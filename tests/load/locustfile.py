@@ -750,6 +750,122 @@ class AdminLoadUser(HttpUser):
         )
 
 
+class BootstrapLoadUser(HttpUser):
+    """
+    Locust user simulating a legacy admin bootstrapping tenants.
+    Lower weight — this is a rare operation (onboarding new companies).
+    Tests the POST /admins/tenants/bootstrap endpoint under load.
+    """
+
+    wait_time = between(5, 15)
+    host = os.getenv("LOAD_TEST_HOST", "http://localhost:8000")
+    weight = 1  # very low frequency
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.headers: dict = {}
+        self._bootstrapped_tenants: list[dict] = []
+
+    def on_start(self) -> None:
+        """Authenticate as legacy admin."""
+        email = os.getenv("LOAD_TEST_ADMIN_EMAIL", "loadtest_admin@visichek.test")
+        password = os.getenv("LOAD_TEST_ADMIN_PASSWORD", "LoadTestAdmin@123")
+
+        resp = self.client.post(
+            "/v1/admins/login",
+            json={"email": email, "password": password},
+            name="/v1/admins/login (bootstrap)",
+        )
+        if resp.status_code != 200:
+            logger.warning(f"Admin login failed ({resp.status_code}), bootstrap tasks will be skipped")
+            self.headers = {}
+            return
+
+        data = resp.json().get("data", {})
+        self.headers = {"Authorization": f"Bearer {data['access_token']}"}
+
+    @task(5)
+    @tag("bootstrap")
+    def bootstrap_tenant(self) -> None:
+        """Bootstrap a new tenant + super_admin."""
+        if not self.headers:
+            return
+
+        ts = int(time.time())
+        rand = random.randint(1000, 99999)
+        payload = {
+            "company_name": f"LoadTest Corp {ts}_{rand}",
+            "lawful_basis": random.choice(["consent", "legitimate_interest"]),
+            "notice_display_mode": random.choice(["passive", "active_consent"]),
+            "retention_days": random.choice([365, 730, 1095]),
+            "dpo_contact_email": f"dpo_{rand}@loadtest.local",
+            "country_of_hosting": random.choice(["Nigeria", "United States", "United Kingdom"]),
+            "admin_full_name": f"SA {rand}",
+            "admin_email": f"sa_{ts}_{rand}@loadtest.local",
+            "admin_password": f"LoadPass_{rand}!",
+        }
+
+        resp = self.client.post(
+            "/v1/admins/tenants/bootstrap",
+            json=payload,
+            headers=self.headers,
+            name="/v1/admins/tenants/bootstrap",
+        )
+        if resp.status_code in (200, 201):
+            data = resp.json().get("data", {})
+            self._bootstrapped_tenants.append({
+                "tenant_id": data.get("tenant", {}).get("id"),
+                "sa_token": data.get("super_admin", {}).get("access_token"),
+                "sa_email": payload["admin_email"],
+                "sa_password": payload["admin_password"],
+            })
+            logger.debug(f"Bootstrapped tenant: {payload['company_name']}")
+        else:
+            logger.warning(f"Bootstrap failed: {resp.status_code}")
+
+    @task(3)
+    @tag("bootstrap", "login")
+    def login_bootstrapped_super_admin(self) -> None:
+        """Log in as a previously bootstrapped super_admin to verify it works."""
+        if not self._bootstrapped_tenants:
+            return
+
+        tenant_info = random.choice(self._bootstrapped_tenants)
+        resp = self.client.post(
+            "/v1/system-users/login",
+            json={
+                "email": tenant_info["sa_email"],
+                "password": tenant_info["sa_password"],
+            },
+            name="/v1/system-users/login (bootstrapped SA)",
+        )
+        if resp.status_code != 200:
+            logger.warning(f"Bootstrapped SA login failed: {resp.status_code}")
+
+    @task(2)
+    @tag("bootstrap", "tenant")
+    def create_tenant_as_admin(self) -> None:
+        """Create a standalone tenant via POST /tenants/ as legacy admin."""
+        if not self.headers:
+            return
+
+        ts = int(time.time())
+        rand = random.randint(1000, 99999)
+        payload = {
+            "company_name": f"Direct Tenant {ts}_{rand}",
+            "lawful_basis": "legitimate_interest",
+            "notice_display_mode": "passive",
+            "retention_days": 730,
+        }
+
+        self.client.post(
+            "/v1/tenants/",
+            json=payload,
+            headers=self.headers,
+            name="/v1/tenants/ (admin create)",
+        )
+
+
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
     """Called when load test starts."""

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 
 from core.response_envelope import document_response
 from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut
+from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_super_admin_token
 from security.principal import AuthPrincipal
 from services.tenant_service import (
@@ -20,8 +21,8 @@ router = APIRouter(prefix="/tenants", tags=["Tenants"])
 @document_response(
     message="Tenant created successfully",
     status_code=status.HTTP_201_CREATED,
-    description="Create a new tenant in the system. Only super-admin users can create tenants.",
-    summary="Create a new tenant",
+    description="Create a new tenant in the system. Only legacy admins can create tenants. For bootstrapping a tenant with its first super_admin, use POST /admins/tenants/bootstrap instead.",
+    summary="Create a new tenant (legacy admin only)",
     success_example={
         "id": "64f1a2b3c4d5e6f7a8b9c0d1",
         "company_name": "Acme Corp",
@@ -47,7 +48,7 @@ router = APIRouter(prefix="/tenants", tags=["Tenants"])
 )
 async def create_tenant_endpoint(
     tenant_data: TenantCreate,
-    principal: AuthPrincipal = Depends(verify_super_admin_token),
+    admin=Depends(check_admin_account_status_and_permissions),
 ):
     return await add_tenant(tenant_data=tenant_data)
 

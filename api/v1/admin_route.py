@@ -4,6 +4,7 @@ from fastapi import APIRouter, Body, Depends, Query, status
 
 from core.response_envelope import document_response
 from schemas.admin_schema import AdminBase, AdminCreate, AdminLogin, AdminOut, AdminRefresh
+from schemas.tenant_schema import TenantBootstrapRequest
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_admin_refresh_token
 from security.principal import AuthPrincipal
@@ -14,6 +15,7 @@ from services.admin_service import (
     remove_admin,
     retrieve_admins,
 )
+from services.tenant_service import bootstrap_tenant
 
 router = APIRouter(prefix="/admins", tags=["Admins"])
 
@@ -144,6 +146,66 @@ async def signup_new_admin(
     new_admin = AdminCreate(invited_by=admin.id, **admin_data_dict) # type: ignore
     items = await add_admin(admin_data=new_admin)
     return items
+
+
+@router.post("/tenants/bootstrap")
+@document_response(
+    message="Tenant and super admin created successfully",
+    status_code=status.HTTP_201_CREATED,
+    description=(
+        "Bootstrap a new tenant along with its first super_admin system user. "
+        "Only legacy admins can call this endpoint. Once a super_admin exists "
+        "for a tenant, all further user management is handled by that super_admin."
+    ),
+    summary="Bootstrap tenant + first super admin",
+    success_example={
+        "tenant": {
+            "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+            "company_name": "Acme Corp",
+            "lawful_basis": "legitimate_interest",
+            "notice_display_mode": "passive",
+            "retention_days": 1095,
+            "default_retention_action": "anonymise",
+            "dpo_contact_email": "dpo@acmecorp.com",
+            "privacy_policy_url": "https://acmecorp.com/privacy",
+            "country_of_hosting": "Nigeria",
+            "cross_border_approved": False,
+            "is_active": True,
+            "date_created": 1712500000,
+            "last_updated": 1712500000,
+        },
+        "super_admin": {
+            "id": "64f1a2b3c4d5e6f7a8b9c0d2",
+            "tenant_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+            "full_name": "Jane Doe",
+            "email": "jane@acmecorp.com",
+            "role": "super_admin",
+            "account_status": "ACTIVE",
+            "access_token": "eyJ...",
+            "refresh_token": "eyJ...",
+            "date_created": 1712500000,
+            "last_updated": 1712500000,
+        },
+    },
+    response_codes={
+        401: "Unauthorized - invalid or missing admin token",
+        403: "Forbidden - insufficient admin permissions",
+        409: "Conflict - tenant company name already exists or tenant already has a super_admin",
+        422: "Validation error - invalid input data",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
+        409: {"success": False, "message": "Tenant with this company name already exists", "code": "VALIDATION_FAILED"},
+        422: {"success": False, "message": "admin_email must be a valid email address", "code": "VALIDATION_FAILED"},
+    },
+)
+async def bootstrap_tenant_endpoint(
+    payload: TenantBootstrapRequest,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    """Create a new tenant and its first super_admin in a single request."""
+    return await bootstrap_tenant(payload)
 
 
 @router.post("/login")

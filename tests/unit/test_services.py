@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from bson import ObjectId
 from fastapi import HTTPException
 
-from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut
+from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut, TenantBootstrapRequest
 from schemas.system_user_schema import (
     SystemUserCreate,
     SystemUserUpdate,
@@ -780,3 +780,155 @@ class TestVisitSessionService:
             await retrieve_visit_session_by_id("invalid-id", tenant_id)
 
         assert exc_info.value.status_code == 400
+
+
+# ============================================================================
+# BOOTSTRAP TENANT SERVICE TESTS
+# ============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestBootstrapTenantService:
+    """Test suite for the bootstrap_tenant service function."""
+
+    @patch("services.tenant_service.add_system_user", new_callable=AsyncMock)
+    @patch("services.tenant_service.get_system_user", new_callable=AsyncMock)
+    @patch("services.tenant_service.create_tenant", new_callable=AsyncMock)
+    @patch("services.tenant_service.get_tenant", new_callable=AsyncMock)
+    async def test_bootstrap_success(self, mock_get_tenant, mock_create_tenant, mock_get_su, mock_add_su):
+        """Test successful bootstrap creates tenant + super_admin."""
+        from services.tenant_service import bootstrap_tenant
+
+        tenant_id = str(ObjectId())
+        su_id = str(ObjectId())
+
+        mock_get_tenant.return_value = None  # no duplicate
+        mock_create_tenant.return_value = TenantOut(
+            id=tenant_id,
+            company_name="Acme Corp",
+            date_created=1712500000,
+        )
+        mock_get_su.return_value = None  # no existing super_admin
+        mock_add_su.return_value = SystemUserOut(
+            id=su_id,
+            tenant_id=tenant_id,
+            full_name="Jane Doe",
+            email="jane@acme.com",
+            role=SystemUserRole.SUPER_ADMIN,
+            account_status=AccountStatus.ACTIVE,
+            access_token="tok_abc",
+            refresh_token="ref_xyz",
+            date_created=1712500000,
+        )
+
+        payload = TenantBootstrapRequest(
+            company_name="Acme Corp",
+            admin_full_name="Jane Doe",
+            admin_email="jane@acme.com",
+            admin_password="SecurePass123!",
+        )
+
+        result = await bootstrap_tenant(payload)
+
+        assert result["tenant"].id == tenant_id
+        assert result["super_admin"].id == su_id
+        assert result["super_admin"].role == SystemUserRole.SUPER_ADMIN
+        mock_create_tenant.assert_called_once()
+        mock_add_su.assert_called_once()
+
+    @patch("services.tenant_service.get_tenant", new_callable=AsyncMock)
+    async def test_bootstrap_duplicate_company_name(self, mock_get_tenant):
+        """Test bootstrap fails if tenant company name already exists."""
+        from services.tenant_service import bootstrap_tenant
+
+        mock_get_tenant.return_value = TenantOut(
+            id=str(ObjectId()),
+            company_name="Acme Corp",
+            date_created=1712500000,
+        )
+
+        payload = TenantBootstrapRequest(
+            company_name="Acme Corp",
+            admin_full_name="Jane Doe",
+            admin_email="jane@acme.com",
+            admin_password="Pass123!",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await bootstrap_tenant(payload)
+
+        assert exc_info.value.status_code == 409
+        assert "company name" in exc_info.value.detail.lower()
+
+    @patch("services.tenant_service.add_system_user", new_callable=AsyncMock)
+    @patch("services.tenant_service.get_system_user", new_callable=AsyncMock)
+    @patch("services.tenant_service.create_tenant", new_callable=AsyncMock)
+    @patch("services.tenant_service.get_tenant", new_callable=AsyncMock)
+    async def test_bootstrap_existing_super_admin_rejected(
+        self, mock_get_tenant, mock_create_tenant, mock_get_su, mock_add_su
+    ):
+        """Test bootstrap fails if tenant already has a super_admin."""
+        from services.tenant_service import bootstrap_tenant
+
+        tenant_id = str(ObjectId())
+        mock_get_tenant.return_value = None
+        mock_create_tenant.return_value = TenantOut(
+            id=tenant_id, company_name="Acme Corp", date_created=1712500000,
+        )
+        mock_get_su.return_value = SystemUserOut(
+            id=str(ObjectId()),
+            tenant_id=tenant_id,
+            full_name="Existing SA",
+            email="existing@acme.com",
+            role=SystemUserRole.SUPER_ADMIN,
+            account_status=AccountStatus.ACTIVE,
+            date_created=1712500000,
+        )
+
+        payload = TenantBootstrapRequest(
+            company_name="Acme Corp",
+            admin_full_name="Jane Doe",
+            admin_email="jane@acme.com",
+            admin_password="Pass123!",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await bootstrap_tenant(payload)
+
+        assert exc_info.value.status_code == 409
+        assert "super_admin" in exc_info.value.detail.lower()
+
+    @patch("services.tenant_service.delete_tenant", new_callable=AsyncMock)
+    @patch("services.tenant_service.add_system_user", new_callable=AsyncMock)
+    @patch("services.tenant_service.get_system_user", new_callable=AsyncMock)
+    @patch("services.tenant_service.create_tenant", new_callable=AsyncMock)
+    @patch("services.tenant_service.get_tenant", new_callable=AsyncMock)
+    async def test_bootstrap_rolls_back_tenant_on_user_failure(
+        self, mock_get_tenant, mock_create_tenant, mock_get_su, mock_add_su, mock_delete_tenant
+    ):
+        """Test tenant is deleted if super_admin creation fails."""
+        from services.tenant_service import bootstrap_tenant
+
+        tenant_id = str(ObjectId())
+        mock_get_tenant.return_value = None
+        mock_create_tenant.return_value = TenantOut(
+            id=tenant_id, company_name="Acme Corp", date_created=1712500000,
+        )
+        mock_get_su.return_value = None
+        mock_add_su.side_effect = HTTPException(status_code=409, detail="Duplicate email")
+        mock_delete_tenant.return_value = MagicMock(deleted_count=1)
+
+        payload = TenantBootstrapRequest(
+            company_name="Acme Corp",
+            admin_full_name="Jane Doe",
+            admin_email="jane@acme.com",
+            admin_password="Pass123!",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await bootstrap_tenant(payload)
+
+        assert exc_info.value.status_code == 409
+        # Verify the tenant rollback was attempted
+        mock_delete_tenant.assert_called_once()

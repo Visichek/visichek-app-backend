@@ -169,16 +169,37 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Schedule expired discount cleanup (every 6 hours)
+    scheduler.add_job(
+        "services.discount_service:expire_stale_discounts",
+        trigger=IntervalTrigger(hours=6),
+        id="expire_stale_discounts",
+        name="Expire Stale Discounts",
+        replace_existing=True,
+    )
+
+    # Schedule usage record cleanup (daily, keep 90 days)
+    scheduler.add_job(
+        "services.usage_service:cleanup_old_usage_records",
+        trigger=IntervalTrigger(hours=24),
+        id="cleanup_usage_records",
+        name="Usage Record Cleanup",
+        replace_existing=True,
+    )
+
     try:
         yield
     finally:
         scheduler.shutdown()
 
 
+from core.plan_enforcement import PlanEnforcementMiddleware
+
 app = FastAPI(lifespan=lifespan, title="REST API")
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(RequestTimingMiddleware)
 app.add_middleware(SessionMiddleware, secret_key=settings.session_secret_key or "dev-only-session-secret")
+app.add_middleware(PlanEnforcementMiddleware)
 app.add_middleware(RateLimitingMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -311,6 +332,10 @@ from api.v1.sub_processor_route import router as v1_sub_processor_route_router
 from api.v1.compliance_route import router as v1_compliance_route_router
 from api.v1.audit_route import router as v1_audit_route_router
 from api.v1.incident_route import router as v1_incident_route_router
+from api.v1.plan_route import router as v1_plan_route_router
+from api.v1.subscription_route import router as v1_subscription_route_router
+from api.v1.discount_route import router as v1_discount_route_router
+from api.v1.usage_route import router as v1_usage_route_router
 
 app.include_router(v1_admin_route_router, prefix='/v1')
 app.include_router(v1_documents_route_router, prefix='/v1')
@@ -331,6 +356,10 @@ app.include_router(v1_sub_processor_route_router, prefix='/v1')
 app.include_router(v1_compliance_route_router, prefix='/v1')
 app.include_router(v1_audit_route_router, prefix='/v1')
 app.include_router(v1_incident_route_router, prefix='/v1')
+app.include_router(v1_plan_route_router, prefix='/v1')
+app.include_router(v1_subscription_route_router, prefix='/v1')
+app.include_router(v1_discount_route_router, prefix='/v1')
+app.include_router(v1_usage_route_router, prefix='/v1')
 # --- auto-routes-end ---
 
 apply_response_documentation(app)

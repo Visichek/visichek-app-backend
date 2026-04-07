@@ -6,6 +6,7 @@ from httpx import AsyncClient, ASGITransport
 
 from main import app
 from security.principal import AuthPrincipal
+from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import (
     verify_super_admin_token,
     verify_system_user_token,
@@ -56,6 +57,23 @@ MOCK_DPO_PRINCIPAL = AuthPrincipal(
 )
 
 
+# Mock AdminOut for legacy admin auth dependency
+MOCK_ADMIN_OUT = {
+    "id": "admin-legacy-001",
+    "full_name": "Legacy Admin",
+    "email": "legacy@example.com",
+    "password": "",
+    "accountStatus": "ACTIVE",
+    "permissionList": {
+        "permissions": [
+            {"name": "all", "methods": ["GET", "POST", "PATCH", "DELETE"], "path": "/v1/*", "key": "all_access"}
+        ]
+    },
+    "date_created": 1712500000,
+    "last_updated": 1712500000,
+}
+
+
 @pytest.fixture
 def cleanup_dependency_overrides():
     """Cleanup dependency overrides after each test."""
@@ -69,8 +87,8 @@ class TestTenantRoutes:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_create_tenant_success(self, cleanup_dependency_overrides):
-        """Test successful tenant creation by super admin."""
-        app.dependency_overrides[verify_super_admin_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        """Test successful tenant creation by legacy admin."""
+        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MOCK_ADMIN_OUT
 
         with patch("services.tenant_service.add_tenant", new_callable=AsyncMock) as mock_add:
             mock_add.return_value = {
@@ -1217,3 +1235,139 @@ class TestResponseEnvelopeFormat:
             assert "data" in data
             assert isinstance(data["success"], bool)
             assert data["success"] is True
+
+
+# ============================================================================
+# BOOTSTRAP ROUTE TESTS
+# ============================================================================
+
+
+class TestBootstrapRoute:
+    """Tests for the POST /admins/tenants/bootstrap endpoint."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_bootstrap_success(self, cleanup_dependency_overrides):
+        """Test successful tenant bootstrap by legacy admin."""
+        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MOCK_ADMIN_OUT
+
+        mock_result = {
+            "tenant": {
+                "id": "tenant-new-001",
+                "company_name": "Bootstrap Corp",
+                "lawful_basis": "legitimate_interest",
+                "notice_display_mode": "passive",
+                "retention_days": 1095,
+                "default_retention_action": "anonymise",
+                "is_active": True,
+                "date_created": 1712500000,
+                "last_updated": 1712500000,
+            },
+            "super_admin": {
+                "id": "su-new-001",
+                "tenant_id": "tenant-new-001",
+                "full_name": "Jane Doe",
+                "email": "jane@bootstrapcorp.com",
+                "role": "super_admin",
+                "account_status": "ACTIVE",
+                "access_token": "eyJ...",
+                "refresh_token": "eyJ...",
+                "date_created": 1712500000,
+                "last_updated": 1712500000,
+            },
+        }
+
+        with patch("api.v1.admin_route.bootstrap_tenant", new_callable=AsyncMock) as mock_bootstrap:
+            mock_bootstrap.return_value = mock_result
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/admins/tenants/bootstrap",
+                    json={
+                        "company_name": "Bootstrap Corp",
+                        "admin_full_name": "Jane Doe",
+                        "admin_email": "jane@bootstrapcorp.com",
+                        "admin_password": "SecurePass123!",
+                    },
+                    headers={"Authorization": "Bearer admin-token"},
+                )
+
+            assert response.status_code == 201
+            data = response.json()
+            assert data["success"] is True
+            assert data["message"] == "Tenant and super admin created successfully"
+            assert data["data"]["tenant"]["id"] == "tenant-new-001"
+            assert data["data"]["super_admin"]["role"] == "super_admin"
+            mock_bootstrap.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_bootstrap_duplicate_company(self, cleanup_dependency_overrides):
+        """Test bootstrap returns 409 on duplicate company name."""
+        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MOCK_ADMIN_OUT
+
+        from fastapi import HTTPException as FastAPIHTTPException
+
+        with patch("api.v1.admin_route.bootstrap_tenant", new_callable=AsyncMock) as mock_bootstrap:
+            mock_bootstrap.side_effect = FastAPIHTTPException(
+                status_code=409,
+                detail="Tenant with this company name already exists",
+            )
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/admins/tenants/bootstrap",
+                    json={
+                        "company_name": "Existing Corp",
+                        "admin_full_name": "Jane Doe",
+                        "admin_email": "jane@existing.com",
+                        "admin_password": "Pass123!",
+                    },
+                    headers={"Authorization": "Bearer admin-token"},
+                )
+
+            assert response.status_code == 409
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_bootstrap_validation_error(self, cleanup_dependency_overrides):
+        """Test bootstrap returns 422 on missing required fields."""
+        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MOCK_ADMIN_OUT
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/v1/admins/tenants/bootstrap",
+                json={
+                    "company_name": "Incomplete Corp",
+                    # missing admin_full_name, admin_email, admin_password
+                },
+                headers={"Authorization": "Bearer admin-token"},
+            )
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_bootstrap_unauthenticated(self, cleanup_dependency_overrides):
+        """Test bootstrap without auth token is rejected."""
+        # Don't override the dependency — let real auth run and fail
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/v1/admins/tenants/bootstrap",
+                json={
+                    "company_name": "No Auth Corp",
+                    "admin_full_name": "Jane Doe",
+                    "admin_email": "jane@noauth.com",
+                    "admin_password": "Pass123!",
+                },
+            )
+
+        assert response.status_code in (401, 403)

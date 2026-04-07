@@ -5,7 +5,7 @@ import time
 from bson import ObjectId
 from pydantic import ValidationError
 
-from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut
+from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut, TenantBootstrapRequest
 from schemas.department_schema import DepartmentCreate, DepartmentUpdate, DepartmentOut
 from schemas.system_user_schema import SystemUserCreate, SystemUserUpdate, SystemUserOut, SystemUserLogin
 from schemas.visitor_profile_schema import VisitorProfileCreate, VisitorProfileUpdate, VisitorProfileOut
@@ -1343,3 +1343,99 @@ class TestUserSessionSchema:
         }
         out = UserSessionOut(**data)
         assert out.id == oid
+
+
+# ============================================================================
+# TENANT BOOTSTRAP SCHEMA TESTS
+# ============================================================================
+
+@pytest.mark.unit
+class TestTenantBootstrapSchema:
+
+    def test_bootstrap_request_with_required_fields(self):
+        """Test TenantBootstrapRequest with all required fields."""
+        payload = TenantBootstrapRequest(
+            company_name="Acme Corp",
+            admin_full_name="Jane Doe",
+            admin_email="jane@acmecorp.com",
+            admin_password="SecurePass123!",
+        )
+        assert payload.company_name == "Acme Corp"
+        assert payload.admin_full_name == "Jane Doe"
+        assert payload.admin_email == "jane@acmecorp.com"
+        assert payload.admin_password == "SecurePass123!"
+        # Defaults
+        assert payload.lawful_basis == LawfulBasis.LEGITIMATE_INTEREST
+        assert payload.notice_display_mode == NoticeDisplayMode.PASSIVE
+        assert payload.retention_days == 1095
+        assert payload.default_retention_action == DeletionAction.ANONYMISE
+        assert payload.cross_border_approved is False
+
+    def test_bootstrap_request_with_all_tenant_fields(self):
+        """Test TenantBootstrapRequest with all optional tenant fields."""
+        payload = TenantBootstrapRequest(
+            company_name="Tech Inc",
+            lawful_basis=LawfulBasis.CONSENT,
+            notice_display_mode=NoticeDisplayMode.ACTIVE_CONSENT,
+            retention_days=365,
+            default_retention_action=DeletionAction.DELETE,
+            dpo_contact_email="dpo@techinc.com",
+            privacy_policy_url="https://techinc.com/privacy",
+            country_of_hosting="Nigeria",
+            cross_border_approved=True,
+            admin_full_name="John Smith",
+            admin_email="john@techinc.com",
+            admin_password="AnotherPass456!",
+        )
+        assert payload.company_name == "Tech Inc"
+        assert payload.lawful_basis == LawfulBasis.CONSENT
+        assert payload.retention_days == 365
+        assert payload.dpo_contact_email == "dpo@techinc.com"
+        assert payload.country_of_hosting == "Nigeria"
+        assert payload.cross_border_approved is True
+
+    def test_bootstrap_request_rejects_missing_company_name(self):
+        """Test TenantBootstrapRequest fails without company_name."""
+        with pytest.raises(ValidationError):
+            TenantBootstrapRequest(
+                admin_full_name="Jane Doe",
+                admin_email="jane@example.com",
+                admin_password="Pass123!",
+            )
+
+    def test_bootstrap_request_rejects_missing_admin_email(self):
+        """Test TenantBootstrapRequest fails without admin_email."""
+        with pytest.raises(ValidationError):
+            TenantBootstrapRequest(
+                company_name="Acme Corp",
+                admin_full_name="Jane Doe",
+                admin_password="Pass123!",
+            )
+
+    def test_bootstrap_request_rejects_invalid_admin_email(self):
+        """Test TenantBootstrapRequest fails with invalid email format."""
+        with pytest.raises(ValidationError):
+            TenantBootstrapRequest(
+                company_name="Acme Corp",
+                admin_full_name="Jane Doe",
+                admin_email="not-an-email",
+                admin_password="Pass123!",
+            )
+
+    def test_bootstrap_request_rejects_missing_admin_password(self):
+        """Test TenantBootstrapRequest fails without admin_password."""
+        with pytest.raises(ValidationError):
+            TenantBootstrapRequest(
+                company_name="Acme Corp",
+                admin_full_name="Jane Doe",
+                admin_email="jane@example.com",
+            )
+
+    def test_bootstrap_request_rejects_missing_admin_name(self):
+        """Test TenantBootstrapRequest fails without admin_full_name."""
+        with pytest.raises(ValidationError):
+            TenantBootstrapRequest(
+                company_name="Acme Corp",
+                admin_email="jane@example.com",
+                admin_password="Pass123!",
+            )

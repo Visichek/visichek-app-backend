@@ -37,6 +37,32 @@ class TenantUpdate(BaseModel):
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
+class TenantBootstrapRequest(BaseModel):
+    """Combined payload to create a tenant and its first super_admin in one step."""
+
+    # --- Tenant fields ---
+    company_name: str
+    lawful_basis: LawfulBasis = LawfulBasis.LEGITIMATE_INTEREST
+    notice_display_mode: NoticeDisplayMode = NoticeDisplayMode.PASSIVE
+    retention_days: int = 1095
+    default_retention_action: DeletionAction = DeletionAction.ANONYMISE
+    dpo_contact_email: Optional[str] = None
+    privacy_policy_url: Optional[str] = None
+    country_of_hosting: Optional[str] = None
+    cross_border_approved: bool = False
+
+    # --- First super_admin fields ---
+    admin_full_name: str
+    admin_email: EmailStr
+    admin_password: str
+
+
+class TenantBootstrapOut(BaseModel):
+    """Response after bootstrapping a tenant + first super_admin."""
+    tenant: "TenantOut"
+    super_admin: dict  # SystemUserOut serialised (avoids circular import)
+
+
 class TenantOut(TenantBase):
     id: Optional[str] = Field(default=None, alias="_id")
     date_created: Optional[int] = None
