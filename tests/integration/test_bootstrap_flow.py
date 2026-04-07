@@ -1,9 +1,9 @@
 """
 Integration tests for the tenant bootstrap flow:
-  - Legacy admin creates tenant + first super_admin in one request
+  - Application admin creates tenant + first super_admin in one request
   - Super_admin created via bootstrap can log in and manage the tenant
   - Duplicate bootstrap attempts are rejected
-  - Tenant creation via POST /tenants/ now requires legacy admin auth
+  - Tenant creation via POST /tenants/ now requires application admin auth
 
 Requires: MongoDB on localhost:27017, Redis on localhost:6379
 """
@@ -30,7 +30,7 @@ async def admin_auth_headers(
     integration_client: AsyncClient,
 ):
     """
-    Create a legacy admin directly in MongoDB and log them in.
+    Create a application admin directly in MongoDB and log them in.
     Returns auth headers dict.
     """
     raw_password = f"AdminPass_{int(time.time())}!"
@@ -229,14 +229,14 @@ class TestBootstrapFlow:
 
 
 class TestTenantCreationAuthChange:
-    """Verify that POST /tenants/ now requires legacy admin auth, not super_admin."""
+    """Verify that POST /tenants/ now requires application admin auth, not super_admin."""
 
     async def test_tenant_creation_with_admin_auth_succeeds(
         self,
         integration_client: AsyncClient,
         admin_auth_headers: dict,
     ):
-        """Legacy admin should be able to create a tenant directly."""
+        """Application admin should be able to create a tenant directly."""
         ts = int(time.time())
         resp = await integration_client.post(
             "/v1/tenants/",
@@ -278,7 +278,7 @@ class TestTenantCreationAuthChange:
             },
             headers=auth_headers,
         )
-        # Should fail because the endpoint now checks for legacy admin role,
+        # Should fail because the endpoint now checks for application admin role,
         # not system user role
         assert resp.status_code in (401, 403, 422), (
             f"Expected rejection for super_admin, got {resp.status_code}: {resp.text}"

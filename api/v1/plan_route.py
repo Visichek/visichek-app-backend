@@ -31,14 +31,14 @@ router = APIRouter(prefix="/plans", tags=["Plans"])
 @document_response(
     message="Plan created successfully",
     status_code=status.HTTP_201_CREATED,
-    description="Create a new subscription plan (legacy admin only)",
+    description="Create a new subscription plan (application admin only)",
     summary="Create plan",
 )
 async def create_plan_endpoint(
     payload: PlanCreate,
     admin=Depends(check_admin_account_status_and_permissions),
 ) -> PlanOut:
-    """Create a new subscription plan. Only legacy admins can manage plans."""
+    """Create a new subscription plan. Only application admins can manage plans."""
     return await add_plan(payload)
 
 
@@ -80,7 +80,7 @@ async def get_plan_endpoint(plan_id: str) -> PlanOut | None:
 @router.put("/{plan_id}")
 @document_response(
     message="Plan updated successfully",
-    description="Update a subscription plan (legacy admin only)",
+    description="Update a subscription plan (application admin only)",
     summary="Update plan",
 )
 async def update_plan_endpoint(
@@ -95,7 +95,7 @@ async def update_plan_endpoint(
 @router.post("/{plan_id}/activate")
 @document_response(
     message="Plan activated successfully",
-    description="Publish a draft plan (legacy admin only)",
+    description="Publish a draft plan (application admin only)",
     summary="Activate plan",
 )
 async def activate_plan_endpoint(
@@ -109,7 +109,7 @@ async def activate_plan_endpoint(
 @router.post("/{plan_id}/archive")
 @document_response(
     message="Plan archived successfully",
-    description="Archive a plan (soft delete). Existing subscriptions continue. (Legacy admin only)",
+    description="Archive a plan (soft delete). Existing subscriptions continue. (Application admin only)",
     summary="Archive plan",
 )
 async def archive_plan_endpoint(
@@ -124,7 +124,7 @@ async def archive_plan_endpoint(
 @document_response(
     message="Plan cloned successfully",
     status_code=status.HTTP_201_CREATED,
-    description="Clone an existing plan with a new name (legacy admin only)",
+    description="Clone an existing plan with a new name (application admin only)",
     summary="Clone plan",
 )
 async def clone_plan_endpoint(
@@ -140,7 +140,7 @@ async def clone_plan_endpoint(
 @router.delete("/{plan_id}")
 @document_response(
     message="Plan deleted successfully",
-    description="Permanently delete a draft plan with no subscriptions (legacy admin only)",
+    description="Permanently delete a draft plan with no subscriptions (application admin only)",
     summary="Delete plan",
 )
 async def delete_plan_endpoint(

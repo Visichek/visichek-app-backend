@@ -10,7 +10,7 @@ from security.principal import AuthPrincipal
 from services.dashboard_service import get_dashboard_stats, get_visitor_log
 from services.export_service import export_visitor_log_csv, export_visitor_log_xlsx
 
-router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["Tenant Dashboard"])
 
 _admin_roles = verify_system_user_token("dept_admin", "super_admin")
 

@@ -65,7 +65,7 @@ class UpdateOverridesRequest(BaseModel):
 @document_response(
     message="Subscription created successfully",
     status_code=status.HTTP_201_CREATED,
-    description="Subscribe a tenant to a plan (legacy admin only)",
+    description="Subscribe a tenant to a plan (application admin only)",
     summary="Create subscription",
 )
 async def create_subscription_endpoint(
@@ -90,7 +90,7 @@ async def create_subscription_endpoint(
 @router.get("")
 @document_response(
     message="Subscriptions retrieved successfully",
-    description="List subscriptions with optional filters (legacy admin only)",
+    description="List subscriptions with optional filters (application admin only)",
     summary="List subscriptions",
     include_meta=True,
 )
@@ -177,7 +177,7 @@ async def cancel_subscription_endpoint(
 @router.put("/{subscription_id}/overrides")
 @document_response(
     message="Subscription overrides updated",
-    description="Update tenant-specific overrides on a subscription (legacy admin only)",
+    description="Update tenant-specific overrides on a subscription (application admin only)",
     summary="Update subscription overrides",
 )
 async def update_overrides_endpoint(

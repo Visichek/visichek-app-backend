@@ -752,7 +752,7 @@ class AdminLoadUser(HttpUser):
 
 class BootstrapLoadUser(HttpUser):
     """
-    Locust user simulating a legacy admin bootstrapping tenants.
+    Locust user simulating a application admin bootstrapping tenants.
     Lower weight — this is a rare operation (onboarding new companies).
     Tests the POST /admins/tenants/bootstrap endpoint under load.
     """
@@ -767,7 +767,7 @@ class BootstrapLoadUser(HttpUser):
         self._bootstrapped_tenants: list[dict] = []
 
     def on_start(self) -> None:
-        """Authenticate as legacy admin."""
+        """Authenticate as application admin."""
         email = os.getenv("LOAD_TEST_ADMIN_EMAIL", "loadtest_admin@visichek.test")
         password = os.getenv("LOAD_TEST_ADMIN_PASSWORD", "LoadTestAdmin@123")
 
@@ -845,7 +845,7 @@ class BootstrapLoadUser(HttpUser):
     @task(2)
     @tag("bootstrap", "tenant")
     def create_tenant_as_admin(self) -> None:
-        """Create a standalone tenant via POST /tenants/ as legacy admin."""
+        """Create a standalone tenant via POST /tenants/ as application admin."""
         if not self.headers:
             return
 

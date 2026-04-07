@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 """
-Platform-wide dashboard service for legacy admins.
+Platform-wide dashboard service for application admins.
 
 Aggregates data across ALL tenants — total users, subscriptions, plan
 distribution, incident trends, revenue, and top-performing tenants.
@@ -21,15 +21,15 @@ from schemas.admin_dashboard_schema import (
 
 
 async def get_admin_dashboard_stats() -> AdminDashboardStats:
-    """Aggregate platform-wide stats for the legacy admin dashboard."""
+    """Aggregate platform-wide stats for the application admin dashboard."""
 
     # --- Tenant counts ---
     total_tenants = await db["tenant_companies"].count_documents({})
     active_tenants = await db["tenant_companies"].count_documents({"is_active": True})
 
     # --- User counts ---
-    total_system_users = await db["system_users"].count_documents({})
-    total_legacy_users = await db["users"].count_documents({})
+    total_tenant_users = await db["system_users"].count_documents({})
+    total_application_users = await db["users"].count_documents({})
 
     # --- Subscription counts & breakdown ---
     total_subscriptions = await db["subscriptions"].count_documents({})
@@ -153,8 +153,8 @@ async def get_admin_dashboard_stats() -> AdminDashboardStats:
     return AdminDashboardStats(
         total_tenants=total_tenants,
         active_tenants=active_tenants,
-        total_system_users=total_system_users,
-        total_legacy_users=total_legacy_users,
+        total_tenant_users=total_tenant_users,
+        total_application_users=total_application_users,
         total_subscriptions=total_subscriptions,
         subscription_breakdown=breakdown,
         total_plans=total_plans,

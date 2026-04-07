@@ -117,3 +117,9 @@ class NoticeDisplayMode(str, Enum):
 class ProfilingPreference(str, Enum):
     ALLOWED = "allowed"
     OPTED_OUT = "opted_out"
+
+class LogoPosition(str, Enum):
+    TOP_LEFT = "top_left"
+    TOP_CENTER = "top_center"
+    TOP_RIGHT = "top_right"
+    CENTER = "center"

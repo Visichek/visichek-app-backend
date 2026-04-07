@@ -15,7 +15,7 @@ DEFAULT_AUDITOR_RATE = "80/minute"
 DEFAULT_SECURITY_OFFICER_RATE = "80/minute"
 DEFAULT_DPO_RATE = "80/minute"
 
-LEGACY_ROLE_ALIASES = {"member": "user"}
+APP_ROLE_ALIASES = {"member": "user"}
 
 SYSTEM_USER_ROLE_DEFAULTS = {
     "receptionist": DEFAULT_RECEPTIONIST_RATE,
@@ -29,7 +29,7 @@ SYSTEM_USER_ROLE_DEFAULTS = {
 
 def normalize_role(role: str | None) -> str:
     value = (role or "anonymous").strip().lower() or "anonymous"
-    return LEGACY_ROLE_ALIASES.get(value, value)
+    return APP_ROLE_ALIASES.get(value, value)
 
 
 def build_role_rate_limits_csv(non_admin_roles: Sequence[str], include_admin: bool = True) -> str:

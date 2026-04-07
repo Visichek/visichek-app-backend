@@ -31,7 +31,7 @@ router = APIRouter(prefix="/discounts", tags=["Discounts"])
 @document_response(
     message="Discount created successfully",
     status_code=status.HTTP_201_CREATED,
-    description="Create a new discount code (legacy admin only)",
+    description="Create a new discount code (application admin only)",
     summary="Create discount",
 )
 async def create_discount_endpoint(
@@ -45,7 +45,7 @@ async def create_discount_endpoint(
 @router.get("")
 @document_response(
     message="Discounts retrieved successfully",
-    description="List discounts with optional filters (legacy admin only)",
+    description="List discounts with optional filters (application admin only)",
     summary="List discounts",
     include_meta=True,
 )
@@ -98,7 +98,7 @@ async def get_discount_endpoint(
 @router.put("/{discount_id}")
 @document_response(
     message="Discount updated successfully",
-    description="Update a discount (legacy admin only)",
+    description="Update a discount (application admin only)",
     summary="Update discount",
 )
 async def update_discount_endpoint(
@@ -113,7 +113,7 @@ async def update_discount_endpoint(
 @router.post("/{discount_id}/disable")
 @document_response(
     message="Discount disabled successfully",
-    description="Disable a discount code (legacy admin only)",
+    description="Disable a discount code (application admin only)",
     summary="Disable discount",
 )
 async def disable_discount_endpoint(
@@ -144,7 +144,7 @@ async def validate_discount_endpoint(
 @router.delete("/{discount_id}")
 @document_response(
     message="Discount deleted successfully",
-    description="Permanently delete a disabled discount with 0 redemptions (legacy admin only)",
+    description="Permanently delete a disabled discount with 0 redemptions (application admin only)",
     summary="Delete discount",
 )
 async def delete_discount_endpoint(

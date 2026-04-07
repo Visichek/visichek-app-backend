@@ -1,4 +1,4 @@
-"""Unit tests for the legacy admin platform-wide dashboard."""
+"""Unit tests for the application admin platform-wide dashboard."""
 from __future__ import annotations
 
 import time

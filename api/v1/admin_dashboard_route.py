@@ -7,7 +7,7 @@ from schemas.admin_schema import AdminOut
 from security.account_status_check import check_admin_account_status_and_permissions
 from services.admin_dashboard_service import get_admin_dashboard_stats
 
-router = APIRouter(prefix="/admins/dashboard", tags=["Admin Dashboard"])
+router = APIRouter(prefix="/admins/dashboard", tags=["Application Admin Dashboard"])
 
 
 @router.get("/stats")
@@ -16,8 +16,8 @@ router = APIRouter(prefix="/admins/dashboard", tags=["Admin Dashboard"])
     success_example={
         "total_tenants": 42,
         "active_tenants": 38,
-        "total_system_users": 256,
-        "total_legacy_users": 5,
+        "total_tenant_users": 256,
+        "total_application_users": 5,
         "total_subscriptions": 38,
         "subscription_breakdown": {
             "active": 30,
@@ -63,7 +63,7 @@ router = APIRouter(prefix="/admins/dashboard", tags=["Admin Dashboard"])
         "last_updated": 1712548800,
     },
     description=(
-        "Platform-wide statistics for the legacy admin dashboard. "
+        "Platform-wide statistics for the application admin dashboard. "
         "Includes tenant counts, subscription breakdowns, plan distribution, "
         "incident logs, visitor metrics, revenue, and top tenants."
     ),
@@ -80,5 +80,5 @@ router = APIRouter(prefix="/admins/dashboard", tags=["Admin Dashboard"])
 async def admin_dashboard_stats(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ):
-    """Platform-wide dashboard for legacy admins."""
+    """Platform-wide dashboard for application admins."""
     return await get_admin_dashboard_stats()

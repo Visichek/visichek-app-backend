@@ -13,12 +13,12 @@ from security.principal import ALL_ROLES, AuthPrincipal
 token_auth_scheme = HTTPBearer(auto_error=True)
 AUTH_ROLES: Final[tuple[str, ...]] = ALL_ROLES
 NON_ADMIN_ROLES: Final[tuple[str, ...]] = ("user",)
-LEGACY_ROLE_ALIASES: Final[dict[str, str]] = {"member": "user"}
+APP_ROLE_ALIASES: Final[dict[str, str]] = {"member": "user"}
 
 
 def _normalize_role(role: str | None) -> str:
     value = (role or "").lower()
-    return LEGACY_ROLE_ALIASES.get(value, value)
+    return APP_ROLE_ALIASES.get(value, value)
 
 
 async def _resolve_principal(
@@ -137,9 +137,9 @@ async def verify_any_system_user_token(
     credentials: HTTPAuthorizationCredentials = Depends(token_auth_scheme),
 ) -> AuthPrincipal:
     """Verify token belongs to any VisiChek system user role."""
-    from security.principal import SYSTEM_USER_ROLES
+    from security.principal import TENANT_USER_ROLES
     principal = await _resolve_principal(credentials, allow_expired=False)
-    if principal.role not in SYSTEM_USER_ROLES:
+    if principal.role not in TENANT_USER_ROLES:
         raise auth_role_mismatch(
             required_role="system_user",
             actual_role=principal.role,
@@ -168,7 +168,7 @@ async def verify_receptionist_token(
 async def verify_system_user_refresh_token(
     principal: AuthPrincipal = Depends(verify_token_to_refresh),
 ) -> AuthPrincipal:
-    from security.principal import SYSTEM_USER_ROLES
-    if principal.role not in SYSTEM_USER_ROLES:
+    from security.principal import TENANT_USER_ROLES
+    if principal.role not in TENANT_USER_ROLES:
         raise auth_role_mismatch(required_role="system_user", actual_role=principal.role)
     return principal

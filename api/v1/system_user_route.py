@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, Query, status
 
 from core.response_envelope import document_response
 from schemas.system_user_schema import (
-    SystemUserCreate,
+    SystemUserSignupRequest,
+    SystemUserTenantLogin,
     SystemUserUpdate,
     SystemUserOut,
     SystemUserLogin,
@@ -17,8 +18,9 @@ from security.auth import (
 )
 from security.principal import AuthPrincipal
 from services.system_user_service import (
-    add_system_user,
+    add_system_user_from_invite,
     authenticate_system_user,
+    authenticate_system_user_by_tenant,
     refresh_system_user_tokens,
     retrieve_system_user_by_id,
     retrieve_system_users,
@@ -26,7 +28,7 @@ from services.system_user_service import (
     remove_system_user,
 )
 
-router = APIRouter(prefix="/system-users", tags=["System Users"])
+router = APIRouter(prefix="/system-users", tags=["Tenant Users"])
 
 
 @router.post("/login")
@@ -44,22 +46,66 @@ router = APIRouter(prefix="/system-users", tags=["System Users"])
         "last_login_at": 1712520000,
         "date_created": 1712500000,
         "last_updated": 1712520000,
-        "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDUiLCJyb2xlIjoicmVjZXB0aW9uaXN0In0.jkl345",
-        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDUiLCJ0eXBlIjoicmVmcmVzaCJ9.mno678"
+        "access_token": "eyJhbGci...",
+        "refresh_token": "eyJhbGci...",
     },
-    description="Authenticate a system user with email and password. Returns access and refresh tokens.",
-    summary="System user login",
+    description="Authenticate a system user with email and password (global — not scoped to tenant). Returns access and refresh tokens.",
+    summary="System user login (global)",
     response_codes={
         401: "Unauthorized - invalid credentials",
+        403: "Forbidden - account not active",
+        429: "Too many failed attempts - account temporarily locked",
         422: "Validation error - missing or invalid email/password",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid email or password", "code": "AUTH_INVALID_TOKEN"},
-        422: {"success": False, "message": "Email and password are required", "code": "VALIDATION_FAILED"},
+        401: {"success": False, "message": "Invalid login credentials", "code": "AUTH_INVALID_TOKEN"},
+        429: {"success": False, "message": "Account temporarily locked", "code": "TOO_MANY_REQUESTS"},
     },
 )
 async def login_system_user(login_data: SystemUserLogin):
     return await authenticate_system_user(login_data=login_data)
+
+
+@router.post("/tenant/{tenant_id}/login")
+@document_response(
+    message="Login successful",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d5",
+        "tenant_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "department_id": "dept-456",
+        "full_name": "Dr. Sarah Wilson",
+        "email": "sarah.wilson@clinic.example.com",
+        "role": "receptionist",
+        "account_status": "ACTIVE",
+        "is_active": True,
+        "last_login_at": 1712520000,
+        "date_created": 1712500000,
+        "last_updated": 1712520000,
+        "access_token": "eyJhbGci...",
+        "refresh_token": "eyJhbGci...",
+    },
+    description=(
+        "Authenticate a system user scoped to a specific tenant. "
+        "The tenant_id in the URL path restricts the lookup so users "
+        "with the same email in different tenants don't collide. "
+        "Returns access and refresh tokens."
+    ),
+    summary="System user login (tenant-scoped)",
+    response_codes={
+        401: "Unauthorized - invalid credentials",
+        403: "Forbidden - account not active",
+        404: "Not found - tenant does not exist",
+        429: "Too many failed attempts - account temporarily locked",
+        422: "Validation error - missing or invalid email/password",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid login credentials", "code": "AUTH_INVALID_TOKEN"},
+        404: {"success": False, "message": "Tenant not found", "code": "RESOURCE_NOT_FOUND"},
+        429: {"success": False, "message": "Account temporarily locked", "code": "TOO_MANY_REQUESTS"},
+    },
+)
+async def login_system_user_by_tenant(tenant_id: str, login_data: SystemUserTenantLogin):
+    return await authenticate_system_user_by_tenant(login_data=login_data, tenant_id=tenant_id)
 
 
 @router.post("/signup")
@@ -76,32 +122,34 @@ async def login_system_user(login_data: SystemUserLogin):
         "is_active": True,
         "last_login_at": None,
         "date_created": 1712521000,
-        "last_updated": 1712521000
+        "last_updated": 1712521000,
     },
     status_code=status.HTTP_201_CREATED,
-    description="Create a new system user account. Only super admins can create system users. The tenant_id is automatically set from the super admin's tenant.",
-    summary="Create system user",
+    description=(
+        "Invite a new system user. Only super admins can create system users. "
+        "The tenant_id is automatically set from the super admin's tenant. "
+        "Account status and permissions are system-assigned based on the chosen role."
+    ),
+    summary="Invite system user",
     response_codes={
         401: "Unauthorized - invalid or missing token",
         403: "Forbidden - insufficient permissions (must be super admin)",
-        409: "Conflict - system user with this email already exists",
-        422: "Validation error - invalid input data",
+        409: "Conflict - system user with this email already exists in this tenant",
+        422: "Validation error - invalid input data or weak password",
     },
     error_examples={
         401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
         403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
-        409: {"success": False, "message": "System user with this email already exists", "code": "VALIDATION_FAILED"},
-        422: {"success": False, "message": "Email and password are required", "code": "VALIDATION_FAILED"},
+        409: {"success": False, "message": "A user with this email already exists in this tenant", "code": "VALIDATION_FAILED"},
+        422: {"success": False, "message": "Password does not meet strength requirements", "code": "VALIDATION_FAILED"},
     },
 )
 async def signup_system_user(
-    user_data: SystemUserCreate,
+    signup_data: SystemUserSignupRequest,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
-    # Ensure tenant_id matches the super admin's tenant
-    if principal.tenant_id:
-        user_data.tenant_id = principal.tenant_id
-    return await add_system_user(user_data=user_data)
+    tenant_id = principal.tenant_id or ""
+    return await add_system_user_from_invite(signup_data=signup_data, tenant_id=tenant_id)
 
 
 @router.post("/refresh")
@@ -119,8 +167,8 @@ async def signup_system_user(
         "last_login_at": 1712520000,
         "date_created": 1712500000,
         "last_updated": 1712520000,
-        "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDUiLCJyb2xlIjoicmVjZXB0aW9uaXN0In0.jkl345",
-        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDUiLCJ0eXBlIjoicmVmcmVzaCJ9.mno678"
+        "access_token": "eyJhbGci...",
+        "refresh_token": "eyJhbGci...",
     },
     description="Refresh expired access tokens using a valid refresh token. Expired access token must be provided in Authorization header.",
     summary="Refresh system user tokens",
@@ -130,7 +178,6 @@ async def signup_system_user(
     },
     error_examples={
         401: {"success": False, "message": "Invalid or expired refresh token", "code": "AUTH_INVALID_TOKEN"},
-        422: {"success": False, "message": "Refresh token is required", "code": "VALIDATION_FAILED"},
     },
 )
 async def refresh_tokens(
@@ -157,7 +204,7 @@ async def refresh_tokens(
         "is_active": True,
         "last_login_at": 1712520000,
         "date_created": 1712500000,
-        "last_updated": 1712520000
+        "last_updated": 1712520000,
     },
     description="Retrieve the authenticated system user's profile information.",
     summary="Get system user profile",
@@ -189,7 +236,7 @@ async def get_my_profile(
             "is_active": True,
             "last_login_at": 1712520000,
             "date_created": 1712500000,
-            "last_updated": 1712520000
+            "last_updated": 1712520000,
         }
     ],
     description="Retrieve a paginated list of system users belonging to the super admin's tenant.",
@@ -227,7 +274,7 @@ async def list_system_users(
         "is_active": True,
         "last_login_at": 1712520000,
         "date_created": 1712500000,
-        "last_updated": 1712521500
+        "last_updated": 1712521500,
     },
     description="Update an existing system user's information. Only super admins can update system users within their tenant.",
     summary="Update system user",
@@ -241,7 +288,6 @@ async def list_system_users(
         401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
         403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
         404: {"success": False, "message": "System user not found", "code": "RESOURCE_NOT_FOUND"},
-        422: {"success": False, "message": "Invalid input data", "code": "VALIDATION_FAILED"},
     },
 )
 async def update_system_user_endpoint(

@@ -71,7 +71,7 @@ limiter = FixedWindowRateLimiter(storage)
 
 async def get_user_type(request: Request) -> tuple[str, str]:
     auth_header = request.headers.get("Authorization")
-    fallback_id = request.headers.get("X-Forwarded-For") or request.client.host
+    fallback_id = request.headers.get("X-Forwarded-For") or request.client.host # type: ignore
 
     if not auth_header or not auth_header.startswith("Bearer "):
         return fallback_id, "anonymous"
@@ -193,9 +193,11 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown()
 
 
+from core.case_conversion import CaseConversionMiddleware
 from core.plan_enforcement import PlanEnforcementMiddleware
 
 app = FastAPI(lifespan=lifespan, title="REST API")
+app.add_middleware(CaseConversionMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(RequestTimingMiddleware)
 app.add_middleware(SessionMiddleware, secret_key=settings.session_secret_key or "dev-only-session-secret")
@@ -289,7 +291,7 @@ async def health_check():
 
     aps_heartbeat = redis_client.get("apscheduler:heartbeat")
     if aps_heartbeat:
-        age = time.time() - float(aps_heartbeat)
+        age = time.time() - float(aps_heartbeat.decode('utf-8')) # type: ignore
         services["apscheduler"] = {
             "status": "healthy" if age <= 30 else "degraded",
             "latency_ms": 0,
@@ -338,6 +340,7 @@ from api.v1.discount_route import router as v1_discount_route_router
 from api.v1.usage_route import router as v1_usage_route_router
 from api.v1.admin_dashboard_route import router as v1_admin_dashboard_route_router
 from api.v1.branch_route import router as v1_branch_route_router
+from api.v1.branding_route import router as v1_branding_route_router
 
 app.include_router(v1_admin_route_router, prefix='/v1')
 app.include_router(v1_documents_route_router, prefix='/v1')
@@ -364,6 +367,7 @@ app.include_router(v1_discount_route_router, prefix='/v1')
 app.include_router(v1_usage_route_router, prefix='/v1')
 app.include_router(v1_admin_dashboard_route_router, prefix='/v1')
 app.include_router(v1_branch_route_router, prefix='/v1')
+app.include_router(v1_branding_route_router, prefix='/v1')
 # --- auto-routes-end ---
 
 apply_response_documentation(app)

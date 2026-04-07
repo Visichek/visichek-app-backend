@@ -57,10 +57,10 @@ MOCK_DPO_PRINCIPAL = AuthPrincipal(
 )
 
 
-# Mock AdminOut for legacy admin auth dependency
+# Mock AdminOut for application admin auth dependency
 MOCK_ADMIN_OUT = {
     "id": "admin-legacy-001",
-    "full_name": "Legacy Admin",
+    "full_name": "Application Admin",
     "email": "legacy@example.com",
     "password": "",
     "accountStatus": "ACTIVE",
@@ -87,7 +87,7 @@ class TestTenantRoutes:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_create_tenant_success(self, cleanup_dependency_overrides):
-        """Test successful tenant creation by legacy admin."""
+        """Test successful tenant creation by application admin."""
         app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MOCK_ADMIN_OUT
 
         with patch("services.tenant_service.add_tenant", new_callable=AsyncMock) as mock_add:
@@ -1248,7 +1248,7 @@ class TestBootstrapRoute:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_bootstrap_success(self, cleanup_dependency_overrides):
-        """Test successful tenant bootstrap by legacy admin."""
+        """Test successful tenant bootstrap by application admin."""
         app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MOCK_ADMIN_OUT
 
         mock_result = {

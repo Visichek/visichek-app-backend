@@ -11,7 +11,7 @@ from services.system_user_service import retrieve_system_users, add_system_user
 from schemas.department_schema import DepartmentCreate
 from schemas.system_user_schema import SystemUserCreate
 
-router = APIRouter(prefix="/super-admin", tags=["Super Admin"])
+router = APIRouter(prefix="/super-admin", tags=["Tenant Super Admin"])
 
 
 @router.get("/analytics")

@@ -15,7 +15,7 @@ the actual route handler. Uses Redis-cached plan data for sub-millisecond
 lookups on the hot path.
 
 Enforcement is skipped for:
-- Legacy admin role (platform operators)
+- Application admin role (platform operators)
 - Unauthenticated requests (handled by auth layer)
 - Health/root endpoints
 - Plan management endpoints themselves (to avoid circular blocking)
@@ -31,7 +31,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from core.response_envelope import error_response
 from repositories.tokens_repo import get_access_token_allow_expired
-from security.principal import LEGACY_ROLES
+from security.principal import APP_ROLES
 
 
 # Paths that bypass plan enforcement entirely
@@ -41,7 +41,7 @@ EXEMPT_PATH_PREFIXES = (
     "/docs",
     "/openapi.json",
     "/redoc",
-    "/v1/admins/",       # Legacy admin endpoints
+    "/v1/admins/",       # Application admin endpoints
     "/v1/plans/",        # Plan management (admin-only anyway)
     "/v1/subscriptions/", # Subscription management
     "/v1/discounts/",    # Discount management
@@ -153,8 +153,8 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
 
         role = (access_token.role or "").lower()
 
-        # Legacy admins bypass plan enforcement
-        if role in LEGACY_ROLES:
+        # Application admins bypass plan enforcement
+        if role in APP_ROLES:
             return await call_next(request)
 
         # Get tenant_id from the token

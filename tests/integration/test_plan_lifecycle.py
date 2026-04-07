@@ -30,7 +30,7 @@ async def admin_auth_headers(
     mongo_db,
     integration_client: AsyncClient,
 ):
-    """Create a legacy admin and log them in."""
+    """Create a application admin and log them in."""
     raw_password = f"PlanTestAdmin_{int(time.time())}!"
     admin_data = AdminCreate(
         full_name="Plan Test Admin",

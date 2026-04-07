@@ -36,12 +36,12 @@ class SubscriptionStatusBreakdown(BaseModel):
 
 
 class AdminDashboardStats(BaseModel):
-    """Platform-wide statistics for legacy admin dashboard."""
+    """Platform-wide statistics for application admin dashboard."""
     # User & tenant counts
     total_tenants: int = 0
     active_tenants: int = 0
-    total_system_users: int = 0
-    total_legacy_users: int = 0
+    total_tenant_users: int = 0
+    total_application_users: int = 0
 
     # Subscription stats
     total_subscriptions: int = 0

@@ -13,15 +13,40 @@ class SystemUserBase(BaseModel):
     account_status: AccountStatus = AccountStatus.ACTIVE
     is_active: bool = True
     last_login_at: Optional[int] = None
+    permissionList: Optional[PermissionList] = None
+
+
+class SystemUserSignupRequest(BaseModel):
+    """Public-facing invite request. No account_status or permission_list —
+    those are system-assigned based on role defaults."""
+
+    department_id: Optional[str] = None
+    full_name: str
+    email: EmailStr
+    password: str
+    role: SystemUserRole
+
+
+class SystemUserTenantLogin(BaseModel):
+    """Login request scoped to a specific tenant (via URL path param)."""
+    email: EmailStr
+    password: str
 
 
 class SystemUserCreate(SystemUserBase):
+    """Internal creation schema. Built by the service layer, NOT exposed to clients."""
+
     password_hash: str | bytes
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
     @model_validator(mode="after")
-    def obscure_password(self):
+    def validate_and_hash_password(self):
+        if isinstance(self.password_hash, str):
+            from security.password_policy import validate_password_strength
+            result = validate_password_strength(self.password_hash)
+            if not result.is_valid:
+                raise ValueError("; ".join(result.errors))
         self.password_hash = hash_password(self.password_hash)
         return self
 

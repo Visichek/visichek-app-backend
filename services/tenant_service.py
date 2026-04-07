@@ -18,7 +18,7 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
     """
     Create a new tenant **and** its first super_admin in one atomic step.
 
-    Only legacy admins call this.  If the system user creation fails the
+    Only application admins call this.  If the system user creation fails the
     tenant is rolled back (deleted) so we never leave an orphaned tenant.
 
     Returns a dict with keys ``tenant`` (TenantOut) and ``super_admin``

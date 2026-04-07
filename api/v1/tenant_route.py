@@ -21,8 +21,8 @@ router = APIRouter(prefix="/tenants", tags=["Tenants"])
 @document_response(
     message="Tenant created successfully",
     status_code=status.HTTP_201_CREATED,
-    description="Create a new tenant in the system. Only legacy admins can create tenants. For bootstrapping a tenant with its first super_admin, use POST /admins/tenants/bootstrap instead.",
-    summary="Create a new tenant (legacy admin only)",
+    description="Create a new tenant in the system. Only application admins can create tenants. For bootstrapping a tenant with its first super_admin, use POST /admins/tenants/bootstrap instead.",
+    summary="Create a new tenant (application admin only)",
     success_example={
         "id": "64f1a2b3c4d5e6f7a8b9c0d1",
         "company_name": "Acme Corp",

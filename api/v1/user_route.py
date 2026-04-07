@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 
 from core.response_envelope import document_response
-from schemas.user_schema import LoginType, UserBase, UserCreate, UserOut, UserRefresh
+from schemas.user_schema import LoginType, UserBase, UserCreate, UserLogin, UserOut, UserRefresh, UserSignupRequest
 from services.user_service import (
     add_user,
+    add_user_from_signup,
     authenticate_user,
     authenticate_user_google,
     oauth,
@@ -141,21 +142,19 @@ async def get_my_users(user: UserOut = Depends(check_user_account_status_and_per
         "last_updated": 1712511000
     },
     status_code=status.HTTP_201_CREATED,
-    description="Create a new user account with email and password.",
+    description="Create a new user account with email and password. Account status and permissions are system-assigned.",
     summary="Sign up new user",
     response_codes={
         409: "Conflict - email already exists",
-        422: "Validation error - invalid input data",
+        422: "Validation error - invalid input data or weak password",
     },
     error_examples={
-        409: {"success": False, "message": "User with this email already exists", "code": "VALIDATION_FAILED"},
-        422: {"success": False, "message": "Email and password are required", "code": "VALIDATION_FAILED"},
+        409: {"success": False, "message": "A user with this email already exists", "code": "VALIDATION_FAILED"},
+        422: {"success": False, "message": "Password does not meet strength requirements", "code": "VALIDATION_FAILED"},
     },
 )
-async def signup_new_user(user_data: UserBase):
-    new_user = UserCreate(**user_data.model_dump())
-    items = await add_user(user_data=new_user)
-    return items
+async def signup_new_user(signup_data: UserSignupRequest):
+    return await add_user_from_signup(signup_data=signup_data)
 
 
 @router.post("/login")
@@ -185,8 +184,8 @@ async def signup_new_user(user_data: UserBase):
         422: {"success": False, "message": "Email and password are required", "code": "VALIDATION_FAILED"},
     },
 )
-async def login_user(user_data: UserBase):
-    items = await authenticate_user(user_data=user_data)
+async def login_user(login_data: UserLogin):
+    items = await authenticate_user(login_data=login_data)
     return items
 
 

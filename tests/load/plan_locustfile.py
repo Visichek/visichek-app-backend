@@ -13,7 +13,7 @@ from locust import HttpUser, between, task
 
 
 class PlanAdminUser(HttpUser):
-    """Simulates a legacy admin managing plans, subscriptions, and discounts."""
+    """Simulates a application admin managing plans, subscriptions, and discounts."""
 
     wait_time = between(0.5, 2)
     weight = 3

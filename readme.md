@@ -1,45 +1,103 @@
-# FasterAPI Project Template
+# VisiChek Backend
 
-This scaffold is a production-ready FastAPI starter with:
+A FastAPI backend for visitor management, built with the FasterAPI framework.
 
-- Envelope-based API responses (`success`, `message`, `data`, optional `meta`, `requestId`)
-- Typed auth principal dependencies (user/admin)
-- Queue abstraction with singleton manager (Celery-first)
-- Document upload abstraction (local + S3)
-- Payment abstraction (Flutterwave + Stripe)
-- Email abstraction with singleton manager, retries, logging, and queue-ready dispatch
+## Architecture
 
-## Environment
+Four-layer architecture: **Route** -> **Service** -> **Repository** -> **Database**
 
-Copy `.env.example` to `.env` and set required values.
+Two parallel user systems:
 
-Key variables:
+- **Application Admins** (`/v1/admins/`) — Platform operators who manage tenants, plans, subscriptions, and discounts
+- **Tenant Users** (`/v1/system-users/`) — Users within a tenant with 6 roles: `super_admin`, `dept_admin`, `receptionist`, `auditor`, `security_officer`, `dpo`
 
-- `SECRET_KEY`, `SESSION_SECRET_KEY`
-- `MONGO_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`
-- `ROLE_RATE_LIMITS` (example: `anonymous:20/minute,user:80/minute,admin:140/minute`)
-- `STORAGE_BACKEND` (`local` or `s3`)
-- `PAYMENT_DEFAULT_PROVIDER` (`flutterwave` or `stripe`)
-- Provider secrets (`FLUTTERWAVE_SECRET_KEY`, `STRIPE_SECRET_KEY`)
-- Email settings (`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USERNAME`, `EMAIL_PASSWORD`)
+## Tech Stack
 
-## Email Workflow
+- **Framework**: FastAPI + FasterAPI CLI scaffolding
+- **Database**: MongoDB (Motor async) or SQLite (`DB_TYPE` env var)
+- **Cache / Queue**: Redis + Celery
+- **Auth**: JWT bearer tokens, role-based permissions, password policy enforcement
+- **Payments**: Stripe / Flutterwave (pluggable)
+- **Storage**: S3 / local filesystem (pluggable)
+- **Email**: SMTP (pluggable, queueable)
 
-- Built-in project default: `email_templates/starter_template.py`
-- Add more templates with CLI: `fasterapi email add-template`
-- Mount templates into the singleton registry: `fasterapi email mount`
-- Mount custom templates from `custom_templates/`: `fasterapi email mount-custom`
+## Getting Started
 
-If mount fails, read `email_mount_errors.log` in your project root.
+1. Copy `.env.example` to `.env` and configure:
+   - `SECRET_KEY`, `SESSION_SECRET_KEY`
+   - `MONGO_URL`, `DB_NAME`, `DB_TYPE`
+   - `REDIS_URL` (or `REDIS_HOST` + `REDIS_PORT`)
+   - `STORAGE_BACKEND` (`local` or `s3`)
+   - `PAYMENT_DEFAULT_PROVIDER` (`flutterwave` or `stripe`)
 
-## New API Modules
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-- `GET/POST/DELETE /v1/documents/*`
-- `POST/GET /v1/payments/*`
+3. Start the development server:
+   ```bash
+   fasterapi run-d
+   ```
 
-## Queue Usage
+4. Open Swagger UI at `http://localhost:8000/docs`
 
-Use the queue manager instead of calling Celery directly:
+## Key API Groups
+
+| Tag | Prefix | Auth | Purpose |
+|-----|--------|------|---------|
+| Application Admins | `/v1/admins/` | Application admin token | Platform management, tenant bootstrap |
+| Application Admin Dashboard | `/v1/admins/dashboard/` | Application admin token | Platform-wide stats |
+| Tenants | `/v1/tenants/` | Application admin token | Tenant CRUD |
+| Plans | `/v1/plans/` | Application admin token | Subscription plan CRUD |
+| Subscriptions | `/v1/subscriptions/` | Application admin token | Tenant subscription management |
+| Discounts | `/v1/discounts/` | Application admin token | Discount code management |
+| Tenant Users | `/v1/system-users/` | Tenant user token | Tenant user CRUD + login |
+| Tenant Super Admin | `/v1/super-admin/` | super_admin token | Tenant user management |
+| Branches | `/v1/branches/` | super_admin token | Tenant branch management |
+| Tenant Dashboard | `/v1/dashboard/` | dept_admin / super_admin | Tenant-scoped visitor stats |
+| Visitors | `/v1/visitors/` | Tenant user token | Visitor registration and check-in |
+| Appointments | `/v1/appointments/` | Tenant user token | Appointment scheduling |
+
+## Security Features
+
+- **Password strength validation**: Min 8 chars, uppercase, lowercase, digit, special char required
+- **Common password blocking**: Top 250+ breached passwords are rejected
+- **Account lockout**: 5 failed login attempts triggers a 15-minute lockout
+- **Password history**: Last 5 passwords cannot be reused
+- **JWT bearer tokens** with role-based access control
+- **Per-role rate limiting** (configurable via `ROLE_RATE_LIMITS` env var)
+- **Plan enforcement middleware**: Feature gating + CRUD/retrieval quotas per tenant subscription
+
+## Subscription & Plan System
+
+Tenants subscribe to plans that control feature access, operation limits, storage caps, and entity limits. Application admins manage plans, subscriptions, and discounts.
+
+- Plans can be `draft`, `active`, or `archived`
+- Archived plans are hidden from public listings but existing subscribers continue until expiry
+- Discounts support percentage/fixed amounts, global/tenant/plan scoping, and stackability
+- Usage is tracked via pre-aggregated counters for fast quota checking
+
+## FasterAPI CLI
+
+```bash
+fasterapi make-schema <name>     # Generate Pydantic schemas
+fasterapi make-crud <name>       # Generate repository functions
+fasterapi make-service <name>    # Generate service layer
+fasterapi make-route <name>      # Generate route handlers
+fasterapi mount                  # Register all routes in main.py
+fasterapi run-d                  # Start dev server
+```
+
+## Testing
+
+```bash
+pytest                            # All tests
+pytest tests/unit/                # Unit tests only
+pytest tests/integration/         # Integration tests (needs MongoDB + Redis)
+```
+
+## Queue & Background Tasks
 
 ```python
 from core.queue.manager import QueueManager
@@ -47,11 +105,17 @@ from core.queue.manager import QueueManager
 QueueManager.get_instance().enqueue("delete_tokens", {"userId": user_id})
 ```
 
-## Response Documentation
+## Response Format
 
-Use `document_response` helpers in routes:
+All responses use a standard envelope:
 
-- `@document_response(...)`
-- `@document_created(...)`
-- `@document_deleted(...)`
-- `@document_paginated(...)`
+```json
+{
+  "success": true,
+  "message": "Description",
+  "data": { ... },
+  "requestId": "uuid"
+}
+```
+
+Use `@document_response(message=..., ...)` decorator on every endpoint.

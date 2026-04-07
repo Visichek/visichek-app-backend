@@ -7,14 +7,14 @@ from schemas.tokens_schema import accessTokenCreate, refreshTokenCreate
 from security.encrypting_jwt import create_jwt_role_token
 
 
-LEGACY_ROLE_ALIASES = {"member": "user"}
+APP_ROLE_ALIASES = {"member": "user"}
 
 
 def _normalize_role(role: str) -> str:
-    return LEGACY_ROLE_ALIASES.get(role.strip().lower(), role.strip().lower())
+    return APP_ROLE_ALIASES.get(role.strip().lower(), role.strip().lower())
 
 
-SYSTEM_USER_ROLES = (
+TENANT_USER_ROLES = (
     "receptionist", "dept_admin", "super_admin",
     "auditor", "security_officer", "dpo",
 )
@@ -24,7 +24,7 @@ async def _issue_access_token(user_id: str, role: str):
     role = _normalize_role(role)
 
     # VisiChek system user roles use the generic system user token function
-    if role in SYSTEM_USER_ROLES:
+    if role in TENANT_USER_ROLES:
         return await token_repo.add_system_user_access_tokens(
             token_data=accessTokenCreate(userId=user_id),
             role=role,

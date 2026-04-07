@@ -18,7 +18,7 @@ router = APIRouter(prefix="/usage", tags=["Usage & Quotas"])
 @router.get("/tenant/{tenant_id}/summary")
 @document_response(
     message="Usage summary retrieved successfully",
-    description="Get a tenant's current usage vs plan limits (legacy admin only)",
+    description="Get a tenant's current usage vs plan limits (application admin only)",
     summary="Get tenant usage summary",
 )
 async def get_usage_summary_endpoint(

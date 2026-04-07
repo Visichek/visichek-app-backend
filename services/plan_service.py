@@ -26,7 +26,7 @@ from schemas.plan_schema import (
 
 
 async def add_plan(plan_data: PlanCreate) -> PlanOut:
-    """Create a new subscription plan. Only legacy admins can do this."""
+    """Create a new subscription plan. Only application admins can do this."""
     # Check for duplicate plan name
     existing = await get_plan({"name": plan_data.name})
     if existing:
