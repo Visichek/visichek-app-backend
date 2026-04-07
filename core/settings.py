@@ -39,6 +39,12 @@ class Settings:
     flutterwave_secret_key: str | None
     flutterwave_public_key: str | None
     flutterwave_webhook_secret_hash: str | None
+    # VisiChek-specific settings
+    ocr_provider: str
+    ocr_api_key: str | None
+    ocr_api_url: str | None
+    qr_signing_secret: str
+    retention_check_interval_hours: int
 
     @property
     def is_production(self) -> bool:
@@ -85,6 +91,11 @@ def get_settings() -> Settings:
         flutterwave_secret_key=os.getenv("FLUTTERWAVE_SECRET_KEY"),
         flutterwave_public_key=os.getenv("FLUTTERWAVE_PUBLIC_KEY"),
         flutterwave_webhook_secret_hash=os.getenv("FLW_WEBHOOK_SECRET_HASH"),
+        ocr_provider=os.getenv("OCR_PROVIDER", "structocr").lower(),
+        ocr_api_key=os.getenv("OCR_API_KEY"),
+        ocr_api_url=os.getenv("OCR_API_URL"),
+        qr_signing_secret=os.getenv("QR_SIGNING_SECRET", secret_key or "dev-qr-secret"),
+        retention_check_interval_hours=int(os.getenv("RETENTION_CHECK_INTERVAL_HOURS", "24")),
     )
 
     if settings.is_production:

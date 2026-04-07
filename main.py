@@ -152,6 +152,23 @@ async def lifespan(app: FastAPI):
         # Payments remain unavailable until provider credentials are configured.
         pass
 
+    # Configure OCR manager (optional - only if credentials are provided)
+    try:
+        from core.ocr.manager import OCRManager
+        OCRManager.configure_from_settings()
+    except RuntimeError:
+        pass
+
+    # Schedule retention cleanup job
+    from services.retention_service import run_retention_cleanup
+    scheduler.add_job(
+        run_retention_cleanup,
+        trigger=IntervalTrigger(hours=settings.retention_check_interval_hours),
+        id="retention_cleanup",
+        name="Data Retention Cleanup",
+        replace_existing=True,
+    )
+
     try:
         yield
     finally:
@@ -279,11 +296,41 @@ from api.v1.admin_route import router as v1_admin_route_router
 from api.v1.documents_route import router as v1_documents_route_router
 from api.v1.payments_route import router as v1_payments_route_router
 from api.v1.user_route import router as v1_user_route_router
+from api.v1.tenant_route import router as v1_tenant_route_router
+from api.v1.department_route import router as v1_department_route_router
+from api.v1.system_user_route import router as v1_system_user_route_router
+from api.v1.visitor_route import router as v1_visitor_route_router
+from api.v1.visitor_profile_route import router as v1_visitor_profile_route_router
+from api.v1.appointment_route import router as v1_appointment_route_router
+from api.v1.privacy_notice_route import router as v1_privacy_notice_route_router
+from api.v1.dashboard_route import router as v1_dashboard_route_router
+from api.v1.super_admin_route import router as v1_super_admin_route_router
+from api.v1.data_subject_request_route import router as v1_dsr_route_router
+from api.v1.retention_route import router as v1_retention_route_router
+from api.v1.sub_processor_route import router as v1_sub_processor_route_router
+from api.v1.compliance_route import router as v1_compliance_route_router
+from api.v1.audit_route import router as v1_audit_route_router
+from api.v1.incident_route import router as v1_incident_route_router
 
 app.include_router(v1_admin_route_router, prefix='/v1')
 app.include_router(v1_documents_route_router, prefix='/v1')
 app.include_router(v1_payments_route_router, prefix='/v1')
 app.include_router(v1_user_route_router, prefix='/v1')
+app.include_router(v1_tenant_route_router, prefix='/v1')
+app.include_router(v1_department_route_router, prefix='/v1')
+app.include_router(v1_system_user_route_router, prefix='/v1')
+app.include_router(v1_visitor_route_router, prefix='/v1')
+app.include_router(v1_visitor_profile_route_router, prefix='/v1')
+app.include_router(v1_appointment_route_router, prefix='/v1')
+app.include_router(v1_privacy_notice_route_router, prefix='/v1')
+app.include_router(v1_dashboard_route_router, prefix='/v1')
+app.include_router(v1_super_admin_route_router, prefix='/v1')
+app.include_router(v1_dsr_route_router, prefix='/v1')
+app.include_router(v1_retention_route_router, prefix='/v1')
+app.include_router(v1_sub_processor_route_router, prefix='/v1')
+app.include_router(v1_compliance_route_router, prefix='/v1')
+app.include_router(v1_audit_route_router, prefix='/v1')
+app.include_router(v1_incident_route_router, prefix='/v1')
 # --- auto-routes-end ---
 
 apply_response_documentation(app)

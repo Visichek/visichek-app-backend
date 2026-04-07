@@ -8,8 +8,23 @@ from limits import parse as parse_rate
 DEFAULT_ANONYMOUS_RATE = "20/minute"
 DEFAULT_ROLE_RATE = "80/minute"
 DEFAULT_ADMIN_RATE = "140/minute"
+DEFAULT_RECEPTIONIST_RATE = "120/minute"
+DEFAULT_DEPT_ADMIN_RATE = "100/minute"
+DEFAULT_SUPER_ADMIN_RATE = "140/minute"
+DEFAULT_AUDITOR_RATE = "80/minute"
+DEFAULT_SECURITY_OFFICER_RATE = "80/minute"
+DEFAULT_DPO_RATE = "80/minute"
 
 LEGACY_ROLE_ALIASES = {"member": "user"}
+
+SYSTEM_USER_ROLE_DEFAULTS = {
+    "receptionist": DEFAULT_RECEPTIONIST_RATE,
+    "dept_admin": DEFAULT_DEPT_ADMIN_RATE,
+    "super_admin": DEFAULT_SUPER_ADMIN_RATE,
+    "auditor": DEFAULT_AUDITOR_RATE,
+    "security_officer": DEFAULT_SECURITY_OFFICER_RATE,
+    "dpo": DEFAULT_DPO_RATE,
+}
 
 
 def normalize_role(role: str | None) -> str:
@@ -62,5 +77,13 @@ def build_role_rate_limits(raw: str | None, *, fallback_csv: str):
 
     if "anonymous" not in final_limits:
         final_limits["anonymous"] = parse_rate(DEFAULT_ANONYMOUS_RATE)
+
+    # Ensure VisiChek system user roles have defaults
+    for role, default_rate in SYSTEM_USER_ROLE_DEFAULTS.items():
+        if role not in final_limits:
+            try:
+                final_limits[role] = parse_rate(default_rate)
+            except Exception:
+                continue
 
     return final_limits
