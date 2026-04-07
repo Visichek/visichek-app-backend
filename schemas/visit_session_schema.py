@@ -1,0 +1,111 @@
+from schemas.imports import *
+from pydantic import Field
+import time
+
+
+class VisitSessionBase(BaseModel):
+    tenant_id: str
+    visitor_profile_id: str
+    department_id: str
+    host_id: Optional[str] = None
+    receptionist_id: Optional[str] = None
+    appointment_id: Optional[str] = None
+    privacy_notice_version_id: Optional[str] = None
+    # Check-in details
+    check_in_method: Optional[CheckInMethod] = None
+    check_out_method: Optional[CheckOutMethod] = None
+    verification_status: VerificationStatus = VerificationStatus.UNVERIFIED
+    verification_method: Optional[VerificationMethod] = None
+    verified_by: Optional[str] = None
+    status: VisitStatus = VisitStatus.REGISTERED
+    purpose: Optional[str] = None
+    # Name snapshots for historical accuracy
+    visitor_name_snapshot: Optional[str] = None
+    visitor_company_snapshot: Optional[str] = None
+    host_name_snapshot: Optional[str] = None
+    department_name_snapshot: Optional[str] = None
+    receptionist_name_snapshot: Optional[str] = None
+    # Consent fields (NDPA compliance)
+    notice_displayed: bool = False
+    consent_granted: Optional[bool] = None
+    consent_method: Optional[str] = None
+    consent_timestamp: Optional[int] = None
+    consent_captured_by: Optional[str] = None
+    consent_withdrawn: bool = False
+    lawful_basis_at_time: Optional[LawfulBasis] = None
+    # Badge fields
+    badge_qr_token: Optional[str] = None
+    badge_format: Optional[BadgeFormat] = None
+    badge_generation_time: Optional[int] = None
+    badge_expiry: Optional[int] = None
+    badge_document_id: Optional[str] = None
+
+
+class VisitSessionCreate(VisitSessionBase):
+    check_in_time: int = Field(default_factory=lambda: int(time.time()))
+    date_created: int = Field(default_factory=lambda: int(time.time()))
+
+
+class VisitSessionUpdate(BaseModel):
+    status: Optional[VisitStatus] = None
+    check_out_method: Optional[CheckOutMethod] = None
+    check_out_time: Optional[int] = None
+    verification_status: Optional[VerificationStatus] = None
+    verification_method: Optional[VerificationMethod] = None
+    verified_by: Optional[str] = None
+    consent_granted: Optional[bool] = None
+    consent_method: Optional[str] = None
+    consent_timestamp: Optional[int] = None
+    consent_captured_by: Optional[str] = None
+    consent_withdrawn: Optional[bool] = None
+    badge_qr_token: Optional[str] = None
+    badge_format: Optional[BadgeFormat] = None
+    badge_generation_time: Optional[int] = None
+    badge_expiry: Optional[int] = None
+    badge_document_id: Optional[str] = None
+    last_updated: int = Field(default_factory=lambda: int(time.time()))
+
+
+class VisitSessionOut(VisitSessionBase):
+    id: Optional[str] = Field(default=None, alias="_id")
+    check_in_time: Optional[int] = None
+    check_out_time: Optional[int] = None
+    date_created: Optional[int] = None
+    visit_duration: Optional[int] = None  # computed: check_out_time - check_in_time
+
+    @model_validator(mode="before")
+    @classmethod
+    def convert_objectid(cls, values):
+        if "_id" in values and isinstance(values["_id"], ObjectId):
+            values["_id"] = str(values["_id"])
+        # Compute visit_duration if both times are available
+        check_in = values.get("check_in_time")
+        check_out = values.get("check_out_time")
+        if check_in and check_out:
+            values["visit_duration"] = check_out - check_in
+        return values
+
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True
+        json_encoders = {ObjectId: str}
+
+
+# Request schemas for check-in/check-out endpoints
+class CheckInRequest(BaseModel):
+    phone: Optional[str] = None
+    full_name: Optional[str] = None
+    company: Optional[str] = None
+    department_id: str
+    host_id: Optional[str] = None
+    purpose: Optional[str] = None
+    check_in_method: CheckInMethod = CheckInMethod.MANUAL
+    photo_url: Optional[str] = None
+    id_image_url: Optional[str] = None
+    consent_granted: Optional[bool] = None
+
+
+class CheckOutRequest(BaseModel):
+    badge_qr_token: Optional[str] = None
+    session_id: Optional[str] = None
+    check_out_method: CheckOutMethod = CheckOutMethod.QR_SCAN

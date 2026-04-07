@@ -1,0 +1,49 @@
+from schemas.imports import *
+from pydantic import Field
+import time
+
+
+class IncidentLogBase(BaseModel):
+    tenant_id: str
+    reporter_id: str
+    incident_type: IncidentType
+    status: IncidentStatus = IncidentStatus.OPEN
+    description: str
+    risk_level: Optional[str] = None  # low, medium, high, critical
+    data_affected: Optional[str] = None
+    mitigation_steps: Optional[str] = None
+    ndpc_notified: bool = False
+    detection_time: Optional[int] = None
+
+
+class IncidentLogCreate(IncidentLogBase):
+    date_created: int = Field(default_factory=lambda: int(time.time()))
+
+
+class IncidentLogUpdate(BaseModel):
+    status: Optional[IncidentStatus] = None
+    description: Optional[str] = None
+    risk_level: Optional[str] = None
+    data_affected: Optional[str] = None
+    mitigation_steps: Optional[str] = None
+    ndpc_notified: Optional[bool] = None
+    closure_time: Optional[int] = None
+    last_updated: int = Field(default_factory=lambda: int(time.time()))
+
+
+class IncidentLogOut(IncidentLogBase):
+    id: Optional[str] = Field(default=None, alias="_id")
+    date_created: Optional[int] = None
+    closure_time: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def convert_objectid(cls, values):
+        if "_id" in values and isinstance(values["_id"], ObjectId):
+            values["_id"] = str(values["_id"])
+        return values
+
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True
+        json_encoders = {ObjectId: str}

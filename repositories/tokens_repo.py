@@ -29,6 +29,16 @@ async def add_admin_access_tokens(token_data:accessTokenCreate)->accessTokenOut:
     
     return accessToken 
 
+async def add_system_user_access_tokens(token_data: accessTokenCreate, role: str) -> accessTokenOut:
+    """Add access token for VisiChek system user roles (receptionist, dept_admin, etc.)."""
+    token = token_data.model_dump()
+    token["role"] = role
+    token["status"] = "active"
+    result = await db.accessToken.insert_one(token)
+    tokn = await db.accessToken.find_one({"_id": result.inserted_id})
+    return accessTokenOut(**tokn)
+
+
 async def update_admin_access_tokens(token:str)->accessTokenOut:
     updatedToken= await db.accessToken.find_one_and_update(filter={"_id":ObjectId(token)},update={"$set": {'status':'active'}},return_document=True)
     accessToken = accessTokenOut(**updatedToken)
