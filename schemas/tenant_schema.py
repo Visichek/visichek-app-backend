@@ -16,6 +16,11 @@ class TenantBase(BaseModel):
     is_active: bool = True
     active_notice_version: Optional[str] = None
 
+    # Payment provider references
+    stripe_customer_id: Optional[str] = None
+    flutterwave_customer_id: Optional[str] = None
+    default_payment_provider: Optional[str] = None  # "stripe" or "flutterwave"
+
 
 class TenantCreate(TenantBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
@@ -34,6 +39,9 @@ class TenantUpdate(BaseModel):
     cross_border_approved: Optional[bool] = None
     is_active: Optional[bool] = None
     active_notice_version: Optional[str] = None
+    stripe_customer_id: Optional[str] = None
+    flutterwave_customer_id: Optional[str] = None
+    default_payment_provider: Optional[str] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

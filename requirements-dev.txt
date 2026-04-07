@@ -1,0 +1,7 @@
+# Development and testing dependencies
+pytest>=7.4
+pytest-asyncio>=0.23
+httpx>=0.25
+ruff>=0.3
+mypy>=1.9
+locust>=2.20

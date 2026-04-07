@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import time
+
+from fastapi import APIRouter, Depends, Query
 
 from core.response_envelope import document_response
 from schemas.admin_schema import AdminOut
 from security.account_status_check import check_admin_account_status_and_permissions
 from services.admin_dashboard_service import get_admin_dashboard_stats
+from services.billing_report_service import get_billing_summary, get_payment_discrepancies
 
 router = APIRouter(prefix="/admins/dashboard", tags=["Application Admin Dashboard"])
 
@@ -82,3 +85,78 @@ async def admin_dashboard_stats(
 ):
     """Platform-wide dashboard for application admins."""
     return await get_admin_dashboard_stats()
+
+
+@router.get("/billing")
+@document_response(
+    message="Billing summary fetched successfully",
+    description="Revenue, MRR, subscription churn, and invoice stats for a date range.",
+    summary="Get billing summary",
+    success_example={
+        "period": {"start": 1709251200, "end": 1711929600},
+        "total_revenue_minor": 1250000,
+        "invoice_count": 42,
+        "new_subscriptions": 8,
+        "cancelled_subscriptions": 2,
+        "active_subscriptions": 38,
+        "mrr_minor": 425000,
+        "generated_at": 1712548800,
+    },
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
+    },
+)
+async def billing_summary(
+    start_date: int = Query(
+        default=None,
+        description="Period start (Unix timestamp). Defaults to 30 days ago.",
+    ),
+    end_date: int = Query(
+        default=None,
+        description="Period end (Unix timestamp). Defaults to now.",
+    ),
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    """Billing summary with revenue, MRR, and subscription metrics."""
+    now = int(time.time())
+    if end_date is None:
+        end_date = now
+    if start_date is None:
+        start_date = now - (30 * 86400)  # 30 days ago
+    return await get_billing_summary(start_date=start_date, end_date=end_date)
+
+
+@router.get("/billing/discrepancies")
+@document_response(
+    message="Billing discrepancies fetched successfully",
+    description="Lists active subscriptions missing invoices and successful payments without matching invoices.",
+    summary="Get billing discrepancies",
+    success_example=[
+        {
+            "type": "missing_invoice",
+            "subscription_id": "507f1f77bcf86cd799439011",
+            "payment_id": None,
+            "tenant_id": "507f1f77bcf86cd799439012",
+            "issue_description": "Active subscription has no invoice in current period",
+            "detected_at": 1712548800,
+        }
+    ],
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
+    },
+)
+async def billing_discrepancies(
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    """Reconciliation check: finds missing invoices and orphaned payments."""
+    return await get_payment_discrepancies()

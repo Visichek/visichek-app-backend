@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
-from core.errors import auth_permission_denied
+from core.errors import auth_permission_denied, resource_not_found
 from core.response_envelope import document_response
 from schemas.payment_schema import PaymentIntentIn, RefundIn
+from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_any_token
 from security.principal import AuthPrincipal
 from services.payment_service import (
@@ -12,6 +13,12 @@ from services.payment_service import (
     get_payment_transaction,
     process_webhook,
     refund_payment,
+)
+from repositories.webhook_event_repo import (
+    get_webhook_event,
+    get_webhook_events,
+    count_webhook_events,
+    WebhookEventOut,
 )
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
@@ -214,3 +221,73 @@ async def refund_transaction(
     if tx.owner_id != principal.user_id and not principal.is_admin:
         raise auth_permission_denied("POST:/v1/payments/{payment_id}/refund")
     return await refund_payment(payment_id=payment_id, amount_minor=payload.amount_minor)
+
+
+@router.get("/webhooks/events")
+@document_response(
+    message="Webhook events retrieved",
+    include_meta=True,
+    description="List stored webhook events with optional filtering by provider or status.",
+    summary="List webhook events",
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - admin only",
+    },
+)
+async def list_webhook_events(
+    provider: str | None = Query(default=None, description="Filter by provider (stripe, flutterwave)"),
+    status_filter: str | None = Query(default=None, alias="processing_status"),
+    start: int = Query(default=0, ge=0),
+    stop: int = Query(default=50, ge=1, le=200),
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    """List webhook events (application admin only)."""
+    filter_dict: dict = {}
+    if provider:
+        filter_dict["provider"] = provider
+    if status_filter:
+        filter_dict["processing_status"] = status_filter
+
+    events = await get_webhook_events(filter_dict=filter_dict, skip=start, limit=stop)
+    total = await count_webhook_events(filter_dict=filter_dict)
+    return {"items": events, "meta": {"total": total, "start": start, "stop": stop}}
+
+
+@router.post("/webhooks/replay/{event_id}")
+@document_response(
+    message="Webhook replayed",
+    description="Re-process a previously stored webhook event. Useful for recovering from processing failures.",
+    summary="Replay webhook event",
+    response_codes={
+        200: "Webhook re-processed successfully",
+        404: "Webhook event not found",
+        401: "Unauthorized",
+        403: "Forbidden - admin only",
+    },
+)
+async def replay_webhook_event(
+    event_id: str,
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    """Replay a stored webhook event by its database ID (application admin only)."""
+    from bson import ObjectId
+
+    if not ObjectId.is_valid(event_id):
+        raise resource_not_found(resource="WebhookEvent", resource_id=event_id)
+
+    event = await get_webhook_event({"_id": ObjectId(event_id)})
+    if not event:
+        raise resource_not_found(resource="WebhookEvent", resource_id=event_id)
+
+    # Re-process through the normal webhook handler
+    import json
+
+    body = json.dumps(event.raw_payload).encode("utf-8")
+    headers = {"x-replay": "true"}
+
+    result = await process_webhook(
+        provider_name=event.provider,
+        body=body,
+        headers=headers,
+    )
+    return {"replayed_event_id": event_id, "provider": event.provider, "result": result}

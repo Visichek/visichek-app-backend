@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 import time
@@ -9,9 +10,10 @@ from datetime import datetime
 
 import redis
 from apscheduler.triggers.interval import IntervalTrigger
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from limits.storage import RedisStorage
 from limits.strategies import FixedWindowRateLimiter
 from pymongo import MongoClient
@@ -20,6 +22,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from celery_worker import celery_app
 from core.email.manager import EmailManager
+from core.logging_config import configure_logging, get_logger
 from core.payments.manager import PaymentManager
 from core.queue.celery_provider import CeleryQueueProvider
 from core.queue.manager import QueueManager
@@ -36,6 +39,10 @@ from core.storage.manager import DocumentStorageManager
 from repositories.tokens_repo import get_access_token_allow_expired
 
 settings = get_settings()
+
+# --- Configure structured logging before anything else ---
+configure_logging(log_level=settings.log_level, is_production=settings.is_production)
+logger = get_logger(__name__)
 
 MONGO_URI = os.getenv("MONGO_URL")
 mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000) if MONGO_URI else None
@@ -88,6 +95,21 @@ async def get_user_type(request: Request) -> tuple[str, str]:
     return access_token.userId, user_type
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security-related HTTP headers to every response."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        if settings.is_production:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+
 class RateLimitingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         user_id, user_type = await get_user_type(request)
@@ -134,6 +156,14 @@ def apscheduler_heartbeat() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # --- Startup validation ---
+    if settings.is_production and not settings.session_secret_key:
+        raise RuntimeError("SESSION_SECRET_KEY must be set in production. Refusing to start.")
+    if settings.is_production and not settings.secret_key:
+        raise RuntimeError("SECRET_KEY must be set in production. Refusing to start.")
+
+    logger.info("Starting VisiChek backend (env=%s)", settings.env)
+
     scheduler.add_job(
         apscheduler_heartbeat,
         trigger=IntervalTrigger(seconds=15),
@@ -187,6 +217,33 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Schedule subscription renewal check (hourly)
+    scheduler.add_job(
+        "services.renewal_service:renew_due_subscriptions",
+        trigger=IntervalTrigger(hours=1),
+        id="renew_due_subscriptions",
+        name="Subscription Renewal Check",
+        replace_existing=True,
+    )
+
+    # Schedule trial conversion check (hourly)
+    scheduler.add_job(
+        "services.renewal_service:convert_expiring_trials",
+        trigger=IntervalTrigger(hours=1),
+        id="convert_expiring_trials",
+        name="Trial Conversion Check",
+        replace_existing=True,
+    )
+
+    # Schedule dunning process (every 6 hours)
+    scheduler.add_job(
+        "services.dunning_service:process_dunning",
+        trigger=IntervalTrigger(hours=6),
+        id="process_dunning",
+        name="Dunning Process",
+        replace_existing=True,
+    )
+
     try:
         yield
     finally:
@@ -196,11 +253,15 @@ async def lifespan(app: FastAPI):
 from core.case_conversion import CaseConversionMiddleware
 from core.plan_enforcement import PlanEnforcementMiddleware
 
-app = FastAPI(lifespan=lifespan, title="REST API")
+app = FastAPI(lifespan=lifespan, title="VisiChek REST API")
 app.add_middleware(CaseConversionMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(RequestTimingMiddleware)
-app.add_middleware(SessionMiddleware, secret_key=settings.session_secret_key or "dev-only-session-secret")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret_key or "dev-only-session-secret-NOT-FOR-PRODUCTION",
+)
 app.add_middleware(PlanEnforcementMiddleware)
 app.add_middleware(RateLimitingMiddleware)
 app.add_middleware(
@@ -245,6 +306,61 @@ async def custom_exception_handler(request: Request, exc: Exception):
 )
 def read_root(request: Request):
     return {"message": "Hello from FasterAPI!", "request_id": getattr(request.state, "request_id", None)}
+
+
+@app.get("/health/live", tags=["Health"], include_in_schema=False)
+async def liveness_check():
+    """Liveness probe: confirms the process is running. Always returns 200."""
+    return JSONResponse({"status": "alive", "timestamp": datetime.utcnow().isoformat()})
+
+
+@app.get("/health/ready", tags=["Health"])
+@document_response(
+    message="Readiness check completed",
+    success_example={"status": "ready", "services": {"mongo": "healthy", "redis": "healthy"}},
+)
+async def readiness_check():
+    """Readiness probe: confirms MongoDB and Redis are reachable.
+    Returns 503 if either dependency is unreachable."""
+    services: dict[str, dict[str, str | float]] = {}
+    ready = True
+
+    if mongo_client is not None:
+        start = time.perf_counter()
+        try:
+            mongo_client.admin.command("ping")
+            services["mongo"] = {
+                "status": "healthy",
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
+            }
+        except Exception as exc:
+            ready = False
+            services["mongo"] = {
+                "status": "unhealthy",
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
+                "message": str(exc),
+            }
+
+    start = time.perf_counter()
+    try:
+        redis_client.ping()
+        services["redis"] = {
+            "status": "healthy",
+            "latency_ms": round((time.perf_counter() - start) * 1000, 2),
+        }
+    except Exception as exc:
+        ready = False
+        services["redis"] = {
+            "status": "unhealthy",
+            "latency_ms": round((time.perf_counter() - start) * 1000, 2),
+            "message": str(exc),
+        }
+
+    status_code = 200 if ready else 503
+    return JSONResponse(
+        {"status": "ready" if ready else "not_ready", "services": services},
+        status_code=status_code,
+    )
 
 
 @app.get("/health", tags=["Health"])
@@ -307,11 +423,15 @@ async def health_check():
             "message": "No heartbeat found",
         }
 
-    return {
-        "status": overall_status,
-        "timestamp": datetime.utcnow().isoformat(),
-        "services": services,
-    }
+    status_code = 200 if overall_status == "healthy" else 503
+    return JSONResponse(
+        {
+            "status": overall_status,
+            "timestamp": datetime.utcnow().isoformat(),
+            "services": services,
+        },
+        status_code=status_code,
+    )
 
 
 # --- auto-routes-start ---
@@ -341,6 +461,7 @@ from api.v1.usage_route import router as v1_usage_route_router
 from api.v1.admin_dashboard_route import router as v1_admin_dashboard_route_router
 from api.v1.branch_route import router as v1_branch_route_router
 from api.v1.branding_route import router as v1_branding_route_router
+from api.v1.invoice_route import router as v1_invoice_route_router
 
 app.include_router(v1_admin_route_router, prefix='/v1')
 app.include_router(v1_documents_route_router, prefix='/v1')
@@ -368,6 +489,7 @@ app.include_router(v1_usage_route_router, prefix='/v1')
 app.include_router(v1_admin_dashboard_route_router, prefix='/v1')
 app.include_router(v1_branch_route_router, prefix='/v1')
 app.include_router(v1_branding_route_router, prefix='/v1')
+app.include_router(v1_invoice_route_router, prefix='/v1')
 # --- auto-routes-end ---
 
 apply_response_documentation(app)

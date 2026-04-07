@@ -40,5 +40,8 @@ typing_extensions==4.13.2
 # Rate limiting
 limits
 
+# PDF Generation
+reportlab==4.0.9
+
 # Legacy/misc
 dotenv==0.9.9

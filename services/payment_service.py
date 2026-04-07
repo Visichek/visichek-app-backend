@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 
 from core.errors import AppException, ErrorCode, resource_not_found
@@ -13,6 +14,8 @@ from repositories.payment_repo import (
     update_payment_transaction_status,
 )
 from schemas.payment_schema import PaymentIntentIn, PaymentTransactionCreate, WebhookReplayCreate
+
+logger = logging.getLogger(__name__)
 
 
 def _epoch() -> int:
@@ -66,10 +69,39 @@ async def create_payment_intent(*, owner_id: str, payload: PaymentIntentIn):
 
 
 async def process_webhook(*, provider_name: str, body: bytes, headers: dict[str, str]):
-    provider = _get_payment_manager().get_provider(provider_name)
+    """
+    Process a payment webhook from a specific provider.
+
+    Dispatches to provider-specific webhook handlers for advanced processing
+    (e.g., Flutterwave webhooks), or uses the generic webhook flow for other providers.
+
+    Args:
+        provider_name: Payment provider name (stripe, flutterwave, etc.)
+        body: Raw webhook body
+        headers: Request headers
+
+    Returns:
+        Dict with processing result
+
+    Raises:
+        AppException: On verification or processing failure
+    """
+    provider_name_lower = provider_name.lower()
+
+    # Dispatch to Flutterwave-specific webhook handler for advanced processing
+    if provider_name_lower == "flutterwave":
+        try:
+            from services.flutterwave_webhook_service import process_flutterwave_webhook
+            return await process_flutterwave_webhook(body=body, headers=headers)
+        except Exception as e:
+            logger.error(f"Flutterwave webhook processing failed: {str(e)}", exc_info=True)
+            raise
+
+    # Generic webhook processing for other providers (Stripe, etc.)
+    provider = _get_payment_manager().get_provider(provider_name_lower)
     event = provider.verify_webhook(body=body, headers=headers)
 
-    if await is_webhook_event_processed(provider=provider_name, event_id=event.event_id):
+    if await is_webhook_event_processed(provider=provider_name_lower, event_id=event.event_id):
         raise AppException(
             status_code=409,
             code=ErrorCode.PAYMENT_WEBHOOK_INVALID,
@@ -99,7 +131,7 @@ async def process_webhook(*, provider_name: str, body: bytes, headers: dict[str,
     if updated is None:
         raise resource_not_found("PaymentTransaction", reference)
     await mark_webhook_event_processed(
-        WebhookReplayCreate(provider=provider_name, event_id=event.event_id, created_at=_epoch())
+        WebhookReplayCreate(provider=provider_name_lower, event_id=event.event_id, created_at=_epoch())
     )
     return {"processed": True, "reference": reference, "status": tx.status.value}
 

@@ -20,6 +20,7 @@ from security.principal import AuthPrincipal
 from services.system_user_service import (
     add_system_user_from_invite,
     authenticate_system_user,
+    authenticate_super_admin_global,
     authenticate_system_user_by_tenant,
     refresh_system_user_tokens,
     retrieve_system_user_by_id,
@@ -64,6 +65,53 @@ router = APIRouter(prefix="/system-users", tags=["Tenant Users"])
 )
 async def login_system_user(login_data: SystemUserLogin):
     return await authenticate_system_user(login_data=login_data)
+
+
+@router.post("/super-admin/login")
+@document_response(
+    message="Super admin login successful",
+    success_example={
+        "user": {
+            "id": "64f1a2b3c4d5e6f7a8b9c0d5",
+            "tenant_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+            "full_name": "Dr. Sarah Wilson",
+            "email": "sarah.wilson@clinic.example.com",
+            "role": "super_admin",
+            "account_status": "ACTIVE",
+            "access_token": "eyJhbGci...",
+            "refresh_token": "eyJhbGci...",
+        },
+        "tenant": {
+            "tenant_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+            "company_name": "Acme Clinic",
+        },
+        "tenant_login_url": "/v1/system-users/tenant/64f1a2b3c4d5e6f7a8b9c0d1/login",
+    },
+    description=(
+        "Dedicated login for tenant super admins. Since super_admin emails are "
+        "globally unique, no tenant_id is needed in the URL. Returns the user "
+        "profile plus tenant context info including the tenant-scoped login URL. "
+        "\n\n"
+        "**Two login contexts for super admins:**\n"
+        "1. **This endpoint** — administrative login. View tenant info, billing, "
+        "manage payments, and get the tenant login URL.\n"
+        "2. **Tenant-scoped login** (`/system-users/tenant/{tenant_id}/login`) — "
+        "operational login. Manage visitors, departments, branding, and other "
+        "day-to-day tenant operations."
+    ),
+    summary="Super admin login (global)",
+    response_codes={
+        401: "Unauthorized - invalid credentials",
+        403: "Forbidden - not a super admin or account not active",
+        429: "Too many failed attempts - account temporarily locked",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid login credentials", "code": "AUTH_INVALID_TOKEN"},
+        403: {"success": False, "message": "This login endpoint is reserved for tenant super admins", "code": "AUTH_PERMISSION_DENIED"},
+    },
+)
+async def login_super_admin_global(login_data: SystemUserLogin):
+    return await authenticate_super_admin_global(login_data=login_data)
 
 
 @router.post("/tenant/{tenant_id}/login")

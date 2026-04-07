@@ -170,6 +170,52 @@ async def authenticate_system_user(login_data: SystemUserLogin, tenant_id: str |
     return user
 
 
+async def authenticate_super_admin_global(login_data: SystemUserLogin) -> dict:
+    """Authenticate a super_admin via global login (unique email).
+
+    Returns the standard SystemUserOut plus tenant context info that the
+    frontend needs to display the super_admin dashboard:
+    - tenant info (company_name, tenant_id)
+    - the tenant-scoped login URL path for the tenant management portal
+
+    This is the "administrative" login — the super_admin uses it to view
+    tenant metadata, billing, and the tenant login URL.  The tenant-scoped
+    login at /system-users/tenant/{tenant_id}/login is used for managing
+    the tenant itself (visitors, departments, branding, etc.).
+    """
+    # Authenticate without tenant scoping — super_admin email is globally unique
+    user = await authenticate_system_user(login_data=login_data)
+
+    # Only super_admins get this enriched response
+    role_str = user.role.value if hasattr(user.role, 'value') else user.role
+    if role_str != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="This login endpoint is reserved for tenant super admins",
+        )
+
+    # Fetch tenant context
+    tenant_info = None
+    tenant_login_url = None
+    if user.tenant_id:
+        try:
+            from services.tenant_service import retrieve_tenant_by_id
+            tenant = await retrieve_tenant_by_id(user.tenant_id)
+            tenant_info = {
+                "tenant_id": tenant.id,
+                "company_name": tenant.company_name,
+            }
+            tenant_login_url = f"/v1/system-users/tenant/{user.tenant_id}/login"
+        except Exception:
+            pass
+
+    return {
+        "user": user,
+        "tenant": tenant_info,
+        "tenant_login_url": tenant_login_url,
+    }
+
+
 async def authenticate_system_user_by_tenant(
     login_data: SystemUserTenantLogin, tenant_id: str
 ) -> SystemUserOut:

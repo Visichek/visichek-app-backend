@@ -11,6 +11,12 @@ def _split_csv(value: str | None) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
+def _parse_int_list(value: str | None) -> tuple[int, ...]:
+    if not value:
+        return (0, 3, 7, 14, 21)
+    return tuple(int(x.strip()) for x in value.split(",") if x.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     env: str
@@ -45,6 +51,15 @@ class Settings:
     ocr_api_url: str | None
     qr_signing_secret: str
     retention_check_interval_hours: int
+    # Logging
+    log_level: str = "INFO"
+    # Billing / Dunning
+    max_dunning_attempts: int = 5
+    dunning_retry_days: tuple[int, ...] = (0, 3, 7, 14, 21)
+    # Backup
+    backup_enabled: bool = False
+    backup_s3_bucket: str | None = None
+    backup_retention_days: int = 30
 
     @property
     def is_production(self) -> bool:
@@ -91,17 +106,16 @@ def get_settings() -> Settings:
         flutterwave_secret_key=os.getenv("FLUTTERWAVE_SECRET_KEY"),
         flutterwave_public_key=os.getenv("FLUTTERWAVE_PUBLIC_KEY"),
         flutterwave_webhook_secret_hash=os.getenv("FLW_WEBHOOK_SECRET_HASH"),
-        ocr_provider=os.getenv("OCR_PROVIDER", "structocr").lower(),
+        ocr_provider=os.getenv("OCR_PROVIDER", "none").lower(),
         ocr_api_key=os.getenv("OCR_API_KEY"),
         ocr_api_url=os.getenv("OCR_API_URL"),
-        qr_signing_secret=os.getenv("QR_SIGNING_SECRET", secret_key or "dev-qr-secret"),
+        qr_signing_secret=os.getenv("QR_SIGNING_SECRET", ""),
         retention_check_interval_hours=int(os.getenv("RETENTION_CHECK_INTERVAL_HOURS", "24")),
+        log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        max_dunning_attempts=int(os.getenv("MAX_DUNNING_ATTEMPTS", "5")),
+        dunning_retry_days=_parse_int_list(os.getenv("DUNNING_RETRY_DAYS", "0,3,7,14,21")),
+        backup_enabled=os.getenv("BACKUP_ENABLED", "false").lower() in {"1", "true", "yes"},
+        backup_s3_bucket=os.getenv("BACKUP_S3_BUCKET"),
+        backup_retention_days=int(os.getenv("BACKUP_RETENTION_DAYS", "30")),
     )
-
-    if settings.is_production:
-        if not settings.secret_key:
-            raise RuntimeError("SECRET_KEY is required when ENV=production")
-        if not settings.session_secret_key:
-            raise RuntimeError("SESSION_SECRET_KEY is required when ENV=production")
-
     return settings

@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Query, status
+from pydantic import BaseModel
 
 from core.response_envelope import document_response
 from schemas.admin_schema import AdminLogin, AdminOut, AdminRefresh, AdminSignupRequest
@@ -16,6 +17,20 @@ from services.admin_service import (
     retrieve_admins,
 )
 from services.tenant_service import bootstrap_tenant
+from services.tenant_offboarding_service import offboard_tenant, get_offboarding_summary
+
+
+class OffboardingRequest(BaseModel):
+    """Request to offboard (deactivate) a tenant."""
+    reason: str
+
+
+class OffboardingSummary(BaseModel):
+    """Summary of actions taken during offboarding."""
+    tenant_id: str
+    offboarded_at: int
+    reason: str
+    actions: dict
 
 router = APIRouter(prefix="/admins", tags=["Application Admins"])
 
@@ -219,3 +234,73 @@ async def refresh_admin_tokens(
 async def delete_admin_account(admin: AdminOut = Depends(check_admin_account_status_and_permissions)):
     result = await remove_admin(admin_id=admin.id)  # type: ignore
     return result
+
+
+@router.post("/tenants/{tenant_id}/offboard")
+@document_response(
+    message="Tenant offboarded successfully",
+    status_code=status.HTTP_200_OK,
+    description=(
+        "Offboard (deactivate) a tenant. This action: "
+        "cancels active subscriptions, deactivates all system users, "
+        "marks the tenant as inactive, and records the action in audit trail."
+    ),
+    summary="Offboard tenant",
+    success_example={
+        "tenant_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "offboarded_at": 1712500000,
+        "reason": "customer_request",
+        "actions": {
+            "subscription_cancelled": True,
+            "users_deactivated_count": 5,
+            "tenant_marked_inactive": True,
+        },
+    },
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        404: "Tenant not found",
+        500: "Internal server error",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
+        404: {"success": False, "message": "Tenant not found", "code": "RESOURCE_NOT_FOUND"},
+    },
+)
+async def offboard_tenant_endpoint(
+    tenant_id: str,
+    payload: OffboardingRequest,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+) -> OffboardingSummary:
+    """Offboard a tenant and clean up associated resources."""
+    result = await offboard_tenant(
+        tenant_id=tenant_id,
+        reason=payload.reason,
+        admin_id=admin.id,  # type: ignore
+    )
+    return OffboardingSummary(**result)
+
+
+@router.get("/tenants/{tenant_id}/offboarding-summary")
+@document_response(
+    message="Offboarding summary retrieved successfully",
+    description="Get the current state of a tenant for offboarding assessment.",
+    summary="Get tenant offboarding summary",
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        404: "Tenant not found",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        404: {"success": False, "message": "Tenant not found", "code": "RESOURCE_NOT_FOUND"},
+    },
+)
+async def get_tenant_offboarding_summary_endpoint(
+    tenant_id: str,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+) -> dict:
+    """Get offboarding assessment summary for a tenant."""
+    summary = await get_offboarding_summary(tenant_id=tenant_id)
+    return summary

@@ -866,10 +866,359 @@ class BootstrapLoadUser(HttpUser):
         )
 
 
+class BillingLoadUser(HttpUser):
+    """
+    Locust user simulating billing/SaaS operations (Phase 4):
+    - Plan management (list, create, update)
+    - Subscription lifecycle (subscribe, list, update, cancel)
+    - Invoice retrieval and payment tracking
+    - Discount code management
+    - Billing summary reports
+
+    Pass/Fail Thresholds:
+    - Response time p95 < 1000ms (acceptable for report generation)
+    - Response time p99 < 2000ms
+    - Error rate < 1% (billing operations are critical)
+    - Invoice list/detail endpoints p95 < 500ms
+    """
+
+    wait_time = between(2, 5)
+    host = os.getenv("LOAD_TEST_HOST", "http://localhost:8000")
+    weight = 2  # moderate frequency for SaaS operations
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.headers: dict = {}
+        self.admin_headers: dict = {}
+        self.tenant_id: Optional[str] = None
+        self.plan_ids: list[str] = []
+        self.subscription_ids: list[str] = []
+        self.invoice_ids: list[str] = []
+        self.discount_ids: list[str] = []
+
+    def on_start(self) -> None:
+        """Authenticate as application admin for billing operations."""
+        # Try admin first (for plan/billing management)
+        admin_email = os.getenv("LOAD_TEST_ADMIN_EMAIL", "loadtest_admin@visichek.test")
+        admin_password = os.getenv("LOAD_TEST_ADMIN_PASSWORD", "LoadTestAdmin@123")
+
+        admin_resp = self.client.post(
+            "/v1/admins/login",
+            json={"email": admin_email, "password": admin_password},
+            name="/v1/admins/login (billing)",
+        )
+
+        if admin_resp.status_code == 200:
+            admin_data = admin_resp.json().get("data", {})
+            self.admin_headers = {"Authorization": f"Bearer {admin_data.get('access_token')}"}
+            logger.info("Authenticated as application admin for billing")
+        else:
+            logger.warning(f"Admin billing auth failed: {admin_resp.status_code}")
+
+        # Also get super_admin/tenant auth if needed
+        email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.test")
+        password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
+
+        user_resp = self.client.post(
+            "/v1/system-users/login",
+            json={"email": email, "password": password},
+            name="/v1/system-users/login (billing)",
+        )
+
+        if user_resp.status_code == 200:
+            user_data = user_resp.json().get("data", {})
+            self.headers = {"Authorization": f"Bearer {user_data.get('access_token')}"}
+            self.tenant_id = user_data.get("tenant_id")
+
+    # --- Plans (Application Admin) ---
+
+    @task(5)
+    @tag("billing", "plans")
+    def list_plans(self) -> None:
+        """List all plans with pagination."""
+        if not self.admin_headers:
+            return
+        self.client.get(
+            "/v1/plans/",
+            params={"start": 0, "stop": 50},
+            headers=self.admin_headers,
+            name="/v1/plans/ (list)",
+        )
+
+    @task(2)
+    @tag("billing", "plans")
+    def create_plan(self) -> None:
+        """Create a new plan (P95 < 500ms, expected)."""
+        if not self.admin_headers:
+            return
+        ts = int(time.time())
+        payload = {
+            "name": f"load-plan-{ts}-{random.randint(1000, 9999)}",
+            "display_name": f"Load Test Plan {ts}",
+            "tier": random.choice(["free", "starter", "professional", "enterprise"]),
+            "base_price_monthly": random.choice([0, 50.0, 100.0, 500.0]),
+            "base_price_yearly": random.choice([0, 500.0, 1000.0, 5000.0]),
+            "status": "active",
+        }
+        resp = self.client.post(
+            "/v1/plans/",
+            json=payload,
+            headers=self.admin_headers,
+            name="/v1/plans/ (create)",
+        )
+        if resp.status_code == 201:
+            plan_id = resp.json().get("data", {}).get("id")
+            if plan_id:
+                self.plan_ids.append(plan_id)
+
+    @task(3)
+    @tag("billing", "plans")
+    def get_plan_details(self) -> None:
+        """Fetch a specific plan (P95 < 300ms)."""
+        if not self.admin_headers or not self.plan_ids:
+            return
+        plan_id = random.choice(self.plan_ids)
+        self.client.get(
+            f"/v1/plans/{plan_id}",
+            headers=self.admin_headers,
+            name="/v1/plans/{id} (get)",
+        )
+
+    @task(1)
+    @tag("billing", "plans")
+    def update_plan(self) -> None:
+        """Update an existing plan."""
+        if not self.admin_headers or not self.plan_ids:
+            return
+        plan_id = random.choice(self.plan_ids)
+        payload = {
+            "base_price_monthly": random.choice([50.0, 75.0, 100.0, 150.0, 200.0]),
+            "priority_support": random.choice([True, False]),
+        }
+        self.client.patch(
+            f"/v1/plans/{plan_id}",
+            json=payload,
+            headers=self.admin_headers,
+            name="/v1/plans/{id} (update)",
+        )
+
+    # --- Subscriptions ---
+
+    @task(8)
+    @tag("billing", "subscriptions")
+    def list_subscriptions(self) -> None:
+        """List subscriptions for current tenant (P95 < 500ms, expected for aggregate query)."""
+        if not self.headers:
+            return
+        self.client.get(
+            "/v1/subscriptions/",
+            params={"start": 0, "stop": 50},
+            headers=self.headers,
+            name="/v1/subscriptions/ (list)",
+        )
+
+    @task(2)
+    @tag("billing", "subscriptions")
+    def subscribe_to_plan(self) -> None:
+        """Subscribe a tenant to a plan."""
+        if not self.headers or not self.admin_headers or not self.plan_ids:
+            return
+        # Admin creates subscription for tenant
+        plan_id = random.choice(self.plan_ids)
+        payload = {
+            "tenant_id": self.tenant_id,
+            "plan_id": plan_id,
+            "billing_cycle": random.choice(["monthly", "yearly"]),
+            "status": "active",
+        }
+        resp = self.client.post(
+            "/v1/subscriptions/",
+            json=payload,
+            headers=self.admin_headers,
+            name="/v1/subscriptions/ (create)",
+        )
+        if resp.status_code == 201:
+            sub_id = resp.json().get("data", {}).get("id")
+            if sub_id:
+                self.subscription_ids.append(sub_id)
+
+    @task(4)
+    @tag("billing", "subscriptions")
+    def get_subscription_details(self) -> None:
+        """Fetch subscription details (P95 < 300ms)."""
+        if not self.headers or not self.subscription_ids:
+            return
+        sub_id = random.choice(self.subscription_ids)
+        self.client.get(
+            f"/v1/subscriptions/{sub_id}",
+            headers=self.headers,
+            name="/v1/subscriptions/{id} (get)",
+        )
+
+    @task(2)
+    @tag("billing", "subscriptions")
+    def update_subscription(self) -> None:
+        """Update subscription status or billing cycle."""
+        if not self.headers or not self.subscription_ids:
+            return
+        sub_id = random.choice(self.subscription_ids)
+        payload = {
+            "status": random.choice(["active", "trialing", "past_due"]),
+        }
+        self.client.patch(
+            f"/v1/subscriptions/{sub_id}",
+            json=payload,
+            headers=self.headers,
+            name="/v1/subscriptions/{id} (update)",
+        )
+
+    @task(1)
+    @tag("billing", "subscriptions")
+    def cancel_subscription(self) -> None:
+        """Cancel a subscription."""
+        if not self.headers or not self.subscription_ids:
+            return
+        sub_id = self.subscription_ids.pop(0)
+        payload = {
+            "status": "cancelled",
+            "cancellation_reason": "Load test cancellation",
+        }
+        self.client.patch(
+            f"/v1/subscriptions/{sub_id}",
+            json=payload,
+            headers=self.headers,
+            name="/v1/subscriptions/{id} (cancel)",
+        )
+
+    # --- Invoices ---
+
+    @task(6)
+    @tag("billing", "invoices")
+    def list_invoices(self) -> None:
+        """List invoices for tenant (P95 < 500ms, may involve aggregation)."""
+        if not self.headers:
+            return
+        self.client.get(
+            "/v1/invoices/",
+            params={"start": 0, "stop": 50},
+            headers=self.headers,
+            name="/v1/invoices/ (list)",
+        )
+
+    @task(3)
+    @tag("billing", "invoices")
+    def get_invoice_details(self) -> None:
+        """Fetch a specific invoice (P95 < 300ms)."""
+        if not self.headers or not self.invoice_ids:
+            return
+        invoice_id = random.choice(self.invoice_ids)
+        self.client.get(
+            f"/v1/invoices/{invoice_id}",
+            headers=self.headers,
+            name="/v1/invoices/{id} (get)",
+        )
+
+    @task(2)
+    @tag("billing", "invoices")
+    def download_invoice_pdf(self) -> None:
+        """Download invoice PDF (P95 < 1000ms, includes file generation)."""
+        if not self.headers or not self.invoice_ids:
+            return
+        invoice_id = random.choice(self.invoice_ids)
+        self.client.get(
+            f"/v1/invoices/{invoice_id}/pdf",
+            headers=self.headers,
+            name="/v1/invoices/{id}/pdf (download)",
+        )
+
+    # --- Discounts ---
+
+    @task(3)
+    @tag("billing", "discounts")
+    def list_discounts(self) -> None:
+        """List discount codes (P95 < 300ms)."""
+        if not self.admin_headers:
+            return
+        self.client.get(
+            "/v1/discounts/",
+            params={"start": 0, "stop": 50},
+            headers=self.admin_headers,
+            name="/v1/discounts/ (list)",
+        )
+
+    @task(1)
+    @tag("billing", "discounts")
+    def create_discount(self) -> None:
+        """Create a new discount code."""
+        if not self.admin_headers:
+            return
+        ts = int(time.time())
+        payload = {
+            "code": f"LOAD-{ts}-{random.randint(100, 999)}",
+            "name": f"Load Test Discount {ts}",
+            "discount_type": random.choice(["percentage", "fixed"]),
+            "value": random.choice([5.0, 10.0, 25.0, 50.0]) if random.random() > 0.5 else random.choice([100, 500, 1000]),
+            "scope": "global",
+            "max_redemptions": random.choice([10, 50, 100, 500]),
+        }
+        resp = self.client.post(
+            "/v1/discounts/",
+            json=payload,
+            headers=self.admin_headers,
+            name="/v1/discounts/ (create)",
+        )
+        if resp.status_code == 201:
+            disc_id = resp.json().get("data", {}).get("id")
+            if disc_id:
+                self.discount_ids.append(disc_id)
+
+    # --- Billing Reports ---
+
+    @task(2)
+    @tag("billing", "reports")
+    def get_billing_summary(self) -> None:
+        """Get billing summary report (P95 < 1000ms, may involve complex aggregation)."""
+        if not self.admin_headers:
+            return
+        now = int(time.time())
+        start = now - 2592000  # 30 days ago
+        self.client.get(
+            "/v1/billing/summary",
+            params={"start": start, "end": now},
+            headers=self.admin_headers,
+            name="/v1/billing/summary (report)",
+        )
+
+    @task(1)
+    @tag("billing", "reports")
+    def get_payment_discrepancies(self) -> None:
+        """Check for payment discrepancies (P95 < 2000ms, heavy aggregation)."""
+        if not self.admin_headers:
+            return
+        self.client.get(
+            "/v1/billing/discrepancies",
+            headers=self.admin_headers,
+            name="/v1/billing/discrepancies (detect)",
+        )
+
+    # --- Health Checks ---
+
+    @task(10)
+    @tag("health")
+    def health_check(self) -> None:
+        """Frequent health checks (P95 < 100ms, should be instant)."""
+        self.client.get("/health", name="/health")
+
+
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
     """Called when load test starts."""
     logger.info("Load test started")
+    logger.info("Load test configuration:")
+    logger.info("  - BillingLoadUser: SaaS billing operations")
+    logger.info("    P95 thresholds: Plans/Subs <500ms, Invoices <500ms, Reports <1000ms")
+    logger.info("    Error rate threshold: <1% (billing is critical)")
+    logger.info("  - Health checks should complete in <100ms")
 
 
 @events.test_stop.add_listener
@@ -878,3 +1227,11 @@ def on_test_stop(environment, **kwargs):
     logger.info("Load test stopped")
     logger.info(f"Total requests: {environment.stats.total.num_requests}")
     logger.info(f"Total failures: {environment.stats.total.num_failures}")
+    logger.info(f"Failure rate: {(environment.stats.total.num_failures / environment.stats.total.num_requests * 100):.2f}%")
+    logger.info("Performance thresholds:")
+    logger.info("  - Health checks (p95): <100ms")
+    logger.info("  - Plan/Subscription operations (p95): <500ms")
+    logger.info("  - Invoice retrieval (p95): <300ms")
+    logger.info("  - Billing reports (p95): <1000ms")
+    logger.info("  - Payment discrepancy detection (p95): <2000ms")
+    logger.info(f"  - Overall error rate: Must be <1% for production readiness")

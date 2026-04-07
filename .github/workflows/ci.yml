@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install ruff mypy
+      - name: Ruff lint
+        run: ruff check .
+      - name: Ruff format check
+        run: ruff format --check .
+      - name: MyPy type check
+        run: mypy --ignore-missing-imports --no-error-summary .
+        continue-on-error: true  # Type errors are warnings until fully typed
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --tb=short -q
+        env:
+          DB_TYPE: mongodb
+          ENV: testing
+          SECRET_KEY: test-secret-key-for-ci
+          SESSION_SECRET_KEY: test-session-key-for-ci
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          MONGO_URL: mongodb://localhost:27017
+          SUPER_ADMIN_EMAIL: ci-admin@test.com
+          SUPER_ADMIN_PASSWORD: "Ci!Test#Pass2026"
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:6.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Run integration tests
+        run: pytest tests/integration/ -v --tb=short -q
+        env:
+          DB_TYPE: mongodb
+          DB_NAME: test_visichek_ci
+          ENV: testing
+          SECRET_KEY: test-secret-key-for-ci
+          SESSION_SECRET_KEY: test-session-key-for-ci
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          MONGO_URL: mongodb://localhost:27017
+          STORAGE_BACKEND: local
+          STORAGE_LOCAL_ROOT: /tmp/test_uploads
+          PAYMENT_DEFAULT_PROVIDER: stripe
+          CELERY_BROKER_URL: redis://localhost:6379/0
+          CELERY_RESULT_BACKEND: redis://localhost:6379/0
+          SUPER_ADMIN_EMAIL: ci-admin@test.com
+          SUPER_ADMIN_PASSWORD: "Ci!Test#Pass2026"
+          STRIPE_SECRET_KEY: sk_test_dummy
+          FLUTTERWAVE_SECRET_KEY: FLWSECK_TEST_dummy
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t visichek-backend:${{ github.sha }} .
+      - name: Verify image runs
+        run: |
+          docker run --rm -d --name visichek-test \
+            -e ENV=testing \
+            -e SECRET_KEY=test-key \
+            -e SESSION_SECRET_KEY=test-session-key \
+            -e SUPER_ADMIN_PASSWORD=Docker!Test#2026 \
+            visichek-backend:${{ github.sha }} \
+            sleep 5
+          docker stop visichek-test || true

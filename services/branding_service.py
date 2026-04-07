@@ -10,7 +10,7 @@ from repositories.branding_repo import (
     update_branding,
     delete_branding,
 )
-from schemas.branding_schema import BrandingCreate, BrandingUpdate, BrandingOut
+from schemas.branding_schema import BrandingCreate, BrandingUpdate, BrandingOut, BrandingPublicOut
 
 
 async def _resolve_logo_urls(branding: BrandingOut) -> BrandingOut:
@@ -55,6 +55,33 @@ async def upsert_branding(tenant_id: str, branding_data: BrandingUpdate) -> Bran
         create_data = BrandingCreate(**create_fields)
         new_branding = await create_branding(create_data)
         return await _resolve_logo_urls(new_branding)
+
+
+async def retrieve_public_branding_by_tenant(tenant_id: str) -> Optional[BrandingPublicOut]:
+    """Get public-facing branding for a tenant (login screen, unauthenticated).
+
+    Returns only the fields needed for UI rendering — no internal object keys,
+    no badge-specific colors, no timestamps.
+    """
+    if not ObjectId.is_valid(tenant_id):
+        raise HTTPException(status_code=400, detail="Invalid tenant ID format")
+
+    branding = await get_branding({"tenant_id": tenant_id})
+    if not branding:
+        return None
+
+    # Resolve presigned URLs for logo and favicon
+    branding = await _resolve_logo_urls(branding)
+
+    return BrandingPublicOut(
+        tenant_id=branding.tenant_id,
+        company_display_name=branding.company_display_name,
+        primary_color=branding.primary_color,
+        secondary_color=branding.secondary_color,
+        accent_color=branding.accent_color,
+        logo_url=branding.logo_url,
+        favicon_url=branding.favicon_url,
+    )
 
 
 async def retrieve_branding_by_tenant(tenant_id: str) -> Optional[BrandingOut]:

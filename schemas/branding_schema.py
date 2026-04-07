@@ -135,3 +135,18 @@ class BrandingOut(BrandingBase):
         populate_by_name = True
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
+
+
+class BrandingPublicOut(BaseModel):
+    """Minimal branding for public / unauthenticated contexts (e.g. login screen).
+
+    Omits internal object keys, badge-specific colors, and timestamps.
+    """
+
+    tenant_id: str
+    company_display_name: Optional[str] = None
+    primary_color: Optional[str] = None
+    secondary_color: Optional[str] = None
+    accent_color: Optional[str] = None
+    logo_url: Optional[str] = None
+    favicon_url: Optional[str] = None

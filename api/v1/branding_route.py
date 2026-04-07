@@ -9,10 +9,48 @@ from security.principal import AuthPrincipal
 from services.branding_service import (
     upsert_branding,
     retrieve_branding_by_tenant,
+    retrieve_public_branding_by_tenant,
     remove_branding,
 )
 
 router = APIRouter(prefix="/branding", tags=["Tenant Branding"])
+
+
+# ─── Public (unauthenticated) ───────────────────────────────────────────
+
+
+@router.get("/public/tenant/{tenant_id}")
+@document_response(
+    message="Branding fetched successfully",
+    success_example={
+        "tenant_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "company_display_name": "Acme Corp",
+        "primary_color": "#1A73E8",
+        "secondary_color": "#34A853",
+        "accent_color": "#FBBC04",
+        "logo_url": "https://s3.../tenants/64f1a.../logo.png?X-Amz-...",
+        "favicon_url": "https://s3.../tenants/64f1a.../favicon.ico?X-Amz-...",
+    },
+    description=(
+        "Public endpoint — no authentication required. "
+        "Returns a subset of branding fields needed to render the tenant "
+        "login screen (colors, display name, logo, favicon). "
+        "Badge-specific fields and internal object keys are omitted."
+    ),
+    summary="Get tenant branding (public)",
+    response_codes={
+        404: "Not found - tenant has no branding configured",
+    },
+    error_examples={
+        404: {"success": False, "message": "Branding not found for this tenant", "code": "RESOURCE_NOT_FOUND"},
+    },
+)
+async def get_public_tenant_branding(tenant_id: str):
+    """Public branding — for login screens and unauthenticated contexts."""
+    return await retrieve_public_branding_by_tenant(tenant_id)
+
+
+# ─── Authenticated (system user) ────────────────────────────────────────
 
 
 @router.get("/tenant/{tenant_id}")

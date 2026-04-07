@@ -53,6 +53,12 @@ class SubscriptionBase(BaseModel):
     # Internal notes (admin-only)
     admin_notes: Optional[str] = None
 
+    # Renewal tracking
+    renewal_attempts: int = 0
+    last_renewal_attempt_at: Optional[int] = None
+    next_retry_at: Optional[int] = None
+    payment_method_id: Optional[str] = None  # stored card/payment method reference
+
 
 class SubscriptionCreate(SubscriptionBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
@@ -82,6 +88,10 @@ class SubscriptionUpdate(BaseModel):
     cancelled_at: Optional[int] = None
     cancellation_reason: Optional[str] = None
     admin_notes: Optional[str] = None
+    renewal_attempts: Optional[int] = None
+    last_renewal_attempt_at: Optional[int] = None
+    next_retry_at: Optional[int] = None
+    payment_method_id: Optional[str] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
