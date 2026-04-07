@@ -10,7 +10,7 @@ class AppointmentBase(BaseModel):
     department_id: str
     visitor_name_snapshot: Optional[str] = None
     host_name_snapshot: Optional[str] = None
-    scheduled_time: int
+    scheduled_datetime: int
     purpose: Optional[str] = None
     status: AppointmentStatus = AppointmentStatus.SCHEDULED
 
@@ -24,7 +24,7 @@ class AppointmentCreate(AppointmentBase):
 class AppointmentUpdate(BaseModel):
     visitor_profile_id: Optional[str] = None
     status: Optional[AppointmentStatus] = None
-    scheduled_time: Optional[int] = None
+    scheduled_datetime: Optional[int] = None
     purpose: Optional[str] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 

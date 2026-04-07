@@ -6,7 +6,7 @@ import time
 class AuditLogCreate(BaseModel):
     tenant_id: str
     actor_id: str
-    actor_name: Optional[str] = None
+    actor_name_snapshot: Optional[str] = None
     user_session_id: Optional[str] = None
     action: str
     target_entity: Optional[str] = None
@@ -14,14 +14,14 @@ class AuditLogCreate(BaseModel):
     ip: Optional[str] = None
     device_signature: Optional[str] = None
     reason: Optional[str] = None
-    timestamp: int = Field(default_factory=lambda: int(time.time()))
+    occurred_at: int = Field(default_factory=lambda: int(time.time()))
 
 
 class AuditLogOut(BaseModel):
     id: Optional[str] = Field(default=None, alias="_id")
     tenant_id: str
     actor_id: str
-    actor_name: Optional[str] = None
+    actor_name_snapshot: Optional[str] = None
     user_session_id: Optional[str] = None
     action: str
     target_entity: Optional[str] = None
@@ -29,7 +29,7 @@ class AuditLogOut(BaseModel):
     ip: Optional[str] = None
     device_signature: Optional[str] = None
     reason: Optional[str] = None
-    timestamp: Optional[int] = None
+    occurred_at: Optional[int] = None
 
     @model_validator(mode="before")
     @classmethod

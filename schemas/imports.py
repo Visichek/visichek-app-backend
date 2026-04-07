@@ -113,3 +113,7 @@ class BadgeFormat(str, Enum):
 class NoticeDisplayMode(str, Enum):
     PASSIVE = "passive"
     ACTIVE_CONSENT = "active_consent"
+
+class ProfilingPreference(str, Enum):
+    ALLOWED = "allowed"
+    OPTED_OUT = "opted_out"

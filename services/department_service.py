@@ -12,13 +12,15 @@ from repositories.department_repo import (
 from schemas.department_schema import DepartmentCreate, DepartmentUpdate, DepartmentOut
 
 
-async def add_department(dept_data: DepartmentCreate) -> DepartmentOut:
+async def add_department(dept_data: DepartmentCreate, created_by: str = None) -> DepartmentOut:
     existing = await get_department({
         "tenant_id": dept_data.tenant_id,
         "code": dept_data.code,
     })
     if existing:
         raise HTTPException(status_code=409, detail="Department with this code already exists in tenant")
+    if created_by:
+        dept_data.created_by = created_by
     return await create_department(dept_data)
 
 

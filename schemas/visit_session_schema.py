@@ -21,24 +21,24 @@ class VisitSessionBase(BaseModel):
     purpose: Optional[str] = None
     # Name snapshots for historical accuracy
     visitor_name_snapshot: Optional[str] = None
-    visitor_company_snapshot: Optional[str] = None
+    company_snapshot: Optional[str] = None
     host_name_snapshot: Optional[str] = None
     department_name_snapshot: Optional[str] = None
     receptionist_name_snapshot: Optional[str] = None
     # Consent fields (NDPA compliance)
-    notice_displayed: bool = False
+    consent_notice_displayed: bool = False
     consent_granted: Optional[bool] = None
     consent_method: Optional[str] = None
     consent_timestamp: Optional[int] = None
-    consent_captured_by: Optional[str] = None
-    consent_withdrawn: bool = False
+    consent_captured_by_user_id: Optional[str] = None
+    consent_withdrawal_at: Optional[int] = None
     lawful_basis_at_time: Optional[LawfulBasis] = None
     # Badge fields
     badge_qr_token: Optional[str] = None
     badge_format: Optional[BadgeFormat] = None
     badge_generation_time: Optional[int] = None
     badge_expiry: Optional[int] = None
-    badge_document_id: Optional[str] = None
+    badge_pdf_object_key: Optional[str] = None
 
 
 class VisitSessionCreate(VisitSessionBase):
@@ -56,13 +56,13 @@ class VisitSessionUpdate(BaseModel):
     consent_granted: Optional[bool] = None
     consent_method: Optional[str] = None
     consent_timestamp: Optional[int] = None
-    consent_captured_by: Optional[str] = None
-    consent_withdrawn: Optional[bool] = None
+    consent_captured_by_user_id: Optional[str] = None
+    consent_withdrawal_at: Optional[int] = None
     badge_qr_token: Optional[str] = None
     badge_format: Optional[BadgeFormat] = None
     badge_generation_time: Optional[int] = None
     badge_expiry: Optional[int] = None
-    badge_document_id: Optional[str] = None
+    badge_pdf_object_key: Optional[str] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
@@ -100,8 +100,8 @@ class CheckInRequest(BaseModel):
     host_id: Optional[str] = None
     purpose: Optional[str] = None
     check_in_method: CheckInMethod = CheckInMethod.MANUAL
-    photo_url: Optional[str] = None
-    id_image_url: Optional[str] = None
+    photo_object_key: Optional[str] = None
+    id_image_object_key: Optional[str] = None
     consent_granted: Optional[bool] = None
 
 

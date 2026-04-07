@@ -59,9 +59,9 @@ async def create_indexes():
 
     # Expected Appointments
     await db.expected_appointments.create_index(
-        [("tenant_id", 1), ("scheduled_time", -1)]
+        [("tenant_id", 1), ("scheduled_datetime", -1)]
     )
-    print("  expected_appointments: index on (tenant_id, scheduled_time)")
+    print("  expected_appointments: index on (tenant_id, scheduled_datetime)")
 
     # Privacy Notice Versions
     await db.privacy_notice_versions.create_index(
@@ -71,7 +71,7 @@ async def create_indexes():
 
     # System Audit Logs
     await db.system_audit_logs.create_index(
-        [("tenant_id", 1), ("timestamp", -1)]
+        [("tenant_id", 1), ("occurred_at", -1)]
     )
     await db.system_audit_logs.create_index(
         [("tenant_id", 1), ("actor_id", 1)]
@@ -79,7 +79,7 @@ async def create_indexes():
     await db.system_audit_logs.create_index(
         [("tenant_id", 1), ("target_entity", 1), ("target_id", 1)]
     )
-    print("  system_audit_logs: indexes on (tenant_id, timestamp), (tenant_id, actor_id), (tenant_id, target)")
+    print("  system_audit_logs: indexes on (tenant_id, occurred_at), (tenant_id, actor_id), (tenant_id, target)")
 
     # Incident Logs
     await db.incident_logs.create_index(

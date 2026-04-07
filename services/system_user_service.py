@@ -52,7 +52,7 @@ async def authenticate_system_user(login_data: SystemUserLogin) -> SystemUserOut
     # Retrieve the raw document to get the hashed password
     from core.database import db
     raw = await db.system_users.find_one({"email": login_data.email})
-    if not raw or not check_password(password=login_data.password, hashed=raw["password"]):
+    if not raw or not check_password(password=login_data.password, hashed=raw["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid login credentials")
 
     if user.account_status.value != "ACTIVE":

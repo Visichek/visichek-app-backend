@@ -24,7 +24,41 @@ router = APIRouter(prefix="/admins", tags=["Admins"])
         Depends(check_admin_account_status_and_permissions),
     ],
 )
-@document_response(message="Admins fetched successfully", success_example=[])
+@document_response(
+    message="Admins fetched successfully",
+    success_example=[
+        {
+            "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+            "full_name": "John Admin",
+            "email": "admin@example.com",
+            "accountStatus": "ACTIVE",
+            "permissionList": {
+                "permissions": [
+                    {
+                        "name": "Read Users",
+                        "methods": ["GET"],
+                        "path": "/v1/users",
+                        "key": "users_read",
+                        "description": "Retrieve user list"
+                    }
+                ]
+            },
+            "date_created": 1712500000,
+            "last_updated": 1712500600
+        }
+    ],
+    description="Retrieve a paginated list of all admins in the system.",
+    summary="List all admins",
+    include_meta=True,
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
+    },
+)
 async def list_admins(
     start: Annotated[
         int,
@@ -40,7 +74,36 @@ async def list_admins(
 
 
 @router.get("/profile")
-@document_response(message="Admin profile fetched successfully")
+@document_response(
+    message="Admin profile fetched successfully",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "full_name": "John Admin",
+        "email": "admin@example.com",
+        "accountStatus": "ACTIVE",
+        "permissionList": {
+            "permissions": [
+                {
+                    "name": "Read Users",
+                    "methods": ["GET"],
+                    "path": "/v1/users",
+                    "key": "users_read",
+                    "description": "Retrieve user list"
+                }
+            ]
+        },
+        "date_created": 1712500000,
+        "last_updated": 1712500600
+    },
+    description="Retrieve the authenticated admin's profile information.",
+    summary="Get admin profile",
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+    },
+)
 async def get_my_admin(admin: AdminOut = Depends(check_admin_account_status_and_permissions)):
     return admin
 
@@ -48,7 +111,30 @@ async def get_my_admin(admin: AdminOut = Depends(check_admin_account_status_and_
 @router.post("/signup")
 @document_response(
     message="Admin created successfully",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d2",
+        "full_name": "Jane Admin",
+        "email": "jane.admin@example.com",
+        "accountStatus": "ACTIVE",
+        "permissionList": None,
+        "date_created": 1712501200,
+        "last_updated": 1712501200
+    },
     status_code=status.HTTP_201_CREATED,
+    description="Create a new admin account. Only existing admins can invite new admins.",
+    summary="Create new admin",
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        409: "Conflict - admin with this email already exists",
+        422: "Validation error - invalid input data",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
+        409: {"success": False, "message": "Admin with this email already exists", "code": "VALIDATION_FAILED"},
+        422: {"success": False, "message": "Email is required and must be valid", "code": "VALIDATION_FAILED"},
+    },
 )
 async def signup_new_admin(
     admin_data: AdminBase,
@@ -61,7 +147,40 @@ async def signup_new_admin(
 
 
 @router.post("/login")
-@document_response(message="Admin login successful")
+@document_response(
+    message="Admin login successful",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "full_name": "John Admin",
+        "email": "admin@example.com",
+        "accountStatus": "ACTIVE",
+        "permissionList": {
+            "permissions": [
+                {
+                    "name": "Read Users",
+                    "methods": ["GET"],
+                    "path": "/v1/users",
+                    "key": "users_read",
+                    "description": "Retrieve user list"
+                }
+            ]
+        },
+        "date_created": 1712500000,
+        "last_updated": 1712500600,
+        "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDEiLCJyb2xlIjoiYWRtaW4ifQ.abc123",
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDEiLCJ0eXBlIjoicmVmcmVzaCJ9.xyz789"
+    },
+    description="Authenticate an admin with email and password. Returns access and refresh tokens.",
+    summary="Admin login",
+    response_codes={
+        401: "Unauthorized - invalid credentials",
+        422: "Validation error - missing or invalid email/password",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid email or password", "code": "AUTH_INVALID_TOKEN"},
+        422: {"success": False, "message": "Email and password are required", "code": "VALIDATION_FAILED"},
+    },
+)
 async def login_admin(admin_data: AdminLogin):
     items = await authenticate_admin(admin_data=admin_data) # type: ignore
     return items
@@ -70,7 +189,40 @@ async def login_admin(admin_data: AdminLogin):
 @router.post(
     "/refresh",
 )
-@document_response(message="Admin tokens refreshed successfully")
+@document_response(
+    message="Admin tokens refreshed successfully",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "full_name": "John Admin",
+        "email": "admin@example.com",
+        "accountStatus": "ACTIVE",
+        "permissionList": {
+            "permissions": [
+                {
+                    "name": "Read Users",
+                    "methods": ["GET"],
+                    "path": "/v1/users",
+                    "key": "users_read",
+                    "description": "Retrieve user list"
+                }
+            ]
+        },
+        "date_created": 1712500000,
+        "last_updated": 1712500600,
+        "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDEiLCJyb2xlIjoiYWRtaW4ifQ.abc123",
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDEiLCJ0eXBlIjoicmVmcmVzaCJ9.xyz789"
+    },
+    description="Refresh expired access tokens using a valid refresh token. Expired access token must be provided in Authorization header.",
+    summary="Refresh admin tokens",
+    response_codes={
+        401: "Unauthorized - invalid or mismatched tokens",
+        422: "Validation error - missing refresh token",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired refresh token", "code": "AUTH_INVALID_TOKEN"},
+        422: {"success": False, "message": "Refresh token is required", "code": "VALIDATION_FAILED"},
+    },
+)
 async def refresh_admin_tokens(
     admin_data: Annotated[
         AdminRefresh,
@@ -113,7 +265,18 @@ async def refresh_admin_tokens(
 
 
 @router.delete("/account")
-@document_response(message="Admin account deleted successfully")
+@document_response(
+    message="Admin account deleted successfully",
+    success_example={"deleted": True},
+    description="Delete the authenticated admin's account. This action is irreversible.",
+    summary="Delete admin account",
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+    },
+)
 async def delete_admin_account(admin: AdminOut = Depends(check_admin_account_status_and_permissions)):
     result = await remove_admin(admin_id=admin.id) # type: ignore
     return result

@@ -42,7 +42,7 @@ async def export_visitor_log_csv(
 
         writer.writerow([
             s.visitor_name_snapshot or "",
-            s.visitor_company_snapshot or "",
+            s.company_snapshot or "",
             s.department_name_snapshot or "",
             s.host_name_snapshot or "",
             check_in, check_out, duration,
@@ -98,7 +98,7 @@ async def export_visitor_log_xlsx(
 
         ws.append([
             s.visitor_name_snapshot or "",
-            s.visitor_company_snapshot or "",
+            s.company_snapshot or "",
             s.department_name_snapshot or "",
             s.host_name_snapshot or "",
             check_in, check_out, duration,

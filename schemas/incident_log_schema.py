@@ -5,7 +5,7 @@ import time
 
 class IncidentLogBase(BaseModel):
     tenant_id: str
-    reporter_id: str
+    reported_by: str
     incident_type: IncidentType
     status: IncidentStatus = IncidentStatus.OPEN
     description: str
@@ -13,6 +13,7 @@ class IncidentLogBase(BaseModel):
     data_affected: Optional[str] = None
     mitigation_steps: Optional[str] = None
     ndpc_notified: bool = False
+    ndpc_notified_at: Optional[int] = None
     detection_time: Optional[int] = None
 
 
@@ -27,14 +28,15 @@ class IncidentLogUpdate(BaseModel):
     data_affected: Optional[str] = None
     mitigation_steps: Optional[str] = None
     ndpc_notified: Optional[bool] = None
-    closure_time: Optional[int] = None
+    ndpc_notified_at: Optional[int] = None
+    resolved_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
 class IncidentLogOut(IncidentLogBase):
     id: Optional[str] = Field(default=None, alias="_id")
     date_created: Optional[int] = None
-    closure_time: Optional[int] = None
+    resolved_at: Optional[int] = None
 
     @model_validator(mode="before")
     @classmethod

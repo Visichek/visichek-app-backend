@@ -20,7 +20,38 @@ _admin_roles = verify_system_user_token("dept_admin", "super_admin", "receptioni
 
 
 @router.post("/")
-@document_response(message="Appointment created successfully", status_code=status.HTTP_201_CREATED)
+@document_response(
+    message="Appointment created successfully",
+    status_code=status.HTTP_201_CREATED,
+    description="Create a new visitor appointment with date, time, and host information.",
+    summary="Create new appointment",
+    success_example={
+        "id": "507f1f77bcf86cd799439013",
+        "tenant_id": "t12345",
+        "visitor_profile_id": "507f1f77bcf86cd799439012",
+        "host_id": "h12345",
+        "department_id": "d12345",
+        "visitor_name_snapshot": "John Doe",
+        "host_name_snapshot": "Jane Smith",
+        "scheduled_datetime": 1712618400,
+        "purpose": "Sales consultation",
+        "status": "scheduled",
+        "created_by": "r12345",
+        "date_created": 1712532000,
+        "last_updated": 1712532000,
+    },
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        404: "Host or department not found",
+        409: "Scheduling conflict - requested time slot unavailable",
+        422: "Validation error - invalid appointment data",
+    },
+    error_examples={
+        409: {"success": False, "message": "Scheduling conflict at requested time", "code": "CONFLICT"},
+        422: {"success": False, "message": "Invalid appointment data", "code": "VALIDATION_FAILED"},
+    },
+)
 async def create_appointment_endpoint(
     appt_data: AppointmentCreate,
     principal: AuthPrincipal = Depends(_admin_roles),
@@ -32,7 +63,33 @@ async def create_appointment_endpoint(
 
 
 @router.get("/")
-@document_response(message="Appointments fetched successfully", success_example=[])
+@document_response(
+    message="Appointments fetched successfully",
+    description="Retrieve paginated list of appointments for the current tenant.",
+    summary="List appointments with pagination",
+    success_example=[
+        {
+            "id": "507f1f77bcf86cd799439013",
+            "tenant_id": "t12345",
+            "visitor_profile_id": "507f1f77bcf86cd799439012",
+            "host_id": "h12345",
+            "department_id": "d12345",
+            "visitor_name_snapshot": "John Doe",
+            "host_name_snapshot": "Jane Smith",
+            "scheduled_datetime": 1712618400,
+            "purpose": "Sales consultation",
+            "status": "scheduled",
+            "created_by": "r12345",
+            "date_created": 1712532000,
+            "last_updated": 1712532000,
+        }
+    ],
+    include_meta=True,
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+    },
+)
 async def list_appointments(
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
@@ -43,7 +100,34 @@ async def list_appointments(
 
 
 @router.get("/{appointment_id}")
-@document_response(message="Appointment fetched successfully")
+@document_response(
+    message="Appointment fetched successfully",
+    description="Retrieve detailed information about a specific appointment.",
+    summary="Fetch appointment by ID",
+    success_example={
+        "id": "507f1f77bcf86cd799439013",
+        "tenant_id": "t12345",
+        "visitor_profile_id": "507f1f77bcf86cd799439012",
+        "host_id": "h12345",
+        "department_id": "d12345",
+        "visitor_name_snapshot": "John Doe",
+        "host_name_snapshot": "Jane Smith",
+        "scheduled_datetime": 1712618400,
+        "purpose": "Sales consultation",
+        "status": "scheduled",
+        "created_by": "r12345",
+        "date_created": 1712532000,
+        "last_updated": 1712532000,
+    },
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        404: "Appointment not found",
+    },
+    error_examples={
+        404: {"success": False, "message": "Appointment not found", "code": "RESOURCE_NOT_FOUND"},
+    },
+)
 async def get_appointment_endpoint(
     appointment_id: str,
     principal: AuthPrincipal = Depends(_admin_roles),
@@ -53,7 +137,36 @@ async def get_appointment_endpoint(
 
 
 @router.patch("/{appointment_id}")
-@document_response(message="Appointment updated successfully")
+@document_response(
+    message="Appointment updated successfully",
+    description="Update appointment details such as date, time, or host information.",
+    summary="Update appointment",
+    success_example={
+        "id": "507f1f77bcf86cd799439013",
+        "tenant_id": "t12345",
+        "visitor_profile_id": "507f1f77bcf86cd799439012",
+        "host_id": "h12345",
+        "department_id": "d12345",
+        "visitor_name_snapshot": "John Doe",
+        "host_name_snapshot": "Jane Smith",
+        "scheduled_datetime": 1712704800,
+        "purpose": "Sales consultation",
+        "status": "scheduled",
+        "created_by": "r12345",
+        "date_created": 1712532000,
+        "last_updated": 1712535600,
+    },
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        404: "Appointment not found",
+        409: "Scheduling conflict - new time slot unavailable",
+    },
+    error_examples={
+        404: {"success": False, "message": "Appointment not found", "code": "RESOURCE_NOT_FOUND"},
+        409: {"success": False, "message": "Scheduling conflict at requested time", "code": "CONFLICT"},
+    },
+)
 async def update_appointment_endpoint(
     appointment_id: str,
     appt_data: AppointmentUpdate,
@@ -66,7 +179,34 @@ async def update_appointment_endpoint(
 
 
 @router.delete("/{appointment_id}")
-@document_response(message="Appointment deleted successfully")
+@document_response(
+    message="Appointment deleted successfully",
+    description="Delete an appointment by ID. Only dept_admin and super_admin can delete.",
+    summary="Delete appointment",
+    success_example={
+        "id": "507f1f77bcf86cd799439013",
+        "tenant_id": "t12345",
+        "visitor_profile_id": "507f1f77bcf86cd799439012",
+        "host_id": "h12345",
+        "department_id": "d12345",
+        "visitor_name_snapshot": "John Doe",
+        "host_name_snapshot": "Jane Smith",
+        "scheduled_datetime": 1712618400,
+        "purpose": "Sales consultation",
+        "status": "scheduled",
+        "created_by": "r12345",
+        "date_created": 1712532000,
+        "last_updated": 1712535600,
+    },
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        404: "Appointment not found",
+    },
+    error_examples={
+        404: {"success": False, "message": "Appointment not found", "code": "RESOURCE_NOT_FOUND"},
+    },
+)
 async def delete_appointment_endpoint(
     appointment_id: str,
     principal: AuthPrincipal = Depends(verify_system_user_token("dept_admin", "super_admin")),

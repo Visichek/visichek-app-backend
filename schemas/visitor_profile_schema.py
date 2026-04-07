@@ -6,15 +6,15 @@ import time
 class VisitorProfileBase(BaseModel):
     tenant_id: str
     phone: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email_address: Optional[EmailStr] = None
     full_name: str
     company: Optional[str] = None
-    photo_url: Optional[str] = None
+    photo_object_key: Optional[str] = None
     id_type: Optional[str] = None
     id_number: Optional[str] = None
-    id_image_url: Optional[str] = None
-    profiling_preference: str = "allowed"  # "allowed" or "opted_out"
-    last_verified_at: Optional[int] = None
+    id_image_object_key: Optional[str] = None
+    profiling_preference: ProfilingPreference = ProfilingPreference.ALLOWED
+    last_verification_date: Optional[int] = None
 
 
 class VisitorProfileCreate(VisitorProfileBase):
@@ -24,15 +24,15 @@ class VisitorProfileCreate(VisitorProfileBase):
 
 class VisitorProfileUpdate(BaseModel):
     phone: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email_address: Optional[EmailStr] = None
     full_name: Optional[str] = None
     company: Optional[str] = None
-    photo_url: Optional[str] = None
+    photo_object_key: Optional[str] = None
     id_type: Optional[str] = None
     id_number: Optional[str] = None
-    id_image_url: Optional[str] = None
-    profiling_preference: Optional[str] = None
-    last_verified_at: Optional[int] = None
+    id_image_object_key: Optional[str] = None
+    profiling_preference: Optional[ProfilingPreference] = None
+    last_verification_date: Optional[int] = None
     deleted_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 

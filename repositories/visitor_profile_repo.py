@@ -79,7 +79,7 @@ async def search_visitor_profiles(
         "$or": [
             {"full_name": {"$regex": query, "$options": "i"}},
             {"phone": {"$regex": query, "$options": "i"}},
-            {"email": {"$regex": query, "$options": "i"}},
+            {"email_address": {"$regex": query, "$options": "i"}},
             {"company": {"$regex": query, "$options": "i"}},
         ],
     }

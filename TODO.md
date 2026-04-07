@@ -230,7 +230,7 @@
   - [ ] `user_sessions` -- index on (user_id, started_at desc)
   - [ ] `visitor_profiles` -- unique compound on (tenant_id, phone)
   - [ ] `visit_sessions` -- compound on (tenant_id, status), (tenant_id, check_in_time desc), unique sparse on badge_qr_token
-  - [ ] `expected_appointments` -- compound on (tenant_id, scheduled_time)
+  - [ ] `expected_appointments` -- compound on (tenant_id, scheduled_datetime)
   - [ ] `system_audit_logs` -- compound on (tenant_id, timestamp desc), (tenant_id, actor_id)
   - [ ] `incident_logs` -- compound on (tenant_id, status)
 

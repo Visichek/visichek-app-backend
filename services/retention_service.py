@@ -55,7 +55,7 @@ async def _cleanup_visit_sessions(tenant_id: str, cutoff: int, action: DeletionA
                 {"_id": doc["_id"]},
                 {"$set": {
                     "visitor_name_snapshot": "ANONYMISED",
-                    "visitor_company_snapshot": "ANONYMISED",
+                    "company_snapshot": "ANONYMISED",
                     "host_name_snapshot": "ANONYMISED",
                     "purpose": "ANONYMISED",
                 }},
@@ -70,15 +70,15 @@ async def _cleanup_visit_sessions(tenant_id: str, cutoff: int, action: DeletionA
 async def _cleanup_id_images(tenant_id: str, cutoff: int, action: DeletionAction):
     filter_dict = {
         "tenant_id": tenant_id,
-        "last_verified_at": {"$lt": cutoff},
-        "id_image_url": {"$ne": None},
+        "last_verification_date": {"$lt": cutoff},
+        "id_image_object_key": {"$ne": None},
         "deleted_at": None,
     }
     cursor = db.visitor_profiles.find(filter_dict, {"_id": 1})
     async for doc in cursor:
         await db.visitor_profiles.update_one(
             {"_id": doc["_id"]},
-            {"$set": {"id_image_url": None, "id_number": None}},
+            {"$set": {"id_image_object_key": None, "id_number": None}},
         )
         await create_deletion_log(DeletionLogCreate(
             tenant_id=tenant_id, entity_type="visitor_profile_id_image",
@@ -116,11 +116,11 @@ async def _cleanup_visitor_profiles(tenant_id: str, cutoff: int, action: Deletio
                 {"$set": {
                     "full_name": "ANONYMISED",
                     "phone": hashed_phone,
-                    "email": None,
+                    "email_address": None,
                     "company": None,
-                    "photo_url": None,
+                    "photo_object_key": None,
                     "id_number": None,
-                    "id_image_url": None,
+                    "id_image_object_key": None,
                     "deleted_at": int(time.time()),
                 }},
             )

@@ -67,7 +67,30 @@ async def auth_callback_user(request: Request):
 )
 @document_response(
     message="Users fetched successfully",
-    success_example=[],
+    success_example=[
+        {
+            "id": "64f1a2b3c4d5e6f7a8b9c0d3",
+            "firstName": "Alice",
+            "lastName": "Smith",
+            "loginType": "EMAIL",
+            "email": "alice.smith@example.com",
+            "accountStatus": "ACTIVE",
+            "permissionList": None,
+            "date_created": 1712510000,
+            "last_updated": 1712510800
+        }
+    ],
+    description="Retrieve a paginated list of all users in the system.",
+    summary="List all users",
+    include_meta=True,
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
+    },
 )
 async def list_users(start: int = 0, stop: int = 100):
     items = await retrieve_users(start=start, stop=stop)
@@ -77,7 +100,28 @@ async def list_users(start: int = 0, stop: int = 100):
 @router.get(
     "/me",
 )
-@document_response(message="User profile fetched successfully")
+@document_response(
+    message="User profile fetched successfully",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d3",
+        "firstName": "Alice",
+        "lastName": "Smith",
+        "loginType": "EMAIL",
+        "email": "alice.smith@example.com",
+        "accountStatus": "ACTIVE",
+        "permissionList": None,
+        "date_created": 1712510000,
+        "last_updated": 1712510800
+    },
+    description="Retrieve the authenticated user's profile information.",
+    summary="Get user profile",
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+    },
+)
 async def get_my_users(user: UserOut = Depends(check_user_account_status_and_permissions)):
     return user
 
@@ -85,7 +129,28 @@ async def get_my_users(user: UserOut = Depends(check_user_account_status_and_per
 @router.post("/signup")
 @document_response(
     message="User created successfully",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d4",
+        "firstName": "Bob",
+        "lastName": "Johnson",
+        "loginType": "EMAIL",
+        "email": "bob.johnson@example.com",
+        "accountStatus": "ACTIVE",
+        "permissionList": None,
+        "date_created": 1712511000,
+        "last_updated": 1712511000
+    },
     status_code=status.HTTP_201_CREATED,
+    description="Create a new user account with email and password.",
+    summary="Sign up new user",
+    response_codes={
+        409: "Conflict - email already exists",
+        422: "Validation error - invalid input data",
+    },
+    error_examples={
+        409: {"success": False, "message": "User with this email already exists", "code": "VALIDATION_FAILED"},
+        422: {"success": False, "message": "Email and password are required", "code": "VALIDATION_FAILED"},
+    },
 )
 async def signup_new_user(user_data: UserBase):
     new_user = UserCreate(**user_data.model_dump())
@@ -94,14 +159,64 @@ async def signup_new_user(user_data: UserBase):
 
 
 @router.post("/login")
-@document_response(message="Login successful")
+@document_response(
+    message="Login successful",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d3",
+        "firstName": "Alice",
+        "lastName": "Smith",
+        "loginType": "EMAIL",
+        "email": "alice.smith@example.com",
+        "accountStatus": "ACTIVE",
+        "permissionList": None,
+        "date_created": 1712510000,
+        "last_updated": 1712510800,
+        "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDMiLCJyb2xlIjoidXNlciJ9.def456",
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDMiLCJ0eXBlIjoicmVmcmVzaCJ9.uvw012"
+    },
+    description="Authenticate a user with email and password. Returns access and refresh tokens.",
+    summary="User login",
+    response_codes={
+        401: "Unauthorized - invalid credentials",
+        422: "Validation error - missing or invalid email/password",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid email or password", "code": "AUTH_INVALID_TOKEN"},
+        422: {"success": False, "message": "Email and password are required", "code": "VALIDATION_FAILED"},
+    },
+)
 async def login_user(user_data: UserBase):
     items = await authenticate_user(user_data=user_data)
     return items
 
 
 @router.post("/refresh")
-@document_response(message="Tokens refreshed successfully")
+@document_response(
+    message="Tokens refreshed successfully",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d3",
+        "firstName": "Alice",
+        "lastName": "Smith",
+        "loginType": "EMAIL",
+        "email": "alice.smith@example.com",
+        "accountStatus": "ACTIVE",
+        "permissionList": None,
+        "date_created": 1712510000,
+        "last_updated": 1712510800,
+        "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDMiLCJyb2xlIjoidXNlciJ9.def456",
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDMiLCJ0eXBlIjoicmVmcmVzaCJ9.uvw012"
+    },
+    description="Refresh expired access tokens using a valid refresh token. Expired access token must be provided in Authorization header.",
+    summary="Refresh user tokens",
+    response_codes={
+        401: "Unauthorized - invalid or mismatched tokens",
+        422: "Validation error - missing refresh token",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired refresh token", "code": "AUTH_INVALID_TOKEN"},
+        422: {"success": False, "message": "Refresh token is required", "code": "VALIDATION_FAILED"},
+    },
+)
 async def refresh_user_tokens(
     user_data: UserRefresh,
     principal: AuthPrincipal = Depends(verify_user_refresh_token),
@@ -114,7 +229,18 @@ async def refresh_user_tokens(
 
 
 @router.delete("/account")
-@document_response(message="User account deleted successfully")
+@document_response(
+    message="User account deleted successfully",
+    success_example={"deleted": True},
+    description="Delete the authenticated user's account. This action is irreversible.",
+    summary="Delete user account",
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+    },
+)
 async def delete_user_account(user: UserOut = Depends(check_user_account_status_and_permissions)):
     result = await remove_user(user_id=user.id) # type: ignore
     return result

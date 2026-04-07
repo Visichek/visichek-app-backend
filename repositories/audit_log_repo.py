@@ -14,7 +14,7 @@ async def create_audit_log(log_data: AuditLogCreate) -> AuditLogOut:
 async def get_audit_logs(filter_dict: dict = {}, start=0, stop=100) -> List[AuditLogOut]:
     cursor = (
         db.system_audit_logs.find(filter_dict)
-        .sort("timestamp", -1)
+        .sort("occurred_at", -1)
         .skip(start)
         .limit(stop - start)
     )

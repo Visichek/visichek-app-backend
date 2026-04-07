@@ -44,7 +44,7 @@ async def get_visitor_log(
     if search:
         filter_dict["$or"] = [
             {"visitor_name_snapshot": {"$regex": search, "$options": "i"}},
-            {"visitor_company_snapshot": {"$regex": search, "$options": "i"}},
+            {"company_snapshot": {"$regex": search, "$options": "i"}},
             {"host_name_snapshot": {"$regex": search, "$options": "i"}},
             {"purpose": {"$regex": search, "$options": "i"}},
         ]

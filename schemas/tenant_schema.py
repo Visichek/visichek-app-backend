@@ -4,16 +4,17 @@ import time
 
 
 class TenantBase(BaseModel):
-    name: str
+    company_name: str
     lawful_basis: LawfulBasis = LawfulBasis.LEGITIMATE_INTEREST
     notice_display_mode: NoticeDisplayMode = NoticeDisplayMode.PASSIVE
     retention_days: int = 1095  # 3 years default
-    default_deletion_action: DeletionAction = DeletionAction.ANONYMISE
-    dpo_email: Optional[str] = None
+    default_retention_action: DeletionAction = DeletionAction.ANONYMISE
+    dpo_contact_email: Optional[str] = None
     privacy_policy_url: Optional[str] = None
-    hosting_country: Optional[str] = None
+    country_of_hosting: Optional[str] = None
     cross_border_approved: bool = False
     is_active: bool = True
+    active_notice_version: Optional[str] = None
 
 
 class TenantCreate(TenantBase):
@@ -22,16 +23,17 @@ class TenantCreate(TenantBase):
 
 
 class TenantUpdate(BaseModel):
-    name: Optional[str] = None
+    company_name: Optional[str] = None
     lawful_basis: Optional[LawfulBasis] = None
     notice_display_mode: Optional[NoticeDisplayMode] = None
     retention_days: Optional[int] = None
-    default_deletion_action: Optional[DeletionAction] = None
-    dpo_email: Optional[str] = None
+    default_retention_action: Optional[DeletionAction] = None
+    dpo_contact_email: Optional[str] = None
     privacy_policy_url: Optional[str] = None
-    hosting_country: Optional[str] = None
+    country_of_hosting: Optional[str] = None
     cross_border_approved: Optional[bool] = None
     is_active: Optional[bool] = None
+    active_notice_version: Optional[str] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

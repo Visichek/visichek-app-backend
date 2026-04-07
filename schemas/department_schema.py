@@ -8,6 +8,7 @@ class DepartmentBase(BaseModel):
     code: str
     name: str
     is_active: bool = True
+    created_by: Optional[str] = None
 
 
 class DepartmentCreate(DepartmentBase):

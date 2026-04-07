@@ -12,7 +12,7 @@ async def log_action(
     tenant_id: str,
     actor_id: str,
     action: str,
-    actor_name: str | None = None,
+    actor_name_snapshot: str | None = None,
     target_entity: str | None = None,
     target_id: str | None = None,
     ip: str | None = None,
@@ -24,7 +24,7 @@ async def log_action(
         await create_audit_log(AuditLogCreate(
             tenant_id=tenant_id,
             actor_id=actor_id,
-            actor_name=actor_name,
+            actor_name_snapshot=actor_name_snapshot,
             action=action,
             target_entity=target_entity,
             target_id=target_id,

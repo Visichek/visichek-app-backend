@@ -37,20 +37,19 @@ async def seed():
     # 1. Create default tenant
     existing_tenant = await get_tenant({"name": "VisiChek Demo Company"})
     if existing_tenant:
+        assert existing_tenant.id is not None
         tenant_id = existing_tenant.id
         print(f"  Tenant already exists: {tenant_id}")
     else:
         tenant = await create_tenant(TenantCreate(
-            name="VisiChek Demo Company",
+            company_name="VisiChek Demo Company",
             lawful_basis=LawfulBasis.LEGITIMATE_INTEREST,
             notice_display_mode=NoticeDisplayMode.PASSIVE,
             retention_days=1095,
-            default_deletion_action=DeletionAction.ANONYMISE,
-            dpo_email="dpo@visicheck-demo.com",
             privacy_policy_url="https://visicheck-demo.com/privacy",
-            hosting_country="Nigeria",
             cross_border_approved=False,
         ))
+        assert tenant.id is not None
         tenant_id = tenant.id
         print(f"  Created tenant: {tenant_id}")
 
@@ -78,9 +77,9 @@ async def seed():
     if not existing_admin:
         await create_system_user(SystemUserCreate(
             tenant_id=tenant_id,
-            name="Super Admin",
+            full_name="Super Admin",
             email=admin_email,
-            password=admin_password,
+            password_hash=admin_password,
             role=SystemUserRole.SUPER_ADMIN,
             account_status=AccountStatus.ACTIVE,
         ))
@@ -103,7 +102,6 @@ async def seed():
                 "required by law. You may request access, correction, or deletion "
                 "of your data at any time."
             ),
-            full_policy_link="https://visicheck-demo.com/privacy",
             effective_from=int(time.time()),
             is_active=True,
         ))

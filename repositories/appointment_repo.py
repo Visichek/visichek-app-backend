@@ -31,7 +31,7 @@ async def get_appointments(filter_dict: dict = {}, start=0, stop=100) -> List[Ap
             filter_dict = {}
         cursor = (
             db.expected_appointments.find(filter_dict)
-            .sort("scheduled_time", -1)
+            .sort("scheduled_datetime", -1)
             .skip(start)
             .limit(stop - start)
         )

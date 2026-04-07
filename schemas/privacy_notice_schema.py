@@ -8,7 +8,7 @@ class PrivacyNoticeBase(BaseModel):
     version_code: str
     title: str
     summary: str
-    full_policy_link: Optional[str] = None
+    full_policy_url: Optional[str] = None
     effective_from: Optional[int] = None
     effective_to: Optional[int] = None
     is_active: bool = True
@@ -21,7 +21,7 @@ class PrivacyNoticeCreate(PrivacyNoticeBase):
 class PrivacyNoticeUpdate(BaseModel):
     title: Optional[str] = None
     summary: Optional[str] = None
-    full_policy_link: Optional[str] = None
+    full_policy_url: Optional[str] = None
     effective_to: Optional[int] = None
     is_active: Optional[bool] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))

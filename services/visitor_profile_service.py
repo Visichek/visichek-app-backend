@@ -23,7 +23,7 @@ async def get_or_create_visitor_profile(
     phone: str | None = None,
     full_name: str = "Unknown",
     company: str | None = None,
-    photo_url: str | None = None,
+    photo_object_key: str | None = None,
 ) -> VisitorProfileOut:
     """Find an existing visitor profile by phone, or create a new one."""
     if phone:
@@ -36,7 +36,7 @@ async def get_or_create_visitor_profile(
         phone=phone,
         full_name=full_name,
         company=company,
-        photo_url=photo_url,
+        photo_object_key=photo_object_key,
     )
     return await create_visitor_profile(profile)
 

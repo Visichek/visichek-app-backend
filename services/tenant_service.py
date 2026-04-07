@@ -13,9 +13,9 @@ from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut
 
 
 async def add_tenant(tenant_data: TenantCreate) -> TenantOut:
-    existing = await get_tenant(filter_dict={"name": tenant_data.name})
+    existing = await get_tenant(filter_dict={"company_name": tenant_data.company_name})
     if existing:
-        raise HTTPException(status_code=409, detail="Tenant with this name already exists")
+        raise HTTPException(status_code=409, detail="Tenant with this company name already exists")
     return await create_tenant(tenant_data)
 
 

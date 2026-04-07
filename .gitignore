@@ -6,10 +6,10 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+claude.md
 # C extensions
 *.so
-
+.claude
 # Distribution / packaging
 .Python
 build/
@@ -35,7 +35,7 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
-
+INTEGRATION_TESTS_SUMMARY.md
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
@@ -58,7 +58,7 @@ cover/
 # Translations
 *.mo
 *.pot
-
+TODO.md
 # Django stuff:
 *.log
 email_mount_errors.log

@@ -6,19 +6,20 @@ import time
 class UserSessionBase(BaseModel):
     user_id: str
     tenant_id: str
-    ip: Optional[str] = None
+    ip_address: Optional[str] = None
     device_signature: Optional[str] = None
     user_agent: Optional[str] = None
     mfa_passed: bool = False
+    expires_at: Optional[int] = None
 
 
 class UserSessionCreate(UserSessionBase):
     started_at: int = Field(default_factory=lambda: int(time.time()))
-    last_activity: int = Field(default_factory=lambda: int(time.time()))
+    last_activity_at: int = Field(default_factory=lambda: int(time.time()))
 
 
 class UserSessionUpdate(BaseModel):
-    last_activity: Optional[int] = None
+    last_activity_at: Optional[int] = None
     ended_at: Optional[int] = None
 
 
@@ -26,7 +27,7 @@ class UserSessionOut(UserSessionBase):
     id: Optional[str] = Field(default=None, alias="_id")
     started_at: Optional[int] = None
     ended_at: Optional[int] = None
-    last_activity: Optional[int] = None
+    last_activity_at: Optional[int] = None
 
     @model_validator(mode="before")
     @classmethod

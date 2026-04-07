@@ -60,7 +60,7 @@ async def check_in_visitor(
         phone=request.phone,
         full_name=request.full_name or "Unknown",
         company=request.company,
-        photo_url=request.photo_url,
+        photo_object_key=request.photo_object_key,
     )
 
     # 3. Get department and host info for snapshots
@@ -99,7 +99,7 @@ async def check_in_visitor(
     # 6. Determine verification status
     verification_status = VerificationStatus.UNVERIFIED
     verification_method = None
-    if request.check_in_method == CheckInMethod.ID_SCAN and request.id_image_url:
+    if request.check_in_method == CheckInMethod.ID_SCAN and request.id_image_object_key:
         verification_status = VerificationStatus.VERIFIED
         verification_method = VerificationMethod.ID_SCAN
     elif request.check_in_method == CheckInMethod.QR:
@@ -119,15 +119,15 @@ async def check_in_visitor(
         status=VisitStatus.CHECKED_IN,
         purpose=request.purpose,
         visitor_name_snapshot=profile.full_name,
-        visitor_company_snapshot=profile.company,
+        company_snapshot=profile.company,
         host_name_snapshot=host_name,
         department_name_snapshot=department.name,
         receptionist_name_snapshot=receptionist_name,
-        notice_displayed=notice is not None,
+        consent_notice_displayed=notice is not None,
         consent_granted=consent_granted,
         consent_method=consent_method,
         consent_timestamp=consent_timestamp_val,
-        consent_captured_by=receptionist_id if consent_granted else None,
+        consent_captured_by_user_id=receptionist_id if consent_granted else None,
         lawful_basis_at_time=lawful_basis,
     )
     session = await create_visit_session(session_data)
@@ -159,7 +159,7 @@ async def check_in_visitor(
     # 10. Update visitor profile last visit date
     await update_visitor_profile(
         {"_id": ObjectId(profile.id)},
-        VisitorProfileUpdate(last_verified_at=int(time.time())),
+        VisitorProfileUpdate(last_verification_date=int(time.time())),
     )
 
     return {
