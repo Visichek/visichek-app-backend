@@ -63,6 +63,7 @@ class TenantCapLimit(BaseModel):
     """Hard caps on entity counts within the tenant."""
     max_system_users: Optional[int] = None
     max_departments: Optional[int] = None
+    max_branches: Optional[int] = None
     max_visitors_per_month: Optional[int] = None
     max_appointments_per_month: Optional[int] = None
 

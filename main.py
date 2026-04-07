@@ -336,6 +336,8 @@ from api.v1.plan_route import router as v1_plan_route_router
 from api.v1.subscription_route import router as v1_subscription_route_router
 from api.v1.discount_route import router as v1_discount_route_router
 from api.v1.usage_route import router as v1_usage_route_router
+from api.v1.admin_dashboard_route import router as v1_admin_dashboard_route_router
+from api.v1.branch_route import router as v1_branch_route_router
 
 app.include_router(v1_admin_route_router, prefix='/v1')
 app.include_router(v1_documents_route_router, prefix='/v1')
@@ -360,6 +362,8 @@ app.include_router(v1_plan_route_router, prefix='/v1')
 app.include_router(v1_subscription_route_router, prefix='/v1')
 app.include_router(v1_discount_route_router, prefix='/v1')
 app.include_router(v1_usage_route_router, prefix='/v1')
+app.include_router(v1_admin_dashboard_route_router, prefix='/v1')
+app.include_router(v1_branch_route_router, prefix='/v1')
 # --- auto-routes-end ---
 
 apply_response_documentation(app)

@@ -75,6 +75,7 @@ PATH_TO_COLLECTION = {
     "audit": "audit",
     "incidents": "incidents",
     "tenants": "tenants",
+    "branches": "branches",
 }
 
 

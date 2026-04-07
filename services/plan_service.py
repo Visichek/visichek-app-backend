@@ -62,6 +62,8 @@ async def retrieve_plans(
         filter_dict["tier"] = tier_filter.value
     if public_only:
         filter_dict["is_public"] = True
+        # Archived plans should never appear in public listings
+        filter_dict["status"] = {"$ne": PlanStatus.ARCHIVED.value}
     return await get_plans(filter_dict, start=start, stop=stop)
 
 
@@ -72,10 +74,14 @@ async def update_plan_by_id(plan_id: str, plan_data: PlanUpdate) -> Optional[Pla
 
 
 async def archive_plan(plan_id: str) -> Optional[PlanOut]:
-    """Soft-delete: set status to archived. Existing subscriptions still work."""
+    """Soft-delete: set status to archived and hide from public.
+
+    Existing subscriptions still work until they expire — only new
+    subscriptions to this plan are blocked (handled by subscribe_tenant).
+    """
     return await update_plan_by_id(
         plan_id,
-        PlanUpdate(status=PlanStatus.ARCHIVED),
+        PlanUpdate(status=PlanStatus.ARCHIVED, is_public=False),
     )
 
 
