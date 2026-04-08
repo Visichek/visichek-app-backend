@@ -11,6 +11,15 @@ Two parallel user systems:
 - **Application Admins** (`/v1/admins/`) — Platform operators who manage tenants, plans, subscriptions, and discounts
 - **Tenant Users** (`/v1/system-users/`) — Users within a tenant with 6 roles: `super_admin`, `dept_admin`, `receptionist`, `auditor`, `security_officer`, `dpo`
 
+## Tenant And System User Creation
+
+Tenant creation happens in two ways:
+
+- `POST /v1/tenants/` lets an application admin create only the tenant record
+- `POST /v1/admins/tenants/bootstrap` creates the tenant and its first tenant user (`super_admin`) together; if creating the `super_admin` fails, the tenant is rolled back
+
+After a tenant has a `super_admin`, that user can create the rest of the tenant's system users through `/v1/system-users/signup`. System users always belong to a specific `tenant_id`, and permissions are assigned automatically from their role.
+
 ## Tech Stack
 
 - **Framework**: FastAPI + FasterAPI CLI scaffolding
