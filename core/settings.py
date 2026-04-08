@@ -60,6 +60,8 @@ class Settings:
     backup_enabled: bool = False
     backup_s3_bucket: str | None = None
     backup_retention_days: int = 30
+    # Session
+    session_inactivity_timeout_minutes: int = 15
 
     @property
     def is_production(self) -> bool:
@@ -117,5 +119,6 @@ def get_settings() -> Settings:
         backup_enabled=os.getenv("BACKUP_ENABLED", "false").lower() in {"1", "true", "yes"},
         backup_s3_bucket=os.getenv("BACKUP_S3_BUCKET"),
         backup_retention_days=int(os.getenv("BACKUP_RETENTION_DAYS", "30")),
+        session_inactivity_timeout_minutes=int(os.getenv("SESSION_INACTIVITY_TIMEOUT_MINUTES", "15")),
     )
     return settings

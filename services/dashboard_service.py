@@ -26,6 +26,8 @@ async def get_visitor_log(
     search: str = None,
     date_from: int = None,
     date_to: int = None,
+    host_id: str = None,
+    verification_status: str = None,
     start: int = 0,
     stop: int = 100,
 ) -> list:
@@ -41,6 +43,10 @@ async def get_visitor_log(
         if date_to:
             time_filter["$lte"] = date_to
         filter_dict["check_in_time"] = time_filter
+    if host_id:
+        filter_dict["host_id"] = host_id
+    if verification_status:
+        filter_dict["verification_status"] = verification_status
     if search:
         filter_dict["$or"] = [
             {"visitor_name_snapshot": {"$regex": search, "$options": "i"}},

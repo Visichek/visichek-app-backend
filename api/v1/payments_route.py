@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from core.errors import auth_permission_denied, resource_not_found
 from core.response_envelope import document_response

@@ -15,6 +15,8 @@ class VisitorProfileBase(BaseModel):
     id_image_object_key: Optional[str] = None
     profiling_preference: ProfilingPreference = ProfilingPreference.ALLOWED
     last_verification_date: Optional[int] = None
+    verification_status: Optional[str] = None
+    verification_method: Optional[str] = None
 
 
 class VisitorProfileCreate(VisitorProfileBase):
@@ -33,6 +35,10 @@ class VisitorProfileUpdate(BaseModel):
     id_image_object_key: Optional[str] = None
     profiling_preference: Optional[ProfilingPreference] = None
     last_verification_date: Optional[int] = None
+    verification_status: Optional[str] = None
+    verification_method: Optional[str] = None
+    total_visits: Optional[int] = None
+    last_visit_date: Optional[int] = None
     deleted_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
@@ -44,6 +50,8 @@ class VisitorProfileOut(VisitorProfileBase):
     deleted_at: Optional[int] = None
     total_visits: Optional[int] = 0
     last_visit_date: Optional[int] = None
+    verification_status: Optional[str] = None
+    verification_method: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod

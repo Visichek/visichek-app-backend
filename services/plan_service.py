@@ -23,6 +23,7 @@ from schemas.plan_schema import (
     CrudLimit,
     RetrievalQuota,
 )
+from services.audit_service import record_audit_event
 
 
 async def add_plan(plan_data: PlanCreate) -> PlanOut:
@@ -34,7 +35,28 @@ async def add_plan(plan_data: PlanCreate) -> PlanOut:
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Plan with name '{plan_data.name}' already exists",
         )
-    return await create_plan(plan_data)
+    plan = await create_plan(plan_data)
+
+    # Record audit event (fire-and-forget)
+    try:
+        await record_audit_event(
+            actor_id="system",
+            actor_role="admin",
+            action="plan.created",
+            resource_type="plan",
+            resource_id=str(plan.id),
+            details={
+                "name": plan_data.name,
+                "tier": plan_data.tier.value if hasattr(plan_data.tier, 'value') else plan_data.tier,
+                "status": plan.status.value if hasattr(plan.status, 'value') else plan.status,
+                "base_price_monthly": plan_data.base_price_monthly,
+                "base_price_yearly": plan_data.base_price_yearly,
+            },
+        )
+    except Exception:
+        pass
+
+    return plan
 
 
 async def retrieve_plan_by_id(plan_id: str) -> Optional[PlanOut]:
@@ -79,10 +101,29 @@ async def archive_plan(plan_id: str) -> Optional[PlanOut]:
     Existing subscriptions still work until they expire — only new
     subscriptions to this plan are blocked (handled by subscribe_tenant).
     """
-    return await update_plan_by_id(
+    archived = await update_plan_by_id(
         plan_id,
         PlanUpdate(status=PlanStatus.ARCHIVED, is_public=False),
     )
+
+    # Record audit event (fire-and-forget)
+    if archived:
+        try:
+            await record_audit_event(
+                actor_id="system",
+                actor_role="admin",
+                action="plan.archived",
+                resource_type="plan",
+                resource_id=plan_id,
+                details={
+                    "name": archived.name,
+                    "tier": archived.tier.value if hasattr(archived.tier, 'value') else archived.tier,
+                },
+            )
+        except Exception:
+            pass
+
+    return archived
 
 
 async def activate_plan(plan_id: str) -> Optional[PlanOut]:
@@ -95,10 +136,29 @@ async def activate_plan(plan_id: str) -> Optional[PlanOut]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot activate an archived plan. Create a new plan instead.",
         )
-    return await update_plan_by_id(
+    activated = await update_plan_by_id(
         plan_id,
         PlanUpdate(status=PlanStatus.ACTIVE),
     )
+
+    # Record audit event (fire-and-forget)
+    if activated:
+        try:
+            await record_audit_event(
+                actor_id="system",
+                actor_role="admin",
+                action="plan.activated",
+                resource_type="plan",
+                resource_id=plan_id,
+                details={
+                    "name": activated.name,
+                    "tier": activated.tier.value if hasattr(activated.tier, 'value') else activated.tier,
+                },
+            )
+        except Exception:
+            pass
+
+    return activated
 
 
 async def clone_plan(source_plan_id: str, new_name: str, new_display_name: str) -> PlanOut:
@@ -165,4 +225,21 @@ async def remove_plan(plan_id: str) -> bool:
             detail="Cannot delete plan with existing subscriptions",
         )
     await delete_plan({"_id": ObjectId(plan_id)})
+
+    # Record audit event (fire-and-forget)
+    try:
+        await record_audit_event(
+            actor_id="system",
+            actor_role="admin",
+            action="plan.deleted",
+            resource_type="plan",
+            resource_id=plan_id,
+            details={
+                "name": plan.name,
+                "tier": plan.tier.value if hasattr(plan.tier, 'value') else plan.tier,
+            },
+        )
+    except Exception:
+        pass
+
     return True

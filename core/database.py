@@ -136,6 +136,9 @@ if DB_TYPE == "sqlite":
         def __getattr__(self, table_name):
             return DBFunctions(table_name)
 
+        def __getitem__(self, table_name):
+            return DBFunctions(table_name)
+
     db = DBWrapper()
 
 elif DB_TYPE == "mongodb":

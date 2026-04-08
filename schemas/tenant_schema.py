@@ -15,6 +15,7 @@ class TenantBase(BaseModel):
     cross_border_approved: bool = False
     is_active: bool = True
     active_notice_version: Optional[str] = None
+    enable_repeat_visitor_recognition: bool = True  # Profiling preference control
 
     # Payment provider references
     stripe_customer_id: Optional[str] = None
@@ -39,6 +40,7 @@ class TenantUpdate(BaseModel):
     cross_border_approved: Optional[bool] = None
     is_active: Optional[bool] = None
     active_notice_version: Optional[str] = None
+    enable_repeat_visitor_recognition: Optional[bool] = None
     stripe_customer_id: Optional[str] = None
     flutterwave_customer_id: Optional[str] = None
     default_payment_provider: Optional[str] = None

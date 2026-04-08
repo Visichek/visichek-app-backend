@@ -39,6 +39,9 @@ class VisitSessionBase(BaseModel):
     badge_generation_time: Optional[int] = None
     badge_expiry: Optional[int] = None
     badge_pdf_object_key: Optional[str] = None
+    # Denial fields
+    denial_reason: Optional[str] = None
+    denied_by: Optional[str] = None
 
 
 class VisitSessionCreate(VisitSessionBase):
@@ -63,6 +66,17 @@ class VisitSessionUpdate(BaseModel):
     badge_generation_time: Optional[int] = None
     badge_expiry: Optional[int] = None
     badge_pdf_object_key: Optional[str] = None
+    denial_reason: Optional[str] = None
+    denied_by: Optional[str] = None
+    # Fields for resuming draft registration
+    purpose: Optional[str] = None
+    host_id: Optional[str] = None
+    visitor_name_snapshot: Optional[str] = None
+    company_snapshot: Optional[str] = None
+    host_name_snapshot: Optional[str] = None
+    department_name_snapshot: Optional[str] = None
+    receptionist_name_snapshot: Optional[str] = None
+    check_in_method: Optional[CheckInMethod] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
@@ -93,16 +107,25 @@ class VisitSessionOut(VisitSessionBase):
 
 # Request schemas for check-in/check-out endpoints
 class CheckInRequest(BaseModel):
-    phone: Optional[str] = None
-    full_name: Optional[str] = None
+    phone: str
+    full_name: str
     company: Optional[str] = None
     department_id: str
     host_id: Optional[str] = None
     purpose: Optional[str] = None
+    appointment_id: Optional[str] = None
     check_in_method: CheckInMethod = CheckInMethod.MANUAL
     photo_object_key: Optional[str] = None
     id_image_object_key: Optional[str] = None
     consent_granted: Optional[bool] = None
+
+
+class ConfirmCheckInRequest(BaseModel):
+    badge_format: Optional[BadgeFormat] = BadgeFormat.A7
+
+
+class DenyVisitorRequest(BaseModel):
+    reason: str
 
 
 class CheckOutRequest(BaseModel):

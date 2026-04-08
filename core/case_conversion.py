@@ -119,9 +119,12 @@ class CaseConversionMiddleware(BaseHTTPMiddleware):
         converted = _convert_keys(data, converter)
         new_body = json.dumps(converted, ensure_ascii=False).encode("utf-8")
 
+        resp_headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+        resp_headers["content-length"] = str(len(new_body))
+
         return Response(
             content=new_body,
             status_code=response.status_code,
-            headers=dict(response.headers),
+            headers=resp_headers,
             media_type="application/json",
         )

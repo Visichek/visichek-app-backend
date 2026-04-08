@@ -15,10 +15,18 @@ class IncidentLogBase(BaseModel):
     ndpc_notified: bool = False
     ndpc_notified_at: Optional[int] = None
     detection_time: Optional[int] = None
+    notification_deadline: Optional[int] = None
+    notification_sent_at: Optional[int] = None
 
 
 class IncidentLogCreate(IncidentLogBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
+
+    @model_validator(mode='after')
+    def set_notification_deadline(self):
+        if self.notification_deadline is None:
+            self.notification_deadline = self.date_created + (72 * 3600)
+        return self
 
 
 class IncidentLogUpdate(BaseModel):
@@ -29,6 +37,8 @@ class IncidentLogUpdate(BaseModel):
     mitigation_steps: Optional[str] = None
     ndpc_notified: Optional[bool] = None
     ndpc_notified_at: Optional[int] = None
+    notification_deadline: Optional[int] = None
+    notification_sent_at: Optional[int] = None
     resolved_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
@@ -36,6 +46,8 @@ class IncidentLogUpdate(BaseModel):
 class IncidentLogOut(IncidentLogBase):
     id: Optional[str] = Field(default=None, alias="_id")
     date_created: Optional[int] = None
+    notification_deadline: Optional[int] = None
+    notification_sent_at: Optional[int] = None
     resolved_at: Optional[int] = None
 
     @model_validator(mode="before")

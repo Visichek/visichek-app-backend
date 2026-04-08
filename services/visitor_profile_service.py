@@ -6,6 +6,8 @@ from repositories.visitor_profile_repo import (
     create_visitor_profile,
     get_visitor_profile,
     get_visitor_profile_by_phone,
+    get_visitor_profile_by_email,
+    get_visitor_profile_by_id_number,
     get_visitor_profiles,
     update_visitor_profile,
     soft_delete_visitor_profile,
@@ -24,10 +26,23 @@ async def get_or_create_visitor_profile(
     full_name: str = "Unknown",
     company: str | None = None,
     photo_object_key: str | None = None,
+    email: str | None = None,
+    id_number: str | None = None,
 ) -> VisitorProfileOut:
-    """Find an existing visitor profile by phone, or create a new one."""
+    """Find an existing visitor profile by phone, email, or id_number, or create a new one."""
+    # Try phone first
     if phone:
         existing = await get_visitor_profile_by_phone(tenant_id=tenant_id, phone=phone)
+        if existing:
+            return existing
+    # Try email next
+    if email:
+        existing = await get_visitor_profile_by_email(tenant_id=tenant_id, email=email)
+        if existing:
+            return existing
+    # Try id_number last
+    if id_number:
+        existing = await get_visitor_profile_by_id_number(tenant_id=tenant_id, id_number=id_number)
         if existing:
             return existing
 
@@ -37,6 +52,8 @@ async def get_or_create_visitor_profile(
         full_name=full_name,
         company=company,
         photo_object_key=photo_object_key,
+        email_address=email,
+        id_number=id_number,
     )
     return await create_visitor_profile(profile)
 

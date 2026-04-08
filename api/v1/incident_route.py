@@ -5,7 +5,7 @@ from schemas.incident_log_schema import IncidentLogCreate, IncidentLogUpdate
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.incident_service import (
-    add_incident, retrieve_incident_by_id, retrieve_incidents, update_incident_by_id,
+    add_incident, retrieve_incident_by_id, retrieve_incidents, update_incident_by_id, retrieve_incidents_approaching_deadline,
 )
 
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
@@ -172,3 +172,17 @@ async def update_incident(
     return await update_incident_by_id(
         incident_id=incident_id, tenant_id=principal.tenant_id or "", log_data=log_data,
     )
+
+
+@router.get("/approaching-deadline")
+@document_response(
+    message="Incidents approaching notification deadline fetched",
+    description="List incidents where the NDPC notification deadline is within 24 hours and notification has not been sent.",
+    summary="List incidents approaching 72h NDPC notification deadline",
+    include_meta=True,
+)
+async def get_approaching_deadline_incidents(
+    start: Annotated[int, Query(ge=0)] = 0, stop: Annotated[int, Query(gt=0)] = 100,
+    principal: AuthPrincipal = Depends(_security_roles),
+):
+    return await retrieve_incidents_approaching_deadline(tenant_id=principal.tenant_id or "", start=start, stop=stop)

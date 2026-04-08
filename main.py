@@ -462,6 +462,8 @@ from api.v1.admin_dashboard_route import router as v1_admin_dashboard_route_rout
 from api.v1.branch_route import router as v1_branch_route_router
 from api.v1.branding_route import router as v1_branding_route_router
 from api.v1.invoice_route import router as v1_invoice_route_router
+from api.v1.public_registration_route import router as v1_public_registration_route_router
+from api.v1.public_rights_route import router as v1_public_rights_route_router
 
 app.include_router(v1_admin_route_router, prefix='/v1')
 app.include_router(v1_documents_route_router, prefix='/v1')
@@ -490,6 +492,8 @@ app.include_router(v1_admin_dashboard_route_router, prefix='/v1')
 app.include_router(v1_branch_route_router, prefix='/v1')
 app.include_router(v1_branding_route_router, prefix='/v1')
 app.include_router(v1_invoice_route_router, prefix='/v1')
+app.include_router(v1_public_registration_route_router, prefix='/v1')
+app.include_router(v1_public_rights_route_router, prefix='/v1')
 # --- auto-routes-end ---
 
 apply_response_documentation(app)

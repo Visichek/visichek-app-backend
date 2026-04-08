@@ -92,6 +92,8 @@ async def dashboard_visitor_log(
     search: str = None,
     date_from: int = None,
     date_to: int = None,
+    host_id: str = None,
+    verification_status: str = None,
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(_admin_roles),
@@ -104,6 +106,8 @@ async def dashboard_visitor_log(
         search=search,
         date_from=date_from,
         date_to=date_to,
+        host_id=host_id,
+        verification_status=verification_status,
         start=start,
         stop=stop,
     )

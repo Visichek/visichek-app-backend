@@ -177,3 +177,84 @@ async def invite_admin(
     if principal.tenant_id:
         user_data.tenant_id = principal.tenant_id
     return await add_system_user(user_data=user_data)
+
+
+@router.post("/registration-qr")
+@document_response(
+    message="Registration QR code generated",
+    status_code=status.HTTP_201_CREATED,
+    description="Generate a signed URL/QR code for visitor self-registration at this tenant. Optionally scoped to a department or branch.",
+    summary="Generate tenant registration QR code",
+    success_example={
+        "registration_url": "/public/register/507f1f77bcf86cd799439011",
+        "signed_token": "base64encodedtoken...",
+        "qr_data": "base64encodedtoken...",
+    },
+)
+async def generate_registration_qr(
+    department_id: str | None = None,
+    branch_id: str | None = None,
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+):
+    from services.visit_session_service import generate_tenant_registration_qr
+    tenant_id = principal.tenant_id
+    return await generate_tenant_registration_qr(tenant_id, department_id, branch_id)
+
+
+@router.get("/visitor-log")
+@document_response(
+    message="Company-wide visitor log retrieved",
+    description="Retrieve visitor logs across all departments for the tenant. Super admin only.",
+    summary="Company-wide visitor logs",
+    include_meta=True,
+)
+async def get_company_visitor_log(
+    start_date: Annotated[int | None, Query(description="Unix timestamp for start date filter")] = None,
+    end_date: Annotated[int | None, Query(description="Unix timestamp for end date filter")] = None,
+    status_filter: Annotated[str | None, Query(description="Filter by visit status")] = None,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(gt=0)] = 100,
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+):
+    tenant_id = principal.tenant_id
+    from repositories.visit_session_repo import get_visit_sessions, count_visit_sessions
+    # Build filter
+    filter_dict = {"tenant_id": tenant_id}
+    if start_date:
+        filter_dict.setdefault("check_in_time", {})
+        filter_dict["check_in_time"]["$gte"] = start_date
+    if end_date:
+        filter_dict.setdefault("check_in_time", {})
+        filter_dict["check_in_time"]["$lte"] = end_date
+    if status_filter:
+        filter_dict["status"] = status_filter
+    sessions = await get_visit_sessions(filter_dict=filter_dict, start=skip, stop=skip + limit)
+    total = await count_visit_sessions(filter_dict)
+    return {"items": sessions, "total": total, "skip": skip, "limit": limit}
+
+
+@router.patch("/admins/{user_id}/department")
+@document_response(
+    message="Department assignment updated",
+    description="Assign a system user to a department.",
+    summary="Assign admin to department",
+)
+async def assign_admin_department(
+    user_id: str,
+    department_id: str,
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+):
+    from bson import ObjectId
+    from fastapi import HTTPException
+    from repositories.system_user_repo import update_system_user
+    from repositories.department_repo import get_department
+    from schemas.system_user_schema import SystemUserUpdate
+    tenant_id = principal.tenant_id
+    # Validate department belongs to tenant
+    dept = await get_department({"_id": ObjectId(department_id), "tenant_id": tenant_id})
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found in this tenant")
+    result = await update_system_user({"_id": ObjectId(user_id), "tenant_id": tenant_id}, SystemUserUpdate(department_id=department_id))
+    if not result:
+        raise HTTPException(status_code=404, detail="System user not found")
+    return result

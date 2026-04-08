@@ -63,8 +63,30 @@ def generate_badge_pdf(
     except ImportError:
         logger.warning("qrcode/Pillow not installed; skipping QR code on badge")
 
+    # Visitor photo
+    if visitor_photo_bytes:
+        try:
+            from reportlab.lib.utils import ImageReader
+            photo_buffer = io.BytesIO(visitor_photo_bytes)
+            photo_size = 20 * mm
+            c.drawImage(
+                ImageReader(photo_buffer),
+                margin,
+                height - margin - 15 - photo_size,
+                photo_size,
+                photo_size,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+            # Adjust text starting position if photo is rendered
+            y = height - margin - 15 - photo_size - 5
+        except Exception:
+            logger.warning("Failed to render visitor photo on badge")
+            y = height - margin - 30
+    else:
+        y = height - margin - 30
+
     # Visitor info
-    y = height - margin - 30
     c.setFont("Helvetica-Bold", 9)
     c.drawString(margin, y, visitor_name or "N/A")
     y -= 12

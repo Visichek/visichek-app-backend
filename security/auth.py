@@ -42,6 +42,7 @@ async def _resolve_principal(
         jwt_token=credentials.credentials,
         allow_expired=allow_expired,
         tenant_id=getattr(token_record, "tenant_id", None),
+        department_id=getattr(token_record, "department_id", None),
     )
 
 

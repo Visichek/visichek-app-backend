@@ -37,6 +37,14 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
             detail="Tenant with this company name already exists",
         )
 
+    # 1B. Cross-border transfer validation
+    if hasattr(payload, 'country_of_hosting') and payload.country_of_hosting:
+        if payload.country_of_hosting.lower() != "nigeria" and not getattr(payload, 'cross_border_approved', False):
+            raise HTTPException(
+                status_code=400,
+                detail="Cross-border data transfer requires approval. Set cross_border_approved=true or use hosting within Nigeria.",
+            )
+
     # 2. Create the tenant
     tenant_data = TenantCreate(
         company_name=payload.company_name,
@@ -88,6 +96,15 @@ async def add_tenant(tenant_data: TenantCreate) -> TenantOut:
     existing = await get_tenant(filter_dict={"company_name": tenant_data.company_name})
     if existing:
         raise HTTPException(status_code=409, detail="Tenant with this company name already exists")
+
+    # Cross-border transfer validation
+    if hasattr(tenant_data, 'country_of_hosting') and tenant_data.country_of_hosting:
+        if tenant_data.country_of_hosting.lower() != "nigeria" and not getattr(tenant_data, 'cross_border_approved', False):
+            raise HTTPException(
+                status_code=400,
+                detail="Cross-border data transfer requires approval. Set cross_border_approved=true or use hosting within Nigeria.",
+            )
+
     return await create_tenant(tenant_data)
 
 

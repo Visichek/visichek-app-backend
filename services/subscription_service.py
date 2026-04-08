@@ -24,6 +24,7 @@ from schemas.subscription_schema import (
 )
 from schemas.plan_schema import PlanOut, PlanStatus
 from schemas.discount_schema import DiscountOut, DiscountScope, DiscountStatus, DiscountType
+from services.audit_service import record_audit_event
 
 
 def _calculate_period_end(start: int, cycle: BillingCycle) -> int:
@@ -186,6 +187,26 @@ async def subscribe_tenant(
     )
     sub = await create_subscription(sub_data)
 
+    # Record audit event (fire-and-forget)
+    try:
+        await record_audit_event(
+            actor_id="system",
+            actor_role="admin",
+            action="subscription.created",
+            resource_type="subscription",
+            resource_id=str(sub.id),
+            tenant_id=tenant_id,
+            details={
+                "plan_id": plan_id,
+                "billing_cycle": billing_cycle.value,
+                "effective_price": effective_price,
+                "trial_days": trial_days,
+                "applied_discount_ids": applied_ids,
+            },
+        )
+    except Exception:
+        pass  # Fire-and-forget: don't block subscription creation if audit fails
+
     # Invalidate cached plan data for this tenant
     from services.plan_cache_service import invalidate_tenant_plan_cache
     await invalidate_tenant_plan_cache(tenant_id)
@@ -268,6 +289,25 @@ async def change_plan(
         update_data,
     )
 
+    # Record audit event (fire-and-forget)
+    try:
+        await record_audit_event(
+            actor_id="system",
+            actor_role="admin",
+            action="subscription.plan_changed",
+            resource_type="subscription",
+            resource_id=str(current.id),
+            tenant_id=tenant_id,
+            details={
+                "old_plan_id": str(current.plan_id),
+                "new_plan_id": new_plan_id,
+                "billing_cycle": cycle.value,
+                "effective_price": effective_price,
+            },
+        )
+    except Exception:
+        pass
+
     # Invalidate cache
     from services.plan_cache_service import invalidate_tenant_plan_cache
     await invalidate_tenant_plan_cache(tenant_id)
@@ -301,6 +341,24 @@ async def cancel_subscription(
         update_data,
     )
 
+    # Record audit event (fire-and-forget)
+    try:
+        await record_audit_event(
+            actor_id="system",
+            actor_role="admin",
+            action="subscription.cancelled",
+            resource_type="subscription",
+            resource_id=str(current.id),
+            tenant_id=tenant_id,
+            details={
+                "reason": reason,
+                "immediate": immediate,
+                "plan_id": str(current.plan_id),
+            },
+        )
+    except Exception:
+        pass
+
     from services.plan_cache_service import invalidate_tenant_plan_cache
     await invalidate_tenant_plan_cache(tenant_id)
 
@@ -332,6 +390,25 @@ async def update_subscription_overrides(
         update_data.tenant_cap_overrides = tenant_cap_overrides
 
     updated = await update_subscription({"_id": ObjectId(sub_id)}, update_data)
+
+    # Record audit event (fire-and-forget)
+    try:
+        await record_audit_event(
+            actor_id="system",
+            actor_role="admin",
+            action="subscription.overrides_updated",
+            resource_type="subscription",
+            resource_id=str(sub_id),
+            tenant_id=sub.tenant_id,
+            details={
+                "feature_overrides_updated": feature_overrides is not None,
+                "crud_limit_overrides_updated": crud_limit_overrides is not None,
+                "retrieval_quota_overrides_updated": retrieval_quota_overrides is not None,
+                "tenant_cap_overrides_updated": tenant_cap_overrides is not None,
+            },
+        )
+    except Exception:
+        pass
 
     from services.plan_cache_service import invalidate_tenant_plan_cache
     await invalidate_tenant_plan_cache(sub.tenant_id)

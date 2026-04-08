@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import time
 from pymongo import ReturnDocument
 from core.database import db
 from typing import List, Optional
@@ -29,3 +32,17 @@ async def update_incident_log(filter_dict: dict, log_data: IncidentLogUpdate) ->
         filter_dict, {"$set": update_dict}, return_document=ReturnDocument.AFTER,
     )
     return IncidentLogOut(**result)
+
+
+async def get_incidents_approaching_deadline(tenant_id: str, start=0, stop=100) -> List[IncidentLogOut]:
+    """Get incidents where notification deadline is within 24 hours and notification has not been sent."""
+    now = int(time.time())
+    deadline_in_24h = now + (24 * 3600)
+
+    filter_dict = {
+        "tenant_id": tenant_id,
+        "notification_deadline": {"$lte": deadline_in_24h, "$gte": now},
+        "notification_sent_at": None,
+    }
+    cursor = db.incident_logs.find(filter_dict).sort("notification_deadline", 1).skip(start).limit(stop - start)
+    return [IncidentLogOut(**doc) async for doc in cursor]

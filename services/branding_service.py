@@ -11,6 +11,7 @@ from repositories.branding_repo import (
     delete_branding,
 )
 from schemas.branding_schema import BrandingCreate, BrandingUpdate, BrandingOut, BrandingPublicOut
+from services.audit_service import record_audit_event
 
 
 async def _resolve_logo_urls(branding: BrandingOut) -> BrandingOut:
@@ -47,6 +48,28 @@ async def upsert_branding(tenant_id: str, branding_data: BrandingUpdate) -> Bran
         )
         if not result:
             raise HTTPException(status_code=500, detail="Failed to update branding")
+
+        # Record audit event (fire-and-forget)
+        try:
+            await record_audit_event(
+                actor_id="system",
+                actor_role="admin",
+                action="branding.updated",
+                resource_type="branding",
+                resource_id=tenant_id,
+                tenant_id=tenant_id,
+                details={
+                    "company_display_name": branding_data.company_display_name,
+                    "primary_color": branding_data.primary_color,
+                    "secondary_color": branding_data.secondary_color,
+                    "accent_color": branding_data.accent_color,
+                    "logo_updated": branding_data.logo_object_key is not None,
+                    "favicon_updated": branding_data.favicon_object_key is not None,
+                },
+            )
+        except Exception:
+            pass
+
         return await _resolve_logo_urls(result)
     else:
         # First-time creation — build a full BrandingCreate
@@ -54,6 +77,26 @@ async def upsert_branding(tenant_id: str, branding_data: BrandingUpdate) -> Bran
         create_fields["tenant_id"] = tenant_id
         create_data = BrandingCreate(**create_fields)
         new_branding = await create_branding(create_data)
+
+        # Record audit event (fire-and-forget)
+        try:
+            await record_audit_event(
+                actor_id="system",
+                actor_role="admin",
+                action="branding.created",
+                resource_type="branding",
+                resource_id=tenant_id,
+                tenant_id=tenant_id,
+                details={
+                    "company_display_name": branding_data.company_display_name,
+                    "primary_color": branding_data.primary_color,
+                    "secondary_color": branding_data.secondary_color,
+                    "accent_color": branding_data.accent_color,
+                },
+            )
+        except Exception:
+            pass
+
         return await _resolve_logo_urls(new_branding)
 
 
@@ -104,3 +147,17 @@ async def remove_branding(tenant_id: str) -> None:
     result = await delete_branding({"tenant_id": tenant_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Branding not found for this tenant")
+
+    # Record audit event (fire-and-forget)
+    try:
+        await record_audit_event(
+            actor_id="system",
+            actor_role="admin",
+            action="branding.deleted",
+            resource_type="branding",
+            resource_id=tenant_id,
+            tenant_id=tenant_id,
+            details={},
+        )
+    except Exception:
+        pass

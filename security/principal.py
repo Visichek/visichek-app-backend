@@ -38,6 +38,7 @@ class AuthPrincipal(BaseModel):
     jwt_token: str
     allow_expired: bool = False
     tenant_id: Optional[str] = None
+    department_id: Optional[str] = None
 
     @property
     def is_admin(self) -> bool:

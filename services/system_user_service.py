@@ -29,6 +29,7 @@ from security.hash import check_password
 from services.auth_helpers import issue_tokens_for_role
 from core.email_utils import normalize_email
 from config.role_permissions import get_default_permissions_for_role
+from services.audit_service import record_audit_event
 
 
 async def _check_email_uniqueness(email: str, role: str, tenant_id: str) -> None:
@@ -83,6 +84,26 @@ async def add_system_user(user_data: SystemUserCreate) -> SystemUserOut:
     )
     new_user.access_token = access_token
     new_user.refresh_token = refresh_token
+
+    # Record audit event (fire-and-forget)
+    try:
+        await record_audit_event(
+            actor_id="system",
+            actor_role="admin",
+            action="system_user.created",
+            resource_type="system_user",
+            resource_id=str(new_user.id),
+            tenant_id=new_user.tenant_id,
+            details={
+                "email": new_user.email,
+                "role": new_user.role.value if hasattr(new_user.role, 'value') else new_user.role,
+                "department_id": new_user.department_id,
+                "full_name": new_user.full_name,
+            },
+        )
+    except Exception:
+        pass
+
     return new_user
 
 
@@ -284,7 +305,31 @@ async def update_system_user_by_id(
 async def remove_system_user(user_id: str, tenant_id: str):
     if not ObjectId.is_valid(user_id):
         raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    # Fetch user before deletion for audit logging
+    user = await get_system_user({"_id": ObjectId(user_id), "tenant_id": tenant_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="System user not found")
+
     result = await delete_system_user({"_id": ObjectId(user_id), "tenant_id": tenant_id})
     await delete_all_tokens_with_user_id(userId=user_id)
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="System user not found")
+
+    # Record audit event (fire-and-forget)
+    try:
+        await record_audit_event(
+            actor_id="system",
+            actor_role="admin",
+            action="system_user.deleted",
+            resource_type="system_user",
+            resource_id=user_id,
+            tenant_id=tenant_id,
+            details={
+                "email": user.email,
+                "role": user.role.value if hasattr(user.role, 'value') else user.role,
+                "full_name": user.full_name,
+            },
+        )
+    except Exception:
+        pass

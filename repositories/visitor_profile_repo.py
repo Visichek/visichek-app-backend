@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import time
 from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
@@ -50,6 +53,14 @@ async def get_visitor_profile_by_phone(tenant_id: str, phone: str) -> Optional[V
     return await get_visitor_profile({"tenant_id": tenant_id, "phone": phone})
 
 
+async def get_visitor_profile_by_email(tenant_id: str, email: str) -> Optional[VisitorProfileOut]:
+    return await get_visitor_profile({"tenant_id": tenant_id, "email_address": email})
+
+
+async def get_visitor_profile_by_id_number(tenant_id: str, id_number: str) -> Optional[VisitorProfileOut]:
+    return await get_visitor_profile({"tenant_id": tenant_id, "id_number": id_number})
+
+
 async def update_visitor_profile(filter_dict: dict, profile_data: VisitorProfileUpdate) -> VisitorProfileOut:
     update_dict = {k: v for k, v in profile_data.model_dump().items() if v is not None}
     result = await db.visitor_profiles.find_one_and_update(
@@ -88,3 +99,18 @@ async def search_visitor_profiles(
     async for doc in cursor:
         profile_list.append(VisitorProfileOut(**doc))
     return profile_list
+
+
+async def increment_visitor_profile_visits(filter_dict: dict) -> Optional[VisitorProfileOut]:
+    """Atomically increment total_visits and set last_visit_date."""
+    result = await db.visitor_profiles.find_one_and_update(
+        filter_dict,
+        {
+            "$inc": {"total_visits": 1},
+            "$set": {"last_visit_date": int(time.time()), "last_updated": int(time.time())},
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    if result is None:
+        return None
+    return VisitorProfileOut(**result)
