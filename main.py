@@ -80,10 +80,15 @@ async def get_user_type(request: Request) -> tuple[str, str]:
     auth_header = request.headers.get("Authorization")
     fallback_id = request.headers.get("X-Forwarded-For") or request.client.host # type: ignore
 
-    if not auth_header or not auth_header.startswith("Bearer "):
+    token: str | None = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", maxsplit=1)[1]
+    else:
+        token = request.cookies.get("access_token")
+
+    if not token:
         return fallback_id, "anonymous"
 
-    token = auth_header.split(" ", maxsplit=1)[1]
     access_token = await get_access_token_allow_expired(accessToken=token)
     if not access_token:
         return fallback_id, "anonymous"
@@ -189,6 +194,13 @@ async def lifespan(app: FastAPI):
     except RuntimeError:
         pass
 
+    # Create TTL index for OTP challenges (auto-expire)
+    try:
+        from core.database import db as _db
+        await _db["pending_otp"].create_index("expires_at", expireAfterSeconds=0)
+    except Exception:
+        logger.warning("Could not create pending_otp TTL index")
+
     # Schedule retention cleanup job
     from services.retention_service import run_retention_cleanup
     scheduler.add_job(
@@ -264,12 +276,16 @@ app.add_middleware(
 )
 app.add_middleware(PlanEnforcementMiddleware)
 app.add_middleware(RateLimitingMiddleware)
+_cors_origins = list(settings.cors_origins) if settings.cors_origins else []
+if settings.env != "production" and "http://localhost:3000" not in _cors_origins:
+    _cors_origins.append("http://localhost:3000")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(settings.cors_origins) if settings.cors_origins else ["http://localhost:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Set-Cookie"],
 )
 
 
@@ -464,6 +480,17 @@ from api.v1.branding_route import router as v1_branding_route_router
 from api.v1.invoice_route import router as v1_invoice_route_router
 from api.v1.public_registration_route import router as v1_public_registration_route_router
 from api.v1.public_rights_route import router as v1_public_rights_route_router
+from api.v1.notification_route import router as v1_notification_route_router
+from api.v1.admin_settings_route import router as v1_admin_settings_route_router
+from api.v1.system_user_settings_route import router as v1_system_user_settings_route_router
+from api.v1.tenant_settings_route import router as v1_tenant_settings_route_router
+from api.v1.user_settings_route import router as v1_user_settings_route_router
+from api.v1.session_management_route import router as v1_session_management_route_router
+from api.v1.auth_management_route import router as v1_auth_management_route_router
+from api.v1.account_route import router as v1_account_route_router
+from api.v1.unified_tenant_settings_route import router as v1_unified_tenant_settings_route_router
+from api.v1.unified_platform_settings_route import router as v1_unified_platform_settings_route_router
+from api.v1.settings_manifest_route import router as v1_settings_manifest_route_router
 
 app.include_router(v1_admin_route_router, prefix='/v1')
 app.include_router(v1_documents_route_router, prefix='/v1')
@@ -494,6 +521,17 @@ app.include_router(v1_branding_route_router, prefix='/v1')
 app.include_router(v1_invoice_route_router, prefix='/v1')
 app.include_router(v1_public_registration_route_router, prefix='/v1')
 app.include_router(v1_public_rights_route_router, prefix='/v1')
+app.include_router(v1_notification_route_router, prefix='/v1')
+app.include_router(v1_admin_settings_route_router, prefix='/v1')
+app.include_router(v1_system_user_settings_route_router, prefix='/v1')
+app.include_router(v1_tenant_settings_route_router, prefix='/v1')
+app.include_router(v1_user_settings_route_router, prefix='/v1')
+app.include_router(v1_session_management_route_router, prefix='/v1')
+app.include_router(v1_auth_management_route_router, prefix='/v1')
+app.include_router(v1_account_route_router, prefix='/v1')
+app.include_router(v1_unified_tenant_settings_route_router, prefix='/v1')
+app.include_router(v1_unified_platform_settings_route_router, prefix='/v1')
+app.include_router(v1_settings_manifest_route_router, prefix='/v1')
 # --- auto-routes-end ---
 
 apply_response_documentation(app)

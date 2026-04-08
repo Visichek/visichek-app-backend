@@ -14,6 +14,7 @@ class AdminBase(BaseModel):
     password: str | bytes
     accountStatus: AccountStatus = AccountStatus.ACTIVE
     permissionList: Optional[PermissionList] = None
+    mfa_enabled: bool = True
 
 
 class AdminLogin(BaseModel):

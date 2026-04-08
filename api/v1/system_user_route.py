@@ -1,8 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 
-from core.response_envelope import document_response
+from core.response_envelope import document_response, success_payload
+from core.settings import get_settings
 from schemas.system_user_schema import (
     SystemUserSignupRequest,
     SystemUserTenantLogin,
@@ -16,17 +19,22 @@ from security.auth import (
     verify_super_admin_token,
     verify_system_user_refresh_token,
 )
+from schemas.otp_schema import MfaAdminUpdate, MfaSettingsUpdate, OtpVerifyRequest
+from security.cookie_utils import set_auth_cookies, clear_auth_cookies, REFRESH_TOKEN_COOKIE
 from security.principal import AuthPrincipal
 from services.system_user_service import (
     add_system_user_from_invite,
+    admin_set_user_mfa,
     authenticate_system_user,
     authenticate_super_admin_global,
     authenticate_system_user_by_tenant,
     refresh_system_user_tokens,
     retrieve_system_user_by_id,
     retrieve_system_users,
+    toggle_user_mfa,
     update_system_user_by_id,
     remove_system_user,
+    verify_system_user_otp,
 )
 
 router = APIRouter(prefix="/system-users", tags=["Tenant Users"])
@@ -63,8 +71,22 @@ router = APIRouter(prefix="/system-users", tags=["Tenant Users"])
         429: {"success": False, "message": "Account temporarily locked", "code": "TOO_MANY_REQUESTS"},
     },
 )
-async def login_system_user(login_data: SystemUserLogin):
-    return await authenticate_system_user(login_data=login_data)
+async def login_system_user(request: Request, login_data: SystemUserLogin):
+    result = await authenticate_system_user(login_data=login_data)
+    request_id = getattr(request.state, "request_id", None)
+
+    if isinstance(result, dict) and result.get("otp_required"):
+        return JSONResponse(
+            content=jsonable_encoder(success_payload(result, message="OTP verification required", request_id=request_id)),
+        )
+
+    user = result
+    is_prod = get_settings().env == "production"
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(user, message="Login successful", request_id=request_id)),
+    )
+    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod) # type: ignore
+    return response
 
 
 @router.post("/super-admin/login")
@@ -110,8 +132,24 @@ async def login_system_user(login_data: SystemUserLogin):
         403: {"success": False, "message": "This login endpoint is reserved for tenant super admins", "code": "AUTH_PERMISSION_DENIED"},
     },
 )
-async def login_super_admin_global(login_data: SystemUserLogin):
-    return await authenticate_super_admin_global(login_data=login_data)
+async def login_super_admin_global(request: Request, login_data: SystemUserLogin):
+    result = await authenticate_super_admin_global(login_data=login_data)
+    request_id = getattr(request.state, "request_id", None)
+
+    # authenticate_super_admin_global calls authenticate_system_user internally
+    # which may return an otp_required dict
+    if isinstance(result, dict) and result.get("otp_required"):
+        return JSONResponse(
+            content=jsonable_encoder(success_payload(result, message="OTP verification required", request_id=request_id)),
+        )
+
+    user = result["user"]
+    is_prod = get_settings().env == "production"
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(result, message="Super admin login successful", request_id=request_id)),
+    )
+    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod)
+    return response
 
 
 @router.post("/tenant/{tenant_id}/login")
@@ -152,8 +190,22 @@ async def login_super_admin_global(login_data: SystemUserLogin):
         429: {"success": False, "message": "Account temporarily locked", "code": "TOO_MANY_REQUESTS"},
     },
 )
-async def login_system_user_by_tenant(tenant_id: str, login_data: SystemUserTenantLogin):
-    return await authenticate_system_user_by_tenant(login_data=login_data, tenant_id=tenant_id)
+async def login_system_user_by_tenant(request: Request, tenant_id: str, login_data: SystemUserTenantLogin):
+    result = await authenticate_system_user_by_tenant(login_data=login_data, tenant_id=tenant_id)
+    request_id = getattr(request.state, "request_id", None)
+
+    if isinstance(result, dict) and result.get("otp_required"):
+        return JSONResponse(
+            content=jsonable_encoder(success_payload(result, message="OTP verification required", request_id=request_id)),
+        )
+
+    user = result
+    is_prod = get_settings().env == "production"
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(user, message="Login successful", request_id=request_id)),
+    )
+    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod) # type: ignore
+    return response
 
 
 @router.post("/signup")
@@ -229,13 +281,81 @@ async def signup_system_user(
     },
 )
 async def refresh_tokens(
+    request: Request,
     refresh_data: SystemUserRefresh,
     principal: AuthPrincipal = Depends(verify_system_user_refresh_token),
 ):
-    return await refresh_system_user_tokens(
+    if not refresh_data.refresh_token:
+        refresh_data.refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE, "")
+
+    user = await refresh_system_user_tokens(
         refresh_data=refresh_data,
         expired_access_token=principal.access_token_id,
     )
+
+    is_prod = get_settings().env == "production"
+    request_id = getattr(request.state, "request_id", None)
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(user, message="Tokens refreshed successfully", request_id=request_id)),
+    )
+    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod) # type: ignore
+    return response
+
+
+@router.post("/verify-otp")
+@document_response(
+    message="OTP verified, login successful",
+    description="Step 2 of 2FA login. Verify the OTP code and receive access/refresh tokens.",
+    summary="Verify system user OTP",
+    response_codes={
+        401: "Unauthorized - invalid or expired OTP",
+        429: "Too many OTP attempts",
+    },
+)
+async def verify_system_user_otp_endpoint(request: Request, otp_data: OtpVerifyRequest):
+    user = await verify_system_user_otp(otp_data.otp_challenge_id, otp_data.otp_code)
+
+    is_prod = get_settings().env == "production"
+    request_id = getattr(request.state, "request_id", None)
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(user, message="OTP verified, login successful", request_id=request_id)),
+    )
+    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod) # type: ignore
+    return response
+
+
+@router.patch("/me/mfa")
+@document_response(
+    message="MFA setting updated",
+    description="Toggle your own 2FA setting. Blocked if locked by admin or tenant policy.",
+    summary="Toggle own MFA",
+    response_codes={403: "Forbidden - MFA locked by admin or tenant policy"},
+)
+async def toggle_my_mfa(
+    settings: MfaSettingsUpdate,
+    principal: AuthPrincipal = Depends(verify_any_system_user_token),
+):
+    return await toggle_user_mfa(
+        user_id=principal.user_id,
+        tenant_id=principal.tenant_id or "",
+        mfa_enabled=settings.mfa_enabled,
+    )
+
+
+@router.post("/logout")
+@document_response(
+    message="Logged out successfully",
+    description="Clear auth cookies and invalidate the current session.",
+    summary="System user logout",
+)
+async def logout_system_user(request: Request):
+    is_prod = get_settings().env == "production"
+    request_id = getattr(request.state, "request_id", None)
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(None, message="Logged out successfully", request_id=request_id)),
+    )
+    clear_auth_cookies(response, is_production=is_prod)
+    return response
 
 
 @router.get("/me")

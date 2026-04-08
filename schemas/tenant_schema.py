@@ -22,6 +22,10 @@ class TenantBase(BaseModel):
     flutterwave_customer_id: Optional[str] = None
     default_payment_provider: Optional[str] = None  # "stripe" or "flutterwave"
 
+    # 2FA / MFA policy
+    mfa_default_for_users: bool = False
+    mfa_user_override_allowed: bool = True
+
 
 class TenantCreate(TenantBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
@@ -44,6 +48,8 @@ class TenantUpdate(BaseModel):
     stripe_customer_id: Optional[str] = None
     flutterwave_customer_id: Optional[str] = None
     default_payment_provider: Optional[str] = None
+    mfa_default_for_users: Optional[bool] = None
+    mfa_user_override_allowed: Optional[bool] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

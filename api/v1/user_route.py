@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, RedirectResponse
 
-from core.response_envelope import document_response
+from core.response_envelope import document_response, success_payload
+from core.settings import get_settings
 from schemas.user_schema import LoginType, UserBase, UserCreate, UserLogin, UserOut, UserRefresh, UserSignupRequest
 from services.user_service import (
     add_user,
@@ -15,6 +17,7 @@ from services.user_service import (
 )
 from security.account_status_check import check_user_account_status_and_permissions
 from security.auth import verify_user_refresh_token
+from security.cookie_utils import set_auth_cookies, clear_auth_cookies, REFRESH_TOKEN_COOKIE
 from security.principal import AuthPrincipal
 import os
 from dotenv import load_dotenv
@@ -184,9 +187,16 @@ async def signup_new_user(signup_data: UserSignupRequest):
         422: {"success": False, "message": "Email and password are required", "code": "VALIDATION_FAILED"},
     },
 )
-async def login_user(login_data: UserLogin):
-    items = await authenticate_user(login_data=login_data)
-    return items
+async def login_user(request: Request, login_data: UserLogin):
+    user = await authenticate_user(login_data=login_data)
+
+    is_prod = get_settings().env == "production"
+    request_id = getattr(request.state, "request_id", None)
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(user, message="Login successful", request_id=request_id)),
+    )
+    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod)
+    return response
 
 
 @router.post("/refresh")
@@ -217,14 +227,41 @@ async def login_user(login_data: UserLogin):
     },
 )
 async def refresh_user_tokens(
+    request: Request,
     user_data: UserRefresh,
     principal: AuthPrincipal = Depends(verify_user_refresh_token),
 ):
-    items = await refresh_user_tokens_reduce_number_of_logins(
+    if not user_data.refresh_token:
+        user_data.refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE, "")
+
+    user = await refresh_user_tokens_reduce_number_of_logins(
         user_refresh_data=user_data,
         expired_access_token=principal.access_token_id,
     )
-    return items
+
+    is_prod = get_settings().env == "production"
+    request_id = getattr(request.state, "request_id", None)
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(user, message="Tokens refreshed successfully", request_id=request_id)),
+    )
+    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod)
+    return response
+
+
+@router.post("/logout")
+@document_response(
+    message="Logged out successfully",
+    description="Clear auth cookies and invalidate the current session.",
+    summary="User logout",
+)
+async def logout_user(request: Request):
+    is_prod = get_settings().env == "production"
+    request_id = getattr(request.state, "request_id", None)
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(None, message="Logged out successfully", request_id=request_id)),
+    )
+    clear_auth_cookies(response, is_production=is_prod)
+    return response
 
 
 @router.delete("/account")

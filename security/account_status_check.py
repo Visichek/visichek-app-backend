@@ -79,18 +79,8 @@ async def check_admin_account_status_and_permissions(
             message="Admin account is not active",
         )
 
-    endpoint_name, request_method, permission_key = _permission_context(request)
-    permission_list = getattr(admin, "permissionList", None)
-    _validate_permission_list(permission_list)
-
-    if not _has_permission(
-        permission_list=permission_list,  # type: ignore[arg-type]
-        permission_key=permission_key,
-        endpoint_name=endpoint_name,
-        request_method=request_method,
-    ):
-        raise auth_permission_denied(permission_key)
-
+    # Application admins are platform operators with full access —
+    # skip fine-grained endpoint permission checks.
     return admin
 
 

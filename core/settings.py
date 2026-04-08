@@ -62,6 +62,10 @@ class Settings:
     backup_retention_days: int = 30
     # Session
     session_inactivity_timeout_minutes: int = 15
+    # OTP / 2FA
+    otp_dev_code: str = "123456"
+    otp_ttl_seconds: int = 300
+    otp_max_attempts: int = 5
 
     @property
     def is_production(self) -> bool:
@@ -120,5 +124,8 @@ def get_settings() -> Settings:
         backup_s3_bucket=os.getenv("BACKUP_S3_BUCKET"),
         backup_retention_days=int(os.getenv("BACKUP_RETENTION_DAYS", "30")),
         session_inactivity_timeout_minutes=int(os.getenv("SESSION_INACTIVITY_TIMEOUT_MINUTES", "15")),
+        otp_dev_code=os.getenv("OTP_DEV_CODE", "123456"),
+        otp_ttl_seconds=int(os.getenv("OTP_TTL_SECONDS", "300")),
+        otp_max_attempts=int(os.getenv("OTP_MAX_ATTEMPTS", "5")),
     )
     return settings

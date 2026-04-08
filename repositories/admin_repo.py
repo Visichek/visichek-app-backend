@@ -14,7 +14,7 @@ from security.hash import hash_password
 load_dotenv()
 SUPER_ADMIN_EMAIL=os.getenv("SUPER_ADMIN_EMAIL")
 SUPER_ADMIN_PASSWORD=os.getenv("SUPER_ADMIN_PASSWORD")
-SUPER_ADMIN_HASHED_PASSWORD=hash_password(SUPER_ADMIN_PASSWORD)
+SUPER_ADMIN_HASHED_PASSWORD=hash_password(SUPER_ADMIN_PASSWORD) # type: ignore
 _ADMIN_PERMISSIONS=get_default_permissions_for_role("admin")
 
 
@@ -23,7 +23,7 @@ async def create_admin(admin_data: AdminCreate) -> AdminOut:
     result =await db.admins.insert_one(admin_dict)
     result = await db.admins.find_one(filter={"_id":result.inserted_id})
   
-    returnable_result = AdminOut(**result)
+    returnable_result = AdminOut(**result) # type: ignore
     return returnable_result
 
 async def get_admin(filter_dict: dict) -> Optional[AdminOut]:
@@ -37,7 +37,7 @@ async def get_admin(filter_dict: dict) -> Optional[AdminOut]:
                 filter_id = filter_dict.get("_id",None)
                 print(filter_id)
                 if filter_email==SUPER_ADMIN_EMAIL or str(filter_id)=="656f7ac12b9d4f6c9e2b9f7d" :
-                    return AdminOut(full_name="Super Admin",email=SUPER_ADMIN_EMAIL,password=SUPER_ADMIN_HASHED_PASSWORD,_id="656f7ac12b9d4f6c9e2b9f7d",accountStatus=AccountStatus.ACTIVE,permissionList=_ADMIN_PERMISSIONS)
+                    return AdminOut(full_name="Super Admin",email=SUPER_ADMIN_EMAIL,password=SUPER_ADMIN_HASHED_PASSWORD,_id="656f7ac12b9d4f6c9e2b9f7d",accountStatus=AccountStatus.ACTIVE,permissionList=_ADMIN_PERMISSIONS) # type: ignore
             except Exception as e:
                 print(e)
                 return None 
@@ -64,9 +64,9 @@ async def get_admins(filter_dict: dict = {},start=0,stop=100) -> List[AdminOut]:
 
         async for doc in cursor:
             adminObj =AdminOut(**doc)
-            adminObj.password=None
+            adminObj.password=None # type: ignore
             admin_list.append(adminObj)
-        super_admin= AdminOut(_id="656f7ac12b9d4f6c9e2b9f7d",full_name="Super Admin",email=SUPER_ADMIN_EMAIL,password=SUPER_ADMIN_HASHED_PASSWORD,accountStatus=AccountStatus.ACTIVE,permissionList=_ADMIN_PERMISSIONS)
+        super_admin= AdminOut(_id="656f7ac12b9d4f6c9e2b9f7d",full_name="Super Admin",email=SUPER_ADMIN_EMAIL,password=SUPER_ADMIN_HASHED_PASSWORD,accountStatus=AccountStatus.ACTIVE,permissionList=_ADMIN_PERMISSIONS) # type: ignore
         admin_list.append(super_admin)
         return admin_list
 

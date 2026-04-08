@@ -181,6 +181,16 @@ async def authenticate_system_user(login_data: SystemUserLogin, tenant_id: str |
         raise HTTPException(status_code=403, detail="Account is not active")
 
     await clear_failed_logins(login_data.email)
+
+    # 2FA check
+    from services.otp_service import is_mfa_required, create_otp_challenge
+    if await is_mfa_required("system_user", user.id):  # type: ignore
+        challenge_id, _code = await create_otp_challenge(
+            user_id=user.id, user_type="system_user",  # type: ignore
+            role=user.role.value, tenant_id=user.tenant_id,
+        )
+        return {"otp_required": True, "otp_challenge_id": challenge_id}
+
     access_token, refresh_token = await issue_tokens_for_role(
         user_id=user.id,
         role=user.role.value,
@@ -206,6 +216,10 @@ async def authenticate_super_admin_global(login_data: SystemUserLogin) -> dict:
     """
     # Authenticate without tenant scoping — super_admin email is globally unique
     user = await authenticate_system_user(login_data=login_data)
+
+    # If 2FA is required, bubble the OTP challenge up to the route
+    if isinstance(user, dict) and user.get("otp_required"):
+        return user
 
     # Only super_admins get this enriched response
     role_str = user.role.value if hasattr(user.role, 'value') else user.role
@@ -333,3 +347,74 @@ async def remove_system_user(user_id: str, tenant_id: str):
         )
     except Exception:
         pass
+
+
+async def verify_system_user_otp(challenge_id: str, otp_code: str):
+    """Step 2 of system user 2FA login — verify OTP and issue tokens."""
+    from services.otp_service import verify_otp_challenge
+
+    result = await verify_otp_challenge(challenge_id, otp_code)
+    user = await get_system_user({"_id": ObjectId(result["user_id"])})
+    if not user:
+        raise HTTPException(status_code=401, detail="System user not found")
+
+    access_token, refresh_token = await issue_tokens_for_role(
+        user_id=user.id,
+        role=user.role.value,
+        tenant_id=user.tenant_id,
+    )
+    user.access_token = access_token
+    user.refresh_token = refresh_token
+    return user
+
+
+async def toggle_user_mfa(
+    user_id: str,
+    tenant_id: str,
+    mfa_enabled: bool,
+) -> SystemUserOut:
+    """Allow a tenant user to toggle their own MFA (subject to locks)."""
+    user = await get_system_user({"_id": ObjectId(user_id), "tenant_id": tenant_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="System user not found")
+
+    if getattr(user, "mfa_locked_by_admin", False):
+        raise HTTPException(status_code=403, detail="MFA setting is locked by your administrator")
+
+    from services.tenant_service import retrieve_tenant_by_id
+    tenant = await retrieve_tenant_by_id(tenant_id)
+    if not getattr(tenant, "mfa_user_override_allowed", True):
+        raise HTTPException(status_code=403, detail="MFA settings are managed by your administrator")
+
+    update_data = SystemUserUpdate(mfa_enabled=mfa_enabled)
+    updated = await update_system_user(
+        {"_id": ObjectId(user_id), "tenant_id": tenant_id},
+        update_data,
+    )
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to update MFA setting")
+    return updated
+
+
+async def admin_set_user_mfa(
+    user_id: str,
+    tenant_id: str,
+    mfa_enabled: bool,
+    mfa_locked_by_admin: bool = False,
+) -> SystemUserOut:
+    """Super admin sets MFA + lock for a tenant user."""
+    user = await get_system_user({"_id": ObjectId(user_id), "tenant_id": tenant_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="System user not found")
+
+    update_data = SystemUserUpdate(
+        mfa_enabled=mfa_enabled,
+        mfa_locked_by_admin=mfa_locked_by_admin,
+    )
+    updated = await update_system_user(
+        {"_id": ObjectId(user_id), "tenant_id": tenant_id},
+        update_data,
+    )
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to update MFA setting")
+    return updated

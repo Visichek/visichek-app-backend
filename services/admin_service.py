@@ -79,6 +79,15 @@ async def authenticate_admin(admin_data: AdminLogin) -> AdminOut:
         if check_password(password=admin_data.password, hashed=admin.password):  # type: ignore
             await clear_failed_logins(admin_data.email)
             admin.password = ""
+
+            # 2FA check — admins always require OTP
+            from services.otp_service import is_mfa_required, create_otp_challenge
+            if await is_mfa_required("admin", admin.id):  # type: ignore
+                challenge_id, _code = await create_otp_challenge(
+                    user_id=admin.id, user_type="admin", role="admin",  # type: ignore
+                )
+                return {"otp_required": True, "otp_challenge_id": challenge_id}
+
             access_token, refresh_token = await issue_tokens_for_user(user_id=admin.id, role="admin")  # type: ignore
             admin.access_token = access_token
             admin.refresh_token = refresh_token
@@ -97,6 +106,22 @@ async def authenticate_admin(admin_data: AdminLogin) -> AdminOut:
             )
     else:
         raise HTTPException(status_code=401, detail="Invalid login credentials")
+
+
+async def verify_admin_otp(challenge_id: str, otp_code: str) -> AdminOut:
+    """Step 2 of admin 2FA login — verify OTP and issue tokens."""
+    from services.otp_service import verify_otp_challenge
+
+    result = await verify_otp_challenge(challenge_id, otp_code)
+    admin = await get_admin(filter_dict={"_id": ObjectId(result["user_id"])})
+    if not admin:
+        raise HTTPException(status_code=401, detail="Admin not found")
+
+    admin.password = ""
+    access_token, refresh_token = await issue_tokens_for_user(user_id=admin.id, role="admin")  # type: ignore
+    admin.access_token = access_token
+    admin.refresh_token = refresh_token
+    return admin
 
 
 async def refresh_admin_tokens_reduce_number_of_logins(admin_refresh_data: AdminRefresh, expired_access_token):

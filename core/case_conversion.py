@@ -119,12 +119,24 @@ class CaseConversionMiddleware(BaseHTTPMiddleware):
         converted = _convert_keys(data, converter)
         new_body = json.dumps(converted, ensure_ascii=False).encode("utf-8")
 
-        resp_headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+        # Collect headers, but skip content-length (we recalculate) and
+        # set-cookie (added back separately to preserve multi-value).
+        resp_headers = {
+            k: v for k, v in response.headers.items()
+            if k.lower() not in ("content-length", "set-cookie")
+        }
         resp_headers["content-length"] = str(len(new_body))
 
-        return Response(
+        new_response = Response(
             content=new_body,
             status_code=response.status_code,
             headers=resp_headers,
             media_type="application/json",
         )
+
+        # Re-attach every Set-Cookie header (multi-value safe)
+        for k, v in response.headers.raw:
+            if k.lower() == b"set-cookie":
+                new_response.headers.append("set-cookie", v.decode("latin-1"))
+
+        return new_response

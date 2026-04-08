@@ -14,6 +14,8 @@ class SystemUserBase(BaseModel):
     is_active: bool = True
     last_login_at: Optional[int] = None
     permissionList: Optional[PermissionList] = None
+    mfa_enabled: bool = False
+    mfa_locked_by_admin: bool = False
 
 
 class SystemUserSignupRequest(BaseModel):
@@ -59,6 +61,8 @@ class SystemUserUpdate(BaseModel):
     account_status: Optional[AccountStatus] = None
     is_active: Optional[bool] = None
     last_login_at: Optional[int] = None
+    mfa_enabled: Optional[bool] = None
+    mfa_locked_by_admin: Optional[bool] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

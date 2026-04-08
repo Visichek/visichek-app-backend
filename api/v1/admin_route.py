@@ -1,20 +1,26 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, Query, status
+from fastapi import APIRouter, Body, Depends, Query, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from core.response_envelope import document_response
+from core.response_envelope import document_response, success_payload
+from core.settings import get_settings
 from schemas.admin_schema import AdminLogin, AdminOut, AdminRefresh, AdminSignupRequest
 from schemas.tenant_schema import TenantBootstrapRequest
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_admin_refresh_token
+from security.cookie_utils import set_auth_cookies, clear_auth_cookies, REFRESH_TOKEN_COOKIE
 from security.principal import AuthPrincipal
+from schemas.otp_schema import OtpVerifyRequest
 from services.admin_service import (
     add_admin,
     authenticate_admin,
     refresh_admin_tokens_reduce_number_of_logins,
     remove_admin,
     retrieve_admins,
+    verify_admin_otp,
 )
 from services.tenant_service import bootstrap_tenant
 from services.tenant_offboarding_service import offboard_tenant, get_offboarding_summary
@@ -182,9 +188,24 @@ async def bootstrap_tenant_endpoint(
         429: {"success": False, "message": "Account temporarily locked", "code": "TOO_MANY_REQUESTS"},
     },
 )
-async def login_admin(admin_data: AdminLogin):
-    items = await authenticate_admin(admin_data=admin_data)  # type: ignore
-    return items
+async def login_admin(request: Request, admin_data: AdminLogin):
+    result = await authenticate_admin(admin_data=admin_data)  # type: ignore
+    request_id = getattr(request.state, "request_id", None)
+
+    # 2FA required — return challenge, no tokens
+    if isinstance(result, dict) and result.get("otp_required"):
+        return JSONResponse(
+            content=jsonable_encoder(success_payload(result, message="OTP verification required", request_id=request_id)),
+        )
+
+    # No 2FA — return tokens + cookies
+    admin = result
+    is_prod = get_settings().env == "production"
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(admin, message="Admin login successful", request_id=request_id)),
+    )
+    set_auth_cookies(response, admin.access_token, admin.refresh_token, is_production=is_prod)
+    return response
 
 
 @router.post("/refresh")
@@ -200,6 +221,7 @@ async def login_admin(admin_data: AdminLogin):
     },
 )
 async def refresh_admin_tokens(
+    request: Request,
     admin_data: Annotated[
         AdminRefresh,
         Body(
@@ -213,13 +235,61 @@ async def refresh_admin_tokens(
     ],
     principal: AuthPrincipal = Depends(verify_admin_refresh_token),
 ):
-    items = await refresh_admin_tokens_reduce_number_of_logins(
+    # Allow refresh token from cookie if not provided in body
+    if not admin_data.refresh_token:
+        admin_data.refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE, "")
+
+    admin = await refresh_admin_tokens_reduce_number_of_logins(
         admin_refresh_data=admin_data,
         expired_access_token=principal.access_token_id,
     )
+    admin.password = ""
 
-    items.password = ""
-    return items
+    is_prod = get_settings().env == "production"
+    request_id = getattr(request.state, "request_id", None)
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(admin, message="Admin tokens refreshed successfully", request_id=request_id)),
+    )
+    set_auth_cookies(response, admin.access_token, admin.refresh_token, is_production=is_prod)
+    return response
+
+
+@router.post("/verify-otp")
+@document_response(
+    message="OTP verified, login successful",
+    description="Step 2 of 2FA login. Verify the OTP code and receive access/refresh tokens.",
+    summary="Verify admin OTP",
+    response_codes={
+        401: "Unauthorized - invalid or expired OTP",
+        429: "Too many OTP attempts",
+    },
+)
+async def verify_admin_otp_endpoint(request: Request, otp_data: OtpVerifyRequest):
+    admin = await verify_admin_otp(otp_data.otp_challenge_id, otp_data.otp_code)
+
+    is_prod = get_settings().env == "production"
+    request_id = getattr(request.state, "request_id", None)
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(admin, message="OTP verified, login successful", request_id=request_id)),
+    )
+    set_auth_cookies(response, admin.access_token, admin.refresh_token, is_production=is_prod)
+    return response
+
+
+@router.post("/logout")
+@document_response(
+    message="Logged out successfully",
+    description="Clear auth cookies and invalidate the current session.",
+    summary="Admin logout",
+)
+async def logout_admin(request: Request):
+    is_prod = get_settings().env == "production"
+    request_id = getattr(request.state, "request_id", None)
+    response = JSONResponse(
+        content=jsonable_encoder(success_payload(None, message="Logged out successfully", request_id=request_id)),
+    )
+    clear_auth_cookies(response, is_production=is_prod)
+    return response
 
 
 @router.delete("/account")

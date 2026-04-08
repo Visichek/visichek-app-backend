@@ -3,11 +3,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from core.response_envelope import document_response
+from schemas.otp_schema import MfaAdminUpdate
 from security.auth import verify_super_admin_token
 from security.principal import AuthPrincipal
 from services.dashboard_service import get_dashboard_stats
 from services.department_service import retrieve_departments, add_department
-from services.system_user_service import retrieve_system_users, add_system_user
+from services.system_user_service import admin_set_user_mfa, retrieve_system_users, add_system_user
 from schemas.department_schema import DepartmentCreate
 from schemas.system_user_schema import SystemUserCreate
 
@@ -258,3 +259,25 @@ async def assign_admin_department(
     if not result:
         raise HTTPException(status_code=404, detail="System user not found")
     return result
+
+
+@router.patch("/admins/{user_id}/mfa")
+@document_response(
+    message="MFA settings updated",
+    description="Enable/disable 2FA for a tenant user and optionally lock the setting to prevent self-service changes.",
+    summary="Set user MFA (super admin)",
+    response_codes={
+        404: "Not found - user does not exist in this tenant",
+    },
+)
+async def set_user_mfa(
+    user_id: str,
+    mfa_data: MfaAdminUpdate,
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+):
+    return await admin_set_user_mfa(
+        user_id=user_id,
+        tenant_id=principal.tenant_id or "",
+        mfa_enabled=mfa_data.mfa_enabled,
+        mfa_locked_by_admin=mfa_data.mfa_locked_by_admin,
+    )
