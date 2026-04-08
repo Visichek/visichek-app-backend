@@ -2,10 +2,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
+from core.errors import auth_permission_denied, auth_role_mismatch
 from core.response_envelope import document_response
 from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut
 from security.account_status_check import check_admin_account_status_and_permissions
-from security.auth import verify_super_admin_token
+from security.auth import verify_any_token, verify_super_admin_token
 from security.principal import AuthPrincipal
 from services.tenant_service import (
     add_tenant,
@@ -84,7 +85,7 @@ async def create_tenant_endpoint(
 async def list_tenants(
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
-    principal: AuthPrincipal = Depends(verify_super_admin_token),
+    admin=Depends(check_admin_account_status_and_permissions),
 ):
     return await retrieve_tenants(start=start, stop=stop)
 
@@ -119,8 +120,15 @@ async def list_tenants(
 )
 async def get_tenant_endpoint(
     tenant_id: str,
-    principal: AuthPrincipal = Depends(verify_super_admin_token),
+    principal: AuthPrincipal = Depends(verify_any_token),
 ):
+    if principal.role == "admin":
+        pass  # application admin can view any tenant
+    elif principal.role == "super_admin":
+        if principal.tenant_id != tenant_id:
+            raise auth_permission_denied()
+    else:
+        raise auth_role_mismatch(required_role="admin", actual_role=principal.role)
     return await retrieve_tenant_by_id(tenant_id=tenant_id)
 
 

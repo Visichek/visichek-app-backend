@@ -70,6 +70,7 @@ class AdminUpdate(BaseModel):
 
 class AdminOut(AdminBase):
     id: Optional[str] = Field(default=None, alias="_id")
+    password: Optional[str | bytes] = Field(default=None, exclude=True)
 
     date_created: Optional[int] = None
     last_updated: Optional[int] = None
