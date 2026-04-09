@@ -66,6 +66,67 @@ class RequestTimingMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log every completed HTTP request with method, path, status, duration, and context."""
+
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        client_host = request.client.host if request.client else "-"
+        method = request.method
+        path = request.url.path
+        query = request.url.query
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = (time.time() - start_time) * 1000
+            request_id = getattr(request.state, "request_id", None)
+            logger.exception(
+                "Unhandled exception during request %s %s (%.2fms)",
+                method,
+                path,
+                duration_ms,
+                extra={
+                    "request_id": request_id,
+                    "endpoint": path,
+                },
+            )
+            raise
+
+        duration_ms = (time.time() - start_time) * 1000
+        request_id = getattr(request.state, "request_id", None)
+        user_id = response.headers.get("X-User-Id")
+        user_type = response.headers.get("X-User-Type")
+        status_code = response.status_code
+
+        log_level = logging.INFO
+        if status_code >= 500:
+            log_level = logging.ERROR
+        elif status_code >= 400:
+            log_level = logging.WARNING
+
+        logger.log(
+            log_level,
+            '%s - "%s %s%s" %d %.2fms',
+            client_host,
+            method,
+            path,
+            f"?{query}" if query else "",
+            status_code,
+            duration_ms,
+            extra={
+                "request_id": request_id,
+                "user_id": user_id,
+                "endpoint": path,
+                "method": method,
+                "status_code": status_code,
+                "duration_ms": round(duration_ms, 2),
+                "user_type": user_type,
+            },
+        )
+        return response
+
+
 ROLE_RATE_LIMITS_DEFAULT = build_role_rate_limits_csv(non_admin_roles=["user"])
 RATE_LIMITS = build_role_rate_limits(
     os.getenv("ROLE_RATE_LIMITS"),
@@ -276,6 +337,7 @@ app.add_middleware(
 )
 app.add_middleware(PlanEnforcementMiddleware)
 app.add_middleware(RateLimitingMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 _cors_origins = list(settings.cors_origins) if settings.cors_origins else []
 if settings.env != "production" and "http://localhost:3000" not in _cors_origins:
     _cors_origins.append("http://localhost:3000")
@@ -306,12 +368,28 @@ async def custom_validation_exception_handler(request: Request, exc: RequestVali
 
 @app.exception_handler(Exception)
 async def custom_exception_handler(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", None)
+    logger.exception(
+        "Unhandled exception on %s %s: %s",
+        request.method,
+        request.url.path,
+        exc,
+        extra={
+            "request_id": request_id,
+            "endpoint": request.url.path,
+            "method": request.method,
+        },
+    )
     details = str(exc) if (settings.debug_include_error_details and not settings.is_production) else None
     return error_response(
         status_code=500,
         message="Internal Server Error",
-        data={"code": "INTERNAL_ERROR", "details": details},
-        request_id=getattr(request.state, "request_id", None),
+        data={
+            "code": "INTERNAL_ERROR",
+            "message": "An unexpected error occurred. Please try again later.",
+            "details": details,
+        },
+        request_id=request_id,
     )
 
 

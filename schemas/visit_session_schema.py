@@ -105,6 +105,28 @@ class VisitSessionOut(VisitSessionBase):
         json_encoders = {ObjectId: str}
 
 
+from schemas.summary_schema import (  # noqa: E402
+    TenantBriefSummary,
+    DepartmentBriefSummary,
+    UserBriefSummary,
+    VisitorProfileBriefSummary,
+    AppointmentBriefSummary,
+)
+
+
+class VisitSessionWithSummaryOut(VisitSessionOut):
+    """VisitSessionOut enriched with snapshots of every entity it references."""
+    tenant_summary: Optional[TenantBriefSummary] = None
+    department_summary: Optional[DepartmentBriefSummary] = None
+    visitor_profile_summary: Optional[VisitorProfileBriefSummary] = None
+    host_summary: Optional[UserBriefSummary] = None
+    receptionist_summary: Optional[UserBriefSummary] = None
+    appointment_summary: Optional[AppointmentBriefSummary] = None
+    verified_by_summary: Optional[UserBriefSummary] = None
+    consent_captured_by_summary: Optional[UserBriefSummary] = None
+    denied_by_summary: Optional[UserBriefSummary] = None
+
+
 # Request schemas for check-in/check-out endpoints
 class CheckInRequest(BaseModel):
     phone: str

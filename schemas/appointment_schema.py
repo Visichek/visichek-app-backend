@@ -46,3 +46,20 @@ class AppointmentOut(AppointmentBase):
         populate_by_name = True
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
+
+
+from schemas.summary_schema import (  # noqa: E402
+    TenantBriefSummary,
+    DepartmentBriefSummary,
+    UserBriefSummary,
+    VisitorProfileBriefSummary,
+)
+
+
+class AppointmentWithSummaryOut(AppointmentOut):
+    """AppointmentOut enriched with snapshots of every entity it references."""
+    tenant_summary: Optional[TenantBriefSummary] = None
+    department_summary: Optional[DepartmentBriefSummary] = None
+    host_summary: Optional[UserBriefSummary] = None
+    visitor_profile_summary: Optional[VisitorProfileBriefSummary] = None
+    created_by_summary: Optional[UserBriefSummary] = None

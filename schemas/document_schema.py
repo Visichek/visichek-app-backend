@@ -31,6 +31,7 @@ class CompleteUploadRequest(BaseModel):
 
 class DocumentCreate(BaseModel):
     owner_id: str
+    tenant_id: str | None = None
     file_name: str
     object_key: str
     backend: str
@@ -46,6 +47,7 @@ class DocumentCreate(BaseModel):
 class DocumentOut(BaseModel):
     id: str | None = Field(default=None, alias="_id")
     owner_id: str
+    tenant_id: str | None = None
     file_name: str
     object_key: str
     backend: str
@@ -66,3 +68,11 @@ class DocumentOut(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+from schemas.summary_schema import UserBriefSummary  # noqa: E402
+
+
+class DocumentWithSummaryOut(DocumentOut):
+    """DocumentOut enriched with the owning user's snapshot."""
+    owner_summary: UserBriefSummary | None = None

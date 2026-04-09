@@ -58,3 +58,9 @@ async def update_appointment(filter_dict: dict, appt_data: AppointmentUpdate) ->
 
 async def delete_appointment(filter_dict: dict):
     return await db.expected_appointments.delete_one(filter_dict)
+
+
+async def count_appointments(filter_dict: dict | None = None) -> int:
+    if filter_dict is None:
+        filter_dict = {}
+    return await db.expected_appointments.count_documents(filter_dict)

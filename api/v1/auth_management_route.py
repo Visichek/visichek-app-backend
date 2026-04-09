@@ -1,26 +1,51 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from typing import Optional
 
-from core.response_envelope import document_response
+from fastapi import APIRouter, Depends, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+from core.errors import auth_invalid_token
+from core.response_envelope import document_response, success_payload
+from core.settings import get_settings
+from schemas.admin_schema import AdminRefresh
 from schemas.session_schema import (
     ChangePasswordRequest,
     TwoFactorVerifyRequest,
     TwoFactorDisableRequest,
     BackupCodesRegenerateRequest,
 )
-from security.auth import verify_any_token
+from schemas.system_user_schema import SystemUserRefresh
+from schemas.user_schema import UserRefresh
+from security.auth import verify_any_refresh_token, verify_any_token
+from security.cookie_utils import REFRESH_TOKEN_COOKIE, set_auth_cookies
 from security.principal import AuthPrincipal, TENANT_USER_ROLES
+from services.admin_service import refresh_admin_tokens_reduce_number_of_logins
 from services.password_change_service import (
     change_admin_password,
     change_system_user_password,
 )
+from services.system_user_service import refresh_system_user_tokens
 from services.two_factor_service import (
     setup_two_factor,
     verify_two_factor_setup,
     disable_two_factor_with_password,
     regenerate_backup_codes_with_password,
 )
+from services.user_service import refresh_user_tokens_reduce_number_of_logins
+
+
+class UnifiedRefreshRequest(BaseModel):
+    """Role-agnostic refresh request body.
+
+    `refresh_token` is optional in the body — if omitted, the unified endpoint
+    falls back to reading it from the `refresh_token` cookie.
+    """
+
+    refresh_token: Optional[str] = Field(default=None)
+
 
 router = APIRouter(prefix="/auth", tags=["Auth Management"])
 
@@ -185,3 +210,76 @@ async def regenerate_backup(
         principal.user_id, user_type, data.password,
     )
     return {"backup_codes": codes}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# UNIFIED TOKEN REFRESH
+# ═══════════════════════════════════════════════════════════════════
+
+
+@router.post("/refresh")
+@document_response(
+    message="Tokens refreshed successfully",
+    description=(
+        "Role-agnostic token refresh. Auto-detects the caller's role from the "
+        "(possibly expired) access token and dispatches to the correct refresh "
+        "service. Works for application admins, application users, and any tenant "
+        "system user role (super_admin, dept_admin, receptionist, auditor, "
+        "security_officer, dpo).\n\n"
+        "The expired access token must be supplied in the `Authorization: Bearer` "
+        "header (or the `access_token` cookie). The refresh token may be supplied "
+        "in the JSON body or the `refresh_token` cookie — if both are present, the "
+        "body wins.\n\n"
+        "On success, new access and refresh tokens are returned in the response "
+        "body and also set as httpOnly cookies. The old token pair is invalidated."
+    ),
+    summary="Refresh tokens (role-agnostic)",
+    response_codes={
+        401: "Unauthorized — invalid or mismatched tokens",
+        404: "Refresh token not found or already used",
+        422: "Validation error — missing refresh token",
+    },
+    error_examples={
+        401: {"success": False, "message": "Invalid or expired refresh token", "code": "AUTH_INVALID_TOKEN"},
+        404: {"success": False, "message": "Invalid refresh token", "code": "RESOURCE_NOT_FOUND"},
+    },
+)
+async def refresh_tokens(
+    request: Request,
+    body: UnifiedRefreshRequest,
+    principal: AuthPrincipal = Depends(verify_any_refresh_token),
+):
+    """Unified refresh endpoint — dispatches to the role-specific refresh service."""
+    refresh_token = body.refresh_token or request.cookies.get(REFRESH_TOKEN_COOKIE, "")
+    if not refresh_token:
+        raise auth_invalid_token(details={"reason": "missing refresh_token"})
+
+    if principal.role == "admin":
+        result = await refresh_admin_tokens_reduce_number_of_logins(
+            admin_refresh_data=AdminRefresh(refresh_token=refresh_token),
+            expired_access_token=principal.access_token_id,
+        )
+        result.password = ""
+    elif principal.role == "user":
+        result = await refresh_user_tokens_reduce_number_of_logins(
+            user_refresh_data=UserRefresh(refresh_token=refresh_token),
+            expired_access_token=principal.access_token_id,
+        )
+    elif principal.role in TENANT_USER_ROLES:
+        result = await refresh_system_user_tokens(
+            refresh_data=SystemUserRefresh(refresh_token=refresh_token),
+            expired_access_token=principal.access_token_id,
+        )
+    else:
+        # verify_any_refresh_token already guarantees this is unreachable, but be explicit.
+        raise auth_invalid_token(details={"role": principal.role})
+
+    is_prod = get_settings().env == "production"
+    request_id = getattr(request.state, "request_id", None)
+    response = JSONResponse(
+        content=jsonable_encoder(
+            success_payload(result, message="Tokens refreshed successfully", request_id=request_id),
+        ),
+    )
+    set_auth_cookies(response, result.access_token, result.refresh_token, is_production=is_prod)
+    return response

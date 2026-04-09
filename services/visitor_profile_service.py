@@ -17,6 +17,7 @@ from schemas.visitor_profile_schema import (
     VisitorProfileCreate,
     VisitorProfileUpdate,
     VisitorProfileOut,
+    VisitorProfileWithSummaryOut,
 )
 
 
@@ -86,6 +87,29 @@ async def update_profile_by_id(
     if not result:
         raise HTTPException(status_code=404, detail="Visitor profile not found or update failed")
     return result
+
+
+async def _enrich_visitor_profile(profile: VisitorProfileOut) -> VisitorProfileWithSummaryOut:
+    from services.summary_resolver import resolve_tenant_summary
+    tenant_summary = await resolve_tenant_summary(profile.tenant_id)
+    data = profile.model_dump(by_alias=False)
+    data["tenant_summary"] = tenant_summary
+    return VisitorProfileWithSummaryOut(**data)
+
+
+async def retrieve_visitor_profiles_with_summary(
+    tenant_id: str, start: int = 0, stop: int = 100
+) -> List[VisitorProfileWithSummaryOut]:
+    import asyncio
+    profiles = await retrieve_visitor_profiles(tenant_id=tenant_id, start=start, stop=stop)
+    return list(await asyncio.gather(*[_enrich_visitor_profile(p) for p in profiles]))
+
+
+async def retrieve_visitor_profile_by_id_with_summary(
+    profile_id: str, tenant_id: str
+) -> VisitorProfileWithSummaryOut:
+    profile = await retrieve_visitor_profile_by_id(profile_id=profile_id, tenant_id=tenant_id)
+    return await _enrich_visitor_profile(profile)
 
 
 async def soft_delete_profile(profile_id: str, tenant_id: str) -> VisitorProfileOut:

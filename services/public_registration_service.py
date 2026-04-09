@@ -4,7 +4,12 @@ import time
 from bson import ObjectId
 from fastapi import HTTPException
 
-from repositories.visit_session_repo import create_visit_session, get_visit_session, update_visit_session
+from repositories.visit_session_repo import (
+    count_visit_sessions,
+    create_visit_session,
+    get_visit_session,
+    update_visit_session,
+)
 from repositories.tenant_repo import get_tenant
 from repositories.department_repo import get_department, get_departments
 from repositories.appointment_repo import get_appointment, update_appointment
@@ -24,6 +29,7 @@ from schemas.imports import VisitStatus, CheckInMethod, CheckOutMethod, Appointm
 from schemas.visit_session_schema import VisitSessionCreate, VisitSessionUpdate
 from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import verify_badge_token
+from services.plan_limits import enforce_entity_cap, get_month_bounds
 
 
 async def register_visitor_public(
@@ -37,6 +43,19 @@ async def register_visitor_public(
     tenant = await get_tenant({"_id": ObjectId(tenant_id)})
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Enforce plan cap on visit sessions created this calendar month
+    month_start, month_end = get_month_bounds()
+    month_count = await count_visit_sessions({
+        "tenant_id": tenant_id,
+        "check_in_time": {"$gte": month_start, "$lt": month_end},
+    })
+    await enforce_entity_cap(
+        tenant_id=tenant_id,
+        cap_key="max_visitors_per_month",
+        current_count=month_count,
+        friendly_name="Monthly visitor",
+    )
 
     # Consent enforcement based on tenant's lawful basis
     from schemas.imports import LawfulBasis

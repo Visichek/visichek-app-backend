@@ -3,12 +3,17 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from core.response_envelope import document_response
-from schemas.visitor_profile_schema import VisitorProfileUpdate
+from schemas.visitor_profile_schema import (
+    VisitorProfileUpdate,
+    VisitorProfileWithSummaryOut,
+)
 from security.auth import verify_system_user_token, verify_any_system_user_token
 from security.principal import AuthPrincipal
 from services.visitor_profile_service import (
     retrieve_visitor_profile_by_id,
+    retrieve_visitor_profile_by_id_with_summary,
     retrieve_visitor_profiles,
+    retrieve_visitor_profiles_with_summary,
     search_profiles,
     update_profile_by_id,
 )
@@ -94,9 +99,11 @@ async def list_visitor_profiles(
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(verify_system_user_token("dept_admin", "super_admin", "auditor")),
-):
+) -> list[VisitorProfileWithSummaryOut]:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_visitor_profiles(tenant_id=tenant_id, start=start, stop=stop)
+    return await retrieve_visitor_profiles_with_summary(
+        tenant_id=tenant_id, start=start, stop=stop
+    )
 
 
 @router.get("/{profile_id}")
@@ -135,9 +142,11 @@ async def list_visitor_profiles(
 async def get_visitor_profile_endpoint(
     profile_id: str,
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
-):
+) -> VisitorProfileWithSummaryOut:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_visitor_profile_by_id(profile_id=profile_id, tenant_id=tenant_id)
+    return await retrieve_visitor_profile_by_id_with_summary(
+        profile_id=profile_id, tenant_id=tenant_id
+    )
 
 
 @router.patch("/{profile_id}")

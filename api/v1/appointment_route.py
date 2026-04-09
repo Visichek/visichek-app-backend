@@ -1,15 +1,21 @@
-from typing import Annotated
+from typing import Annotated, List
 
 from fastapi import APIRouter, Depends, Query, status
 
 from core.response_envelope import document_response
-from schemas.appointment_schema import AppointmentCreate, AppointmentUpdate
+from schemas.appointment_schema import (
+    AppointmentCreate,
+    AppointmentUpdate,
+    AppointmentWithSummaryOut,
+)
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.appointment_service import (
     add_appointment,
     retrieve_appointment_by_id,
+    retrieve_appointment_by_id_with_summary,
     retrieve_appointments,
+    retrieve_appointments_with_summary,
     update_appointment_by_id,
     remove_appointment,
 )
@@ -94,9 +100,11 @@ async def list_appointments(
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(_admin_roles),
-):
+) -> List[AppointmentWithSummaryOut]:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_appointments(tenant_id=tenant_id, start=start, stop=stop)
+    return await retrieve_appointments_with_summary(
+        tenant_id=tenant_id, start=start, stop=stop
+    )
 
 
 @router.get("/{appointment_id}")
@@ -131,9 +139,11 @@ async def list_appointments(
 async def get_appointment_endpoint(
     appointment_id: str,
     principal: AuthPrincipal = Depends(_admin_roles),
-):
+) -> AppointmentWithSummaryOut:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_appointment_by_id(appointment_id=appointment_id, tenant_id=tenant_id)
+    return await retrieve_appointment_by_id_with_summary(
+        appointment_id=appointment_id, tenant_id=tenant_id
+    )
 
 
 @router.patch("/{appointment_id}")

@@ -79,3 +79,15 @@ class InvoiceOut(InvoiceBase):
         populate_by_name = True
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
+
+
+from schemas.summary_schema import (  # noqa: E402
+    TenantBriefSummary,
+    SubscriptionBriefSummary,
+)
+
+
+class InvoiceWithSummaryOut(InvoiceOut):
+    """InvoiceOut enriched with the tenant and subscription it belongs to."""
+    tenant_summary: Optional[TenantBriefSummary] = None
+    subscription_summary: Optional[SubscriptionBriefSummary] = None

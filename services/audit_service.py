@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional
 from bson import ObjectId
 
 from core.database import db
-from repositories.audit_log_repo import create_audit_log
-from schemas.audit_log_schema import AuditLogCreate
+from repositories.audit_log_repo import create_audit_log, get_audit_logs
+from schemas.audit_log_schema import AuditLogCreate, AuditLogOut, AuditLogWithSummaryOut
 
 logger = logging.getLogger(__name__)
 
@@ -157,3 +157,29 @@ async def get_audit_trail_for_resource(
         skip=skip,
         limit=limit,
     )
+
+
+async def _enrich_audit_log(log: AuditLogOut) -> AuditLogWithSummaryOut:
+    """Build a summary-enriched view of a single audit log entry."""
+    import asyncio
+    from services.summary_resolver import resolve_tenant_summary, resolve_user_summary
+
+    tenant_summary, actor_summary = await asyncio.gather(
+        resolve_tenant_summary(log.tenant_id),
+        resolve_user_summary(log.actor_id),
+    )
+    data = log.model_dump(by_alias=False)
+    data["tenant_summary"] = tenant_summary
+    data["actor_summary"] = actor_summary
+    return AuditLogWithSummaryOut(**data)
+
+
+async def retrieve_audit_logs_with_summary(
+    filter_dict: Dict[str, Any],
+    start: int = 0,
+    stop: int = 100,
+) -> List[AuditLogWithSummaryOut]:
+    """Retrieve audit logs with actor + tenant summaries embedded."""
+    import asyncio
+    logs = await get_audit_logs(filter_dict, start=start, stop=stop)
+    return list(await asyncio.gather(*[_enrich_audit_log(log) for log in logs]))

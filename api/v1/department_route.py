@@ -1,15 +1,22 @@
-from typing import Annotated
+from typing import Annotated, List
 
 from fastapi import APIRouter, Depends, Query, status
 
 from core.response_envelope import document_response
-from schemas.department_schema import DepartmentCreate, DepartmentUpdate, DepartmentOut
+from schemas.department_schema import (
+    DepartmentCreate,
+    DepartmentUpdate,
+    DepartmentOut,
+    DepartmentWithSummaryOut,
+)
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.department_service import (
     add_department,
     retrieve_department_by_id,
+    retrieve_department_by_id_with_summary,
     retrieve_departments,
+    retrieve_departments_with_summary,
     update_department_by_id,
     remove_department,
 )
@@ -46,8 +53,7 @@ async def create_department_endpoint(
     dept_data: DepartmentCreate,
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
-    if not principal.is_super_admin:
-        dept_data.tenant_id = principal.tenant_id or dept_data.tenant_id
+    dept_data.tenant_id = principal.tenant_id
     return await add_department(dept_data=dept_data, created_by=principal.user_id)
 
 
@@ -77,9 +83,9 @@ async def list_departments(
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(_admin_roles),
-):
+) -> List[DepartmentWithSummaryOut]:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_departments(tenant_id=tenant_id, start=start, stop=stop)
+    return await retrieve_departments_with_summary(tenant_id=tenant_id, start=start, stop=stop)
 
 
 @router.get("/{department_id}")
@@ -107,9 +113,11 @@ async def list_departments(
 async def get_department_endpoint(
     department_id: str,
     principal: AuthPrincipal = Depends(_admin_roles),
-):
+) -> DepartmentWithSummaryOut:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_department_by_id(department_id=department_id, tenant_id=tenant_id)
+    return await retrieve_department_by_id_with_summary(
+        department_id=department_id, tenant_id=tenant_id
+    )
 
 
 @router.patch("/{department_id}")

@@ -112,3 +112,37 @@ class SubscriptionOut(SubscriptionBase):
         populate_by_name = True
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
+
+
+class SubscriptionTenantInfo(BaseModel):
+    """Tenant snapshot embedded in subscription responses."""
+    id: str
+    company_name: str
+    is_active: bool
+    country_of_hosting: Optional[str] = None
+    dpo_contact_email: Optional[str] = None
+    default_payment_provider: Optional[str] = None
+    stripe_customer_id: Optional[str] = None
+    flutterwave_customer_id: Optional[str] = None
+
+
+class SubscriptionPlanInfo(BaseModel):
+    """Plan snapshot embedded in subscription responses."""
+    id: str
+    name: str
+    display_name: str
+    tier: str
+    description: Optional[str] = None
+    base_price_monthly: float
+    base_price_yearly: float
+    currency: str
+    priority_support: bool
+    custom_branding: bool
+    api_access: bool
+    tenant_caps: Optional[dict] = None
+
+
+class SubscriptionWithDetailsOut(SubscriptionOut):
+    """SubscriptionOut enriched with full tenant and plan info."""
+    tenant: Optional[SubscriptionTenantInfo] = None
+    plan: Optional[SubscriptionPlanInfo] = None

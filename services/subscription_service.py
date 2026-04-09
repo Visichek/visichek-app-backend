@@ -20,6 +20,9 @@ from schemas.subscription_schema import (
     SubscriptionUpdate,
     SubscriptionOut,
     SubscriptionStatus,
+    SubscriptionWithDetailsOut,
+    SubscriptionTenantInfo,
+    SubscriptionPlanInfo,
     BillingCycle,
 )
 from schemas.plan_schema import PlanOut, PlanStatus
@@ -243,6 +246,76 @@ async def retrieve_subscriptions(
     if status_filter:
         filter_dict["status"] = status_filter.value
     return await get_subscriptions(filter_dict, start=start, stop=stop)
+
+
+async def _enrich_subscription(sub: SubscriptionOut) -> SubscriptionWithDetailsOut:
+    import asyncio
+    from repositories.tenant_repo import get_tenant
+    from bson import ObjectId as BsonObjectId
+
+    async def _fetch_tenant():
+        if not sub.tenant_id:
+            return None
+        try:
+            t = await get_tenant({"_id": BsonObjectId(sub.tenant_id)})
+            if not t:
+                return None
+            return SubscriptionTenantInfo(
+                id=t.id,
+                company_name=t.company_name,
+                is_active=t.is_active,
+                country_of_hosting=t.country_of_hosting,
+                dpo_contact_email=t.dpo_contact_email,
+                default_payment_provider=t.default_payment_provider,
+                stripe_customer_id=t.stripe_customer_id,
+                flutterwave_customer_id=t.flutterwave_customer_id,
+            )
+        except Exception:
+            return None
+
+    async def _fetch_plan():
+        if not sub.plan_id:
+            return None
+        try:
+            p = await get_plan({"_id": BsonObjectId(sub.plan_id)})
+            if not p:
+                return None
+            caps = p.tenant_caps.model_dump() if p.tenant_caps else None
+            return SubscriptionPlanInfo(
+                id=p.id,
+                name=p.name,
+                display_name=p.display_name,
+                tier=p.tier,
+                description=p.description,
+                base_price_monthly=p.base_price_monthly,
+                base_price_yearly=p.base_price_yearly,
+                currency=p.currency,
+                priority_support=p.priority_support,
+                custom_branding=p.custom_branding,
+                api_access=p.api_access,
+                tenant_caps=caps,
+            )
+        except Exception:
+            return None
+
+    tenant_info, plan_info = await asyncio.gather(_fetch_tenant(), _fetch_plan())
+    data = sub.model_dump(by_alias=False)
+    data["tenant"] = tenant_info
+    data["plan"] = plan_info
+    return SubscriptionWithDetailsOut(**data)
+
+
+async def retrieve_subscriptions_with_details(
+    tenant_id: Optional[str] = None,
+    status_filter: Optional[SubscriptionStatus] = None,
+    start: int = 0,
+    stop: int = 100,
+) -> List[SubscriptionWithDetailsOut]:
+    import asyncio
+    subs = await retrieve_subscriptions(
+        tenant_id=tenant_id, status_filter=status_filter, start=start, stop=stop
+    )
+    return list(await asyncio.gather(*[_enrich_subscription(s) for s in subs]))
 
 
 async def change_plan(

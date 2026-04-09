@@ -3,14 +3,17 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, status
 
 from core.response_envelope import document_response
-from schemas.invoice_schema import InvoiceOut
+from schemas.invoice_schema import InvoiceOut, InvoiceWithSummaryOut
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_super_admin_token
 from security.principal import AuthPrincipal
 from services.invoice_service import (
     retrieve_all_invoices,
+    retrieve_all_invoices_with_summary,
     retrieve_invoice_by_id,
+    retrieve_invoice_by_id_with_summary,
     retrieve_invoices_for_tenant,
+    retrieve_invoices_for_tenant_with_summary,
 )
 from services.invoice_pdf_service import get_invoice_pdf_url
 from core.errors import resource_not_found
@@ -29,8 +32,8 @@ async def list_tenant_invoices(
     stop: int = Query(default=20, ge=1, le=100),
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
-    """List invoices for the authenticated super admin's tenant."""
-    invoices, total = await retrieve_invoices_for_tenant(
+    """List invoices for the authenticated super admin's tenant, enriched with tenant + subscription summaries."""
+    invoices, total = await retrieve_invoices_for_tenant_with_summary(
         tenant_id=tenant_id,
         skip=start,
         limit=stop,
@@ -50,8 +53,8 @@ async def list_all_invoices(
     status_filter: str | None = Query(default=None, alias="status"),
     admin=Depends(check_admin_account_status_and_permissions),
 ):
-    """List all invoices (application admin only)."""
-    invoices, total = await retrieve_all_invoices(
+    """List all invoices (application admin only), enriched with tenant + subscription summaries."""
+    invoices, total = await retrieve_all_invoices_with_summary(
         skip=start,
         limit=stop,
         tenant_id=tenant_id,
@@ -65,9 +68,9 @@ async def list_all_invoices(
 async def get_invoice_detail(
     invoice_id: str,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
-) -> InvoiceOut | None:
-    """Get a specific invoice by ID."""
-    return await retrieve_invoice_by_id(invoice_id)
+):
+    """Get a specific invoice by ID, enriched with tenant + subscription summaries."""
+    return await retrieve_invoice_by_id_with_summary(invoice_id)
 
 
 @router.get("/{invoice_id}/pdf")

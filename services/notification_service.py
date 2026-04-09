@@ -22,6 +22,7 @@ from schemas.notification_schema import (
     NotificationCreate,
     NotificationUpdate,
     NotificationOut,
+    NotificationWithSummaryOut,
     NotificationPreferencesCreate,
     NotificationPreferencesUpdate,
     NotificationPreferencesOut,
@@ -69,6 +70,35 @@ async def retrieve_notifications(
     items = await get_notifications(filter_dict, skip=skip, limit=limit)
     total = await count_notifications(filter_dict)
     return items, total
+
+
+async def _enrich_notification(notif: NotificationOut) -> NotificationWithSummaryOut:
+    import asyncio
+    from services.summary_resolver import resolve_user_summary, resolve_tenant_summary
+
+    user_summary, tenant_summary = await asyncio.gather(
+        resolve_user_summary(notif.user_id, user_type=notif.user_type),
+        resolve_tenant_summary(notif.tenant_id),
+    )
+    data = notif.model_dump(by_alias=False)
+    data["user_summary"] = user_summary
+    data["tenant_summary"] = tenant_summary
+    return NotificationWithSummaryOut(**data)
+
+
+async def retrieve_notifications_with_summary(
+    user_id: str,
+    user_type: str,
+    read: Optional[bool] = None,
+    skip: int = 0,
+    limit: int = 20,
+) -> tuple[List[NotificationWithSummaryOut], int]:
+    import asyncio
+    items, total = await retrieve_notifications(
+        user_id=user_id, user_type=user_type, read=read, skip=skip, limit=limit
+    )
+    enriched = list(await asyncio.gather(*[_enrich_notification(n) for n in items]))
+    return enriched, total
 
 
 async def mark_notification_read(notification_id: str, user_id: str, user_type: str) -> NotificationOut:

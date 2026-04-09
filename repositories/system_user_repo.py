@@ -54,3 +54,9 @@ async def update_system_user(filter_dict: dict, user_data: SystemUserUpdate) -> 
 
 async def delete_system_user(filter_dict: dict):
     return await db.system_users.delete_one(filter_dict)
+
+
+async def count_system_users(filter_dict: dict | None = None) -> int:
+    if filter_dict is None:
+        filter_dict = {}
+    return await db.system_users.count_documents(filter_dict)

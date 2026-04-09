@@ -14,7 +14,9 @@ from services.visit_session_service import (
     check_out_visitor,
     retrieve_active_visitors,
     retrieve_visit_session_by_id,
+    retrieve_visit_session_by_id_with_summary,
     retrieve_visit_sessions,
+    retrieve_visit_sessions_with_summary,
     confirm_check_in,
     deny_visitor,
     retrieve_pending_sessions,
@@ -24,6 +26,7 @@ from services.visit_session_service import (
     download_badge_pdf,
     resume_draft_registration,
 )
+from schemas.visit_session_schema import VisitSessionWithSummaryOut
 
 router = APIRouter(prefix="/visitors", tags=["Visitors"])
 
@@ -283,9 +286,9 @@ async def list_visit_sessions(
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(verify_system_user_token("dept_admin", "super_admin", "auditor")),
-):
+) -> list[VisitSessionWithSummaryOut]:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_visit_sessions(
+    return await retrieve_visit_sessions_with_summary(
         tenant_id=tenant_id, department_id=department_id, start=start, stop=stop
     )
 
@@ -345,9 +348,11 @@ async def list_visit_sessions(
 async def get_visit_session_endpoint(
     session_id: str,
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
-):
+) -> VisitSessionWithSummaryOut:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_visit_session_by_id(session_id=session_id, tenant_id=tenant_id)
+    return await retrieve_visit_session_by_id_with_summary(
+        session_id=session_id, tenant_id=tenant_id
+    )
 
 
 @router.post("/sessions/{session_id}/confirm")

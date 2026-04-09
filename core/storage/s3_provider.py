@@ -51,5 +51,8 @@ class S3StorageProvider(DocumentStorageProvider):
             ExpiresIn=expires_in,
         )
 
+    def upload_bytes(self, *, object_key: str, payload: bytes, mime_type: str) -> None:
+        self._client.put_object(Bucket=self._bucket, Key=object_key, Body=payload, ContentType=mime_type)
+
     def delete_object(self, *, object_key: str) -> None:
         self._client.delete_object(Bucket=self._bucket, Key=object_key)

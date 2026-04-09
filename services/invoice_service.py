@@ -20,6 +20,7 @@ from schemas.invoice_schema import (
     InvoiceOut,
     InvoiceStatus,
     InvoiceUpdate,
+    InvoiceWithSummaryOut,
 )
 from services.invoice_pdf_service import generate_invoice_pdf, get_invoice_pdf_url
 
@@ -236,3 +237,62 @@ async def void_invoice(invoice_id: str) -> InvoiceOut | None:
         invoice_id,
         InvoiceUpdate(status=InvoiceStatus.VOID),
     )
+
+
+async def _enrich_invoice(invoice: InvoiceOut) -> InvoiceWithSummaryOut:
+    import asyncio
+    from services.summary_resolver import (
+        resolve_tenant_summary,
+        resolve_subscription_summary,
+    )
+
+    tenant_s, sub_s = await asyncio.gather(
+        resolve_tenant_summary(invoice.tenant_id),
+        resolve_subscription_summary(invoice.subscription_id),
+    )
+    data = invoice.model_dump(by_alias=False)
+    data["tenant_summary"] = tenant_s
+    data["subscription_summary"] = sub_s
+    return InvoiceWithSummaryOut(**data)
+
+
+async def retrieve_invoice_by_id_with_summary(
+    invoice_id: str, resolve_pdf_url: bool = True
+) -> InvoiceWithSummaryOut | None:
+    invoice = await retrieve_invoice_by_id(invoice_id, resolve_pdf_url=resolve_pdf_url)
+    if invoice is None:
+        return None
+    return await _enrich_invoice(invoice)
+
+
+async def retrieve_invoices_for_tenant_with_summary(
+    tenant_id: str,
+    skip: int = 0,
+    limit: int = 20,
+    resolve_pdf_urls: bool = False,
+) -> tuple[list[InvoiceWithSummaryOut], int]:
+    import asyncio
+    invoices, total = await retrieve_invoices_for_tenant(
+        tenant_id=tenant_id, skip=skip, limit=limit, resolve_pdf_urls=resolve_pdf_urls
+    )
+    enriched = list(await asyncio.gather(*[_enrich_invoice(i) for i in invoices]))
+    return enriched, total
+
+
+async def retrieve_all_invoices_with_summary(
+    skip: int = 0,
+    limit: int = 20,
+    tenant_id: str | None = None,
+    status: str | None = None,
+    resolve_pdf_urls: bool = False,
+) -> tuple[list[InvoiceWithSummaryOut], int]:
+    import asyncio
+    invoices, total = await retrieve_all_invoices(
+        skip=skip,
+        limit=limit,
+        tenant_id=tenant_id,
+        status=status,
+        resolve_pdf_urls=resolve_pdf_urls,
+    )
+    enriched = list(await asyncio.gather(*[_enrich_invoice(i) for i in invoices]))
+    return enriched, total

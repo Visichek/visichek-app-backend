@@ -13,6 +13,8 @@ from schemas.system_user_schema import (
     SystemUserOut,
     SystemUserLogin,
     SystemUserRefresh,
+    SystemUserProfileOut,
+    TenantProfileSummary,
 )
 from security.auth import (
     verify_any_system_user_token,
@@ -36,6 +38,7 @@ from services.system_user_service import (
     remove_system_user,
     verify_system_user_otp,
 )
+from services.tenant_service import retrieve_tenant_by_id
 
 router = APIRouter(prefix="/system-users", tags=["Tenant Users"])
 
@@ -385,8 +388,29 @@ async def logout_system_user(request: Request):
 )
 async def get_my_profile(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
-):
-    return await retrieve_system_user_by_id(user_id=principal.user_id)
+) -> SystemUserProfileOut:
+    user = await retrieve_system_user_by_id(user_id=principal.user_id)
+    tenant_summary = None
+    if principal.tenant_id:
+        try:
+            tenant = await retrieve_tenant_by_id(principal.tenant_id)
+            tenant_summary = TenantProfileSummary(
+                id=tenant.id,
+                company_name=tenant.company_name,
+                lawful_basis=tenant.lawful_basis,
+                notice_display_mode=tenant.notice_display_mode,
+                dpo_contact_email=tenant.dpo_contact_email,
+                privacy_policy_url=tenant.privacy_policy_url,
+                country_of_hosting=tenant.country_of_hosting,
+                cross_border_approved=tenant.cross_border_approved,
+                is_active=tenant.is_active,
+                enable_repeat_visitor_recognition=tenant.enable_repeat_visitor_recognition,
+                mfa_default_for_users=tenant.mfa_default_for_users,
+                mfa_user_override_allowed=tenant.mfa_user_override_allowed,
+            )
+        except Exception:
+            pass
+    return SystemUserProfileOut(**user.model_dump(), tenant=tenant_summary)
 
 
 @router.get("/")

@@ -93,3 +93,24 @@ class SystemUserOut(SystemUserBase):
 
 class SystemUserRefresh(BaseModel):
     refresh_token: str
+
+
+class TenantProfileSummary(BaseModel):
+    """Lightweight tenant snapshot embedded in the system user profile response."""
+    id: Optional[str] = None
+    company_name: Optional[str] = None
+    lawful_basis: Optional[str] = None
+    notice_display_mode: Optional[str] = None
+    dpo_contact_email: Optional[str] = None
+    privacy_policy_url: Optional[str] = None
+    country_of_hosting: Optional[str] = None
+    cross_border_approved: Optional[bool] = None
+    is_active: Optional[bool] = None
+    enable_repeat_visitor_recognition: Optional[bool] = None
+    mfa_default_for_users: Optional[bool] = None
+    mfa_user_override_allowed: Optional[bool] = None
+
+
+class SystemUserProfileOut(SystemUserOut):
+    """SystemUserOut enriched with tenant context for frontend rendering."""
+    tenant: Optional[TenantProfileSummary] = None

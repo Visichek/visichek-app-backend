@@ -11,7 +11,7 @@ from repositories.tenant_repo import (
     update_tenant,
     delete_tenant,
 )
-from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut, TenantBootstrapRequest
+from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut, TenantBootstrapRequest, TenantWithSummaryOut, TenantPlanSummary
 
 
 async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
@@ -119,6 +119,44 @@ async def retrieve_tenant_by_id(tenant_id: str) -> TenantOut:
 
 async def retrieve_tenants(start=0, stop=100) -> List[TenantOut]:
     return await get_tenants(start=start, stop=stop)
+
+
+def _build_plan_summary(plan_data: dict | None) -> TenantPlanSummary | None:
+    if not plan_data:
+        return None
+    return TenantPlanSummary(
+        plan_id=plan_data.get("plan_id"),
+        plan_name=plan_data.get("plan_name"),
+        plan_display_name=plan_data.get("plan_display_name"),
+        plan_tier=plan_data.get("tier"),
+        subscription_id=plan_data.get("subscription_id"),
+        subscription_status=plan_data.get("subscription_status"),
+        billing_cycle=plan_data.get("billing_cycle"),
+        effective_price=plan_data.get("effective_price"),
+        currency="NGN",
+        current_period_end=plan_data.get("current_period_end"),
+        trial_ends_at=plan_data.get("trial_ends_at"),
+        entity_caps=plan_data.get("tenant_caps"),
+    )
+
+
+async def _enrich_tenant(tenant: TenantOut) -> TenantWithSummaryOut:
+    from services.plan_cache_service import resolve_tenant_plan
+    plan_data = await resolve_tenant_plan(tenant.id)
+    data = tenant.model_dump(by_alias=False)
+    data["plan_summary"] = _build_plan_summary(plan_data)
+    return TenantWithSummaryOut(**data)
+
+
+async def retrieve_tenants_with_summary(start=0, stop=100) -> List[TenantWithSummaryOut]:
+    import asyncio
+    tenants = await get_tenants(start=start, stop=stop)
+    return list(await asyncio.gather(*[_enrich_tenant(t) for t in tenants]))
+
+
+async def retrieve_tenant_by_id_with_summary(tenant_id: str) -> TenantWithSummaryOut:
+    tenant = await retrieve_tenant_by_id(tenant_id)
+    return await _enrich_tenant(tenant)
 
 
 async def update_tenant_by_id(tenant_id: str, tenant_data: TenantUpdate) -> TenantOut:

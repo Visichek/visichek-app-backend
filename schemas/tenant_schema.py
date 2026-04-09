@@ -72,6 +72,14 @@ class TenantBootstrapRequest(BaseModel):
     admin_email: EmailStr
     admin_password: str
 
+    @model_validator(mode="after")
+    def validate_admin_password(self):
+        from security.password_policy import validate_password_strength
+        result = validate_password_strength(self.admin_password)
+        if not result.is_valid:
+            raise ValueError("; ".join(result.errors))
+        return self
+
 
 class TenantBootstrapOut(BaseModel):
     """Response after bootstrapping a tenant + first super_admin."""
@@ -95,3 +103,24 @@ class TenantOut(TenantBase):
         populate_by_name = True
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
+
+
+class TenantPlanSummary(BaseModel):
+    """Lightweight plan + subscription snapshot attached to tenant responses."""
+    plan_id: Optional[str] = None
+    plan_name: Optional[str] = None
+    plan_display_name: Optional[str] = None
+    plan_tier: Optional[str] = None
+    subscription_id: Optional[str] = None
+    subscription_status: Optional[str] = None
+    billing_cycle: Optional[str] = None
+    effective_price: Optional[float] = None
+    currency: Optional[str] = None
+    current_period_end: Optional[int] = None
+    trial_ends_at: Optional[int] = None
+    entity_caps: Optional[dict] = None
+
+
+class TenantWithSummaryOut(TenantOut):
+    """TenantOut enriched with plan, subscription, and usage cap summary."""
+    plan_summary: Optional[TenantPlanSummary] = None

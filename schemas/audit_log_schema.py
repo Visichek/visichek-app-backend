@@ -42,3 +42,17 @@ class AuditLogOut(BaseModel):
         populate_by_name = True
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
+
+
+from schemas.summary_schema import TenantBriefSummary, UserBriefSummary  # noqa: E402
+
+
+class AuditLogWithSummaryOut(AuditLogOut):
+    """AuditLogOut enriched with the actor and tenant snapshots.
+
+    ``target_id`` is intentionally left un-enriched because it can refer to
+    any kind of entity (visitor, department, plan, etc.) and the type lookup
+    is best handled by the frontend with the existing ``target_entity`` hint.
+    """
+    tenant_summary: Optional[TenantBriefSummary] = None
+    actor_summary: Optional[UserBriefSummary] = None

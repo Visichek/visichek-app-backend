@@ -201,3 +201,17 @@ async def verify_system_user_refresh_token(
     if principal.role not in TENANT_USER_ROLES:
         raise auth_role_mismatch(required_role="system_user", actual_role=principal.role)
     return principal
+
+
+async def verify_any_refresh_token(
+    principal: AuthPrincipal = Depends(verify_token_to_refresh),
+) -> AuthPrincipal:
+    """Role-agnostic refresh-token verifier.
+
+    Accepts any of the 8 roles (admin, user, or any tenant user role) and returns
+    the principal. The caller is expected to dispatch on `principal.role` to invoke
+    the role-specific refresh service.
+    """
+    if principal.role not in ALL_ROLES:
+        raise auth_invalid_token(details={"role": principal.role})
+    return principal

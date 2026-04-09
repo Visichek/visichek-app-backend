@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, Query
 from core.response_envelope import document_response
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
-from repositories.audit_log_repo import get_audit_logs, count_audit_logs
+from repositories.audit_log_repo import count_audit_logs
+from services.audit_service import retrieve_audit_logs_with_summary
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 _audit_roles = verify_system_user_token("super_admin", "auditor", "dpo")
@@ -66,6 +67,6 @@ async def list_audit_logs(
             time_filter["$lte"] = date_to
         filter_dict["occurred_at"] = time_filter
 
-    logs = await get_audit_logs(filter_dict, start=start, stop=stop)
+    logs = await retrieve_audit_logs_with_summary(filter_dict, start=start, stop=stop)
     total = await count_audit_logs(filter_dict)
     return {"items": logs, "total": total}

@@ -1,18 +1,57 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, Form, UploadFile, File
 from fastapi.responses import Response
 
 from core.errors import auth_permission_denied
 from core.response_envelope import document_response
 from core.storage.local_provider import LocalStorageProvider
 from core.storage.manager import DocumentStorageManager
-from schemas.document_schema import CompleteUploadRequest, UploadIntentRequest
+from schemas.document_schema import (
+    CompleteUploadRequest,
+    UploadIntentRequest,
+)
 from security.auth import verify_any_token
 from security.principal import AuthPrincipal
-from services.document_service import complete_upload, create_upload_intent, fetch_document, remove_document
+from services.document_service import (
+    complete_upload,
+    create_upload_intent,
+    direct_upload,
+    fetch_document,
+    fetch_document_with_summary,
+    remove_document,
+)
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
+
+
+@router.post("")
+@document_response(
+    message="Document uploaded successfully",
+    status_code=201,
+    description="Upload a document directly as multipart/form-data. The file is stored immediately and the document record is returned.",
+    summary="Upload document",
+    response_codes={
+        400: "Invalid file",
+        401: "Unauthorized - invalid or missing authentication token",
+        413: "File exceeds 50 MB limit",
+    },
+)
+async def upload_document(
+    file: UploadFile = File(...),
+    mime_type: str | None = Form(default=None),
+    principal: AuthPrincipal = Depends(verify_any_token),
+):
+    payload = await file.read()
+    resolved_mime = mime_type or file.content_type or "application/octet-stream"
+    doc = await direct_upload(
+        owner_id=principal.user_id,
+        tenant_id=principal.tenant_id,
+        file_name=file.filename or "upload",
+        mime_type=resolved_mime,
+        payload=payload,
+    )
+    return doc
 
 
 @router.post("/upload-intents")
@@ -57,7 +96,11 @@ async def create_document_upload_intent(
     payload: UploadIntentRequest,
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    intent = await create_upload_intent(owner_id=principal.user_id, payload=payload)
+    intent = await create_upload_intent(
+        owner_id=principal.user_id,
+        tenant_id=principal.tenant_id,
+        payload=payload,
+    )
     return {
         "object_key": intent.object_key,
         "upload_url": intent.upload_url,
@@ -112,7 +155,11 @@ async def complete_document_upload(
     payload: CompleteUploadRequest,
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    doc = await complete_upload(owner_id=principal.user_id, payload=payload)
+    doc = await complete_upload(
+        owner_id=principal.user_id,
+        tenant_id=principal.tenant_id,
+        payload=payload,
+    )
     return doc
 
 
@@ -166,7 +213,7 @@ async def complete_document_upload(
     },
 )
 async def get_document(document_id: str, principal: AuthPrincipal = Depends(verify_any_token)):
-    doc, download_url = await fetch_document(document_id=document_id)
+    doc, download_url = await fetch_document_with_summary(document_id=document_id)
     if doc.owner_id != principal.user_id and not principal.is_admin:
         raise auth_permission_denied("GET:/v1/documents/{document_id}")
     return {"document": doc, "download_url": download_url}

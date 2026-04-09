@@ -64,3 +64,11 @@ class VisitorProfileOut(VisitorProfileBase):
         populate_by_name = True
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
+
+
+from schemas.summary_schema import TenantBriefSummary  # noqa: E402
+
+
+class VisitorProfileWithSummaryOut(VisitorProfileOut):
+    """VisitorProfileOut enriched with the owning tenant's snapshot."""
+    tenant_summary: Optional[TenantBriefSummary] = None

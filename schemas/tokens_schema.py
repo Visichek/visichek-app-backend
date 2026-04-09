@@ -21,6 +21,8 @@ class accessTokenOut(accessTokenBase):
     dateCreated: int = Field(default_factory=lambda: int(time.time()))
     accesstoken: Optional[str] =None
     role:Optional[str]="anonymous"
+    tenant_id: Optional[str] = None
+    department_id: Optional[str] = None
     @model_validator(mode='before')
     def set_values(cls,values):
         if values is None:
@@ -30,7 +32,7 @@ class accessTokenOut(accessTokenBase):
         if admin_token:
             values['accesstoken']=values.get("accessToken")
         return values
-    
+
     model_config = {
         'populate_by_name': True,
         'arbitrary_types_allowed': True,

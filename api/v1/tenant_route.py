@@ -4,14 +4,16 @@ from fastapi import APIRouter, Depends, Query, status
 
 from core.errors import auth_permission_denied, auth_role_mismatch
 from core.response_envelope import document_response
-from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut
+from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut, TenantWithSummaryOut
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_any_token, verify_super_admin_token
 from security.principal import AuthPrincipal
 from services.tenant_service import (
     add_tenant,
     retrieve_tenant_by_id,
+    retrieve_tenant_by_id_with_summary,
     retrieve_tenants,
+    retrieve_tenants_with_summary,
     update_tenant_by_id,
 )
 
@@ -87,7 +89,7 @@ async def list_tenants(
     stop: Annotated[int, Query(gt=0)] = 100,
     admin=Depends(check_admin_account_status_and_permissions),
 ):
-    return await retrieve_tenants(start=start, stop=stop)
+    return await retrieve_tenants_with_summary(start=start, stop=stop)
 
 
 @router.get("/{tenant_id}")
@@ -129,7 +131,7 @@ async def get_tenant_endpoint(
             raise auth_permission_denied()
     else:
         raise auth_role_mismatch(required_role="admin", actual_role=principal.role)
-    return await retrieve_tenant_by_id(tenant_id=tenant_id)
+    return await retrieve_tenant_by_id_with_summary(tenant_id=tenant_id)
 
 
 @router.patch("/{tenant_id}")

@@ -64,6 +64,15 @@ class UnreadCountOut(BaseModel):
     count: int = 0
 
 
+from schemas.summary_schema import TenantBriefSummary, UserBriefSummary  # noqa: E402
+
+
+class NotificationWithSummaryOut(NotificationOut):
+    """NotificationOut enriched with user and tenant snapshots."""
+    user_summary: Optional[UserBriefSummary] = None
+    tenant_summary: Optional[TenantBriefSummary] = None
+
+
 # --- Notification Preferences ---
 
 class NotificationPreferencesBase(BaseModel):

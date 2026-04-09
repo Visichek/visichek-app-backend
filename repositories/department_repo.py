@@ -53,3 +53,9 @@ async def update_department(filter_dict: dict, dept_data: DepartmentUpdate) -> D
 
 async def delete_department(filter_dict: dict):
     return await db.departments.delete_one(filter_dict)
+
+
+async def count_departments(filter_dict: dict | None = None) -> int:
+    if filter_dict is None:
+        filter_dict = {}
+    return await db.departments.count_documents(filter_dict)

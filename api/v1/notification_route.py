@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query, status
 from core.response_envelope import document_response
 from schemas.notification_schema import (
     NotificationOut,
+    NotificationWithSummaryOut,
     NotificationPreferencesOut,
     NotificationPreferencesUpdate,
     UnreadCountOut,
@@ -15,6 +16,7 @@ from security.auth import verify_any_token
 from security.principal import AuthPrincipal
 from services.notification_service import (
     retrieve_notifications,
+    retrieve_notifications_with_summary,
     mark_notification_read,
     mark_all_notifications_read,
     get_unread_count,
@@ -54,9 +56,9 @@ async def list_notifications(
     read: Annotated[Optional[bool], Query(description="Filter by read status")] = None,
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    """List paginated notifications for the authenticated user."""
+    """List paginated notifications for the authenticated user, enriched with user/tenant snapshots."""
     user_type = "admin" if principal.role == "admin" else "system_user"
-    items, total = await retrieve_notifications(
+    items, total = await retrieve_notifications_with_summary(
         user_id=principal.user_id,
         user_type=user_type,
         read=read,

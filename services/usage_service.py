@@ -138,7 +138,7 @@ async def get_tenant_usage_summary(
 
     return TenantUsageSummary(
         tenant_id=tenant_id,
-        plan_name=plan_data.get("name", "unknown"),
+        plan_name=plan_data.get("plan_name", "unknown"),
         plan_tier=plan_data.get("tier", "unknown"),
         subscription_status=plan_data.get("subscription_status", "unknown"),
         period=period_monthly,

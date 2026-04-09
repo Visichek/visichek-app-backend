@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from core.response_envelope import document_response
 from schemas.subscription_schema import (
     SubscriptionOut,
+    SubscriptionWithDetailsOut,
     SubscriptionStatus,
     BillingCycle,
 )
@@ -16,6 +17,7 @@ from services.subscription_service import (
     retrieve_subscription_by_id,
     retrieve_tenant_active_subscription,
     retrieve_subscriptions,
+    retrieve_subscriptions_with_details,
     change_plan,
     cancel_subscription,
     update_subscription_overrides,
@@ -90,19 +92,19 @@ async def create_subscription_endpoint(
 @router.get("")
 @document_response(
     message="Subscriptions retrieved successfully",
-    description="List subscriptions with optional filters (application admin only)",
+    description="List subscriptions with optional filters (application admin only). Includes full tenant and plan details.",
     summary="List subscriptions",
     include_meta=True,
 )
 async def list_subscriptions_endpoint(
-    tenant_id: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None, alias="tenantId"),
     status_filter: Optional[SubscriptionStatus] = Query(None, alias="status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     admin=Depends(check_admin_account_status_and_permissions),
-) -> list[SubscriptionOut]:
-    """List subscriptions. Admin can filter by tenant or status."""
-    return await retrieve_subscriptions(
+) -> list[SubscriptionWithDetailsOut]:
+    """List subscriptions enriched with tenant and plan info. Filter by tenantId or status."""
+    return await retrieve_subscriptions_with_details(
         tenant_id=tenant_id,
         status_filter=status_filter,
         start=skip,

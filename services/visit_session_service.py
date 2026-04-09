@@ -7,6 +7,7 @@ from bson import ObjectId
 from fastapi import HTTPException
 
 from repositories.visit_session_repo import (
+    count_visit_sessions,
     create_visit_session,
     get_visit_session,
     get_visit_session_by_badge_token,
@@ -24,6 +25,7 @@ from schemas.visit_session_schema import (
     VisitSessionCreate,
     VisitSessionUpdate,
     VisitSessionOut,
+    VisitSessionWithSummaryOut,
     CheckInRequest,
     CheckOutRequest,
     ConfirmCheckInRequest,
@@ -44,6 +46,7 @@ from schemas.imports import (
 from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import sign_badge_token, verify_badge_token
 from services.badge_service import generate_badge_pdf
+from services.plan_limits import enforce_entity_cap, get_month_bounds
 
 
 async def check_in_visitor(
@@ -52,6 +55,19 @@ async def check_in_visitor(
     receptionist_id: str,
 ) -> dict:
     """Phase 1A: Register visitor — create session with status=REGISTERED, no badge yet."""
+    # 0. Enforce plan cap on visit sessions created this calendar month
+    month_start, month_end = get_month_bounds()
+    month_count = await count_visit_sessions({
+        "tenant_id": tenant_id,
+        "check_in_time": {"$gte": month_start, "$lt": month_end},
+    })
+    await enforce_entity_cap(
+        tenant_id=tenant_id,
+        cap_key="max_visitors_per_month",
+        current_count=month_count,
+        friendly_name="Monthly visitor",
+    )
+
     # 1. Get tenant settings
     tenant = await get_tenant({"_id": ObjectId(tenant_id)})
     if not tenant:
@@ -389,6 +405,67 @@ async def retrieve_visit_sessions(tenant_id: str, department_id: str = None, sta
     if department_id:
         filter_dict["department_id"] = department_id
     return await get_visit_sessions(filter_dict=filter_dict, start=start, stop=stop)
+
+
+async def _enrich_visit_session(session: VisitSessionOut) -> VisitSessionWithSummaryOut:
+    import asyncio
+    from services.summary_resolver import (
+        resolve_tenant_summary,
+        resolve_department_summary,
+        resolve_visitor_profile_summary,
+        resolve_system_user_summary,
+        resolve_appointment_summary,
+    )
+
+    (
+        tenant_s,
+        dept_s,
+        visitor_s,
+        host_s,
+        receptionist_s,
+        appointment_s,
+        verified_by_s,
+        consent_capture_s,
+        denied_by_s,
+    ) = await asyncio.gather(
+        resolve_tenant_summary(session.tenant_id),
+        resolve_department_summary(session.department_id),
+        resolve_visitor_profile_summary(session.visitor_profile_id),
+        resolve_system_user_summary(session.host_id),
+        resolve_system_user_summary(session.receptionist_id),
+        resolve_appointment_summary(session.appointment_id),
+        resolve_system_user_summary(session.verified_by),
+        resolve_system_user_summary(session.consent_captured_by_user_id),
+        resolve_system_user_summary(session.denied_by),
+    )
+    data = session.model_dump(by_alias=False)
+    data["tenant_summary"] = tenant_s
+    data["department_summary"] = dept_s
+    data["visitor_profile_summary"] = visitor_s
+    data["host_summary"] = host_s
+    data["receptionist_summary"] = receptionist_s
+    data["appointment_summary"] = appointment_s
+    data["verified_by_summary"] = verified_by_s
+    data["consent_captured_by_summary"] = consent_capture_s
+    data["denied_by_summary"] = denied_by_s
+    return VisitSessionWithSummaryOut(**data)
+
+
+async def retrieve_visit_sessions_with_summary(
+    tenant_id: str, department_id: str = None, start: int = 0, stop: int = 100
+):
+    import asyncio
+    sessions = await retrieve_visit_sessions(
+        tenant_id=tenant_id, department_id=department_id, start=start, stop=stop
+    )
+    return list(await asyncio.gather(*[_enrich_visit_session(s) for s in sessions]))
+
+
+async def retrieve_visit_session_by_id_with_summary(
+    session_id: str, tenant_id: str
+) -> VisitSessionWithSummaryOut:
+    session = await retrieve_visit_session_by_id(session_id=session_id, tenant_id=tenant_id)
+    return await _enrich_visit_session(session)
 
 
 async def verify_id_with_ocr(id_image_object_key: str) -> dict:
