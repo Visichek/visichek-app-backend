@@ -535,7 +535,9 @@ async def health_check():
 
     aps_heartbeat = redis_client.get("apscheduler:heartbeat")
     if aps_heartbeat:
-        age = time.time() - float(aps_heartbeat.decode("utf-8"))  # type: ignore
+        if isinstance(aps_heartbeat, bytes):
+            aps_heartbeat = aps_heartbeat.decode("utf-8")
+        age = time.time() - float(aps_heartbeat)
         services["apscheduler"] = {
             "status": "healthy" if age <= 30 else "degraded",
             "latency_ms": 0,
