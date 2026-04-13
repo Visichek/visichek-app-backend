@@ -6,7 +6,9 @@ from pydantic import BaseModel, EmailStr
 
 
 class PublicRegistrationRequest(BaseModel):
-    full_name: str
+    # full_name is optional when `profile_id` is supplied (returning visitor
+    # confirmed via /lookup). Otherwise the service layer rejects the request.
+    full_name: Optional[str] = None
     phone: str
     company: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -16,6 +18,11 @@ class PublicRegistrationRequest(BaseModel):
     consent_granted: Optional[bool] = None
     consent_method: Optional[str] = None
     privacy_notice_version_id: Optional[str] = None
+    # Signed QR token from /public/register/verify. When present its scope
+    # overrides client-supplied department_id / branch_id.
+    registration_token: Optional[str] = None
+    # Returning-visitor shortcut: opaque id returned from /lookup's confirm step.
+    profile_id: Optional[str] = None
 
 
 class PublicRegistrationResponse(BaseModel):
@@ -56,3 +63,42 @@ class PublicAppointmentLookupOut(BaseModel):
     department_name: Optional[str] = None
     scheduled_at: Optional[int] = None
     purpose: Optional[str] = None
+
+
+class PublicRegistrationTokenVerifyOut(BaseModel):
+    """Response from GET /public/register/verify. scope fields mirror the signed
+    registration token; the client uses them to prefill + lock form inputs."""
+    valid: bool
+    tenant_id: Optional[str] = None
+    department_id: Optional[str] = None
+    branch_id: Optional[str] = None
+    company_name: Optional[str] = None
+
+
+class PublicIdScanOut(BaseModel):
+    """OCR extraction result. No session is created and no image is persisted."""
+    full_name: Optional[str] = None
+    id_number: Optional[str] = None
+    id_type: Optional[str] = None
+    confidence: float = 0.0
+
+
+class PublicReturningVisitorLookupRequest(BaseModel):
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+
+
+class PublicReturningVisitorLookupOut(BaseModel):
+    """Masked projection of a matched returning visitor. Raw PII is never
+    returned — the caller must re-supply `phone` on register to confirm."""
+    found: bool
+    profile_id: Optional[str] = None
+    full_name_masked: Optional[str] = None
+    company: Optional[str] = None
+    last_visit_ago_days: Optional[int] = None
+    id_verified_recently: bool = False
+
+
+class PublicFinalizeRequest(BaseModel):
+    session_id: str
+    receptionist_code: str

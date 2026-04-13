@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 from bson import ObjectId
 from fastapi import HTTPException
@@ -133,10 +134,10 @@ async def check_in_visitor(
         host = await get_system_user({"_id": ObjectId(host_id), "tenant_id": tenant_id})
         if not host:
             raise HTTPException(status_code=404, detail="Host not found in this tenant")
-        host_name = host.name if host else None
+        host_name = host.full_name if host else None
 
     receptionist = await get_system_user({"_id": ObjectId(receptionist_id)})
-    receptionist_name = receptionist.name if receptionist else None
+    receptionist_name = receptionist.full_name if receptionist else None
 
     # 4. Get active privacy notice
     notice = await get_active_notice_for_tenant(tenant_id)
@@ -217,6 +218,8 @@ async def confirm_check_in(
     receptionist_id: str,
     tenant_id: str,
     badge_format: str = "A7",
+    purpose: Optional[str] = None,
+    host_id: Optional[str] = None,
 ) -> dict:
     """Phase 1A: Confirm check-in — validate minimum fields, generate badge, transition to CHECKED_IN."""
     if not ObjectId.is_valid(session_id):
@@ -233,6 +236,25 @@ async def confirm_check_in(
             status_code=400,
             detail=f"Cannot confirm check-in with status: {current_status}. Expected REGISTERED or PENDING_VERIFICATION.",
         )
+
+    # Apply optional patch fields (purpose, host_id) supplied at confirm time
+    patch_fields: dict = {}
+    if purpose is not None:
+        patch_fields["purpose"] = purpose
+    if host_id is not None:
+        if not ObjectId.is_valid(host_id):
+            raise HTTPException(status_code=400, detail="Invalid host_id format")
+        host = await get_system_user({"_id": ObjectId(host_id), "tenant_id": tenant_id})
+        if not host:
+            raise HTTPException(status_code=404, detail="Host not found")
+        patch_fields["host_id"] = host_id
+        patch_fields["host_name_snapshot"] = host.full_name
+    if patch_fields:
+        await update_visit_session(
+            {"_id": ObjectId(session_id), "tenant_id": tenant_id},
+            VisitSessionUpdate(**patch_fields),
+        )
+        session = await get_visit_session({"_id": ObjectId(session_id), "tenant_id": tenant_id})
 
     # Validate minimum required fields
     if not session.visitor_name_snapshot:

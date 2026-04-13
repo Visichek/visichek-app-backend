@@ -213,10 +213,27 @@ async def complete_document_upload(
     },
 )
 async def get_document(document_id: str, principal: AuthPrincipal = Depends(verify_any_token)):
-    doc, download_url = await fetch_document_with_summary(document_id=document_id)
-    if doc.owner_id != principal.user_id and not principal.is_admin:
-        raise auth_permission_denied("GET:/v1/documents/{document_id}")
-    return {"document": doc, "download_url": download_url}
+    try:
+        doc, download_url = await fetch_document_with_summary(document_id=document_id)
+    except Exception:
+        doc = None
+        download_url = None
+
+    if doc is not None:
+        if doc.owner_id != principal.user_id and not principal.is_admin:
+            raise auth_permission_denied("GET:/v1/documents/{document_id}")
+        return {"document": doc, "download_url": download_url}
+
+    if ".." in document_id:
+        return Response(status_code=400)
+    provider = DocumentStorageManager.get_instance().provider
+    if not isinstance(provider, LocalStorageProvider):
+        return Response(status_code=404)
+    try:
+        data = provider.read_bytes(object_key=document_id)
+    except FileNotFoundError:
+        return Response(status_code=404)
+    return Response(content=data)
 
 
 @router.delete("/{document_id}")

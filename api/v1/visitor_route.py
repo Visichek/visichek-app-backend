@@ -25,6 +25,7 @@ from services.visit_session_service import (
     approve_visitor_by_host,
     download_badge_pdf,
     resume_draft_registration,
+    generate_tenant_registration_qr,
 )
 from schemas.visit_session_schema import VisitSessionWithSummaryOut
 
@@ -41,6 +42,38 @@ class ApplyIdScanRequest(BaseModel):
 
 class ApproveVisitorRequest(BaseModel):
     pass  # No body required; host_id comes from auth principal
+
+
+class RegistrationQrRequest(BaseModel):
+    department_id: Optional[str] = None
+    branch_id: Optional[str] = None
+
+
+@router.post("/registration-qr")
+@document_response(
+    message="Registration QR token generated",
+    status_code=status.HTTP_201_CREATED,
+    description="Mint a signed registration token for a visitor-facing QR code. The token encodes tenant + optional department/branch scope and expires after 30 days. Render the returned `signed_token` as a QR — the public form calls /v1/public/register/verify to validate it.",
+    summary="Generate registration QR token (receptionist / super_admin)",
+    success_example={
+        "registration_url": "/public/register/t123",
+        "signed_token": "base64url-hmac-token",
+        "qr_data": "base64url-hmac-token",
+        "tenant_id": "t123",
+        "department_id": "d1",
+        "branch_id": None,
+    },
+)
+async def generate_registration_qr_endpoint(
+    request: RegistrationQrRequest,
+    principal: AuthPrincipal = Depends(_checkin_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    return await generate_tenant_registration_qr(
+        tenant_id=tenant_id,
+        department_id=request.department_id,
+        branch_id=request.branch_id,
+    )
 
 
 @router.post("/check-in")
@@ -293,6 +326,28 @@ async def list_visit_sessions(
     )
 
 
+@router.get("/sessions/pending")
+@document_response(
+    message="Pending sessions fetched successfully",
+    description="Retrieve paginated list of pending visitor sessions (status: REGISTERED or PENDING_VERIFICATION) with optional department filtering.",
+    summary="List pending visitor sessions",
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+    },
+)
+async def list_pending_sessions(
+    department_id: str = None,
+    start: Annotated[int, Query(ge=0)] = 0,
+    stop: Annotated[int, Query(gt=0)] = 100,
+    principal: AuthPrincipal = Depends(verify_system_user_token("dept_admin", "super_admin", "receptionist")),
+):
+    tenant_id = principal.tenant_id or ""
+    return await retrieve_pending_sessions(
+        tenant_id=tenant_id, department_id=department_id, start=start, stop=stop
+    )
+
+
 @router.get("/sessions/{session_id}")
 @document_response(
     message="Visit session fetched successfully",
@@ -425,6 +480,8 @@ async def confirm_check_in_endpoint(
         receptionist_id=principal.user_id,
         tenant_id=tenant_id,
         badge_format=request.badge_format.value if request.badge_format else "A7",
+        purpose=request.purpose,
+        host_id=request.host_id,
     )
 
 
@@ -523,69 +580,6 @@ async def verify_id_scan(
 ):
     """Extract identity information from uploaded ID via OCR."""
     return await verify_id_with_ocr(id_image_object_key)
-
-
-@router.get("/sessions/pending")
-@document_response(
-    message="Pending sessions fetched successfully",
-    description="Retrieve paginated list of pending visitor sessions (status: REGISTERED or PENDING_VERIFICATION) with optional department filtering.",
-    summary="List pending visitor sessions",
-    success_example=[
-        {
-            "id": "507f1f77bcf86cd799439011",
-            "tenant_id": "t12345",
-            "visitor_profile_id": "507f1f77bcf86cd799439012",
-            "department_id": "d12345",
-            "host_id": "h12345",
-            "receptionist_id": "r12345",
-            "appointment_id": None,
-            "privacy_notice_version_id": None,
-            "check_in_method": "manual_entry",
-            "check_out_method": None,
-            "verification_status": "unverified",
-            "verification_method": None,
-            "verified_by": None,
-            "status": "registered",
-            "purpose": "Business meeting",
-            "visitor_name_snapshot": "John Doe",
-            "company_snapshot": "Acme Corp",
-            "host_name_snapshot": "Jane Smith",
-            "department_name_snapshot": "Sales",
-            "receptionist_name_snapshot": "Mike Johnson",
-            "consent_notice_displayed": True,
-            "consent_granted": True,
-            "consent_method": "digital_signature",
-            "consent_timestamp": 1712532000,
-            "consent_captured_by_user_id": "r12345",
-            "consent_withdrawal_at": None,
-            "lawful_basis_at_time": "legitimate_interest",
-            "badge_qr_token": None,
-            "badge_format": None,
-            "badge_generation_time": None,
-            "badge_expiry": None,
-            "badge_pdf_object_key": None,
-            "check_in_time": 1712532000,
-            "check_out_time": None,
-            "date_created": 1712532000,
-            "visit_duration": None,
-        }
-    ],
-    include_meta=True,
-    response_codes={
-        401: "Unauthorized - invalid or missing token",
-        403: "Forbidden - insufficient permissions",
-    },
-)
-async def list_pending_sessions(
-    department_id: str = None,
-    start: Annotated[int, Query(ge=0)] = 0,
-    stop: Annotated[int, Query(gt=0)] = 100,
-    principal: AuthPrincipal = Depends(verify_system_user_token("dept_admin", "super_admin", "receptionist")),
-):
-    tenant_id = principal.tenant_id or ""
-    return await retrieve_pending_sessions(
-        tenant_id=tenant_id, department_id=department_id, start=start, stop=stop
-    )
 
 
 @router.post("/sessions/{session_id}/apply-id-scan")

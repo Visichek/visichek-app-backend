@@ -144,6 +144,8 @@ class CheckInRequest(BaseModel):
 
 class ConfirmCheckInRequest(BaseModel):
     badge_format: Optional[BadgeFormat] = BadgeFormat.A7
+    purpose: Optional[str] = None
+    host_id: Optional[str] = None
 
 
 class DenyVisitorRequest(BaseModel):

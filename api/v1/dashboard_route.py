@@ -13,6 +13,9 @@ from services.export_service import export_visitor_log_csv, export_visitor_log_x
 router = APIRouter(prefix="/dashboard", tags=["Tenant Dashboard"])
 
 _admin_roles = verify_system_user_token("dept_admin", "super_admin")
+_all_tenant_roles = verify_system_user_token(
+    "receptionist", "dept_admin", "super_admin", "auditor", "security_officer", "dpo"
+)
 
 
 @router.get("/stats")
@@ -46,10 +49,12 @@ _admin_roles = verify_system_user_token("dept_admin", "super_admin")
 )
 async def dashboard_stats(
     department_id: str = None,
-    principal: AuthPrincipal = Depends(_admin_roles),
+    principal: AuthPrincipal = Depends(_all_tenant_roles),
 ):
     tenant_id = principal.tenant_id or ""
-    return await get_dashboard_stats(tenant_id=tenant_id, department_id=department_id)
+    return await get_dashboard_stats(
+        tenant_id=tenant_id, department_id=department_id, role=principal.role,
+    )
 
 
 @router.get("/visitors")

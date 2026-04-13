@@ -24,7 +24,7 @@ def set_auth_cookies(
         secure=is_production,
         samesite="lax",
         path="/",
-        max_age=ACCESS_TOKEN_MAX_AGE,
+        max_age=REFRESH_TOKEN_MAX_AGE,
     )
     response.set_cookie(
         key=REFRESH_TOKEN_COOKIE,

@@ -14,21 +14,33 @@ from repositories.tenant_repo import get_tenant
 from repositories.department_repo import get_department, get_departments
 from repositories.appointment_repo import get_appointment, update_appointment
 from repositories.privacy_notice_repo import get_active_notice_for_tenant
-from repositories.visitor_profile_repo import increment_visitor_profile_visits
+from repositories.visitor_profile_repo import (
+    get_visitor_profile,
+    get_visitor_profile_by_email,
+    get_visitor_profile_by_phone,
+    increment_visitor_profile_visits,
+)
+from repositories.system_user_repo import get_system_user
+from repositories.tenant_settings_repo import get_tenant_settings
 from schemas.appointment_schema import AppointmentUpdate
 from schemas.public_registration_schema import (
     PublicAppointmentLookupOut,
     PublicCheckoutResponse,
     PublicDepartmentOut,
+    PublicFinalizeRequest,
+    PublicIdScanOut,
     PublicPrivacyNoticeOut,
     PublicRegistrationRequest,
     PublicRegistrationResponse,
+    PublicRegistrationTokenVerifyOut,
+    PublicReturningVisitorLookupOut,
+    PublicReturningVisitorLookupRequest,
     PublicTenantInfoOut,
 )
 from schemas.imports import VisitStatus, CheckInMethod, CheckOutMethod, AppointmentStatus
 from schemas.visit_session_schema import VisitSessionCreate, VisitSessionUpdate
 from services.visitor_profile_service import get_or_create_visitor_profile
-from services.qr_service import verify_badge_token
+from services.qr_service import sign_registration_token, verify_badge_token, verify_registration_token
 from services.plan_limits import enforce_entity_cap, get_month_bounds
 
 
@@ -43,6 +55,35 @@ async def register_visitor_public(
     tenant = await get_tenant({"_id": ObjectId(tenant_id)})
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # If a signed registration token is supplied, its scope overrides any
+    # client-supplied department_id. Tokens are bound to a single tenant.
+    token_scope = None
+    if request.registration_token:
+        token_scope = verify_registration_token(request.registration_token)
+        if not token_scope or token_scope.get("tenant_id") != tenant_id:
+            raise HTTPException(status_code=400, detail="Invalid or expired registration token")
+        if token_scope.get("department_id"):
+            request.department_id = token_scope["department_id"]
+
+    # Returning-visitor shortcut: if profile_id is supplied it must match the
+    # phone. full_name can then be omitted and is pulled from the profile.
+    existing_profile = None
+    if request.profile_id:
+        if not ObjectId.is_valid(request.profile_id):
+            raise HTTPException(status_code=400, detail="Invalid profile_id")
+        existing_profile = await get_visitor_profile(
+            {"_id": ObjectId(request.profile_id), "tenant_id": tenant_id},
+        )
+        if not existing_profile or existing_profile.phone != request.phone:
+            raise HTTPException(status_code=400, detail="Returning-visitor match failed")
+        if not request.full_name:
+            request.full_name = existing_profile.full_name
+        if not request.company:
+            request.company = existing_profile.company
+
+    if not request.full_name:
+        raise HTTPException(status_code=400, detail="full_name is required")
 
     # Enforce plan cap on visit sessions created this calendar month
     month_start, month_end = get_month_bounds()
@@ -239,4 +280,144 @@ async def lookup_public_appointment(
         department_name=getattr(appointment, "department_name", None),
         scheduled_at=getattr(appointment, "scheduled_at", None),
         purpose=getattr(appointment, "purpose", None),
+    )
+
+
+def _mask_name(full_name: str) -> str:
+    parts = [p for p in (full_name or "").split() if p]
+    if not parts:
+        return ""
+    def _m(s: str) -> str:
+        return s[0] + ("*" * max(len(s) - 1, 2)) if s else ""
+    return " ".join(_m(p) for p in parts)
+
+
+async def verify_public_registration_token(token: str) -> PublicRegistrationTokenVerifyOut:
+    """Public pre-flight check for a QR registration token. Used by the form
+    to reject expired/tampered tokens before collecting visitor PII."""
+    scope = verify_registration_token(token)
+    if not scope:
+        return PublicRegistrationTokenVerifyOut(valid=False)
+
+    tenant_id = scope.get("tenant_id")
+    company_name = None
+    if tenant_id and ObjectId.is_valid(tenant_id):
+        tenant = await get_tenant({"_id": ObjectId(tenant_id)})
+        if tenant:
+            company_name = tenant.company_name
+        else:
+            return PublicRegistrationTokenVerifyOut(valid=False)
+
+    return PublicRegistrationTokenVerifyOut(
+        valid=True,
+        tenant_id=tenant_id,
+        department_id=scope.get("department_id"),
+        branch_id=scope.get("branch_id"),
+        company_name=company_name,
+    )
+
+
+async def public_ocr_id_scan(tenant_id: str, image_bytes: bytes, mime_type: str) -> PublicIdScanOut:
+    """Run OCR on an uploaded ID image and return extracted fields. The image
+    is processed in-memory and never persisted — the visitor submits the
+    confirmed fields through /public/register/{tenant_id} normally."""
+    if not ObjectId.is_valid(tenant_id):
+        raise HTTPException(status_code=400, detail="Invalid tenant ID")
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Empty image payload")
+    # 8 MiB hard cap — the OCR provider will reject larger anyway.
+    if len(image_bytes) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image exceeds 8 MiB limit")
+
+    try:
+        from core.ocr.manager import OCRManager
+        ocr = OCRManager.get_instance()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="OCR service is not configured")
+
+    try:
+        result = await ocr.extract_id(image_bytes, mime_type or "image/jpeg")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"OCR extraction failed: {str(e)}")
+
+    return PublicIdScanOut(
+        full_name=result.get("full_name"),
+        id_number=result.get("id_number"),
+        id_type=result.get("id_type"),
+        confidence=float(result.get("confidence", 0.0) or 0.0),
+    )
+
+
+async def lookup_returning_visitor(
+    tenant_id: str,
+    request: PublicReturningVisitorLookupRequest,
+) -> PublicReturningVisitorLookupOut:
+    """Masked lookup for returning visitors. Returns a masked name and the
+    opaque profile_id on match. The caller must re-supply `phone` on submit
+    to prove possession — we never return the raw phone/email back."""
+    if not ObjectId.is_valid(tenant_id):
+        raise HTTPException(status_code=400, detail="Invalid tenant ID")
+    if not request.phone and not request.email:
+        raise HTTPException(status_code=400, detail="phone or email is required")
+
+    profile = None
+    if request.phone:
+        profile = await get_visitor_profile_by_phone(tenant_id=tenant_id, phone=request.phone)
+    if not profile and request.email:
+        profile = await get_visitor_profile_by_email(tenant_id=tenant_id, email=request.email)
+
+    if not profile:
+        return PublicReturningVisitorLookupOut(found=False)
+
+    # Re-verification window check — tenant setting gates the "skip ID scan"
+    # fast path. 0 disables the shortcut entirely.
+    id_verified_recently = False
+    settings = await get_tenant_settings({"tenant_id": tenant_id})
+    window_days = getattr(settings, "id_reverification_days", 30) if settings else 30
+    if window_days and window_days > 0 and profile.last_verification_date:
+        cutoff = int(time.time()) - (window_days * 86400)
+        id_verified_recently = profile.last_verification_date >= cutoff
+
+    last_visit_ago_days = None
+    if profile.last_visit_date:
+        last_visit_ago_days = max((int(time.time()) - profile.last_visit_date) // 86400, 0)
+
+    return PublicReturningVisitorLookupOut(
+        found=True,
+        profile_id=profile.id,
+        full_name_masked=_mask_name(profile.full_name),
+        company=profile.company,
+        last_visit_ago_days=last_visit_ago_days,
+        id_verified_recently=id_verified_recently,
+    )
+
+
+async def finalize_public_registration(
+    tenant_id: str,
+    request: PublicFinalizeRequest,
+) -> dict:
+    """Public endpoint that finalizes a REGISTERED session by naming the
+    receptionist who is accepting the visitor. The receptionist_code is the
+    receptionist's system_user id (displayed at reception). Delegates to the
+    standard confirm_check_in flow so badge generation + audit stay identical."""
+    if not ObjectId.is_valid(tenant_id):
+        raise HTTPException(status_code=400, detail="Invalid tenant ID")
+    if not ObjectId.is_valid(request.session_id):
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+    if not ObjectId.is_valid(request.receptionist_code):
+        raise HTTPException(status_code=400, detail="Invalid receptionist code")
+
+    receptionist = await get_system_user({
+        "_id": ObjectId(request.receptionist_code),
+        "tenant_id": tenant_id,
+    })
+    if not receptionist or receptionist.role not in ("receptionist", "super_admin"):
+        raise HTTPException(status_code=404, detail="Receptionist not found")
+
+    from services.visit_session_service import confirm_check_in
+    return await confirm_check_in(
+        session_id=request.session_id,
+        receptionist_id=receptionist.id or request.receptionist_code,
+        tenant_id=tenant_id,
+        badge_format="A7",
     )

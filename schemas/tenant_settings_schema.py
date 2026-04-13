@@ -57,6 +57,9 @@ class TenantSettingsBase(BaseModel):
     self_registration_fields: List[str] = Field(
         default_factory=lambda: ["company", "purpose", "email"]
     )
+    # Skip ID re-verification if the visitor's last_verification_date falls
+    # within this window. 0 disables the shortcut (every visit re-verifies).
+    id_reverification_days: int = 30
 
     # Data Retention
     visitor_data_retention_days: int = 365
@@ -127,6 +130,7 @@ class TenantSettingsUpdate(BaseModel):
     visitor_badge_expiry_hours: Optional[int] = None
     allow_self_registration: Optional[bool] = None
     self_registration_fields: Optional[List[str]] = None
+    id_reverification_days: Optional[int] = None
 
     # Data Retention
     visitor_data_retention_days: Optional[int] = None
