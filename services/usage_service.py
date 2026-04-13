@@ -107,7 +107,7 @@ async def get_tenant_usage_summary(
     from schemas.plan_schema import QuotaResetInterval
 
     period_monthly = get_period_key(QuotaResetInterval.MONTHLY)
-    period_daily = get_period_key(QuotaResetInterval.DAILY)
+    get_period_key(QuotaResetInterval.DAILY)
 
     crud_usage: dict = {}
     for cl in plan_data.get("crud_limits", []):

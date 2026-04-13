@@ -1,0 +1,15 @@
+[lint]
+ignore = [
+    "F403",  # from module import *  — project pattern (schemas/imports.py)
+    "F405",  # may be undefined from star imports — same reason
+]
+
+[lint.per-file-ignores]
+"main.py" = ["E402"]  # auto-mounted routes after middleware setup
+"core/plan_enforcement.py" = ["E402"]  # module docstring before imports
+"services/admin_dashboard_service.py" = ["E402"]
+"services/branch_service.py" = ["E402"]
+"services/plan_limits.py" = ["E402"]
+"tests/conftest.py" = ["E402"]
+"tests/integration/conftest.py" = ["E402"]
+"tests/integration/test_flows.py" = ["E402"]

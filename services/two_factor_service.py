@@ -116,7 +116,7 @@ async def verify_two_factor_setup(
     )
 
     # Return the backup codes that were stored during setup
-    cursor = db[BACKUP_CODES_COLLECTION].find(
+    db[BACKUP_CODES_COLLECTION].find(
         {"user_id": user_id, "user_type": user_type, "used": False},
         {"code_hash": 0},
     )

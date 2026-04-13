@@ -153,7 +153,7 @@ async def get_consent_log_endpoint(
         limit=limit,
     )
 
-    total_count = await get_consent_log_count(
+    await get_consent_log_count(
         tenant_id=principal.tenant_id,
         principal=principal,
         start_date=start_date,

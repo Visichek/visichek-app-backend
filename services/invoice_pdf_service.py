@@ -25,7 +25,7 @@ def _generate_pdf_bytes(invoice: InvoiceOut) -> bytes:
             TableStyle,
             Paragraph,
             Spacer,
-            PageBreak,
+            PageBreak,  # noqa: F401
         )
         from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER  # type: ignore[import-untyped]
     except ImportError as e:

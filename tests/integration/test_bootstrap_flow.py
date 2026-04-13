@@ -38,7 +38,7 @@ async def admin_auth_headers(
         password=raw_password,
         invited_by="seed",
     )
-    admin = await create_admin(admin_data)
+    await create_admin(admin_data)
 
     # Login via API
     response = await integration_client.post(

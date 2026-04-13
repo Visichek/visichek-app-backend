@@ -134,7 +134,7 @@ def visitor_profile_factory() -> Callable[..., VisitorProfileCreate]:
 @pytest.fixture
 def visit_session_factory() -> Callable[..., VisitSessionCreate]:
     def _make(**kwargs) -> VisitSessionCreate:
-        now = int(time.time())
+        int(time.time())
         defaults: dict = {
             "tenant_id": str(ObjectId()),
             "visitor_profile_id": str(ObjectId()),

@@ -11,7 +11,7 @@ async def generate_member_access_tokens(userId)->accessTokenOut:
 
     
     try:
-        obj_id = ObjectId(userId)
+        ObjectId(userId)
     except errors.InvalidId:
         raise   HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid User Id")    
 
@@ -26,7 +26,7 @@ async def generate_admin_access_tokens(userId)->accessTokenOut:
     from repositories.tokens_repo import add_admin_access_tokens
 
     try:
-        obj_id = ObjectId(userId)
+        ObjectId(userId)
     except errors.InvalidId:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid User Id")    # or raise an error / log it    
 
@@ -40,15 +40,15 @@ async def generate_refresh_tokens(userId,accessToken)->refreshTokenOut:
     from repositories.tokens_repo import add_refresh_tokens
 
     try:
-        obj_id = ObjectId(userId)
+        ObjectId(userId)
     except errors.InvalidId:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid User Id While trying to create refresh token")    # or raise an error / log it    
 
     accessToken = await decode_jwt_token(accessToken)
-    if accessToken==None:
+    if accessToken is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Failed to decode the accesstoken while trying to create a refreshtoken")
     try:
-        obj_id = ObjectId(accessToken['accessToken'])
+        ObjectId(accessToken['accessToken'])
     except errors.InvalidId:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid Access Id While trying to create refresh token")    # or raise an error / log it    
 
@@ -60,7 +60,7 @@ async def validate_refreshToken(refreshToken:str):
     from repositories.tokens_repo import get_refresh_tokens
 
     try:
-        obj_id = ObjectId(refreshToken)
+        ObjectId(refreshToken)
     except errors.InvalidId:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid Refresh Id")   # or raise an error / log it    
 
@@ -92,7 +92,7 @@ async def validate_admin_accesstoken_otp(accessToken:str):
     decodedAccessToken = await decode_jwt_token(token=accessToken)
     print(decodedAccessToken)
     try:
-        obj_id = ObjectId(decodedAccessToken['accessToken']) # type: ignore
+        ObjectId(decodedAccessToken['accessToken']) # type: ignore
     except errors.InvalidId:
         
         return None  # or raise an error / log it    
@@ -104,7 +104,7 @@ async def validate_admin_accesstoken_otp(accessToken:str):
            
             validatedAccessToken= await get_inactive_access_token(token_id=decodedAccessToken['accessToken'])
             print(validatedAccessToken)
-            if type(validatedAccessToken) == type(accessTokenOut(userId="12",accesstoken="sa")):
+            if isinstance(validatedAccessToken, accessTokenOut):
                 return validatedAccessToken
             elif validatedAccessToken=="None":
                 return None
@@ -132,7 +132,7 @@ async def validate_expired_admin_accesstoken(accessToken:str):
 
     decodedAccessToken = await decode_jwt_token_without_expiration(token=accessToken)
     try:
-        obj_id = ObjectId(decodedAccessToken['accessToken']) # type: ignore
+        ObjectId(decodedAccessToken['accessToken']) # type: ignore
     except errors.InvalidId:
         return None  # or raise an error / log it    
 
@@ -140,7 +140,7 @@ async def validate_expired_admin_accesstoken(accessToken:str):
     if decodedAccessToken:
         if decodedAccessToken['role']=="admin":
             validatedAccessToken= await get_admin_access_tokens(accessToken=decodedAccessToken['accessToken'])
-            if type(validatedAccessToken) == type(accessTokenOut(userId="12",accesstoken="sa")):
+            if isinstance(validatedAccessToken, accessTokenOut):
                 return validatedAccessToken
             elif validatedAccessToken=="None":
                 return None

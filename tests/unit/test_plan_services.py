@@ -154,7 +154,7 @@ class TestPlanService:
         mock_update.return_value = expected
 
         from services.plan_service import archive_plan
-        result = await archive_plan("plan_123")
+        await archive_plan("plan_123")
         mock_update.assert_called_once()
 
     @patch("services.plan_service.retrieve_plan_by_id", new_callable=AsyncMock)
@@ -246,7 +246,7 @@ class TestSubscriptionService:
         mock_update.return_value = _make_sub_out(plan_id="plan_999")
 
         from services.subscription_service import change_plan
-        result = await change_plan("tenant_abc", "507f1f77bcf86cd799439011")
+        await change_plan("tenant_abc", "507f1f77bcf86cd799439011")
         mock_update.assert_called_once()
         mock_cache.assert_called_once_with("tenant_abc")
 

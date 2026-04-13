@@ -148,7 +148,7 @@ async def _retry_payment(subscription: SubscriptionOut, now: int) -> bool:
             return False
 
         # Payment succeeded, reset to ACTIVE
-        settings = get_settings()
+        get_settings()
         update = SubscriptionUpdate(
             status=SubscriptionStatus.ACTIVE,
             renewal_attempts=0,

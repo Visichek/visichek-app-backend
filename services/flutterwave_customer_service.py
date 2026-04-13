@@ -68,7 +68,7 @@ async def create_or_get_flutterwave_customer(
     # Update tenant with new customer ID
     try:
         update_data = TenantUpdate(flutterwave_customer_id=customer_id)
-        updated_tenant = await update_tenant(
+        await update_tenant(
             filter_dict={"_id": ObjectId(tenant_id)},
             tenant_data=update_data,
         )

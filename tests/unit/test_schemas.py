@@ -57,7 +57,7 @@ class TestTenantSchema:
 
     def test_tenant_create_with_optional_fields(self):
         """Test TenantCreate with all optional fields provided."""
-        now = int(time.time())
+        int(time.time())
         payload = TenantCreate(
             company_name="Test Co",
             lawful_basis=LawfulBasis.CONSENT,
@@ -526,7 +526,7 @@ class TestVisitSessionSchema:
 
     def test_visit_session_create_with_optional_fields(self):
         """Test VisitSessionCreate with optional fields."""
-        now = int(time.time())
+        int(time.time())
         payload = VisitSessionCreate(
             tenant_id="tenant123",
             visitor_profile_id="visitor456",

@@ -1,9 +1,6 @@
-import time
-from datetime import datetime, timezone
-from pydantic import BaseModel, Field, EmailStr, model_validator
-from typing import Any, Optional, List
+from pydantic import BaseModel
+from typing import Optional, List
 from enum import Enum
-from bson import ObjectId
 
 
 class LoginType(str, Enum):

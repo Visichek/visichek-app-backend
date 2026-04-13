@@ -267,7 +267,7 @@ class TestVisitorCheckInCheckOutFlow:
             phone="1234567890",
             company="Visitor Corp",
         )
-        visitor = await create_visitor_profile(visitor_data)
+        await create_visitor_profile(visitor_data)
 
         # Check-in visitor
         checkin_request = CheckInRequest(
@@ -662,7 +662,7 @@ class TestAppointmentFlow:
         visitor = await create_visitor_profile(visitor_data)
 
         # Check-in visitor linked to appointment
-        visit_data = CheckInRequest(
+        CheckInRequest(
             full_name="Scheduled Visitor",
             phone="5551234567",
             company="Appointment Corp",

@@ -29,7 +29,7 @@ class TestVisitorProfileFlow:
     async def _profiles(self, mongo_db, seeded_tenant):
         """Seed 5 visitor profiles with varied data."""
         profiles = []
-        base_time = int(time.time())
+        int(time.time())
         names = [
             ("Ada Lovelace", "ada@example.com", "+2348100000001"),
             ("Grace Hopper", "grace@example.com", "+2348100000002"),

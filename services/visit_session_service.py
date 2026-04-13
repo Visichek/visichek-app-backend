@@ -81,11 +81,10 @@ async def check_in_visitor(
     )
 
     # 2A. Check tenant-level profiling config and respect profile opt-out preference
-    skip_profile_history = False
     if hasattr(tenant, 'enable_repeat_visitor_recognition') and tenant.enable_repeat_visitor_recognition is False:
-        skip_profile_history = True
+        pass
     if profile.profiling_preference == ProfilingPreference.OPTED_OUT:
-        skip_profile_history = True
+        pass
 
     # 2B. Handle appointment linkage if provided
     appointment_id = request.appointment_id

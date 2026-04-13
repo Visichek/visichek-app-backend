@@ -99,12 +99,11 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
 
     # ── Check tenant-level 2FA enforcement ──────────────────────────
     tenant_enforces_totp = False
-    mfa_user_override_allowed = True
     if principal.tenant_id:
         tenant = await db.tenant_companies.find_one({"_id": ObjectId(principal.tenant_id)})
         if tenant:
             tenant_enforces_totp = tenant.get("mfa_default_for_users", False)
-            mfa_user_override_allowed = tenant.get("mfa_user_override_allowed", True)
+            tenant.get("mfa_user_override_allowed", True)
 
         # Also check tenant_settings collection
         ts = await db["tenant_settings"].find_one({"tenant_id": principal.tenant_id})

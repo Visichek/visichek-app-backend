@@ -380,7 +380,7 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
         reference = f"trial-convert-{subscription.id}-{now}"
 
         try:
-            intent = provider.create_intent(
+            provider.create_intent(
                 PaymentIntentRequest(
                     amount_minor=amount_minor,
                     currency=subscription.currency,

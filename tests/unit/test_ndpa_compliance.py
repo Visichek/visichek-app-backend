@@ -213,7 +213,7 @@ class TestNDPACompliance:
 
         app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_DEPT_ADMIN_PRINCIPAL
 
-        opted_out_profile = _make_visitor_profile_out(
+        _make_visitor_profile_out(
             id="visitor-opted-out",
             profiling_preference=ProfilingPreference.OPTED_OUT,
             visit_count=5,
@@ -418,5 +418,6 @@ class TestNDPACompliance:
                 )
 
             assert response.status_code == 201
+            data = response.json()
             assert data["success"] is True
             mock_create.assert_called_once()

@@ -41,7 +41,7 @@ def generate_badge_pdf(
     # QR Code
     try:
         import qrcode  # type: ignore[import-untyped]
-        from PIL import Image as PILImage  # type: ignore[import-untyped]
+        from PIL import Image as PILImage  # type: ignore[import-untyped]  # noqa: F401
         from reportlab.lib.utils import ImageReader  # type: ignore[import-untyped]
 
         qr = qrcode.QRCode(version=1, box_size=4, border=1)

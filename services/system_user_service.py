@@ -127,7 +127,7 @@ async def add_system_user_from_invite(
     - Auto-assigns permissions based on role
     - Normalizes and checks email uniqueness
     """
-    role_str = signup_data.role.value if hasattr(signup_data.role, 'value') else signup_data.role
+    signup_data.role.value if hasattr(signup_data.role, 'value') else signup_data.role
 
     # Build internal SystemUserCreate with system-assigned fields
     create_data = SystemUserCreate(

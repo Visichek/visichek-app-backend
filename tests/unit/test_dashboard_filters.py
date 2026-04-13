@@ -198,12 +198,12 @@ class TestDashboardFilters:
             verification_status=VerificationStatus.VERIFIED,
             visitor_name_snapshot="John Doe",
         )
-        unverified_session = _make_visit_session_out(
+        _make_visit_session_out(
             id="session-002",
             verification_status=VerificationStatus.UNVERIFIED,
             visitor_name_snapshot="Jane Smith",
         )
-        denied_session = _make_visit_session_out(
+        _make_visit_session_out(
             id="session-003",
             verification_status=VerificationStatus.DENIED,
             visitor_name_snapshot="Bob Johnson",

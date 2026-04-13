@@ -8,7 +8,7 @@ import bcrypt
 _OTP_SECRET = os.getenv("SECRET_KEY", "dev-otp-key").encode()
 
 def hash_password(password: str|bytes) -> bytes: # type: ignore
-    if type(password)==str:
+    if isinstance(password, str):
         salt = bcrypt.gensalt()
         hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
         return hashed

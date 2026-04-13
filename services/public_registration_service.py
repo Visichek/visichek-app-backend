@@ -142,7 +142,6 @@ async def register_visitor_public(
 
     # Handle appointment linkage
     host_id = None
-    host_name = None
     appointment_id = request.appointment_id
     if appointment_id and ObjectId.is_valid(appointment_id):
         appointment = await get_appointment({"_id": ObjectId(appointment_id), "tenant_id": tenant_id})
