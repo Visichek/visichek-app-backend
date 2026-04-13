@@ -12,9 +12,7 @@ from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.appointment_service import (
     add_appointment,
-    retrieve_appointment_by_id,
     retrieve_appointment_by_id_with_summary,
-    retrieve_appointments,
     retrieve_appointments_with_summary,
     update_appointment_by_id,
     remove_appointment,

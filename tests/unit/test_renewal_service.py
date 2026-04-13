@@ -14,7 +14,7 @@ from schemas.subscription_schema import (
     SubscriptionStatus,
     BillingCycle,
 )
-from core.payments import PaymentIntent, PaymentIntentRequest
+from core.payments import PaymentIntentRequest, PaymentIntentResponse, PaymentProviderName, PaymentStatus
 
 pytestmark = pytest.mark.asyncio
 
@@ -115,11 +115,11 @@ class TestRenewalService:
 
         # Mock payment manager
         mock_provider = MagicMock()
-        mock_intent = PaymentIntent(
-            id="intent_123",
-            status="succeeded",
-            amount_minor=10000,
-            currency="NGN",
+        mock_intent = PaymentIntentResponse(
+            provider=PaymentProviderName.STRIPE,
+            reference="intent_123",
+            status=PaymentStatus.SUCCEEDED,
+            checkout_url=None,
             provider_payload={"id": "txn_stripe_123"},
         )
         mock_provider.create_intent.return_value = mock_intent
@@ -248,11 +248,11 @@ class TestRenewalService:
 
         # Mock payment provider
         mock_provider = MagicMock()
-        mock_intent = PaymentIntent(
-            id="intent_trial_123",
-            status="succeeded",
-            amount_minor=10000,
-            currency="NGN",
+        mock_intent = PaymentIntentResponse(
+            provider=PaymentProviderName.STRIPE,
+            reference="intent_trial_123",
+            status=PaymentStatus.SUCCEEDED,
+            checkout_url=None,
             provider_payload={"id": "txn_trial_123"},
         )
         mock_provider.create_intent.return_value = mock_intent

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from typing import Generator
 
 import pytest
 from httpx import AsyncClient
@@ -10,35 +9,27 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from schemas.tenant_schema import TenantCreate, TenantOut
 from schemas.system_user_schema import (
     SystemUserCreate,
-    SystemUserLogin,
     SystemUserOut,
 )
-from schemas.department_schema import DepartmentCreate, DepartmentOut
+from schemas.department_schema import DepartmentCreate
 from schemas.visit_session_schema import CheckInRequest, CheckOutRequest
-from schemas.privacy_notice_schema import PrivacyNoticeCreate, PrivacyNoticeOut, PrivacyNoticeUpdate
-from schemas.data_subject_request_schema import DSRCreate, DSRUpdate, DSROut
-from schemas.appointment_schema import AppointmentCreate, AppointmentOut
+from schemas.privacy_notice_schema import PrivacyNoticeCreate, PrivacyNoticeUpdate
+from schemas.data_subject_request_schema import DSRCreate, DSRUpdate
+from schemas.appointment_schema import AppointmentCreate
 from schemas.imports import (
     SystemUserRole,
-    AccountStatus,
     LawfulBasis,
     NoticeDisplayMode,
-    DeletionAction,
     DSRType,
     DSRStatus,
     CheckInMethod,
-    CheckOutMethod,
     AppointmentStatus,
 )
-from repositories.tenant_repo import create_tenant, get_tenant
+from repositories.tenant_repo import create_tenant
 from services.tenant_service import add_tenant
-from repositories.system_user_repo import (
-    create_system_user,
-    get_system_user,
-)
+from repositories.system_user_repo import create_system_user
 from repositories.department_repo import (
     create_department,
-    get_department,
     get_departments,
     update_department,
     delete_department,
@@ -46,7 +37,6 @@ from repositories.department_repo import (
 from repositories.visit_session_repo import (
     create_visit_session,
     get_visit_session,
-    update_visit_session,
 )
 from repositories.privacy_notice_repo import (
     create_privacy_notice,
@@ -60,7 +50,6 @@ from repositories.data_subject_request_repo import (
 )
 from repositories.appointment_repo import (
     create_appointment,
-    get_appointment,
     update_appointment,
 )
 from repositories.visitor_profile_repo import create_visitor_profile
@@ -722,4 +711,3 @@ class TestAppointmentFlow:
 from bson import ObjectId
 from schemas.department_schema import DepartmentUpdate
 from schemas.appointment_schema import AppointmentUpdate
-from schemas.visit_session_schema import VisitSessionCreate

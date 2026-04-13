@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends
 
 from core.response_envelope import document_response
-from schemas.branding_schema import BrandingUpdate, BrandingOut
+from schemas.branding_schema import BrandingUpdate
 from security.auth import verify_super_admin_token, verify_any_system_user_token
 from security.principal import AuthPrincipal
 from services.branding_service import (

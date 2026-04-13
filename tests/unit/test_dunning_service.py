@@ -14,7 +14,7 @@ from schemas.subscription_schema import (
     SubscriptionStatus,
     BillingCycle,
 )
-from core.payments import PaymentIntent
+from core.payments import PaymentIntentResponse, PaymentProviderName, PaymentStatus
 from core.settings import Settings
 
 pytestmark = pytest.mark.asyncio
@@ -128,11 +128,11 @@ class TestDunningService:
 
         # Mock payment success
         mock_provider = MagicMock()
-        mock_intent = PaymentIntent(
-            id="intent_dunning_1",
-            status="succeeded",
-            amount_minor=10000,
-            currency="NGN",
+        mock_intent = PaymentIntentResponse(
+            provider=PaymentProviderName.STRIPE,
+            reference="intent_dunning_1",
+            status=PaymentStatus.SUCCEEDED,
+            checkout_url=None,
             provider_payload={"id": "txn_dunning_1"},
         )
         mock_provider.create_intent.return_value = mock_intent

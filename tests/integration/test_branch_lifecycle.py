@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from main import app
 from api.v1.branch_route import _super_admin_dep
@@ -32,8 +33,12 @@ def _mock_super_admin(tenant_id: str = "integration-tenant-1"):
 
 
 @pytest_asyncio.fixture
-async def client():
-    """Async HTTP client with super_admin auth overridden."""
+async def client(mongo_db: AsyncIOMotorDatabase):
+    """Async HTTP client with super_admin auth overridden.
+
+    Depends on mongo_db to ensure the database connection is patched
+    to the current event loop before any requests hit the app.
+    """
     app.dependency_overrides[_super_admin_dep] = lambda: _mock_super_admin()
 
     async with AsyncClient(

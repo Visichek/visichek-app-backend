@@ -33,19 +33,65 @@ from schemas.tenant_schema import TenantCreate, TenantOut
 from schemas.system_user_schema import SystemUserCreate, SystemUserOut
 from repositories.tenant_repo import create_tenant
 from repositories.system_user_repo import create_system_user
-from services.system_user_service import authenticate_system_user
-from schemas.system_user_schema import SystemUserLogin
 from schemas.imports import SystemUserRole, AccountStatus
+import core.database
 
 
 settings = get_settings()
+
+
+def _patch_db_everywhere(new_db: AsyncIOMotorDatabase) -> dict:
+    """
+    Replace the ``db`` binding in ``core.database`` **and** every loaded
+    module that did ``from core.database import db``.
+
+    Returns a dict of {module_name: original_db} so callers can restore.
+    """
+    originals: dict = {}
+
+    # 1. Patch the canonical module attribute
+    originals["core.database"] = core.database.db
+    core.database.db = new_db
+
+    # 2. Patch every already-imported module that grabbed a local reference
+    for mod_name, mod in list(sys.modules.items()):
+        if mod is None:
+            continue
+        if mod_name == "core.database":
+            continue
+        # Only look at project modules that are likely to have imported db
+        if not (
+            mod_name.startswith("repositories.")
+            or mod_name.startswith("services.")
+            or mod_name.startswith("security.")
+            or mod_name.startswith("api.")
+            or mod_name.startswith("core.")
+            or mod_name == "main"
+            or mod_name == "seed"
+        ):
+            continue
+        if hasattr(mod, "db") and mod.__dict__.get("db") is originals["core.database"]:
+            originals[mod_name] = mod.db
+            mod.db = new_db
+
+    return originals
+
+
+def _restore_db_everywhere(originals: dict) -> None:
+    """Restore all ``db`` bindings from the dict returned by _patch_db_everywhere."""
+    for mod_name, original_db in originals.items():
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            mod.db = original_db
 
 
 @pytest_asyncio.fixture
 async def mongo_db() -> AsyncGenerator[AsyncIOMotorDatabase, None]:
     """
     Fixture that connects to real MongoDB for integration tests.
-    Yields the test database and drops it on teardown.
+    Creates a fresh Motor client bound to the current event loop and patches
+    the ``db`` reference in all repository / service modules so the app
+    uses this connection instead of the stale import-time one.
     """
     mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
     db_name = "visichek_test_integration"
@@ -53,9 +99,13 @@ async def mongo_db() -> AsyncGenerator[AsyncIOMotorDatabase, None]:
     client = AsyncIOMotorClient(mongo_url)
     db = client[db_name]
 
+    # Swap the db reference in every module that imported it
+    originals = _patch_db_everywhere(db)
+
     yield db
 
-    # Cleanup: drop the test database after each test
+    # Restore original references and cleanup
+    _restore_db_everywhere(originals)
     await client.drop_database(db_name)
     client.close()
 
@@ -80,9 +130,11 @@ async def redis_client() -> AsyncGenerator[redis.Redis, None]:
 
 
 @pytest_asyncio.fixture
-async def integration_app() -> FastAPI:
+async def integration_app(mongo_db: AsyncIOMotorDatabase) -> FastAPI:
     """
     Fixture that returns the FastAPI app configured with real MongoDB.
+    Depends on mongo_db to ensure the database is patched before any
+    requests hit the app.
     """
     return app
 

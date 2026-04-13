@@ -8,14 +8,12 @@ Verifies that:
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
 
-from schemas.admin_schema import AdminSignupRequest, AdminCreate, AdminOut
-from schemas.user_schema import UserSignupRequest, UserLogin, UserCreate, UserOut
+from schemas.admin_schema import AdminSignupRequest
+from schemas.user_schema import UserSignupRequest, UserLogin
 from schemas.system_user_schema import (
     SystemUserSignupRequest,
     SystemUserTenantLogin,
-    SystemUserCreate,
 )
 from schemas.imports import SystemUserRole
 
