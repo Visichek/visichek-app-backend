@@ -4,16 +4,13 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from bson import ObjectId
 
 from repositories.usage_repo import (
     create_usage_record,
     get_current_count,
     increment_usage_aggregate,
-    get_usage_aggregates,
     reset_usage_aggregates,
     delete_usage_records,
-    delete_usage_aggregates,
 )
 from schemas.usage_schema import (
     UsageRecordCreate,
@@ -112,7 +109,7 @@ async def get_tenant_usage_summary(
     period_monthly = get_period_key(QuotaResetInterval.MONTHLY)
     period_daily = get_period_key(QuotaResetInterval.DAILY)
 
-    crud_usage = {}
+    crud_usage: dict = {}
     for cl in plan_data.get("crud_limits", []):
         collection = cl["collection"]
         period = get_period_key(QuotaResetInterval(cl.get("reset_interval", "monthly")))

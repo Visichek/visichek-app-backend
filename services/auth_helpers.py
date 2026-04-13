@@ -78,7 +78,7 @@ async def issue_tokens_for_role(user_id: str, role: str, tenant_id: str | None =
         )
     )
 
-    return jwt_token, refresh_token.refreshtoken
+    return jwt_token, refresh_token.refreshtoken or ""
 
 
 async def issue_tokens_for_user(user_id: str, role: str) -> tuple[str, str]:

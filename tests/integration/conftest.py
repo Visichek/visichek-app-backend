@@ -4,9 +4,8 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, cast
 
-import pytest
 import pytest_asyncio
 import redis
 from dotenv import load_dotenv
@@ -33,7 +32,7 @@ from schemas.tenant_schema import TenantCreate, TenantOut
 from schemas.system_user_schema import SystemUserCreate, SystemUserOut
 from repositories.tenant_repo import create_tenant
 from repositories.system_user_repo import create_system_user
-from schemas.imports import SystemUserRole, AccountStatus
+from schemas.imports import SystemUserRole, AccountStatus, LawfulBasis, NoticeDisplayMode
 import core.database
 
 
@@ -51,7 +50,7 @@ def _patch_db_everywhere(new_db: AsyncIOMotorDatabase) -> dict:
 
     # 1. Patch the canonical module attribute
     originals["core.database"] = core.database.db
-    core.database.db = new_db
+    core.database.db = new_db  # type: ignore[assignment]
 
     # 2. Patch every already-imported module that grabbed a local reference
     for mod_name, mod in list(sys.modules.items()):
@@ -71,8 +70,8 @@ def _patch_db_everywhere(new_db: AsyncIOMotorDatabase) -> dict:
         ):
             continue
         if hasattr(mod, "db") and mod.__dict__.get("db") is originals["core.database"]:
-            originals[mod_name] = mod.db
-            mod.db = new_db
+            originals[mod_name] = mod.db  # type: ignore[attr-defined]
+            mod.db = new_db  # type: ignore[attr-defined]
 
     return originals
 
@@ -82,7 +81,7 @@ def _restore_db_everywhere(originals: dict) -> None:
     for mod_name, original_db in originals.items():
         mod = sys.modules.get(mod_name)
         if mod is not None:
-            mod.db = original_db
+            mod.db = original_db  # type: ignore[attr-defined]
 
 
 @pytest_asyncio.fixture
@@ -96,7 +95,7 @@ async def mongo_db() -> AsyncGenerator[AsyncIOMotorDatabase, None]:
     mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
     db_name = "visichek_test_integration"
 
-    client = AsyncIOMotorClient(mongo_url)
+    client: Any = AsyncIOMotorClient(mongo_url)
     db = client[db_name]
 
     # Swap the db reference in every module that imported it
@@ -144,7 +143,7 @@ async def integration_client(integration_app: FastAPI) -> AsyncGenerator[AsyncCl
     """
     Fixture that provides an httpx AsyncClient for making requests to the FastAPI app.
     """
-    async with AsyncClient(transport=ASGITransport(app=integration_app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=cast(object, integration_app)), base_url="http://test") as client:  # type: ignore[arg-type]
         yield client
 
 
@@ -155,8 +154,8 @@ async def seeded_tenant(mongo_db: AsyncIOMotorDatabase) -> AsyncGenerator[Tenant
     """
     tenant_data = TenantCreate(
         company_name=f"Test Company {int(time.time())}",
-        lawful_basis="legitimate_interest",
-        notice_display_mode="passive",
+        lawful_basis=LawfulBasis("legitimate_interest"),
+        notice_display_mode=NoticeDisplayMode("passive"),
         retention_days=1095,
     )
 
@@ -179,7 +178,7 @@ async def seeded_system_user(
     raw_password = f"TestPassword123!_{int(time.time())}"
 
     user_data = SystemUserCreate(
-        tenant_id=seeded_tenant.id,
+        tenant_id=seeded_tenant.id or "",
         full_name="Test Super Admin",
         email=f"admin_{int(time.time())}@test.example.com",
         role=SystemUserRole.SUPER_ADMIN,

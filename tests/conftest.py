@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -36,8 +35,8 @@ async def app_instance() -> FastAPI:
 
 
 @pytest.fixture
-async def client(app_instance: FastAPI) -> AsyncClient:
-    async with AsyncClient(transport=ASGITransport(app=app_instance), base_url="http://test") as ac:
+async def client(app_instance: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+    async with AsyncClient(transport=ASGITransport(app=cast(object, app_instance)), base_url="http://test") as ac:  # type: ignore[arg-type]
         yield ac
 
 

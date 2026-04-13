@@ -4,9 +4,8 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from core.response_envelope import document_response, success_payload
 from core.settings import get_settings
-from schemas.user_schema import LoginType, UserBase, UserCreate, UserLogin, UserOut, UserRefresh, UserSignupRequest
+from schemas.user_schema import LoginType, UserBase, UserLogin, UserOut, UserRefresh, UserSignupRequest
 from services.user_service import (
-    add_user,
     add_user_from_signup,
     authenticate_user,
     authenticate_user_google,
@@ -195,7 +194,7 @@ async def login_user(request: Request, login_data: UserLogin):
     response = JSONResponse(
         content=jsonable_encoder(success_payload(user, message="Login successful", request_id=request_id)),
     )
-    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod)
+    set_auth_cookies(response, user.access_token or "", user.refresh_token or "", is_production=is_prod)
     return response
 
 
@@ -244,7 +243,7 @@ async def refresh_user_tokens(
     response = JSONResponse(
         content=jsonable_encoder(success_payload(user, message="Tokens refreshed successfully", request_id=request_id)),
     )
-    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod)
+    set_auth_cookies(response, user.access_token or "", user.refresh_token or "", is_production=is_prod)
     return response
 
 

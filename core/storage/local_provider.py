@@ -52,6 +52,9 @@ class LocalStorageProvider(DocumentStorageProvider):
     def upload_bytes(self, *, object_key: str, payload: bytes, mime_type: str) -> None:
         self.save_bytes(object_key=object_key, payload=payload)
 
+    async def download_bytes(self, object_key: str) -> bytes:
+        return self.read_bytes(object_key=object_key)
+
     def save_bytes(self, *, object_key: str, payload: bytes) -> int:
         file_path = self._root / object_key
         file_path.parent.mkdir(parents=True, exist_ok=True)

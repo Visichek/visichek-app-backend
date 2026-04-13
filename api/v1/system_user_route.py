@@ -10,7 +10,6 @@ from schemas.system_user_schema import (
     SystemUserSignupRequest,
     SystemUserTenantLogin,
     SystemUserUpdate,
-    SystemUserOut,
     SystemUserLogin,
     SystemUserRefresh,
     SystemUserProfileOut,
@@ -21,12 +20,11 @@ from security.auth import (
     verify_super_admin_token,
     verify_system_user_refresh_token,
 )
-from schemas.otp_schema import MfaAdminUpdate, MfaSettingsUpdate, OtpVerifyRequest
+from schemas.otp_schema import MfaSettingsUpdate, OtpVerifyRequest
 from security.cookie_utils import set_auth_cookies, clear_auth_cookies, REFRESH_TOKEN_COOKIE
 from security.principal import AuthPrincipal
 from services.system_user_service import (
     add_system_user_from_invite,
-    admin_set_user_mfa,
     authenticate_system_user,
     authenticate_super_admin_global,
     authenticate_system_user_by_tenant,

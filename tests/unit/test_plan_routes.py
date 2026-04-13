@@ -65,7 +65,7 @@ def _plan_out(**overrides) -> PlanOut:
         "last_updated": int(time.time()),
     }
     defaults.update(overrides)
-    return PlanOut(**defaults)
+    return PlanOut(**defaults)  # type: ignore[arg-type]
 
 
 def _sub_out(**overrides) -> SubscriptionOut:
@@ -83,7 +83,7 @@ def _sub_out(**overrides) -> SubscriptionOut:
         "last_updated": int(time.time()),
     }
     defaults.update(overrides)
-    return SubscriptionOut(**defaults)
+    return SubscriptionOut(**defaults)  # type: ignore[arg-type]
 
 
 def _discount_out(**overrides) -> DiscountOut:
@@ -102,7 +102,7 @@ def _discount_out(**overrides) -> DiscountOut:
         "last_updated": int(time.time()),
     }
     defaults.update(overrides)
-    return DiscountOut(**defaults)
+    return DiscountOut(**defaults)  # type: ignore[arg-type]
 
 
 # ============================================================================

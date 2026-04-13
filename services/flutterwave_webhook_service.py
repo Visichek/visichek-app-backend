@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import time
@@ -9,7 +8,7 @@ from typing import Optional
 from bson import ObjectId
 
 from core.errors import AppException, ErrorCode
-from core.payments import PaymentManager, PaymentProviderName
+from core.payments import PaymentManager
 from repositories.payment_repo import update_payment_transaction_status
 from repositories.subscription_repo import update_subscription
 from repositories.webhook_event_repo import (

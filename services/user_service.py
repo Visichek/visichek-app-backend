@@ -16,7 +16,8 @@ from repositories.tokens_repo import get_refresh_tokens, delete_access_token, de
 from services.auth_helpers import issue_tokens_for_user
 from core.email_utils import normalize_email
 from config.role_permissions import get_default_permissions_for_role
-from authlib.integrations.starlette_client import OAuth
+from schemas.imports import AccountStatus
+from authlib.integrations.starlette_client import OAuth  # type: ignore[import-untyped]
 import os
 from dotenv import load_dotenv
 
@@ -64,7 +65,7 @@ async def add_user_from_signup(signup_data: UserSignupRequest) -> UserOut:
         email=signup_data.email,
         password=signup_data.password,
         loginType=signup_data.loginType,
-        accountStatus="ACTIVE",
+        accountStatus=AccountStatus("ACTIVE"),
         permissionList=permission_list,
     )
 
@@ -212,7 +213,7 @@ async def authenticate_user_google(user_data: UserBase) -> UserOut:
             email=user_data.email,
             password=user_data.password,
             loginType=user_data.loginType,
-            accountStatus="ACTIVE",
+            accountStatus=AccountStatus("ACTIVE"),
             permissionList=permission_list,
         )
         new_user = await create_user(create_data)

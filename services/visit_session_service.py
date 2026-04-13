@@ -11,7 +11,6 @@ from repositories.visit_session_repo import (
     count_visit_sessions,
     create_visit_session,
     get_visit_session,
-    get_visit_session_by_badge_token,
     get_active_visitors,
     update_visit_session,
     get_visit_sessions,
@@ -29,20 +28,18 @@ from schemas.visit_session_schema import (
     VisitSessionWithSummaryOut,
     CheckInRequest,
     CheckOutRequest,
-    ConfirmCheckInRequest,
-    DenyVisitorRequest,
 )
 from schemas.visitor_profile_schema import VisitorProfileUpdate
 from schemas.appointment_schema import AppointmentUpdate
 from schemas.imports import (
     VisitStatus,
     CheckInMethod,
-    CheckOutMethod,
     VerificationStatus,
     VerificationMethod,
     LawfulBasis,
     AppointmentStatus,
     ProfilingPreference,
+    BadgeFormat,
 )
 from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import sign_badge_token, verify_badge_token
@@ -171,7 +168,7 @@ async def check_in_visitor(
     # 7. Create visit session with status=REGISTERED (not CHECKED_IN)
     session_data = VisitSessionCreate(
         tenant_id=tenant_id,
-        visitor_profile_id=profile.id,
+        visitor_profile_id=profile.id or "",
         department_id=dept_id,
         host_id=host_id,
         receptionist_id=receptionist_id,
@@ -256,6 +253,9 @@ async def confirm_check_in(
         )
         session = await get_visit_session({"_id": ObjectId(session_id), "tenant_id": tenant_id})
 
+    if session is None:
+        raise HTTPException(status_code=404, detail="Visit session not found after update")
+
     # Validate minimum required fields
     if not session.visitor_name_snapshot:
         raise HTTPException(status_code=400, detail="Missing required field: visitor_name_snapshot")
@@ -284,7 +284,7 @@ async def confirm_check_in(
             pass  # Photo is optional for badge
 
     # Generate badge with signed QR token
-    badge_token = sign_badge_token(session.id, expiry_hours=24)
+    badge_token = sign_badge_token(session.id or "", expiry_hours=24)
     now = datetime.now(timezone.utc)
     badge_pdf_bytes = generate_badge_pdf(
         visitor_name=session.visitor_name_snapshot,
@@ -303,10 +303,10 @@ async def confirm_check_in(
         from core.storage.manager import DocumentStorageManager
         storage = DocumentStorageManager.get_instance()
         badge_object_key = f"badges/{tenant_id}/{session.id}.pdf"
-        await storage.provider.upload_bytes(
+        storage.provider.upload_bytes(
             object_key=badge_object_key,
-            data=badge_pdf_bytes,
-            content_type="application/pdf",
+            payload=badge_pdf_bytes,
+            mime_type="application/pdf",
         )
     except Exception as e:
         import logging
@@ -319,7 +319,7 @@ async def confirm_check_in(
         VisitSessionUpdate(
             status=VisitStatus.CHECKED_IN,
             badge_qr_token=badge_token,
-            badge_format=badge_format,
+            badge_format=BadgeFormat(badge_format),
             badge_generation_time=int(time.time()),
             badge_expiry=int(time.time()) + 86400,
             badge_pdf_object_key=badge_object_key,
@@ -366,9 +366,9 @@ async def deny_visitor(
     return updated
 
 
-async def retrieve_pending_sessions(tenant_id: str, department_id: str = None, start=0, stop=100):
+async def retrieve_pending_sessions(tenant_id: str, department_id: Optional[str] = None, start=0, stop=100):
     """Phase 1C: Get sessions with status in (REGISTERED, PENDING_VERIFICATION)."""
-    filter_dict = {
+    filter_dict: dict = {
         "tenant_id": tenant_id,
         "status": {"$in": [VisitStatus.REGISTERED.value, VisitStatus.PENDING_VERIFICATION.value]},
     }
@@ -409,7 +409,7 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> VisitSe
     return updated
 
 
-async def retrieve_active_visitors(tenant_id: str, department_id: str = None):
+async def retrieve_active_visitors(tenant_id: str, department_id: Optional[str] = None):
     return await get_active_visitors(tenant_id=tenant_id, department_id=department_id)
 
 
@@ -422,8 +422,8 @@ async def retrieve_visit_session_by_id(session_id: str, tenant_id: str) -> Visit
     return result
 
 
-async def retrieve_visit_sessions(tenant_id: str, department_id: str = None, start=0, stop=100):
-    filter_dict = {"tenant_id": tenant_id}
+async def retrieve_visit_sessions(tenant_id: str, department_id: Optional[str] = None, start=0, stop=100):
+    filter_dict: dict = {"tenant_id": tenant_id}
     if department_id:
         filter_dict["department_id"] = department_id
     return await get_visit_sessions(filter_dict=filter_dict, start=start, stop=stop)
@@ -474,7 +474,7 @@ async def _enrich_visit_session(session: VisitSessionOut) -> VisitSessionWithSum
 
 
 async def retrieve_visit_sessions_with_summary(
-    tenant_id: str, department_id: str = None, start: int = 0, stop: int = 100
+    tenant_id: str, department_id: Optional[str] = None, start: int = 0, stop: int = 100
 ):
     import asyncio
     sessions = await retrieve_visit_sessions(
@@ -509,10 +509,10 @@ async def verify_id_with_ocr(id_image_object_key: str) -> dict:
     try:
         result = await ocr.extract_id(image_bytes)
         return {
-            "full_name": result.get("full_name"),
-            "id_number": result.get("id_number"),
-            "id_type": result.get("id_type"),
-            "confidence": result.get("confidence", 0.0),
+            "full_name": getattr(result, "full_name", None),
+            "id_number": getattr(result, "id_number", None),
+            "id_type": getattr(result, "id_type", None),
+            "confidence": getattr(result, "confidence", 0.0),
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"OCR extraction failed: {str(e)}")
@@ -523,7 +523,7 @@ async def apply_id_scan_verification(
     tenant_id: str,
     id_type: str,
     id_number: str,
-    id_image_object_key: str = None,
+    id_image_object_key: Optional[str] = None,
 ) -> VisitSessionOut:
     """Apply OCR scan results to a visit session and the linked visitor profile."""
     if not ObjectId.is_valid(session_id):

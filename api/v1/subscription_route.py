@@ -16,7 +16,6 @@ from services.subscription_service import (
     subscribe_tenant,
     retrieve_subscription_by_id,
     retrieve_tenant_active_subscription,
-    retrieve_subscriptions,
     retrieve_subscriptions_with_details,
     change_plan,
     cancel_subscription,
@@ -149,7 +148,7 @@ async def get_subscription_endpoint(
 async def change_plan_endpoint(
     payload: ChangePlanRequest,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> SubscriptionOut:
+) -> SubscriptionOut | None:
     """Immediately switch a tenant to a different plan."""
     return await change_plan(
         tenant_id=payload.tenant_id,
@@ -167,7 +166,7 @@ async def change_plan_endpoint(
 async def cancel_subscription_endpoint(
     payload: CancelSubscriptionRequest,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> SubscriptionOut:
+) -> SubscriptionOut | None:
     """Cancel a tenant's subscription. Can be immediate or at period end."""
     return await cancel_subscription(
         tenant_id=payload.tenant_id,

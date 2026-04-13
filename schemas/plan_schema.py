@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from schemas.imports import *
-from pydantic import Field, field_validator
+from pydantic import Field
 import time
 
 

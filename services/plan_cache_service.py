@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import json
-import time
-from typing import Optional
+from typing import Any, Optional, cast
 
 from core.redis_cache import cache_db
 
@@ -17,7 +16,7 @@ async def get_cached_tenant_plan(tenant_id: str) -> Optional[dict]:
     Returns None on cache miss.
     """
     try:
-        raw = cache_db.get(f"{TENANT_PLAN_PREFIX}{tenant_id}")
+        raw = cast(Any, cache_db.get(f"{TENANT_PLAN_PREFIX}{tenant_id}"))
         if raw:
             return json.loads(raw)
     except Exception:
@@ -55,10 +54,10 @@ async def invalidate_plan_cache(plan_id: str) -> None:
         # This is fine because plan changes are rare admin operations
         cursor = 0
         while True:
-            cursor, keys = cache_db.scan(cursor, match=f"{TENANT_PLAN_PREFIX}*", count=100)
+            cursor, keys = cast(Any, cache_db.scan(cursor, match=f"{TENANT_PLAN_PREFIX}*", count=100))
             for key in keys:
                 try:
-                    raw = cache_db.get(key)
+                    raw = cast(Any, cache_db.get(key))
                     if raw:
                         data = json.loads(raw)
                         if data.get("plan_id") == plan_id:

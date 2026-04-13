@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import os
 import random
-import string
 import time
-from typing import Optional
+from typing import Any, Optional
 from locust import HttpUser, task, between, events, tag
 import logging
 
@@ -223,7 +222,7 @@ class VisichekLoadUser(HttpUser):
     @tag("list")
     def list_visit_sessions(self) -> None:
         """List visitor visit sessions with pagination."""
-        params = {
+        params: dict[str, Any] = {
             "start": random.randint(0, 100),
             "stop": random.randint(100, 200),
         }
@@ -262,7 +261,7 @@ class VisichekLoadUser(HttpUser):
     @tag("dashboard")
     def get_dashboard_visitors(self) -> None:
         """Fetch dashboard visitor log."""
-        params = {
+        params: dict[str, Any] = {
             "start": 0,
             "stop": 50,
         }
@@ -312,7 +311,7 @@ class VisichekLoadUser(HttpUser):
     @tag("appointment")
     def list_appointments(self) -> None:
         """List appointments with pagination."""
-        params = {
+        params: dict[str, Any] = {
             "start": 0,
             "stop": 50,
         }
@@ -1234,4 +1233,4 @@ def on_test_stop(environment, **kwargs):
     logger.info("  - Invoice retrieval (p95): <300ms")
     logger.info("  - Billing reports (p95): <1000ms")
     logger.info("  - Payment discrepancy detection (p95): <2000ms")
-    logger.info(f"  - Overall error rate: Must be <1% for production readiness")
+    logger.info("  - Overall error rate: Must be <1% for production readiness")

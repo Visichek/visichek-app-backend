@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from core.response_envelope import document_response
 from schemas.usage_schema import TenantUsageSummary

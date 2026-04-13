@@ -4,7 +4,6 @@ Tests feature gating, quota checking, and path extraction.
 """
 from __future__ import annotations
 
-import pytest
 
 from core.plan_enforcement import (
     _extract_collection_from_path,

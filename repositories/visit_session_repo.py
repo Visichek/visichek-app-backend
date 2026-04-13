@@ -46,8 +46,8 @@ async def get_visit_sessions(filter_dict: dict = {}, start=0, stop=100) -> List[
         )
 
 
-async def get_active_visitors(tenant_id: str, department_id: str = None) -> List[VisitSessionOut]:
-    filter_dict = {"tenant_id": tenant_id, "status": "checked_in"}
+async def get_active_visitors(tenant_id: str, department_id: Optional[str] = None) -> List[VisitSessionOut]:
+    filter_dict: dict = {"tenant_id": tenant_id, "status": "checked_in"}
     if department_id:
         filter_dict["department_id"] = department_id
     return await get_visit_sessions(filter_dict=filter_dict, start=0, stop=1000)
@@ -71,8 +71,8 @@ async def count_visit_sessions(filter_dict: dict) -> int:
     return await db.visit_sessions.count_documents(filter_dict)
 
 
-async def get_visitor_session_stats(tenant_id: str, department_id: str = None) -> dict:
-    match = {"tenant_id": tenant_id}
+async def get_visitor_session_stats(tenant_id: str, department_id: Optional[str] = None) -> dict:
+    match: dict = {"tenant_id": tenant_id}
     if department_id:
         match["department_id"] = department_id
 

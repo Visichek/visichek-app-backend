@@ -4,15 +4,13 @@ from fastapi import APIRouter, Depends, Query, status
 
 from core.errors import auth_permission_denied, auth_role_mismatch
 from core.response_envelope import document_response
-from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut, TenantWithSummaryOut
+from schemas.tenant_schema import TenantCreate, TenantUpdate
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_any_token, verify_super_admin_token
 from security.principal import AuthPrincipal
 from services.tenant_service import (
     add_tenant,
-    retrieve_tenant_by_id,
     retrieve_tenant_by_id_with_summary,
-    retrieve_tenants,
     retrieve_tenants_with_summary,
     update_tenant_by_id,
 )
@@ -128,7 +126,7 @@ async def get_tenant_endpoint(
         pass  # application admin can view any tenant
     elif principal.role == "super_admin":
         if principal.tenant_id != tenant_id:
-            raise auth_permission_denied()
+            raise auth_permission_denied(permission_key="tenant.read")
     else:
         raise auth_role_mismatch(required_role="admin", actual_role=principal.role)
     return await retrieve_tenant_by_id_with_summary(tenant_id=tenant_id)

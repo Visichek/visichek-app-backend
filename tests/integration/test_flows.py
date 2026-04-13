@@ -215,7 +215,6 @@ class TestAuthFlow:
         tenant: TenantOut,
     ) -> str:
         """Helper to get a super_admin token for the given tenant."""
-        from services.system_user_service import authenticate_system_user
 
         # This is a helper to create admin token; in real tests, use seeded_system_user
         raise NotImplementedError("Use auth_headers fixture or create dedicated admin user")
@@ -241,7 +240,7 @@ class TestVisitorCheckInCheckOutFlow:
         Complete visitor lifecycle: Create dept -> Create host -> Check-in -> Verify active ->
         Check-out -> Verify inactive -> Verify session duration.
         """
-        tenant_id = seeded_tenant.id
+        tenant_id = seeded_tenant.id or ""
 
         # Create a department
         dept_data = DepartmentCreate(
@@ -275,8 +274,8 @@ class TestVisitorCheckInCheckOutFlow:
             full_name="John Visitor",
             phone="1234567890",
             company="Visitor Corp",
-            department_id=dept.id,
-            host_id=host.id,
+            department_id=dept.id or "",
+            host_id=host.id or "",
             purpose="Business meeting",
         )
 
@@ -401,7 +400,7 @@ class TestTenantDepartmentFlow:
             retention_days=730,
         )
         tenant = await create_tenant(tenant_data)
-        tenant_id = tenant.id
+        tenant_id = tenant.id or ""
 
         # Create 3 departments
         dept_ids = []
@@ -484,7 +483,7 @@ class TestComplianceFlow:
         Create privacy notice -> Get active -> Create new version ->
         Old deactivated -> Verify versioning.
         """
-        tenant_id = seeded_tenant.id
+        tenant_id = seeded_tenant.id or ""
         now = int(time.time())
 
         # Create initial privacy notice v1.0
@@ -531,12 +530,14 @@ class TestComplianceFlow:
         new_active = await get_privacy_notice(
             filter_dict={"tenant_id": tenant_id, "is_active": True}
         )
+        assert new_active is not None
         assert new_active.version_code == "1.1"
 
         # Verify old notice is deactivated
         old_notice = await get_privacy_notice(
             filter_dict={"_id": ObjectId(notice_v1.id)}
         )
+        assert old_notice is not None
         assert old_notice.is_active is False
 
     async def test_dsr_lifecycle(
@@ -548,7 +549,7 @@ class TestComplianceFlow:
         Create DSR -> Update status to in_progress -> Complete ->
         Verify resolution timestamp and status.
         """
-        tenant_id = seeded_tenant.id
+        tenant_id = seeded_tenant.id or ""
 
         # Create a visitor profile for DSR
         visitor_data = VisitorProfileCreate(
@@ -562,7 +563,7 @@ class TestComplianceFlow:
         # Create DSR (Data Subject Request)
         dsr_create_data = DSRCreate(
             tenant_id=tenant_id,
-            visitor_profile_id=visitor.id,
+            visitor_profile_id=visitor.id or "",
             request_type=DSRType.ACCESS,
             status=DSRStatus.PENDING,
         )
@@ -619,7 +620,7 @@ class TestAppointmentFlow:
         """
         from bson import ObjectId
 
-        tenant_id = seeded_tenant.id
+        tenant_id = seeded_tenant.id or ""
         scheduled_time = int(time.time()) + 3600  # 1 hour from now
 
         # Create department and host
@@ -642,8 +643,8 @@ class TestAppointmentFlow:
         # Create appointment
         appt_data = AppointmentCreate(
             tenant_id=tenant_id,
-            host_id=host.id,
-            department_id=dept.id,
+            host_id=host.id or "",
+            department_id=dept.id or "",
             scheduled_datetime=scheduled_time,
             purpose="Scheduled meeting",
             status=AppointmentStatus.SCHEDULED,
@@ -665,8 +666,8 @@ class TestAppointmentFlow:
             full_name="Scheduled Visitor",
             phone="5551234567",
             company="Appointment Corp",
-            department_id=dept.id,
-            host_id=host.id,
+            department_id=dept.id or "",
+            host_id=host.id or "",
             purpose="Scheduled meeting",
         )
         # Note: In a real test, you'd call the actual check-in endpoint
@@ -692,7 +693,7 @@ class TestAppointmentFlow:
 
         from schemas.visit_session_schema import VisitSessionCreate
 
-        visit_session_create = VisitSessionCreate(**visit_session_data)
+        visit_session_create = VisitSessionCreate(**visit_session_data)  # type: ignore[arg-type]
         visit_session = await create_visit_session(visit_session_create)
         assert visit_session.appointment_id == appointment.id
 

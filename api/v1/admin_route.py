@@ -204,7 +204,7 @@ async def login_admin(request: Request, admin_data: AdminLogin):
     response = JSONResponse(
         content=jsonable_encoder(success_payload(admin, message="Admin login successful", request_id=request_id)),
     )
-    set_auth_cookies(response, admin.access_token, admin.refresh_token, is_production=is_prod)
+    set_auth_cookies(response, admin.access_token or "", admin.refresh_token or "", is_production=is_prod)
     return response
 
 
@@ -250,7 +250,7 @@ async def refresh_admin_tokens(
     response = JSONResponse(
         content=jsonable_encoder(success_payload(admin, message="Admin tokens refreshed successfully", request_id=request_id)),
     )
-    set_auth_cookies(response, admin.access_token, admin.refresh_token, is_production=is_prod)
+    set_auth_cookies(response, admin.access_token or "", admin.refresh_token or "", is_production=is_prod)
     return response
 
 
@@ -272,7 +272,7 @@ async def verify_admin_otp_endpoint(request: Request, otp_data: OtpVerifyRequest
     response = JSONResponse(
         content=jsonable_encoder(success_payload(admin, message="OTP verified, login successful", request_id=request_id)),
     )
-    set_auth_cookies(response, admin.access_token, admin.refresh_token, is_production=is_prod)
+    set_auth_cookies(response, admin.access_token or "", admin.refresh_token or "", is_production=is_prod)
     return response
 
 

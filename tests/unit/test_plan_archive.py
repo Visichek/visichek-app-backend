@@ -25,7 +25,7 @@ def _make_plan_out(**overrides) -> PlanOut:
         "is_public": True,
     }
     defaults.update(overrides)
-    return PlanOut(**defaults)
+    return PlanOut(**defaults)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

@@ -129,7 +129,7 @@ async def check_member_account_status_and_permissions(
 
 async def check_system_user_status(
     principal: AuthPrincipal,
-) -> None:
+):
     """Verify a system user exists and is active. No fine-grained permission check."""
     from repositories.system_user_repo import get_system_user
 

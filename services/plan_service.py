@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from typing import List, Optional
 
 from bson import ObjectId
@@ -19,9 +18,6 @@ from schemas.plan_schema import (
     PlanOut,
     PlanStatus,
     PlanTier,
-    FeatureRule,
-    CrudLimit,
-    RetrievalQuota,
 )
 from services.audit_service import record_audit_event
 
@@ -77,7 +73,7 @@ async def retrieve_plans(
     stop: int = 100,
 ) -> List[PlanOut]:
     """List plans with optional filters."""
-    filter_dict = {}
+    filter_dict: dict = {}
     if status_filter:
         filter_dict["status"] = status_filter.value
     if tier_filter:

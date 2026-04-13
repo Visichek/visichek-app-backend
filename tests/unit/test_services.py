@@ -14,23 +14,17 @@ from schemas.system_user_schema import (
 )
 from schemas.appointment_schema import AppointmentCreate, AppointmentUpdate, AppointmentOut
 from schemas.visit_session_schema import (
-    VisitSessionCreate,
-    VisitSessionUpdate,
     VisitSessionOut,
     CheckInRequest,
     CheckOutRequest,
 )
 from schemas.visitor_profile_schema import (
-    VisitorProfileCreate,
-    VisitorProfileUpdate,
     VisitorProfileOut,
 )
 from schemas.imports import (
     LawfulBasis,
     CheckInMethod,
     CheckOutMethod,
-    VerificationStatus,
-    VerificationMethod,
     VisitStatus,
     AccountStatus,
     SystemUserRole,

@@ -23,7 +23,7 @@ from typing import Any
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response, StreamingResponse
+from starlette.responses import Response
 
 
 # ── helpers ──────────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ from httpx import AsyncClient, ASGITransport
 
 from main import app
 from security.principal import AuthPrincipal
-from schemas.imports import ProfilingPreference, IncidentStatus, LawfulBasis
+from schemas.imports import ProfilingPreference, IncidentStatus
 
 
 MOCK_DEPT_ADMIN_PRINCIPAL = AuthPrincipal(

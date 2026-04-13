@@ -1,7 +1,7 @@
 """Unit tests for security/password_policy.py — password strength, common passwords, lockout, history."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -9,10 +9,7 @@ from security.password_policy import (
     is_common_password,
     validate_password_strength,
     PasswordStrengthResult,
-    MIN_PASSWORD_LENGTH,
     MAX_FAILED_ATTEMPTS,
-    LOCKOUT_DURATION_SECONDS,
-    PASSWORD_HISTORY_COUNT,
     _has_sequential_chars,
     _has_repeated_chars,
 )

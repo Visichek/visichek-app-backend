@@ -1,6 +1,6 @@
 import os
 
-from celery import Celery
+from celery import Celery  # type: ignore[import-untyped]
 from dotenv import load_dotenv
 
 from core.queue.tasks import execute_registered_task

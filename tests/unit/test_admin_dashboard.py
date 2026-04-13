@@ -1,7 +1,6 @@
 """Unit tests for the application admin platform-wide dashboard."""
 from __future__ import annotations
 
-import time
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
@@ -10,7 +9,6 @@ from schemas.admin_dashboard_schema import (
     AdminDashboardStats,
     PlanDistribution,
     TopTenantByIncidents,
-    TopTenantByVisitors,
     SubscriptionStatusBreakdown,
 )
 
@@ -119,7 +117,6 @@ async def test_get_admin_dashboard_stats_returns_stats():
 @pytest.mark.asyncio
 async def test_admin_dashboard_route_returns_200():
     """GET /v1/admins/dashboard/stats returns 200 for authenticated admin."""
-    from unittest.mock import AsyncMock
 
     mock_stats = AdminDashboardStats(total_tenants=10, active_tenants=8)
 

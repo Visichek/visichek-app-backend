@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +22,9 @@ def generate_badge_pdf(
         badge_format: "A6" (105x148mm) or "A7" (74x105mm)
     """
     try:
-        from reportlab.lib.pagesizes import A6, A7
-        from reportlab.lib.units import mm
-        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A6, A7  # type: ignore[import-untyped]
+        from reportlab.lib.units import mm  # type: ignore[import-untyped]
+        from reportlab.pdfgen import canvas  # type: ignore[import-untyped]
     except ImportError:
         raise RuntimeError("reportlab is required for badge generation. Install with: pip install reportlab")
 
@@ -41,9 +40,9 @@ def generate_badge_pdf(
 
     # QR Code
     try:
-        import qrcode
-        from PIL import Image as PILImage
-        from reportlab.lib.utils import ImageReader
+        import qrcode  # type: ignore[import-untyped]
+        from PIL import Image as PILImage  # type: ignore[import-untyped]
+        from reportlab.lib.utils import ImageReader  # type: ignore[import-untyped]
 
         qr = qrcode.QRCode(version=1, box_size=4, border=1)
         qr.add_data(qr_data)

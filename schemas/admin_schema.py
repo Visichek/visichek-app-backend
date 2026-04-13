@@ -2,7 +2,7 @@ from schemas.imports import *
 from pydantic import Field
 import time
 from security.hash import hash_password
-from typing import List, Optional
+from typing import Optional
 from pydantic import BaseModel, EmailStr, model_validator
 
 
@@ -11,7 +11,7 @@ class AdminBase(BaseModel):
 
     full_name: str
     email: EmailStr
-    password: str | bytes
+    password: Optional[str | bytes] = None
     accountStatus: AccountStatus = AccountStatus.ACTIVE
     permissionList: Optional[PermissionList] = None
     mfa_enabled: bool = True

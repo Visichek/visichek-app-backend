@@ -89,7 +89,7 @@ async def add_system_user(user_data: SystemUserCreate) -> SystemUserOut:
 
     new_user = await create_system_user(user_data)
     access_token, refresh_token = await issue_tokens_for_role(
-        user_id=new_user.id,
+        user_id=new_user.id or "",
         role=new_user.role.value,
         tenant_id=new_user.tenant_id,
     )
@@ -200,10 +200,10 @@ async def authenticate_system_user(login_data: SystemUserLogin, tenant_id: str |
             user_id=user.id, user_type="system_user",  # type: ignore
             role=user.role.value, tenant_id=user.tenant_id,
         )
-        return {"otp_required": True, "otp_challenge_id": challenge_id}
+        return {"otp_required": True, "otp_challenge_id": challenge_id}  # type: ignore[return-value]
 
     access_token, refresh_token = await issue_tokens_for_role(
-        user_id=user.id,
+        user_id=user.id or "",
         role=user.role.value,
         tenant_id=user.tenant_id,
     )
@@ -290,7 +290,7 @@ async def refresh_system_user_tokens(refresh_data: SystemUserRefresh, expired_ac
         raise HTTPException(status_code=404, detail="System user not found")
 
     access_token, refresh_token = await issue_tokens_for_role(
-        user_id=user.id,
+        user_id=user.id or "",
         role=user.role.value,
         tenant_id=user.tenant_id,
     )
@@ -370,7 +370,7 @@ async def verify_system_user_otp(challenge_id: str, otp_code: str):
         raise HTTPException(status_code=401, detail="System user not found")
 
     access_token, refresh_token = await issue_tokens_for_role(
-        user_id=user.id,
+        user_id=user.id or "",
         role=user.role.value,
         tenant_id=user.tenant_id,
     )

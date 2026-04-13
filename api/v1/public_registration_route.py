@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Form, UploadFile, status
+from fastapi import APIRouter, File, UploadFile, status
 
 from core.response_envelope import document_response
 from schemas.public_registration_schema import (

@@ -13,9 +13,7 @@ from services.visit_session_service import (
     check_in_visitor,
     check_out_visitor,
     retrieve_active_visitors,
-    retrieve_visit_session_by_id,
     retrieve_visit_session_by_id_with_summary,
-    retrieve_visit_sessions,
     retrieve_visit_sessions_with_summary,
     confirm_check_in,
     deny_visitor,
@@ -256,7 +254,7 @@ async def check_out(
     },
 )
 async def list_active_visitors(
-    department_id: str = None,
+    department_id: Optional[str] = None,
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     tenant_id = principal.tenant_id or ""
@@ -315,7 +313,7 @@ async def list_active_visitors(
     },
 )
 async def list_visit_sessions(
-    department_id: str = None,
+    department_id: Optional[str] = None,
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(verify_system_user_token("dept_admin", "super_admin", "auditor")),
@@ -337,7 +335,7 @@ async def list_visit_sessions(
     },
 )
 async def list_pending_sessions(
-    department_id: str = None,
+    department_id: Optional[str] = None,
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(verify_system_user_token("dept_admin", "super_admin", "receptionist")),
@@ -648,7 +646,7 @@ async def apply_id_scan_endpoint(
         tenant_id=tenant_id,
         id_type=request.id_type,
         id_number=request.id_number,
-        id_image_object_key=request.id_image_object_key,
+        id_image_object_key=request.id_image_object_key or "",
     )
 
 

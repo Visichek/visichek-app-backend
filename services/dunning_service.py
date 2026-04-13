@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
 
 from bson import ObjectId
 
-from core.database import db
 from core.payments import PaymentIntentRequest, PaymentManager
 from core.queue import QueueManager
 from core.settings import get_settings
@@ -172,14 +170,14 @@ async def _retry_payment(subscription: SubscriptionOut, now: int) -> bool:
         try:
             await generate_invoice(
                 tenant_id=subscription.tenant_id,
-                subscription_id=subscription.id,
+                subscription_id=subscription.id or "",
                 plan_name=plan.name,
                 billing_cycle=subscription.billing_cycle.value,
                 currency=subscription.currency,
                 base_price_minor=amount_minor,
                 discount_minor=0,
                 period_start=subscription.current_period_start,
-                period_end=subscription.current_period_end,
+                period_end=subscription.current_period_end or 0,
                 payment_transaction_id=intent.provider_payload.get("id") if intent.provider_payload else None,
             )
         except Exception as e:

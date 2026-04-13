@@ -3,21 +3,22 @@ from __future__ import annotations
 import csv
 import io
 from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 from repositories.visit_session_repo import get_visit_sessions
 
 
 async def export_visitor_log_csv(
     tenant_id: str,
-    department_id: str = None,
-    date_from: int = None,
-    date_to: int = None,
+    department_id: Optional[str] = None,
+    date_from: Optional[int] = None,
+    date_to: Optional[int] = None,
 ) -> bytes:
-    filter_dict = {"tenant_id": tenant_id}
+    filter_dict: Dict[str, Any] = {"tenant_id": tenant_id}
     if department_id:
         filter_dict["department_id"] = department_id
     if date_from or date_to:
-        time_filter = {}
+        time_filter: Dict[str, Any] = {}
         if date_from:
             time_filter["$gte"] = date_from
         if date_to:
@@ -58,20 +59,20 @@ async def export_visitor_log_csv(
 
 async def export_visitor_log_xlsx(
     tenant_id: str,
-    department_id: str = None,
-    date_from: int = None,
-    date_to: int = None,
+    department_id: Optional[str] = None,
+    date_from: Optional[int] = None,
+    date_to: Optional[int] = None,
 ) -> bytes:
     try:
-        from openpyxl import Workbook
+        from openpyxl import Workbook  # type: ignore[import-untyped]
     except ImportError:
         raise RuntimeError("openpyxl is required for Excel export")
 
-    filter_dict = {"tenant_id": tenant_id}
+    filter_dict: Dict[str, Any] = {"tenant_id": tenant_id}
     if department_id:
         filter_dict["department_id"] = department_id
     if date_from or date_to:
-        time_filter = {}
+        time_filter: Dict[str, Any] = {}
         if date_from:
             time_filter["$gte"] = date_from
         if date_to:

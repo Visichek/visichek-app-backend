@@ -15,7 +15,6 @@ from schemas.subscription_schema import (
     BillingCycle,
 )
 from core.payments import PaymentIntentResponse, PaymentProviderName, PaymentStatus
-from core.settings import Settings
 
 pytestmark = pytest.mark.asyncio
 
@@ -45,7 +44,7 @@ def _make_plan_out(**overrides) -> PlanOut:
         "last_updated": int(time.time()),
     }
     defaults.update(overrides)
-    return PlanOut(**defaults)
+    return PlanOut(**defaults)  # type: ignore[arg-type]
 
 
 def _make_subscription_out(**overrides) -> SubscriptionOut:
@@ -68,7 +67,7 @@ def _make_subscription_out(**overrides) -> SubscriptionOut:
         "last_updated": now,
     }
     defaults.update(overrides)
-    return SubscriptionOut(**defaults)
+    return SubscriptionOut(**defaults)  # type: ignore[arg-type]
 
 
 class TestDunningService:

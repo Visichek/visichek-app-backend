@@ -14,8 +14,6 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
-from schemas.department_schema import DepartmentCreate
-from repositories.department_repo import create_department
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]

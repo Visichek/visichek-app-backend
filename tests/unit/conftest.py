@@ -1,25 +1,25 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Callable
+from typing import Callable
 
 import pytest
 from bson import ObjectId
 
-from schemas.tenant_schema import TenantCreate, TenantOut
-from schemas.department_schema import DepartmentCreate, DepartmentOut
-from schemas.system_user_schema import SystemUserCreate, SystemUserOut
-from schemas.visitor_profile_schema import VisitorProfileCreate, VisitorProfileOut
-from schemas.visit_session_schema import VisitSessionCreate, VisitSessionOut
-from schemas.appointment_schema import AppointmentCreate, AppointmentOut
-from schemas.privacy_notice_schema import PrivacyNoticeCreate, PrivacyNoticeOut
-from schemas.incident_log_schema import IncidentLogCreate, IncidentLogOut
-from schemas.audit_log_schema import AuditLogCreate, AuditLogOut
-from schemas.data_subject_request_schema import DSRCreate, DSROut
-from schemas.retention_policy_schema import RetentionPolicyCreate, RetentionPolicyOut
-from schemas.sub_processor_schema import SubProcessorCreate, SubProcessorOut
-from schemas.deletion_log_schema import DeletionLogCreate, DeletionLogOut
-from schemas.user_session_schema import UserSessionCreate, UserSessionOut
+from schemas.tenant_schema import TenantCreate
+from schemas.department_schema import DepartmentCreate
+from schemas.system_user_schema import SystemUserCreate
+from schemas.visitor_profile_schema import VisitorProfileCreate
+from schemas.visit_session_schema import VisitSessionCreate
+from schemas.appointment_schema import AppointmentCreate
+from schemas.privacy_notice_schema import PrivacyNoticeCreate
+from schemas.incident_log_schema import IncidentLogCreate
+from schemas.audit_log_schema import AuditLogCreate
+from schemas.data_subject_request_schema import DSRCreate
+from schemas.retention_policy_schema import RetentionPolicyCreate
+from schemas.sub_processor_schema import SubProcessorCreate
+from schemas.deletion_log_schema import DeletionLogCreate
+from schemas.user_session_schema import UserSessionCreate
 from schemas.imports import (
     LawfulBasis,
     NoticeDisplayMode,
@@ -31,7 +31,6 @@ from schemas.imports import (
     AppointmentStatus,
     IncidentType,
     IncidentStatus,
-    BadgeFormat,
     DSRType,
     DSRStatus,
     ProfilingPreference,
@@ -44,7 +43,7 @@ from schemas.imports import (
 @pytest.fixture
 def tenant_factory() -> Callable[..., TenantCreate]:
     def _make(**kwargs) -> TenantCreate:
-        defaults = {
+        defaults: dict = {
             "company_name": "Test Company Inc.",
             "lawful_basis": LawfulBasis.LEGITIMATE_INTEREST,
             "notice_display_mode": NoticeDisplayMode.PASSIVE,
@@ -69,7 +68,7 @@ def tenant_factory() -> Callable[..., TenantCreate]:
 @pytest.fixture
 def department_factory() -> Callable[..., DepartmentCreate]:
     def _make(**kwargs) -> DepartmentCreate:
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "code": f"DEPT-{ObjectId()}",
             "name": "Engineering Department",
@@ -88,7 +87,7 @@ def department_factory() -> Callable[..., DepartmentCreate]:
 @pytest.fixture
 def system_user_factory() -> Callable[..., SystemUserCreate]:
     def _make(**kwargs) -> SystemUserCreate:
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "department_id": str(ObjectId()),
             "full_name": "John Doe",
@@ -110,7 +109,7 @@ def system_user_factory() -> Callable[..., SystemUserCreate]:
 @pytest.fixture
 def visitor_profile_factory() -> Callable[..., VisitorProfileCreate]:
     def _make(**kwargs) -> VisitorProfileCreate:
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "phone": "+2348012345678",
             "email_address": f"visitor+{ObjectId()}@example.com",
@@ -136,7 +135,7 @@ def visitor_profile_factory() -> Callable[..., VisitorProfileCreate]:
 def visit_session_factory() -> Callable[..., VisitSessionCreate]:
     def _make(**kwargs) -> VisitSessionCreate:
         now = int(time.time())
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "visitor_profile_id": str(ObjectId()),
             "department_id": str(ObjectId()),
@@ -182,7 +181,7 @@ def visit_session_factory() -> Callable[..., VisitSessionCreate]:
 def appointment_factory() -> Callable[..., AppointmentCreate]:
     def _make(**kwargs) -> AppointmentCreate:
         now = int(time.time())
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "visitor_profile_id": str(ObjectId()),
             "host_id": str(ObjectId()),
@@ -207,7 +206,7 @@ def appointment_factory() -> Callable[..., AppointmentCreate]:
 def privacy_notice_factory() -> Callable[..., PrivacyNoticeCreate]:
     def _make(**kwargs) -> PrivacyNoticeCreate:
         now = int(time.time())
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "version_code": f"v1.0.{ObjectId()}",
             "title": "Privacy Notice for Visitors",
@@ -230,7 +229,7 @@ def privacy_notice_factory() -> Callable[..., PrivacyNoticeCreate]:
 def incident_log_factory() -> Callable[..., IncidentLogCreate]:
     def _make(**kwargs) -> IncidentLogCreate:
         now = int(time.time())
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "reported_by": str(ObjectId()),
             "incident_type": IncidentType.DATA_BREACH,
@@ -256,7 +255,7 @@ def incident_log_factory() -> Callable[..., IncidentLogCreate]:
 def audit_log_factory() -> Callable[..., AuditLogCreate]:
     def _make(**kwargs) -> AuditLogCreate:
         now = int(time.time())
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "actor_id": str(ObjectId()),
             "actor_name_snapshot": "Admin User",
@@ -282,7 +281,7 @@ def audit_log_factory() -> Callable[..., AuditLogCreate]:
 def dsr_factory() -> Callable[..., DSRCreate]:
     def _make(**kwargs) -> DSRCreate:
         now = int(time.time())
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "visitor_profile_id": str(ObjectId()),
             "admin_id": None,
@@ -305,7 +304,7 @@ def dsr_factory() -> Callable[..., DSRCreate]:
 @pytest.fixture
 def retention_policy_factory() -> Callable[..., RetentionPolicyCreate]:
     def _make(**kwargs) -> RetentionPolicyCreate:
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "scope": "visit_sessions",
             "retention_days": 1095,
@@ -323,7 +322,7 @@ def retention_policy_factory() -> Callable[..., RetentionPolicyCreate]:
 @pytest.fixture
 def sub_processor_factory() -> Callable[..., SubProcessorCreate]:
     def _make(**kwargs) -> SubProcessorCreate:
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "provider": "Amazon Web Services",
             "purpose": "Cloud storage and data processing",
@@ -344,7 +343,7 @@ def sub_processor_factory() -> Callable[..., SubProcessorCreate]:
 def deletion_log_factory() -> Callable[..., DeletionLogCreate]:
     def _make(**kwargs) -> DeletionLogCreate:
         now = int(time.time())
-        defaults = {
+        defaults: dict = {
             "tenant_id": str(ObjectId()),
             "entity_type": "visitor_profile",
             "entity_id": str(ObjectId()),
@@ -366,7 +365,7 @@ def deletion_log_factory() -> Callable[..., DeletionLogCreate]:
 def user_session_factory() -> Callable[..., UserSessionCreate]:
     def _make(**kwargs) -> UserSessionCreate:
         now = int(time.time())
-        defaults = {
+        defaults: dict = {
             "user_id": str(ObjectId()),
             "tenant_id": str(ObjectId()),
             "ip_address": "192.168.1.100",

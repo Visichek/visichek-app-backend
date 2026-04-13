@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from bson import ObjectId
 from typing import Optional
 
 from core.database import db

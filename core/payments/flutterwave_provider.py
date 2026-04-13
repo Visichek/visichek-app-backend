@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 from core.errors import AppException, ErrorCode
 from core.payments.provider import PaymentProvider

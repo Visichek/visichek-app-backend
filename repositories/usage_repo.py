@@ -7,9 +7,7 @@ from typing import List, Optional
 from schemas.usage_schema import (
     UsageRecordCreate,
     UsageRecordOut,
-    UsageAggregateCreate,
     UsageAggregateOut,
-    UsageAggregateUpdate,
 )
 
 

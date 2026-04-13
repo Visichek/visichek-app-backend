@@ -42,7 +42,7 @@ async def client(mongo_db: AsyncIOMotorDatabase):
     app.dependency_overrides[_super_admin_dep] = lambda: _mock_super_admin()
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app), base_url="http://test"  # type: ignore[arg-type]
     ) as c:
         yield c
 

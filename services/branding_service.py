@@ -23,9 +23,9 @@ async def _resolve_logo_urls(branding: BrandingOut) -> BrandingOut:
         provider = manager.provider
 
         if branding.logo_object_key:
-            branding.logo_url = await provider.create_download_url(branding.logo_object_key)
+            branding.logo_url = provider.download_url(object_key=branding.logo_object_key)
         if branding.favicon_object_key:
-            branding.favicon_url = await provider.create_download_url(branding.favicon_object_key)
+            branding.favicon_url = provider.download_url(object_key=branding.favicon_object_key)
     except Exception:
         # If storage is not configured, return branding without URLs
         pass

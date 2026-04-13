@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from core.response_envelope import document_response
-from schemas.tenant_settings_schema import TenantSettingsOut, TenantSettingsUpdate
+from schemas.tenant_settings_schema import TenantSettingsUpdate
 from security.auth import verify_super_admin_token
 from security.principal import AuthPrincipal
 from services.tenant_settings_service import (

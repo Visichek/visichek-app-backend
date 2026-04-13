@@ -9,7 +9,6 @@ import pytest
 from pydantic import ValidationError
 
 from schemas.plan_schema import (
-    PlanBase,
     PlanCreate,
     PlanUpdate,
     PlanOut,
@@ -24,24 +23,19 @@ from schemas.plan_schema import (
 )
 from schemas.subscription_schema import (
     SubscriptionCreate,
-    SubscriptionUpdate,
     SubscriptionOut,
     SubscriptionStatus,
     BillingCycle,
 )
 from schemas.discount_schema import (
     DiscountCreate,
-    DiscountUpdate,
     DiscountOut,
     DiscountType,
     DiscountScope,
-    DiscountStatus,
 )
 from schemas.usage_schema import (
     UsageRecordCreate,
-    UsageRecordOut,
     UsageAggregateCreate,
-    UsageAggregateOut,
     OperationType,
     TenantUsageSummary,
 )

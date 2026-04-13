@@ -6,14 +6,7 @@ import pytest
 from config.role_permissions import (
     DEFAULT_ROLE_PERMISSIONS,
     get_default_permissions_for_role,
-    ADMIN_PERMISSIONS,
-    USER_PERMISSIONS,
-    SUPER_ADMIN_PERMISSIONS,
-    DEPT_ADMIN_PERMISSIONS,
-    RECEPTIONIST_PERMISSIONS,
     AUDITOR_PERMISSIONS,
-    SECURITY_OFFICER_PERMISSIONS,
-    DPO_PERMISSIONS,
 )
 from schemas.imports import Permission, PermissionList
 

@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query
 
 from core.response_envelope import document_response
 from schemas.visitor_profile_schema import (
@@ -10,9 +10,7 @@ from schemas.visitor_profile_schema import (
 from security.auth import verify_system_user_token, verify_any_system_user_token
 from security.principal import AuthPrincipal
 from services.visitor_profile_service import (
-    retrieve_visitor_profile_by_id,
     retrieve_visitor_profile_by_id_with_summary,
-    retrieve_visitor_profiles,
     retrieve_visitor_profiles_with_summary,
     search_profiles,
     update_profile_by_id,

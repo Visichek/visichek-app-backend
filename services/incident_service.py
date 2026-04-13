@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from bson import ObjectId
 from fastapi import HTTPException
 from typing import List

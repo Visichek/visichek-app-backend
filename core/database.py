@@ -111,7 +111,7 @@ if DB_TYPE == "sqlite":
                 cursor = conn.cursor()
 
                 where_clause = ""
-                values = []
+                values: list = []
 
                 if filter_dict:
                     where_clause = "WHERE " + " AND ".join(f"{k} = ?" for k in filter_dict)
@@ -147,7 +147,7 @@ elif DB_TYPE == "mongodb":
     DB = os.getenv("DB_NAME")
     MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
 
-    client = AsyncIOMotorClient(MONGO_URL)
+    client: AsyncIOMotorClient = AsyncIOMotorClient(MONGO_URL)
     db = client[DB] # type: ignore
 
 else:

@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -48,7 +48,7 @@ _all_tenant_roles = verify_system_user_token(
     },
 )
 async def dashboard_stats(
-    department_id: str = None,
+    department_id: Optional[str] = None,
     principal: AuthPrincipal = Depends(_all_tenant_roles),
 ):
     tenant_id = principal.tenant_id or ""
@@ -92,13 +92,13 @@ async def dashboard_stats(
     },
 )
 async def dashboard_visitor_log(
-    department_id: str = None,
-    status_filter: str = None,
-    search: str = None,
-    date_from: int = None,
-    date_to: int = None,
-    host_id: str = None,
-    verification_status: str = None,
+    department_id: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    search: Optional[str] = None,
+    date_from: Optional[int] = None,
+    date_to: Optional[int] = None,
+    host_id: Optional[str] = None,
+    verification_status: Optional[str] = None,
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(_admin_roles),
@@ -152,7 +152,7 @@ async def dashboard_visitor_log(
     },
 )
 async def dashboard_active_visitors(
-    department_id: str = None,
+    department_id: Optional[str] = None,
     principal: AuthPrincipal = Depends(verify_system_user_token(
         "receptionist", "dept_admin", "super_admin"
     )),
@@ -165,9 +165,9 @@ async def dashboard_active_visitors(
 @router.get("/export")
 async def dashboard_export(
     format: str = "csv",
-    department_id: str = None,
-    date_from: int = None,
-    date_to: int = None,
+    department_id: Optional[str] = None,
+    date_from: Optional[int] = None,
+    date_to: Optional[int] = None,
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
     tenant_id = principal.tenant_id or ""

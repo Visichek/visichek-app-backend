@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
 
 from bson import ObjectId
 
-from core.database import db
 from core.payments import PaymentIntentRequest, PaymentManager
-from core.errors import AppException
+from core.errors import AppException, ErrorCode
 from core.settings import get_settings
 from repositories.subscription_repo import (
-    get_subscription,
     get_subscriptions,
     update_subscription,
 )
@@ -72,7 +69,7 @@ async def _get_provider_for_tenant(tenant_id: str) -> str:
                 f"tenant_id={tenant_id}"
             )
             # Fall back to default provider
-            provider_name = None
+            provider_name = ""
     elif provider_name == "stripe":
         if not tenant.stripe_customer_id:
             logger.warning(
@@ -80,7 +77,7 @@ async def _get_provider_for_tenant(tenant_id: str) -> str:
                 f"tenant_id={tenant_id}"
             )
             # Fall back to default provider
-            provider_name = None
+            provider_name = ""
 
     # Use the payment manager's default provider if none specified
     # or if the preferred provider is not available
@@ -242,7 +239,7 @@ async def _attempt_renewal(subscription: SubscriptionOut) -> bool:
         try:
             await generate_invoice(
                 tenant_id=subscription.tenant_id,
-                subscription_id=subscription.id,
+                subscription_id=subscription.id or "",
                 plan_name=plan.name,
                 billing_cycle=subscription.billing_cycle.value,
                 currency=subscription.currency,
@@ -426,7 +423,7 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
         try:
             await generate_invoice(
                 tenant_id=subscription.tenant_id,
-                subscription_id=subscription.id,
+                subscription_id=subscription.id or "",
                 plan_name=plan.name,
                 billing_cycle=subscription.billing_cycle.value,
                 currency=subscription.currency,

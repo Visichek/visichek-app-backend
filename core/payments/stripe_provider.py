@@ -33,7 +33,7 @@ class StripePaymentProvider(PaymentProvider):
                 amount=payload.amount_minor,
                 currency=payload.currency.lower(),
                 metadata={"reference": payload.reference, **(payload.metadata or {})},
-                receipt_email=payload.customer_email,
+                receipt_email=payload.customer_email or "",
                 automatic_payment_methods={"enabled": True},
             )
         except Exception as err:
@@ -93,7 +93,7 @@ class StripePaymentProvider(PaymentProvider):
             )
 
         intent = intents.data[0]
-        status = PaymentStatus.SUCCEEDED if intent.status == "succeeded" else PaymentStatus.PENDING
+        status = PaymentStatus.SUCCEEDED if getattr(intent, "status", None) == "succeeded" else PaymentStatus.PENDING
         return PaymentTransaction(
             provider=PaymentProviderName.STRIPE,
             reference=reference,

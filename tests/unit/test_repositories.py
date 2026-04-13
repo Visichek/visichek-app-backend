@@ -3,12 +3,11 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from bson import ObjectId
-from pymongo import ReturnDocument
 
 from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut
 from schemas.system_user_schema import SystemUserCreate, SystemUserUpdate, SystemUserOut
 from schemas.visit_session_schema import VisitSessionCreate, VisitSessionUpdate, VisitSessionOut
-from schemas.imports import LawfulBasis, SystemUserRole, AccountStatus, VisitStatus
+from schemas.imports import LawfulBasis, SystemUserRole, VisitStatus
 
 
 # ============================================================================
@@ -440,7 +439,6 @@ class TestVisitSessionRepository:
     @patch("repositories.visit_session_repo.db")
     async def test_delete_visit_session_calls_delete_one(self, mock_db):
         """Test deleting a visit session calls delete_one."""
-        from repositories.visit_session_repo import create_visit_session
 
         session_id = ObjectId()
         mock_result = MagicMock()

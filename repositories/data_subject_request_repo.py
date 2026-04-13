@@ -1,6 +1,5 @@
 from pymongo import ReturnDocument
 from core.database import db
-from fastapi import HTTPException, status
 from typing import List, Optional
 from schemas.data_subject_request_schema import DSRCreate, DSRUpdate, DSROut
 

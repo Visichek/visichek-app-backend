@@ -40,7 +40,7 @@ from schemas.public_registration_schema import (
 from schemas.imports import VisitStatus, CheckInMethod, CheckOutMethod, AppointmentStatus
 from schemas.visit_session_schema import VisitSessionCreate, VisitSessionUpdate
 from services.visitor_profile_service import get_or_create_visitor_profile
-from services.qr_service import sign_registration_token, verify_badge_token, verify_registration_token
+from services.qr_service import verify_badge_token, verify_registration_token
 from services.plan_limits import enforce_entity_cap, get_month_bounds
 
 
@@ -158,7 +158,7 @@ async def register_visitor_public(
     # Create visit session with REGISTERED status
     session_data = VisitSessionCreate(
         tenant_id=tenant_id,
-        visitor_profile_id=profile.id,
+        visitor_profile_id=profile.id or "",
         department_id=department_id or "",
         host_id=host_id,
         appointment_id=appointment_id,
@@ -341,10 +341,10 @@ async def public_ocr_id_scan(tenant_id: str, image_bytes: bytes, mime_type: str)
         raise HTTPException(status_code=400, detail=f"OCR extraction failed: {str(e)}")
 
     return PublicIdScanOut(
-        full_name=result.get("full_name"),
-        id_number=result.get("id_number"),
-        id_type=result.get("id_type"),
-        confidence=float(result.get("confidence", 0.0) or 0.0),
+        full_name=getattr(result, "full_name", None),
+        id_number=getattr(result, "id_number", None),
+        id_type=getattr(result, "id_type", None),
+        confidence=float(getattr(result, "confidence", 0.0) or 0.0),
     )
 
 

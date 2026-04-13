@@ -114,7 +114,7 @@ async def generate_invoice(
         pdf_object_key = await generate_invoice_pdf(invoice)
         if pdf_object_key:
             await update_invoice(
-                invoice.id,
+                invoice.id or "",
                 InvoiceUpdate(pdf_object_key=pdf_object_key),
             )
             logger.info(

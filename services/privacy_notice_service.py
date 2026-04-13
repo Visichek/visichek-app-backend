@@ -4,7 +4,6 @@ from typing import List
 
 from repositories.privacy_notice_repo import (
     create_privacy_notice,
-    get_privacy_notice,
     get_active_notice_for_tenant,
     get_privacy_notices,
     update_privacy_notice,

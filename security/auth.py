@@ -52,10 +52,12 @@ async def _resolve_principal(
     if role not in AUTH_ROLES:
         raise auth_invalid_token(details={"role": token_record.role})
 
+    from typing import cast as _cast
+    from security.principal import AllRolesLiteral as _AllRolesLiteral
     return AuthPrincipal(
         user_id=token_record.userId,
-        role=role,
-        access_token_id=token_record.accesstoken,
+        role=_cast(_AllRolesLiteral, role),
+        access_token_id=token_record.accesstoken or "",
         jwt_token=jwt_token,
         allow_expired=allow_expired,
         tenant_id=getattr(token_record, "tenant_id", None),

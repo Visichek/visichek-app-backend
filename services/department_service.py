@@ -1,6 +1,6 @@
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import List
+from typing import List, Optional
 
 from repositories.department_repo import (
     count_departments,
@@ -19,11 +19,11 @@ from schemas.department_schema import (
 from services.plan_limits import enforce_entity_cap
 
 
-async def add_department(dept_data: DepartmentCreate, created_by: str = None) -> DepartmentOut:
+async def add_department(dept_data: DepartmentCreate, created_by: Optional[str] = None) -> DepartmentOut:
     # Enforce plan cap on total departments for this tenant
     current_count = await count_departments({"tenant_id": dept_data.tenant_id})
     await enforce_entity_cap(
-        tenant_id=dept_data.tenant_id,
+        tenant_id=dept_data.tenant_id or "",
         cap_key="max_departments",
         current_count=current_count,
         friendly_name="Department",

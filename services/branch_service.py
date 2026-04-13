@@ -8,7 +8,6 @@ branch creation). The maximum number of branches is controlled by the
 tenant's subscription plan via ``TenantCapLimit.max_branches``.
 """
 
-import time
 from typing import List, Optional
 
 from bson import ObjectId
@@ -23,6 +22,7 @@ from repositories.branch_repo import (
     update_branch,
 )
 from schemas.branch_schema import BranchCreate, BranchOut, BranchUpdate
+from schemas.branch_schema import BranchStatus
 
 
 async def add_branch(branch_data: BranchCreate) -> BranchOut:
@@ -92,7 +92,7 @@ async def deactivate_branch(branch_id: str) -> Optional[BranchOut]:
 
     return await update_branch_by_id(
         branch_id,
-        BranchUpdate(status="inactive"),
+        BranchUpdate(status=BranchStatus("inactive")),
     )
 
 

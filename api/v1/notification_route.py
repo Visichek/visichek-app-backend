@@ -2,20 +2,16 @@ from __future__ import annotations
 
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query
 
 from core.response_envelope import document_response
 from schemas.notification_schema import (
-    NotificationOut,
-    NotificationWithSummaryOut,
-    NotificationPreferencesOut,
     NotificationPreferencesUpdate,
     UnreadCountOut,
 )
 from security.auth import verify_any_token
 from security.principal import AuthPrincipal
 from services.notification_service import (
-    retrieve_notifications,
     retrieve_notifications_with_summary,
     mark_notification_read,
     mark_all_notifications_read,

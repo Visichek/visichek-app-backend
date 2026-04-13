@@ -1,9 +1,8 @@
 from core.database import db
 
 from schemas.tokens_schema import accessTokenCreate,refreshTokenCreate,accessTokenOut,refreshTokenOut
-import asyncio
 from datetime import datetime, timezone, timedelta
-from dateutil import parser
+from dateutil import parser  # type: ignore[import-untyped]
 from bson import ObjectId,errors
 from fastapi import HTTPException
 from repositories.admin_repo import get_admin
@@ -158,7 +157,7 @@ async def get_access_token_allow_expired(accessToken: str) -> accessTokenOut | N
     return await get_access_token(accessToken=accessToken, allow_expired=True)
 
     
-async def get_refresh_tokens(refreshToken:str)->refreshTokenOut:
+async def get_refresh_tokens(refreshToken:str)->refreshTokenOut | None:
     token = await db.refreshToken.find_one({"_id": ObjectId(refreshToken)})
     if token:
         tokn = refreshTokenOut(**token)

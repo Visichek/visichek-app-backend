@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from bson import ObjectId
 
 from core.database import db
 from schemas.branch_schema import BranchCreate, BranchOut, BranchUpdate

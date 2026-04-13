@@ -17,8 +17,6 @@ from httpx import AsyncClient
 
 from schemas.admin_schema import AdminCreate
 from repositories.admin_repo import create_admin
-from services.admin_service import authenticate_admin
-from schemas.admin_schema import AdminLogin
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]

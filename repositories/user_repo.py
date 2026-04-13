@@ -41,7 +41,7 @@ async def get_users(filter_dict: dict = {},start=0,stop=100) -> List[UserOut]:
 
         async for doc in cursor:
             userObj =UserOut(**doc)
-            userObj.password=None
+            userObj.password=None  # type: ignore[assignment]
             user_list.append(userObj)
         
         return user_list

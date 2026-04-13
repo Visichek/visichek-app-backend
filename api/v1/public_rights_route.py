@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import secrets
-import time
 from typing import Optional
 
-from bson import ObjectId
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, status
 from pydantic import BaseModel, EmailStr
 
 from core.response_envelope import document_response
-from schemas.imports import DSRType, DSRStatus
+from schemas.imports import DSRType
 
 router = APIRouter(prefix="/public/rights", tags=["Public Visitor Rights"])
 

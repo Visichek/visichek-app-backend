@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any, Dict, Optional
 
 from core.database import db
 from repositories.visit_session_repo import (
@@ -23,7 +24,7 @@ def _start_of_today_ts() -> int:
 
 async def _receptionist_stats(tenant_id: str, department_id: str | None) -> dict:
     start_today = _start_of_today_ts()
-    base = {"tenant_id": tenant_id}
+    base: Dict[str, Any] = {"tenant_id": tenant_id}
     if department_id:
         base["department_id"] = department_id
 
@@ -34,7 +35,7 @@ async def _receptionist_stats(tenant_id: str, department_id: str | None) -> dict
     visitors_today = await count_visit_sessions(
         {**base, "check_in_time": {"$gte": start_today}}
     )
-    appt_filter = {"tenant_id": tenant_id, "scheduled_datetime": {"$gte": start_today, "$lt": start_today + 86400}}
+    appt_filter: Dict[str, Any] = {"tenant_id": tenant_id, "scheduled_datetime": {"$gte": start_today, "$lt": start_today + 86400}}
     if department_id:
         appt_filter["department_id"] = department_id
     expected_today = await count_appointments(appt_filter)
@@ -57,7 +58,7 @@ async def _receptionist_stats(tenant_id: str, department_id: str | None) -> dict
 async def _dept_admin_stats(tenant_id: str, department_id: str | None) -> dict:
     stats = await get_visitor_session_stats(tenant_id=tenant_id, department_id=department_id)
     active = await get_active_visitors(tenant_id=tenant_id, department_id=department_id)
-    incident_filter = {"tenant_id": tenant_id}
+    incident_filter: Dict[str, Any] = {"tenant_id": tenant_id}
     if department_id:
         incident_filter["department_id"] = department_id
     open_incidents = await db.incident_logs.count_documents({**incident_filter, "status": {"$ne": "resolved"}})
@@ -152,7 +153,7 @@ async def _dpo_stats(tenant_id: str) -> dict:
 
 async def get_dashboard_stats(
     tenant_id: str,
-    department_id: str = None,
+    department_id: Optional[str] = None,
     role: str | None = None,
 ) -> dict:
     if role == "receptionist":
@@ -176,23 +177,23 @@ async def get_dashboard_stats(
 
 async def get_visitor_log(
     tenant_id: str,
-    department_id: str = None,
-    status_filter: str = None,
-    search: str = None,
-    date_from: int = None,
-    date_to: int = None,
-    host_id: str = None,
-    verification_status: str = None,
+    department_id: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    search: Optional[str] = None,
+    date_from: Optional[int] = None,
+    date_to: Optional[int] = None,
+    host_id: Optional[str] = None,
+    verification_status: Optional[str] = None,
     start: int = 0,
     stop: int = 100,
-) -> list:
-    filter_dict = {"tenant_id": tenant_id}
+) -> dict:
+    filter_dict: Dict[str, Any] = {"tenant_id": tenant_id}
     if department_id:
         filter_dict["department_id"] = department_id
     if status_filter:
         filter_dict["status"] = status_filter
     if date_from or date_to:
-        time_filter = {}
+        time_filter: Dict[str, Any] = {}
         if date_from:
             time_filter["$gte"] = date_from
         if date_to:

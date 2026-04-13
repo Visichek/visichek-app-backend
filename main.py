@@ -9,8 +9,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 import redis
-from apscheduler.triggers.interval import IntervalTrigger
-from fastapi import FastAPI, HTTPException, Request, Response
+from apscheduler.triggers.interval import IntervalTrigger  # type: ignore[import-untyped]
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -45,7 +45,7 @@ configure_logging(log_level=settings.log_level, is_production=settings.is_produc
 logger = get_logger(__name__)
 
 MONGO_URI = os.getenv("MONGO_URL")
-mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000) if MONGO_URI else None
+mongo_client: "MongoClient | None" = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000) if MONGO_URI else None
 redis_client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, decode_responses=True)
 
 

@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 
 from main import app
-from schemas.imports import VisitStatus, LawfulBasis, DSRType, DSRStatus
+from schemas.imports import VisitStatus, DSRType, DSRStatus
 
 
 def _make_visit_session_out(

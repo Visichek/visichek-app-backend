@@ -1,7 +1,6 @@
 """Tests for email normalization utility."""
 from __future__ import annotations
 
-import pytest
 from core.email_utils import normalize_email
 
 

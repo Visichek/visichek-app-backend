@@ -12,7 +12,6 @@ from __future__ import annotations
 import time
 import pytest
 from httpx import AsyncClient
-from bson import ObjectId
 
 pytestmark = pytest.mark.asyncio
 

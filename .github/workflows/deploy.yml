@@ -21,7 +21,8 @@ jobs:
             set -e
 
             APP_DIR="$HOME/visichek-app-backend"
-            REPO_SSH="git@github.com-appbackend:Visichek/visichek-app-backend.git"
+            REPO_SSH="git@github.com:Visichek/visichek-app-backend.git"
+            export GIT_SSH_COMMAND='ssh -i ~/.ssh/other_repo_deploy -o IdentitiesOnly=yes'
 
             if [ ! -d "$APP_DIR/.git" ]; then
               git clone "$REPO_SSH" "$APP_DIR"

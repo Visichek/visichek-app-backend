@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-import requests
 
 from core.errors import AppException, ErrorCode
 from core.settings import get_settings

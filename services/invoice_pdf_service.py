@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from core.storage.manager import DocumentStorageManager
-from core.storage.types import DocumentMetadata, StorageBackend
+from core.storage.types import DocumentMetadata
 from schemas.invoice_schema import InvoiceOut
 
 logger = logging.getLogger(__name__)
@@ -15,11 +15,11 @@ logger = logging.getLogger(__name__)
 def _generate_pdf_bytes(invoice: InvoiceOut) -> bytes:
     """Generate PDF bytes from invoice data using reportlab."""
     try:
-        from reportlab.lib.pagesizes import letter
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import inch
-        from reportlab.lib.colors import HexColor, grey
-        from reportlab.platypus import (
+        from reportlab.lib.pagesizes import letter  # type: ignore[import-untyped]
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle  # type: ignore[import-untyped]
+        from reportlab.lib.units import inch  # type: ignore[import-untyped]
+        from reportlab.lib.colors import HexColor, grey  # type: ignore[import-untyped]
+        from reportlab.platypus import (  # type: ignore[import-untyped]
             SimpleDocTemplate,
             Table,
             TableStyle,
@@ -27,7 +27,7 @@ def _generate_pdf_bytes(invoice: InvoiceOut) -> bytes:
             Spacer,
             PageBreak,
         )
-        from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER
+        from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER  # type: ignore[import-untyped]
     except ImportError as e:
         logger.error("reportlab is required for PDF generation: %s", str(e))
         raise
@@ -124,7 +124,7 @@ def _generate_pdf_bytes(invoice: InvoiceOut) -> bytes:
 
     period_data = [
         [
-            Paragraph(f"<b>Billing Period</b>", style_label),
+            Paragraph("<b>Billing Period</b>", style_label),
             Paragraph(f"{period_start_str} to {period_end_str}", style_value),
         ]
     ]
@@ -310,10 +310,10 @@ async def generate_invoice_pdf(invoice: InvoiceOut) -> str | None:
             # S3: use presigned URL flow
             intent = provider.create_upload_intent(metadata)
             # Upload the PDF bytes directly
-            import boto3
+            import boto3  # type: ignore[import-untyped]
             s3_client = boto3.client("s3")
             s3_client.put_object(
-                Bucket=provider._bucket,
+                Bucket=getattr(provider, "_bucket", None),
                 Key=intent.object_key,
                 Body=pdf_bytes,
                 ContentType=metadata.mime_type,
@@ -338,7 +338,8 @@ async def generate_invoice_pdf(invoice: InvoiceOut) -> str | None:
             object_key = f"{uuid4().hex}{extension}"
 
             # Save PDF bytes using provider's save_bytes method
-            saved_size = provider.save_bytes(object_key=object_key, payload=pdf_bytes)
+            provider.upload_bytes(object_key=object_key, payload=pdf_bytes, mime_type=metadata.mime_type)
+            saved_size = len(pdf_bytes)
 
             stored = provider.complete_upload(
                 object_key=object_key,

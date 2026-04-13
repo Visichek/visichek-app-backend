@@ -10,7 +10,6 @@ from bson import ObjectId
 from fastapi import HTTPException
 
 from core.database import db
-from security.hash import hash_password
 
 logger = logging.getLogger(__name__)
 

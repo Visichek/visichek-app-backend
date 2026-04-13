@@ -12,7 +12,7 @@ class S3StorageProvider(DocumentStorageProvider):
 
     def __init__(self, *, bucket_name: str, region: str | None = None, endpoint_url: str | None = None) -> None:
         try:
-            import boto3
+            import boto3  # type: ignore[import-untyped]
         except ModuleNotFoundError as err:
             raise RuntimeError("boto3 is required for S3 storage provider") from err
 
@@ -53,6 +53,10 @@ class S3StorageProvider(DocumentStorageProvider):
 
     def upload_bytes(self, *, object_key: str, payload: bytes, mime_type: str) -> None:
         self._client.put_object(Bucket=self._bucket, Key=object_key, Body=payload, ContentType=mime_type)
+
+    async def download_bytes(self, object_key: str) -> bytes:
+        resp = self._client.get_object(Bucket=self._bucket, Key=object_key)
+        return resp["Body"].read()
 
     def delete_object(self, *, object_key: str) -> None:
         self._client.delete_object(Bucket=self._bucket, Key=object_key)

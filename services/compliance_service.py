@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import time
-from typing import List, Optional
+import csv
+import io
+from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
 
@@ -35,7 +36,7 @@ async def get_consent_log(
     Returns:
         List of consent log records with relevant fields
     """
-    filter_dict = {"tenant_id": tenant_id}
+    filter_dict: Dict[str, Any] = {"tenant_id": tenant_id}
 
     # Apply department scoping if principal provided and user is dept_admin
     if principal:
@@ -43,7 +44,7 @@ async def get_consent_log(
 
     # Apply date range filtering on consent_timestamp if provided
     if start_date or end_date:
-        date_filter = {}
+        date_filter: Dict[str, Any] = {}
         if start_date:
             date_filter["$gte"] = start_date
         if end_date:
@@ -91,13 +92,13 @@ async def get_consent_log_count(
 
     Useful for pagination metadata.
     """
-    filter_dict = {"tenant_id": tenant_id}
+    filter_dict: Dict[str, Any] = {"tenant_id": tenant_id}
 
     if principal:
         filter_dict = apply_department_scope(filter_dict, principal)
 
     if start_date or end_date:
-        date_filter = {}
+        date_filter: Dict[str, Any] = {}
         if start_date:
             date_filter["$gte"] = start_date
         if end_date:
@@ -109,7 +110,6 @@ async def get_consent_log_count(
 
 async def generate_compliance_export(tenant_id: str) -> bytes:
     """Generate a ZIP containing compliance CSVs."""
-    import csv
     import io
     import zipfile
 
@@ -160,7 +160,7 @@ def _records_to_csv(records: list, fields: list) -> str:
     writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
     writer.writeheader()
     for record in records:
-        row = {}
+        row: Dict[str, Any] = {}
         for f in fields:
             val = record.get(f, "") if isinstance(record, dict) else getattr(record, f, "")
             if hasattr(val, '__str__') and not isinstance(val, str):

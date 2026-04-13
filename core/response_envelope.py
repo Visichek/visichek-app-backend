@@ -125,7 +125,7 @@ def http_exception_response(exc: HTTPException, request: Request | None = None) 
         message=message,
         data=data,
         request_id=_request_id_from_request(request),
-        headers=exc.headers,
+        headers=dict(exc.headers) if exc.headers else None,
     )
 
 

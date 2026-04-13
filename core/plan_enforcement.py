@@ -22,7 +22,6 @@ Enforcement is skipped for:
 """
 
 import fnmatch
-import re
 import time
 from typing import Optional
 

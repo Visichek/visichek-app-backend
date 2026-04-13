@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any, Dict, Optional
 from fastapi import APIRouter, Depends, Query
 from core.response_envelope import document_response
 from security.auth import verify_system_user_token
@@ -43,16 +43,16 @@ _audit_roles = verify_system_user_token("super_admin", "auditor", "dpo")
     },
 )
 async def list_audit_logs(
-    actor_id: str = None,
-    action: str = None,
-    target_entity: str = None,
-    date_from: int = None,
-    date_to: int = None,
+    actor_id: Optional[str] = None,
+    action: Optional[str] = None,
+    target_entity: Optional[str] = None,
+    date_from: Optional[int] = None,
+    date_to: Optional[int] = None,
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(_audit_roles),
 ):
-    filter_dict = {"tenant_id": principal.tenant_id or ""}
+    filter_dict: Dict[str, Any] = {"tenant_id": principal.tenant_id or ""}
     if actor_id:
         filter_dict["actor_id"] = actor_id
     if action:
@@ -60,7 +60,7 @@ async def list_audit_logs(
     if target_entity:
         filter_dict["target_entity"] = target_entity
     if date_from or date_to:
-        time_filter = {}
+        time_filter: Dict[str, Any] = {}
         if date_from:
             time_filter["$gte"] = date_from
         if date_to:

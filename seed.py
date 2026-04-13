@@ -15,7 +15,6 @@ load_dotenv()
 
 
 async def seed():
-    from core.database import db
     from schemas.tenant_schema import TenantCreate
     from schemas.department_schema import DepartmentCreate
     from schemas.system_user_schema import SystemUserCreate

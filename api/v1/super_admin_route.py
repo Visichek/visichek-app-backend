@@ -199,7 +199,7 @@ async def generate_registration_qr(
 ):
     from services.visit_session_service import generate_tenant_registration_qr
     tenant_id = principal.tenant_id
-    return await generate_tenant_registration_qr(tenant_id, department_id, branch_id)
+    return await generate_tenant_registration_qr(tenant_id or "", department_id, branch_id)
 
 
 @router.get("/visitor-log")
@@ -220,7 +220,8 @@ async def get_company_visitor_log(
     tenant_id = principal.tenant_id
     from repositories.visit_session_repo import get_visit_sessions, count_visit_sessions
     # Build filter
-    filter_dict = {"tenant_id": tenant_id}
+    from typing import Any as _Any, Dict as _Dict
+    filter_dict: _Dict[str, _Any] = {"tenant_id": tenant_id}
     if start_date:
         filter_dict.setdefault("check_in_time", {})
         filter_dict["check_in_time"]["$gte"] = start_date

@@ -16,6 +16,7 @@ from repositories.tokens_repo import get_refresh_tokens, delete_access_token, de
 from services.auth_helpers import issue_tokens_for_user
 from core.email_utils import normalize_email
 from config.role_permissions import get_default_permissions_for_role
+from schemas.imports import AccountStatus
 
 
 async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOut:
@@ -44,7 +45,7 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
         full_name=signup_data.full_name,
         email=signup_data.email,
         password=signup_data.password,
-        accountStatus="ACTIVE",
+        accountStatus=AccountStatus("ACTIVE"),
         permissionList=permission_list,
         invited_by=invited_by,
     )
@@ -86,7 +87,7 @@ async def authenticate_admin(admin_data: AdminLogin) -> AdminOut:
                 challenge_id, _code = await create_otp_challenge(
                     user_id=admin.id, user_type="admin", role="admin",  # type: ignore
                 )
-                return {"otp_required": True, "otp_challenge_id": challenge_id}
+                return {"otp_required": True, "otp_challenge_id": challenge_id}  # type: ignore[return-value]
 
             access_token, refresh_token = await issue_tokens_for_user(user_id=admin.id, role="admin")  # type: ignore
             admin.access_token = access_token

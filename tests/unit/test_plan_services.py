@@ -5,7 +5,7 @@ Uses mocking to isolate service logic from database.
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -15,12 +15,9 @@ from schemas.plan_schema import (
     PlanOut,
     PlanStatus,
     PlanTier,
-    FeatureRule,
-    CrudLimit,
     QuotaResetInterval,
 )
 from schemas.subscription_schema import (
-    SubscriptionCreate,
     SubscriptionOut,
     SubscriptionStatus,
     BillingCycle,
@@ -64,7 +61,7 @@ def _make_plan_out(**overrides) -> PlanOut:
         "last_updated": int(time.time()),
     }
     defaults.update(overrides)
-    return PlanOut(**defaults)
+    return PlanOut(**defaults)  # type: ignore[arg-type]
 
 
 def _make_sub_out(**overrides) -> SubscriptionOut:
@@ -83,7 +80,7 @@ def _make_sub_out(**overrides) -> SubscriptionOut:
         "last_updated": int(time.time()),
     }
     defaults.update(overrides)
-    return SubscriptionOut(**defaults)
+    return SubscriptionOut(**defaults)  # type: ignore[arg-type]
 
 
 def _make_discount_out(**overrides) -> DiscountOut:
@@ -102,7 +99,7 @@ def _make_discount_out(**overrides) -> DiscountOut:
         "last_updated": int(time.time()),
     }
     defaults.update(overrides)
-    return DiscountOut(**defaults)
+    return DiscountOut(**defaults)  # type: ignore[arg-type]
 
 
 # ============================================================================

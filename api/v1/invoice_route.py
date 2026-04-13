@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query
 
 from core.response_envelope import document_response
-from schemas.invoice_schema import InvoiceOut, InvoiceWithSummaryOut
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_super_admin_token
 from security.principal import AuthPrincipal
 from services.invoice_service import (
-    retrieve_all_invoices,
     retrieve_all_invoices_with_summary,
     retrieve_invoice_by_id,
     retrieve_invoice_by_id_with_summary,
-    retrieve_invoices_for_tenant,
     retrieve_invoices_for_tenant_with_summary,
 )
 from services.invoice_pdf_service import get_invoice_pdf_url

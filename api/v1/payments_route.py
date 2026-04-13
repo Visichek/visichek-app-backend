@@ -18,7 +18,6 @@ from repositories.webhook_event_repo import (
     get_webhook_event,
     get_webhook_events,
     count_webhook_events,
-    WebhookEventOut,
 )
 
 router = APIRouter(prefix="/payments", tags=["Payments"])

@@ -8,7 +8,6 @@ from fastapi import HTTPException
 
 from repositories.notification_repo import (
     create_notification,
-    get_notification,
     get_notifications,
     count_notifications,
     update_notification,
@@ -27,6 +26,7 @@ from schemas.notification_schema import (
     NotificationPreferencesUpdate,
     NotificationPreferencesOut,
 )
+from schemas.notification_schema import NotificationType
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ async def send_notification(
         user_type=user_type,
         title=title,
         body=body,
-        type=type,
+        type=NotificationType(type),
         link=link,
         tenant_id=tenant_id,
     )

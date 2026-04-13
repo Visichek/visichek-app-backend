@@ -6,16 +6,13 @@ from core.response_envelope import document_response
 from schemas.department_schema import (
     DepartmentCreate,
     DepartmentUpdate,
-    DepartmentOut,
     DepartmentWithSummaryOut,
 )
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.department_service import (
     add_department,
-    retrieve_department_by_id,
     retrieve_department_by_id_with_summary,
-    retrieve_departments,
     retrieve_departments_with_summary,
     update_department_by_id,
     remove_department,

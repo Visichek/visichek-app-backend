@@ -63,7 +63,7 @@ async def resolve_tenant_summary(tenant_id: Optional[str]) -> Optional[TenantBri
         if not tenant:
             return None
         return TenantBriefSummary(
-            id=tenant.id,
+            id=str(tenant.id or ""),
             company_name=tenant.company_name,
             is_active=tenant.is_active,
             country_of_hosting=tenant.country_of_hosting,
@@ -82,7 +82,7 @@ async def resolve_plan_summary(plan_id: Optional[str]) -> Optional[PlanBriefSumm
         if not plan:
             return None
         return PlanBriefSummary(
-            id=plan.id,
+            id=str(plan.id or ""),
             name=plan.name,
             display_name=plan.display_name,
             tier=plan.tier,
@@ -103,7 +103,7 @@ async def resolve_subscription_summary(
         if not sub:
             return None
         return SubscriptionBriefSummary(
-            id=sub.id,
+            id=str(sub.id or ""),
             status=sub.status,
             billing_cycle=sub.billing_cycle,
             plan_id=sub.plan_id,
@@ -125,7 +125,7 @@ async def resolve_department_summary(
         if not dept:
             return None
         return DepartmentBriefSummary(
-            id=dept.id,
+            id=str(dept.id or ""),
             name=dept.name,
             code=dept.code,
             is_active=dept.is_active,
@@ -144,7 +144,7 @@ async def resolve_system_user_summary(user_id: Optional[str]) -> Optional[UserBr
         if not user:
             return None
         return UserBriefSummary(
-            id=user.id,
+            id=str(user.id or ""),
             full_name=user.full_name,
             email=user.email,
             role=user.role,
@@ -165,7 +165,7 @@ async def resolve_admin_summary(admin_id: Optional[str]) -> Optional[UserBriefSu
         if not admin:
             return None
         return UserBriefSummary(
-            id=admin.id,
+            id=str(admin.id or ""),
             full_name=admin.full_name,
             email=admin.email,
             role="admin",
@@ -211,7 +211,7 @@ async def resolve_visitor_profile_summary(
         if not profile:
             return None
         return VisitorProfileBriefSummary(
-            id=profile.id,
+            id=str(profile.id or ""),
             full_name=profile.full_name,
             phone=profile.phone,
             email_address=profile.email_address,
@@ -233,7 +233,7 @@ async def resolve_appointment_summary(
         if not appt:
             return None
         return AppointmentBriefSummary(
-            id=appt.id,
+            id=str(appt.id or ""),
             purpose=appt.purpose,
             status=appt.status,
             scheduled_datetime=appt.scheduled_datetime,
@@ -252,7 +252,7 @@ async def resolve_branch_summary(branch_id: Optional[str]) -> Optional[BranchBri
         if not branch:
             return None
         return BranchBriefSummary(
-            id=branch.id,
+            id=str(branch.id or ""),
             name=branch.name,
             is_active=getattr(branch, "is_active", None),
         )
@@ -272,7 +272,7 @@ async def resolve_visit_session_summary(
         if not session:
             return None
         return VisitSessionBriefSummary(
-            id=session.id,
+            id=str(session.id or ""),
             status=session.status,
             visitor_name_snapshot=session.visitor_name_snapshot,
             check_in_time=session.check_in_time,
@@ -291,7 +291,7 @@ async def resolve_invoice_summary(invoice_id: Optional[str]) -> Optional[Invoice
         if not invoice:
             return None
         return InvoiceBriefSummary(
-            id=invoice.id,
+            id=str(invoice.id or ""),
             invoice_number=invoice.invoice_number,
             status=invoice.status,
             total_minor=invoice.total_minor,

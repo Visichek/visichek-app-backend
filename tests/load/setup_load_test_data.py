@@ -4,7 +4,6 @@ import asyncio
 import os
 import sys
 import random
-import string
 import time
 from typing import Optional
 
@@ -261,10 +260,10 @@ async def main():
             auth_result = await login_user(client, super_admin_email, super_admin_password)
             super_admin_headers = auth_result["headers"]
             super_admin_id = auth_result["user_id"]
-            print(f"✓ Logged in as existing super admin")
+            print("✓ Logged in as existing super admin")
         except Exception as e:
-            print(f"✗ Super admin login failed, will attempt to create via default admin")
-            print(f"  Note: This requires an existing super admin in the system")
+            print("✗ Super admin login failed, will attempt to create via default admin")
+            print("  Note: This requires an existing super admin in the system")
             print(f"  Error: {e}")
             sys.exit(1)
 
@@ -351,22 +350,22 @@ async def main():
         print("\n" + "=" * 60)
         print("Load Test Data Setup Complete!")
         print("=" * 60)
-        print(f"\nConfiguration:")
+        print("\nConfiguration:")
         print(f"  Backend URL: {BASE_URL}")
         print(f"  Tenant ID: {tenant_id}")
         print(f"  Department IDs: {department_ids}")
         print(f"  Visitor Profiles Created: {len(visitor_ids)}")
 
-        print(f"\nSuperAdmin User (for load testing):")
+        print("\nSuperAdmin User (for load testing):")
         print(f"  Email: {super_admin_email}")
         print(f"  Password: {super_admin_password}")
 
-        print(f"\nOther Users Created:")
+        print("\nOther Users Created:")
         print(f"  Receptionist: {receptionist_email}")
         print(f"  Dept Admin: {dept_admin_email}")
 
-        print(f"\nTo run load tests with these credentials:")
-        print(f"  cd tests/load")
+        print("\nTo run load tests with these credentials:")
+        print("  cd tests/load")
         print(f"  export LOAD_TEST_EMAIL={super_admin_email}")
         print(f"  export LOAD_TEST_PASSWORD={super_admin_password}")
         print(f"  locust -f locustfile.py --host={BASE_URL}")

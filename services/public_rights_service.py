@@ -3,19 +3,20 @@ from __future__ import annotations
 import secrets
 import time
 from bson import ObjectId
+from typing import Optional
 from fastapi import HTTPException
 
 from core.database import db
 from repositories.visitor_profile_repo import get_visitor_profile, get_visitor_profile_by_phone, update_visitor_profile
 from repositories.data_subject_request_repo import create_dsr, get_dsr
-from schemas.data_subject_request_schema import DSRCreate, DSROut
+from schemas.data_subject_request_schema import DSRCreate
 from schemas.visitor_profile_schema import VisitorProfileUpdate
 from schemas.imports import DSRType, DSRStatus, ProfilingPreference
 
 VERIFICATION_TOKEN_COLLECTION = "dsr_verification_tokens"
 
 
-async def _find_visitor_profile(tenant_id: str, phone: str = None, email: str = None):
+async def _find_visitor_profile(tenant_id: str, phone: Optional[str] = None, email: Optional[str] = None):
     """Look up a visitor profile by phone or email."""
     if not phone and not email:
         raise HTTPException(status_code=400, detail="Must provide phone or email for identity verification")

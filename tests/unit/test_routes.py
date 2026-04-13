@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 
 from main import app
@@ -11,7 +11,6 @@ from security.auth import (
     verify_super_admin_token,
     verify_system_user_token,
     verify_any_system_user_token,
-    verify_system_user_refresh_token,
 )
 
 

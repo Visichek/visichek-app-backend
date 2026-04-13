@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from typing import List
 
 from repositories.sub_processor_repo import (
-    create_sub_processor, get_sub_processor, get_sub_processors,
+    create_sub_processor, get_sub_processors,
     update_sub_processor, delete_sub_processor,
 )
 from schemas.sub_processor_schema import SubProcessorCreate, SubProcessorUpdate, SubProcessorOut

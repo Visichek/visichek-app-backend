@@ -73,7 +73,7 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
     # 4. Create the first super_admin system user
     try:
         super_admin_data = SystemUserCreate(
-            tenant_id=tenant.id,
+            tenant_id=tenant.id or "",
             full_name=payload.admin_full_name,
             email=payload.admin_email,
             role=SystemUserRole.SUPER_ADMIN,
@@ -142,7 +142,7 @@ def _build_plan_summary(plan_data: dict | None) -> TenantPlanSummary | None:
 
 async def _enrich_tenant(tenant: TenantOut) -> TenantWithSummaryOut:
     from services.plan_cache_service import resolve_tenant_plan
-    plan_data = await resolve_tenant_plan(tenant.id)
+    plan_data = await resolve_tenant_plan(tenant.id or "")
     data = tenant.model_dump(by_alias=False)
     data["plan_summary"] = _build_plan_summary(plan_data)
     return TenantWithSummaryOut(**data)

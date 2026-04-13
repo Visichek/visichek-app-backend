@@ -1,5 +1,5 @@
 from core.database import db
-from typing import List, Optional
+from typing import List
 from schemas.data_processing_register_schema import DPRCreate, DPROut
 
 

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
 
-from bson import ObjectId
 
 from core.database import db
 

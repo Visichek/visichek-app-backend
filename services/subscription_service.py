@@ -11,7 +11,6 @@ from repositories.subscription_repo import (
     get_subscription,
     get_subscriptions,
     update_subscription,
-    delete_subscription,
 )
 from repositories.plan_repo import get_plan
 from repositories.discount_repo import get_discount, increment_redemptions
@@ -181,7 +180,7 @@ async def subscribe_tenant(
         trial_ends_at=trial_ends_at,
         current_period_start=now,
         current_period_end=period_end,
-        applied_discount_ids=applied_ids,
+        applied_discount_ids=[d for d in applied_ids if d],
         admin_notes=admin_notes,
         feature_overrides=feature_overrides,
         crud_limit_overrides=crud_limit_overrides,
@@ -322,7 +321,7 @@ async def change_plan(
     tenant_id: str,
     new_plan_id: str,
     billing_cycle: Optional[BillingCycle] = None,
-) -> SubscriptionOut:
+) -> Optional[SubscriptionOut]:
     """Immediately switch a tenant to a different plan. Takes effect now."""
     current = await retrieve_tenant_active_subscription(tenant_id)
     if not current:
@@ -392,7 +391,7 @@ async def cancel_subscription(
     tenant_id: str,
     reason: Optional[str] = None,
     immediate: bool = False,
-) -> SubscriptionOut:
+) -> Optional[SubscriptionOut]:
     """Cancel a tenant's subscription."""
     current = await retrieve_tenant_active_subscription(tenant_id)
     if not current:

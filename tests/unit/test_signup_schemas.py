@@ -7,7 +7,6 @@ Verifies that:
 """
 from __future__ import annotations
 
-import pytest
 
 from schemas.admin_schema import AdminSignupRequest
 from schemas.user_schema import UserSignupRequest, UserLogin

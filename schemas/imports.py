@@ -1,11 +1,9 @@
-from bson import ObjectId
-from pydantic import GetJsonSchemaHandler
-from pydantic import BaseModel, EmailStr, Field,model_validator
-from pydantic_core import core_schema
-from datetime import datetime,timezone
-from typing import Optional,List,Any
-from enum import Enum
 import time
+from datetime import datetime, timezone
+from pydantic import BaseModel, Field, EmailStr, model_validator
+from typing import Any, Optional, List
+from enum import Enum
+from bson import ObjectId
 
 
 class LoginType(str, Enum):
