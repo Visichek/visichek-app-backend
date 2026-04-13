@@ -30,5 +30,20 @@ jobs:
 
             cd "$APP_DIR"
             git pull origin master
+
+            DOMAIN="api.visichek.app"
+            EMAIL="uririnathaniel@gmail.com"
+            APP_PORT="7861"
+            SETUP_SCRIPT="$APP_DIR/server_automations/setup-ngnix-letsencryp.sh"
+
+            if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+              echo "Cert for $DOMAIN already present — running dry-run renewal"
+              sudo certbot renew --cert-name "$DOMAIN" --dry-run
+            else
+              echo "No cert for $DOMAIN — running nginx + Let's Encrypt setup"
+              chmod +x "$SETUP_SCRIPT"
+              "$SETUP_SCRIPT" "$DOMAIN" "$APP_PORT" "$EMAIL"
+            fi
+
             docker compose down
             docker compose up --build -d

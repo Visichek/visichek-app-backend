@@ -4,11 +4,19 @@ set -e
 # ===== CONFIG (EDIT ONLY THESE) =====
 DOMAIN_NAME="$1"
 APP_PORT="$2"
+EMAIL="${3:-admin@$DOMAIN_NAME}"
 
 # ===== VALIDATION =====
 if [[ -z "$DOMAIN_NAME" || -z "$APP_PORT" ]]; then
-  echo "Usage: $0 <domain_name> <app_port>"
+  echo "Usage: $0 <domain_name> <app_port> [email]"
   exit 1
+fi
+
+# ===== SKIP IF ALREADY CONFIGURED =====
+if [[ -f "/etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem" ]]; then
+  echo "✅ $DOMAIN_NAME already has a certificate — running dry-run renewal check"
+  sudo certbot renew --cert-name "$DOMAIN_NAME" --dry-run
+  exit 0
 fi
 
 NGINX_AVAILABLE="/etc/nginx/sites-available/$DOMAIN_NAME"
@@ -76,7 +84,7 @@ sudo nginx -t
 sudo systemctl reload nginx
 
 # ===== SSL CERTIFICATE =====
-sudo certbot --nginx -d "$DOMAIN_NAME" --non-interactive --agree-tos -m admin@"$DOMAIN_NAME" --redirect
+sudo certbot --nginx -d "$DOMAIN_NAME" --non-interactive --agree-tos -m "$EMAIL" --redirect
 
 # ===== DONE =====
 echo
