@@ -17,7 +17,9 @@ class StructOCRProvider(OCRProvider):
     def provider_name(self) -> str:
         return "structocr"
 
-    async def extract_id(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> OCRResult:
+    async def extract_id(
+        self, image_bytes: bytes, mime_type: str = "image/jpeg"
+    ) -> OCRResult:
         try:
             import httpx
 

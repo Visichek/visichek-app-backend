@@ -2,6 +2,7 @@
 Unit tests for plan, subscription, discount, and usage route endpoints.
 Uses httpx AsyncClient with ASGITransport to test route-level behavior.
 """
+
 from __future__ import annotations
 
 import time
@@ -13,26 +14,43 @@ from httpx import ASGITransport, AsyncClient
 
 from main import app
 from schemas.plan_schema import PlanOut, PlanStatus, PlanTier
-from schemas.subscription_schema import SubscriptionOut, SubscriptionStatus, BillingCycle
-from schemas.discount_schema import DiscountOut, DiscountType, DiscountScope, DiscountStatus
+from schemas.subscription_schema import (
+    SubscriptionOut,
+    SubscriptionStatus,
+    BillingCycle,
+)
+from schemas.discount_schema import (
+    DiscountOut,
+    DiscountType,
+    DiscountScope,
+    DiscountStatus,
+)
 from security.account_status_check import check_admin_account_status_and_permissions
 
 pytestmark = pytest.mark.asyncio
 
 
 # Mock admin object for dependency override
-MOCK_ADMIN = type("MockAdmin", (), {
-    "id": "admin_mock",
-    "email": "admin@test.com",
-    "full_name": "Mock Admin",
-    "role": "admin",
-})()
+MOCK_ADMIN = type(
+    "MockAdmin",
+    (),
+    {
+        "id": "admin_mock",
+        "email": "admin@test.com",
+        "full_name": "Mock Admin",
+        "role": "admin",
+    },
+)()
 
 
 @pytest_asyncio.fixture
 async def client():
-    app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MOCK_ADMIN
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+    app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: (
+        MOCK_ADMIN
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
         yield c
     app.dependency_overrides.clear()
 
@@ -40,6 +58,7 @@ async def client():
 # ============================================================================
 # Helper factories
 # ============================================================================
+
 
 def _plan_out(**overrides) -> PlanOut:
     defaults = {
@@ -109,15 +128,18 @@ def _discount_out(**overrides) -> DiscountOut:
 # Plan Route Tests
 # ============================================================================
 
-class TestPlanRoutes:
 
+class TestPlanRoutes:
     @patch("api.v1.plan_route.add_plan", new_callable=AsyncMock)
     async def test_create_plan(self, mock_add, client):
         mock_add.return_value = _plan_out()
-        resp = await client.post("/v1/plans", json={
-            "name": "test-plan",
-            "display_name": "Test Plan",
-        })
+        resp = await client.post(
+            "/v1/plans",
+            json={
+                "name": "test-plan",
+                "display_name": "Test Plan",
+            },
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["success"] is True
@@ -143,9 +165,12 @@ class TestPlanRoutes:
     async def test_update_plan(self, mock_update, client):
         updated = _plan_out(display_name="Updated Plan")
         mock_update.return_value = updated
-        resp = await client.put("/v1/plans/plan_test", json={
-            "display_name": "Updated Plan",
-        })
+        resp = await client.put(
+            "/v1/plans/plan_test",
+            json={
+                "display_name": "Updated Plan",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["data"]["display_name"] == "Updated Plan"
 
@@ -175,15 +200,18 @@ class TestPlanRoutes:
 # Subscription Route Tests
 # ============================================================================
 
-class TestSubscriptionRoutes:
 
+class TestSubscriptionRoutes:
     @patch("api.v1.subscription_route.subscribe_tenant", new_callable=AsyncMock)
     async def test_create_subscription(self, mock_sub, client):
         mock_sub.return_value = _sub_out()
-        resp = await client.post("/v1/subscriptions", json={
-            "tenant_id": "tenant_abc",
-            "plan_id": "plan_test",
-        })
+        resp = await client.post(
+            "/v1/subscriptions",
+            json={
+                "tenant_id": "tenant_abc",
+                "plan_id": "plan_test",
+            },
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["success"] is True
@@ -196,7 +224,9 @@ class TestSubscriptionRoutes:
         assert resp.status_code == 200
         assert len(resp.json()["data"]) == 1
 
-    @patch("api.v1.subscription_route.retrieve_subscription_by_id", new_callable=AsyncMock)
+    @patch(
+        "api.v1.subscription_route.retrieve_subscription_by_id", new_callable=AsyncMock
+    )
     async def test_get_subscription(self, mock_get, client):
         mock_get.return_value = _sub_out()
         resp = await client.get("/v1/subscriptions/sub_test")
@@ -206,10 +236,13 @@ class TestSubscriptionRoutes:
     @patch("api.v1.subscription_route.change_plan", new_callable=AsyncMock)
     async def test_change_plan(self, mock_change, client):
         mock_change.return_value = _sub_out(plan_id="plan_new")
-        resp = await client.post("/v1/subscriptions/change-plan", json={
-            "tenant_id": "tenant_abc",
-            "new_plan_id": "plan_new",
-        })
+        resp = await client.post(
+            "/v1/subscriptions/change-plan",
+            json={
+                "tenant_id": "tenant_abc",
+                "new_plan_id": "plan_new",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["data"]["plan_id"] == "plan_new"
 
@@ -219,10 +252,13 @@ class TestSubscriptionRoutes:
             status=SubscriptionStatus.CANCELLED.value,
             cancelled_at=int(time.time()),
         )
-        resp = await client.post("/v1/subscriptions/cancel", json={
-            "tenant_id": "tenant_abc",
-            "immediate": True,
-        })
+        resp = await client.post(
+            "/v1/subscriptions/cancel",
+            json={
+                "tenant_id": "tenant_abc",
+                "immediate": True,
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "cancelled"
 
@@ -231,16 +267,19 @@ class TestSubscriptionRoutes:
 # Discount Route Tests
 # ============================================================================
 
-class TestDiscountRoutes:
 
+class TestDiscountRoutes:
     @patch("api.v1.discount_route.add_discount", new_callable=AsyncMock)
     async def test_create_discount(self, mock_add, client):
         mock_add.return_value = _discount_out()
-        resp = await client.post("/v1/discounts", json={
-            "code": "TESTCODE",
-            "name": "Test Discount",
-            "value": 10.0,
-        })
+        resp = await client.post(
+            "/v1/discounts",
+            json={
+                "code": "TESTCODE",
+                "name": "Test Discount",
+                "value": 10.0,
+            },
+        )
         assert resp.status_code == 201
         assert resp.json()["data"]["code"] == "TESTCODE"
 

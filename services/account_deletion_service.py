@@ -33,11 +33,13 @@ async def delete_admin_account(admin_id: str, password: str) -> None:
 
     # Delete all tokens
     from repositories.tokens_repo import delete_all_tokens_with_admin_id
+
     await delete_all_tokens_with_admin_id(adminId=admin_id)
 
     # Record audit event (fire-and-forget)
     try:
         from services.audit_service import record_audit_event
+
         await record_audit_event(
             actor_id=admin_id,
             actor_role="admin",
@@ -50,7 +52,9 @@ async def delete_admin_account(admin_id: str, password: str) -> None:
         pass
 
 
-async def delete_system_user_account(user_id: str, password: str, tenant_id: str) -> None:
+async def delete_system_user_account(
+    user_id: str, password: str, tenant_id: str
+) -> None:
     """Delete a system user account after password confirmation.
 
     - Verifies password
@@ -68,11 +72,13 @@ async def delete_system_user_account(user_id: str, password: str, tenant_id: str
 
     # If super_admin, check they're not the last one
     if user.get("role") == "super_admin":
-        super_admin_count = await db.system_users.count_documents({
-            "tenant_id": tenant_id,
-            "role": "super_admin",
-            "account_status": "ACTIVE",
-        })
+        super_admin_count = await db.system_users.count_documents(
+            {
+                "tenant_id": tenant_id,
+                "role": "super_admin",
+                "account_status": "ACTIVE",
+            }
+        )
         if super_admin_count <= 1:
             raise HTTPException(
                 status_code=403,
@@ -80,10 +86,12 @@ async def delete_system_user_account(user_id: str, password: str, tenant_id: str
             )
 
         # Check for active subscription
-        active_sub = await db["subscriptions"].find_one({
-            "tenant_id": tenant_id,
-            "status": {"$in": ["active", "trialing"]},
-        })
+        active_sub = await db["subscriptions"].find_one(
+            {
+                "tenant_id": tenant_id,
+                "status": {"$in": ["active", "trialing"]},
+            }
+        )
         if active_sub:
             raise HTTPException(
                 status_code=403,
@@ -101,11 +109,13 @@ async def delete_system_user_account(user_id: str, password: str, tenant_id: str
 
     # Delete all tokens
     from repositories.tokens_repo import delete_all_tokens_with_user_id
+
     await delete_all_tokens_with_user_id(userId=user_id)
 
     # Record audit event (fire-and-forget)
     try:
         from services.audit_service import record_audit_event
+
         await record_audit_event(
             actor_id=user_id,
             actor_role=user.get("role", "system_user"),

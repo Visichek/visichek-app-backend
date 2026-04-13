@@ -5,25 +5,82 @@ import time
 from bson import ObjectId
 from pydantic import ValidationError
 
-from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut, TenantBootstrapRequest
+from schemas.tenant_schema import (
+    TenantCreate,
+    TenantUpdate,
+    TenantOut,
+    TenantBootstrapRequest,
+)
 from schemas.department_schema import DepartmentCreate, DepartmentUpdate, DepartmentOut
-from schemas.system_user_schema import SystemUserCreate, SystemUserUpdate, SystemUserOut, SystemUserLogin
-from schemas.visitor_profile_schema import VisitorProfileCreate, VisitorProfileUpdate, VisitorProfileOut
-from schemas.visit_session_schema import VisitSessionCreate, VisitSessionUpdate, VisitSessionOut, CheckInRequest, CheckOutRequest
-from schemas.appointment_schema import AppointmentCreate, AppointmentUpdate, AppointmentOut
-from schemas.privacy_notice_schema import PrivacyNoticeCreate, PrivacyNoticeUpdate, PrivacyNoticeOut
+from schemas.system_user_schema import (
+    SystemUserCreate,
+    SystemUserUpdate,
+    SystemUserOut,
+    SystemUserLogin,
+)
+from schemas.visitor_profile_schema import (
+    VisitorProfileCreate,
+    VisitorProfileUpdate,
+    VisitorProfileOut,
+)
+from schemas.visit_session_schema import (
+    VisitSessionCreate,
+    VisitSessionUpdate,
+    VisitSessionOut,
+    CheckInRequest,
+    CheckOutRequest,
+)
+from schemas.appointment_schema import (
+    AppointmentCreate,
+    AppointmentUpdate,
+    AppointmentOut,
+)
+from schemas.privacy_notice_schema import (
+    PrivacyNoticeCreate,
+    PrivacyNoticeUpdate,
+    PrivacyNoticeOut,
+)
 from schemas.audit_log_schema import AuditLogCreate, AuditLogOut
-from schemas.incident_log_schema import IncidentLogCreate, IncidentLogUpdate, IncidentLogOut
+from schemas.incident_log_schema import (
+    IncidentLogCreate,
+    IncidentLogUpdate,
+    IncidentLogOut,
+)
 from schemas.data_subject_request_schema import DSRCreate, DSRUpdate, DSROut
-from schemas.retention_policy_schema import RetentionPolicyCreate, RetentionPolicyUpdate, RetentionPolicyOut
-from schemas.sub_processor_schema import SubProcessorCreate, SubProcessorUpdate, SubProcessorOut
+from schemas.retention_policy_schema import (
+    RetentionPolicyCreate,
+    RetentionPolicyUpdate,
+    RetentionPolicyOut,
+)
+from schemas.sub_processor_schema import (
+    SubProcessorCreate,
+    SubProcessorUpdate,
+    SubProcessorOut,
+)
 from schemas.deletion_log_schema import DeletionLogCreate, DeletionLogOut
-from schemas.user_session_schema import UserSessionCreate, UserSessionUpdate, UserSessionOut
+from schemas.user_session_schema import (
+    UserSessionCreate,
+    UserSessionUpdate,
+    UserSessionOut,
+)
 from schemas.imports import (
-    LawfulBasis, NoticeDisplayMode, DeletionAction, SystemUserRole, AccountStatus,
-    VisitStatus, CheckInMethod, CheckOutMethod, VerificationMethod, VerificationStatus,
-    AppointmentStatus, ProfilingPreference, IncidentType, IncidentStatus, BadgeFormat,
-    DSRType, DSRStatus
+    LawfulBasis,
+    NoticeDisplayMode,
+    DeletionAction,
+    SystemUserRole,
+    AccountStatus,
+    VisitStatus,
+    CheckInMethod,
+    CheckOutMethod,
+    VerificationMethod,
+    VerificationStatus,
+    AppointmentStatus,
+    ProfilingPreference,
+    IncidentType,
+    IncidentStatus,
+    BadgeFormat,
+    DSRType,
+    DSRStatus,
 )
 
 
@@ -31,9 +88,9 @@ from schemas.imports import (
 # TENANT SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestTenantSchema:
-
     def test_tenant_create_with_required_fields(self):
         """Test TenantCreate with minimal required fields."""
         payload = TenantCreate(company_name="Acme Corp")
@@ -69,7 +126,7 @@ class TestTenantSchema:
             country_of_hosting="US",
             cross_border_approved=True,
             is_active=False,
-            active_notice_version="v2"
+            active_notice_version="v2",
         )
         assert payload.company_name == "Test Co"
         assert payload.lawful_basis == LawfulBasis.CONSENT
@@ -88,7 +145,7 @@ class TestTenantSchema:
         with pytest.raises(ValidationError) as exc_info:
             TenantCreate()
         errors = exc_info.value.errors()
-        assert any(e['loc'] == ('company_name',) for e in errors)
+        assert any(e["loc"] == ("company_name",) for e in errors)
 
     def test_tenant_update_all_optional(self):
         """Test TenantUpdate makes all fields optional."""
@@ -103,7 +160,7 @@ class TestTenantSchema:
         payload = TenantUpdate(
             company_name="Updated Co",
             retention_days=730,
-            dpo_contact_email="new-dpo@example.com"
+            dpo_contact_email="new-dpo@example.com",
         )
         assert payload.company_name == "Updated Co"
         assert payload.retention_days == 730
@@ -124,7 +181,7 @@ class TestTenantSchema:
             "cross_border_approved": False,
             "is_active": True,
             "date_created": int(time.time()),
-            "last_updated": int(time.time())
+            "last_updated": int(time.time()),
         }
         out = TenantOut(**data)
         assert out.id == str(oid)
@@ -143,7 +200,7 @@ class TestTenantSchema:
             "cross_border_approved": False,
             "is_active": True,
             "date_created": int(time.time()),
-            "last_updated": int(time.time())
+            "last_updated": int(time.time()),
         }
         out = TenantOut(**data_with_id)
         assert out.id == str(oid)
@@ -151,35 +208,24 @@ class TestTenantSchema:
     def test_tenant_enum_validation(self):
         """Test TenantCreate validates enum fields."""
         with pytest.raises(ValidationError):
-            TenantCreate(
-                company_name="Test",
-                lawful_basis="invalid_basis"
-            )
+            TenantCreate(company_name="Test", lawful_basis="invalid_basis")
         with pytest.raises(ValidationError):
-            TenantCreate(
-                company_name="Test",
-                notice_display_mode="invalid_mode"
-            )
+            TenantCreate(company_name="Test", notice_display_mode="invalid_mode")
         with pytest.raises(ValidationError):
-            TenantCreate(
-                company_name="Test",
-                default_retention_action="invalid_action"
-            )
+            TenantCreate(company_name="Test", default_retention_action="invalid_action")
 
 
 # ============================================================================
 # DEPARTMENT SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestDepartmentSchema:
-
     def test_department_create_with_required_fields(self):
         """Test DepartmentCreate with minimal required fields."""
         payload = DepartmentCreate(
-            tenant_id="tenant123",
-            code="DEPT001",
-            name="Engineering"
+            tenant_id="tenant123", code="DEPT001", name="Engineering"
         )
         assert payload.tenant_id == "tenant123"
         assert payload.code == "DEPT001"
@@ -193,9 +239,7 @@ class TestDepartmentSchema:
         """Test DepartmentCreate generates timestamps."""
         before = int(time.time())
         payload = DepartmentCreate(
-            tenant_id="tenant123",
-            code="DEPT001",
-            name="Engineering"
+            tenant_id="tenant123", code="DEPT001", name="Engineering"
         )
         after = int(time.time())
         assert before <= payload.date_created <= after
@@ -206,8 +250,8 @@ class TestDepartmentSchema:
         with pytest.raises(ValidationError) as exc_info:
             DepartmentCreate(tenant_id="tenant123")
         errors = exc_info.value.errors()
-        assert any(e['loc'] == ('code',) for e in errors)
-        assert any(e['loc'] == ('name',) for e in errors)
+        assert any(e["loc"] == ("code",) for e in errors)
+        assert any(e["loc"] == ("name",) for e in errors)
 
     def test_department_update_all_optional(self):
         """Test DepartmentUpdate makes all fields optional."""
@@ -219,10 +263,7 @@ class TestDepartmentSchema:
 
     def test_department_update_partial(self):
         """Test DepartmentUpdate with partial updates."""
-        payload = DepartmentUpdate(
-            name="Updated Dept",
-            is_active=False
-        )
+        payload = DepartmentUpdate(name="Updated Dept", is_active=False)
         assert payload.name == "Updated Dept"
         assert payload.is_active is False
         assert payload.code is None
@@ -238,7 +279,7 @@ class TestDepartmentSchema:
             "is_active": True,
             "created_by": "user456",
             "date_created": int(time.time()),
-            "last_updated": int(time.time())
+            "last_updated": int(time.time()),
         }
         out = DepartmentOut(**data)
         assert out.id == str(oid)
@@ -254,7 +295,7 @@ class TestDepartmentSchema:
             "is_active": True,
             "created_by": "user456",
             "date_created": int(time.time()),
-            "last_updated": int(time.time())
+            "last_updated": int(time.time()),
         }
         out = DepartmentOut(**data)
         assert out.id == oid
@@ -264,9 +305,9 @@ class TestDepartmentSchema:
 # SYSTEM USER SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestSystemUserSchema:
-
     def test_system_user_create_required_fields(self):
         """Test SystemUserCreate with required fields."""
         payload = SystemUserCreate(
@@ -274,7 +315,7 @@ class TestSystemUserSchema:
             full_name="John Doe",
             email="john@example.com",
             role=SystemUserRole.RECEPTIONIST,
-            password_hash="raw_password"
+            password_hash="raw_password",
         )
         assert payload.tenant_id == "tenant123"
         assert payload.full_name == "John Doe"
@@ -292,7 +333,7 @@ class TestSystemUserSchema:
             full_name="John Doe",
             email="john@example.com",
             role=SystemUserRole.RECEPTIONIST,
-            password_hash=raw_password
+            password_hash=raw_password,
         )
         assert payload.password_hash != raw_password
         assert len(payload.password_hash) > len(raw_password)
@@ -305,7 +346,7 @@ class TestSystemUserSchema:
             full_name="John Doe",
             email="john@example.com",
             role=SystemUserRole.ADMIN,
-            password_hash="password"
+            password_hash="password",
         )
         after = int(time.time())
         assert before <= payload.date_created <= after
@@ -319,10 +360,10 @@ class TestSystemUserSchema:
                 full_name="John Doe",
                 email="not-an-email",
                 role=SystemUserRole.RECEPTIONIST,
-                password_hash="password"
+                password_hash="password",
             )
         errors = exc_info.value.errors()
-        assert any(e['loc'] == ('email',) for e in errors)
+        assert any(e["loc"] == ("email",) for e in errors)
 
     def test_system_user_create_invalid_role(self):
         """Test SystemUserCreate validates role enum."""
@@ -332,10 +373,10 @@ class TestSystemUserSchema:
                 full_name="John Doe",
                 email="john@example.com",
                 role="invalid_role",
-                password_hash="password"
+                password_hash="password",
             )
         errors = exc_info.value.errors()
-        assert any(e['loc'] == ('role',) for e in errors)
+        assert any(e["loc"] == ("role",) for e in errors)
 
     def test_system_user_update_all_optional(self):
         """Test SystemUserUpdate makes all fields optional."""
@@ -353,7 +394,7 @@ class TestSystemUserSchema:
             full_name="Jane Doe",
             email="jane@example.com",
             role=SystemUserRole.DPO,
-            account_status=AccountStatus.SUSPENDED
+            account_status=AccountStatus.SUSPENDED,
         )
         assert payload.full_name == "Jane Doe"
         assert payload.email == "jane@example.com"
@@ -363,10 +404,7 @@ class TestSystemUserSchema:
 
     def test_system_user_login_schema(self):
         """Test SystemUserLogin schema."""
-        payload = SystemUserLogin(
-            email="john@example.com",
-            password="password123"
-        )
+        payload = SystemUserLogin(email="john@example.com", password="password123")
         assert payload.email == "john@example.com"
         assert payload.password == "password123"
 
@@ -382,7 +420,7 @@ class TestSystemUserSchema:
             "account_status": "ACTIVE",
             "is_active": True,
             "date_created": int(time.time()),
-            "last_updated": int(time.time())
+            "last_updated": int(time.time()),
         }
         out = SystemUserOut(**data)
         assert out.id == str(oid)
@@ -397,7 +435,7 @@ class TestSystemUserSchema:
             "account_status": "ACTIVE",
             "is_active": True,
             "access_token": "jwt_access_token",
-            "refresh_token": "jwt_refresh_token"
+            "refresh_token": "jwt_refresh_token",
         }
         out = SystemUserOut(**data)
         assert out.access_token == "jwt_access_token"
@@ -408,15 +446,12 @@ class TestSystemUserSchema:
 # VISITOR PROFILE SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestVisitorProfileSchema:
-
     def test_visitor_profile_create_required_fields(self):
         """Test VisitorProfileCreate with required fields."""
-        payload = VisitorProfileCreate(
-            tenant_id="tenant123",
-            full_name="Jane Smith"
-        )
+        payload = VisitorProfileCreate(tenant_id="tenant123", full_name="Jane Smith")
         assert payload.tenant_id == "tenant123"
         assert payload.full_name == "Jane Smith"
         assert payload.profiling_preference == ProfilingPreference.ALLOWED
@@ -438,7 +473,7 @@ class TestVisitorProfileSchema:
             id_number="ABC123456",
             id_image_object_key="id_image123.jpg",
             profiling_preference=ProfilingPreference.OPTED_OUT,
-            last_verification_date=int(time.time())
+            last_verification_date=int(time.time()),
         )
         assert payload.phone == "+1234567890"
         assert payload.email_address == "jane@example.com"
@@ -451,7 +486,7 @@ class TestVisitorProfileSchema:
             VisitorProfileCreate(
                 tenant_id="tenant123",
                 full_name="Jane Smith",
-                email_address="not-an-email"
+                email_address="not-an-email",
             )
 
     def test_visitor_profile_update_all_optional(self):
@@ -467,7 +502,7 @@ class TestVisitorProfileSchema:
         payload = VisitorProfileUpdate(
             full_name="Jane Smith Updated",
             phone="+9999999999",
-            profiling_preference=ProfilingPreference.OPTED_OUT
+            profiling_preference=ProfilingPreference.OPTED_OUT,
         )
         assert payload.full_name == "Jane Smith Updated"
         assert payload.phone == "+9999999999"
@@ -485,7 +520,7 @@ class TestVisitorProfileSchema:
             "date_created": int(time.time()),
             "last_updated": int(time.time()),
             "total_visits": 5,
-            "last_visit_date": int(time.time())
+            "last_visit_date": int(time.time()),
         }
         out = VisitorProfileOut(**data)
         assert out.id == str(oid)
@@ -497,7 +532,7 @@ class TestVisitorProfileSchema:
             VisitorProfileCreate(
                 tenant_id="tenant123",
                 full_name="Jane Smith",
-                profiling_preference="invalid_preference"
+                profiling_preference="invalid_preference",
             )
 
 
@@ -505,15 +540,15 @@ class TestVisitorProfileSchema:
 # VISIT SESSION SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestVisitSessionSchema:
-
     def test_visit_session_create_required_fields(self):
         """Test VisitSessionCreate with required fields."""
         payload = VisitSessionCreate(
             tenant_id="tenant123",
             visitor_profile_id="visitor456",
-            department_id="dept789"
+            department_id="dept789",
         )
         assert payload.tenant_id == "tenant123"
         assert payload.visitor_profile_id == "visitor456"
@@ -536,7 +571,7 @@ class TestVisitSessionSchema:
             status=VisitStatus.CHECKED_IN,
             verification_method=VerificationMethod.ID_SCAN,
             badge_qr_token="qr_token_123",
-            badge_format=BadgeFormat.A6
+            badge_format=BadgeFormat.A6,
         )
         assert payload.host_id == "host111"
         assert payload.check_in_method == CheckInMethod.QR
@@ -558,7 +593,7 @@ class TestVisitSessionSchema:
             status=VisitStatus.CHECKED_OUT,
             check_out_method=CheckOutMethod.QR_SCAN,
             check_out_time=now,
-            consent_granted=True
+            consent_granted=True,
         )
         assert payload.status == VisitStatus.CHECKED_OUT
         assert payload.check_out_method == CheckOutMethod.QR_SCAN
@@ -578,7 +613,7 @@ class TestVisitSessionSchema:
             "verification_status": "verified",
             "check_in_time": now - 3600,
             "check_out_time": now,
-            "date_created": now
+            "date_created": now,
         }
         out = VisitSessionOut(**data)
         assert out.id == str(oid)
@@ -596,7 +631,7 @@ class TestVisitSessionSchema:
             "status": "checked_out",
             "verification_status": "verified",
             "check_in_time": check_in,
-            "check_out_time": check_out
+            "check_out_time": check_out,
         }
         out = VisitSessionOut(**data)
         assert out.visit_duration == 7200
@@ -623,7 +658,7 @@ class TestVisitSessionSchema:
                 tenant_id="tenant123",
                 visitor_profile_id="visitor456",
                 department_id="dept789",
-                status="invalid_status"
+                status="invalid_status",
             )
 
 
@@ -631,9 +666,9 @@ class TestVisitSessionSchema:
 # APPOINTMENT SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestAppointmentSchema:
-
     def test_appointment_create_required_fields(self):
         """Test AppointmentCreate with required fields."""
         now = int(time.time())
@@ -641,7 +676,7 @@ class TestAppointmentSchema:
             tenant_id="tenant123",
             host_id="host111",
             department_id="dept789",
-            scheduled_datetime=now + 3600
+            scheduled_datetime=now + 3600,
         )
         assert payload.tenant_id == "tenant123"
         assert payload.host_id == "host111"
@@ -663,7 +698,7 @@ class TestAppointmentSchema:
             visitor_name_snapshot="Jane Smith",
             host_name_snapshot="John Host",
             purpose="Business Meeting",
-            created_by="admin123"
+            created_by="admin123",
         )
         assert payload.visitor_profile_id == "visitor456"
         assert payload.visitor_name_snapshot == "Jane Smith"
@@ -682,8 +717,7 @@ class TestAppointmentSchema:
         """Test AppointmentUpdate with partial updates."""
         now = int(time.time())
         payload = AppointmentUpdate(
-            status=AppointmentStatus.FULFILLED,
-            scheduled_datetime=now + 7200
+            status=AppointmentStatus.FULFILLED, scheduled_datetime=now + 7200
         )
         assert payload.status == AppointmentStatus.FULFILLED
         assert payload.scheduled_datetime == now + 7200
@@ -701,7 +735,7 @@ class TestAppointmentSchema:
             "scheduled_datetime": now + 3600,
             "status": "scheduled",
             "date_created": now,
-            "last_updated": now
+            "last_updated": now,
         }
         out = AppointmentOut(**data)
         assert out.id == str(oid)
@@ -715,7 +749,7 @@ class TestAppointmentSchema:
                 host_id="host111",
                 department_id="dept789",
                 scheduled_datetime=now + 3600,
-                status="invalid_status"
+                status="invalid_status",
             )
 
 
@@ -723,16 +757,16 @@ class TestAppointmentSchema:
 # PRIVACY NOTICE SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestPrivacyNoticeSchema:
-
     def test_privacy_notice_create_required_fields(self):
         """Test PrivacyNoticeCreate with required fields."""
         payload = PrivacyNoticeCreate(
             tenant_id="tenant123",
             version_code="v1.0",
             title="Privacy Notice",
-            summary="This is a privacy notice."
+            summary="This is a privacy notice.",
         )
         assert payload.tenant_id == "tenant123"
         assert payload.version_code == "v1.0"
@@ -752,7 +786,7 @@ class TestPrivacyNoticeSchema:
             full_policy_url="https://example.com/privacy",
             effective_from=now,
             effective_to=now + 86400,
-            is_active=False
+            is_active=False,
         )
         assert payload.full_policy_url == "https://example.com/privacy"
         assert payload.effective_from == now
@@ -770,10 +804,7 @@ class TestPrivacyNoticeSchema:
     def test_privacy_notice_update_partial(self):
         """Test PrivacyNoticeUpdate with partial updates."""
         now = int(time.time())
-        payload = PrivacyNoticeUpdate(
-            title="New Title",
-            effective_to=now + 86400
-        )
+        payload = PrivacyNoticeUpdate(title="New Title", effective_to=now + 86400)
         assert payload.title == "New Title"
         assert payload.effective_to == now + 86400
         assert payload.summary is None
@@ -789,7 +820,7 @@ class TestPrivacyNoticeSchema:
             "title": "Privacy Notice",
             "summary": "Summary",
             "is_active": True,
-            "date_created": now
+            "date_created": now,
         }
         out = PrivacyNoticeOut(**data)
         assert out.id == str(oid)
@@ -799,15 +830,13 @@ class TestPrivacyNoticeSchema:
 # AUDIT LOG SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestAuditLogSchema:
-
     def test_audit_log_create_required_fields(self):
         """Test AuditLogCreate with required fields."""
         payload = AuditLogCreate(
-            tenant_id="tenant123",
-            actor_id="user456",
-            action="USER_LOGIN"
+            tenant_id="tenant123", actor_id="user456", action="USER_LOGIN"
         )
         assert payload.tenant_id == "tenant123"
         assert payload.actor_id == "user456"
@@ -828,7 +857,7 @@ class TestAuditLogSchema:
             ip="192.168.1.1",
             device_signature="device_sig_123",
             reason="Scheduled visit",
-            occurred_at=now
+            occurred_at=now,
         )
         assert payload.actor_name_snapshot == "John Doe"
         assert payload.target_entity == "VisitSession"
@@ -844,7 +873,7 @@ class TestAuditLogSchema:
             "tenant_id": "tenant123",
             "actor_id": "user456",
             "action": "USER_LOGIN",
-            "occurred_at": now
+            "occurred_at": now,
         }
         out = AuditLogOut(**data)
         assert out.id == str(oid)
@@ -854,16 +883,16 @@ class TestAuditLogSchema:
 # INCIDENT LOG SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestIncidentLogSchema:
-
     def test_incident_log_create_required_fields(self):
         """Test IncidentLogCreate with required fields."""
         payload = IncidentLogCreate(
             tenant_id="tenant123",
             reported_by="admin123",
             incident_type=IncidentType.DATA_BREACH,
-            description="Data breach detected in visitor profiles"
+            description="Data breach detected in visitor profiles",
         )
         assert payload.tenant_id == "tenant123"
         assert payload.reported_by == "admin123"
@@ -887,7 +916,7 @@ class TestIncidentLogSchema:
             mitigation_steps="Disabled API endpoint",
             ndpc_notified=True,
             ndpc_notified_at=now,
-            detection_time=now
+            detection_time=now,
         )
         assert payload.risk_level == "high"
         assert payload.data_affected == "visitor_id_images"
@@ -906,9 +935,7 @@ class TestIncidentLogSchema:
         """Test IncidentLogUpdate with partial updates."""
         now = int(time.time())
         payload = IncidentLogUpdate(
-            status=IncidentStatus.CONTAINED,
-            risk_level="medium",
-            ndpc_notified_at=now
+            status=IncidentStatus.CONTAINED, risk_level="medium", ndpc_notified_at=now
         )
         assert payload.status == IncidentStatus.CONTAINED
         assert payload.risk_level == "medium"
@@ -926,7 +953,7 @@ class TestIncidentLogSchema:
             "status": "open",
             "description": "Breach detected",
             "ndpc_notified": False,
-            "date_created": now
+            "date_created": now,
         }
         out = IncidentLogOut(**data)
         assert out.id == str(oid)
@@ -938,7 +965,7 @@ class TestIncidentLogSchema:
                 tenant_id="tenant123",
                 reported_by="admin123",
                 incident_type="invalid_type",
-                description="Test"
+                description="Test",
             )
         with pytest.raises(ValidationError):
             IncidentLogCreate(
@@ -946,7 +973,7 @@ class TestIncidentLogSchema:
                 reported_by="admin123",
                 incident_type=IncidentType.DATA_BREACH,
                 description="Test",
-                status="invalid_status"
+                status="invalid_status",
             )
 
 
@@ -954,15 +981,15 @@ class TestIncidentLogSchema:
 # DATA SUBJECT REQUEST SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestDSRSchema:
-
     def test_dsr_create_required_fields(self):
         """Test DSRCreate with required fields."""
         payload = DSRCreate(
             tenant_id="tenant123",
             visitor_profile_id="visitor456",
-            request_type=DSRType.ACCESS
+            request_type=DSRType.ACCESS,
         )
         assert payload.tenant_id == "tenant123"
         assert payload.visitor_profile_id == "visitor456"
@@ -983,7 +1010,7 @@ class TestDSRSchema:
             status=DSRStatus.IN_PROGRESS,
             identity_verified=True,
             sla_deadline=now + 2592000,  # 30 days
-            notes="Visitor requested data deletion"
+            notes="Visitor requested data deletion",
         )
         assert payload.admin_id == "admin789"
         assert payload.status == DSRStatus.IN_PROGRESS
@@ -1002,9 +1029,7 @@ class TestDSRSchema:
         """Test DSRUpdate with partial updates."""
         now = int(time.time())
         payload = DSRUpdate(
-            status=DSRStatus.COMPLETED,
-            resolved_at=now,
-            identity_verified=True
+            status=DSRStatus.COMPLETED, resolved_at=now, identity_verified=True
         )
         assert payload.status == DSRStatus.COMPLETED
         assert payload.resolved_at == now
@@ -1022,7 +1047,7 @@ class TestDSRSchema:
             "status": "pending",
             "identity_verified": False,
             "received_at": now,
-            "date_created": now
+            "date_created": now,
         }
         out = DSROut(**data)
         assert out.id == str(oid)
@@ -1033,14 +1058,14 @@ class TestDSRSchema:
             DSRCreate(
                 tenant_id="tenant123",
                 visitor_profile_id="visitor456",
-                request_type="invalid_type"
+                request_type="invalid_type",
             )
         with pytest.raises(ValidationError):
             DSRCreate(
                 tenant_id="tenant123",
                 visitor_profile_id="visitor456",
                 request_type=DSRType.ACCESS,
-                status="invalid_status"
+                status="invalid_status",
             )
 
 
@@ -1048,15 +1073,13 @@ class TestDSRSchema:
 # RETENTION POLICY SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestRetentionPolicySchema:
-
     def test_retention_policy_create_required_fields(self):
         """Test RetentionPolicyCreate with required fields."""
         payload = RetentionPolicyCreate(
-            tenant_id="tenant123",
-            scope="visit_sessions",
-            retention_days=1095
+            tenant_id="tenant123", scope="visit_sessions", retention_days=1095
         )
         assert payload.tenant_id == "tenant123"
         assert payload.scope == "visit_sessions"
@@ -1070,7 +1093,7 @@ class TestRetentionPolicySchema:
             tenant_id="tenant123",
             scope="id_images",
             retention_days=365,
-            action=DeletionAction.DELETE
+            action=DeletionAction.DELETE,
         )
         assert payload.action == DeletionAction.DELETE
 
@@ -1084,8 +1107,7 @@ class TestRetentionPolicySchema:
     def test_retention_policy_update_partial(self):
         """Test RetentionPolicyUpdate with partial updates."""
         payload = RetentionPolicyUpdate(
-            retention_days=730,
-            action=DeletionAction.DELETE
+            retention_days=730, action=DeletionAction.DELETE
         )
         assert payload.retention_days == 730
         assert payload.action == DeletionAction.DELETE
@@ -1100,7 +1122,7 @@ class TestRetentionPolicySchema:
             "scope": "visit_sessions",
             "retention_days": 1095,
             "action": "anonymise",
-            "date_created": now
+            "date_created": now,
         }
         out = RetentionPolicyOut(**data)
         assert out.id == str(oid)
@@ -1112,7 +1134,7 @@ class TestRetentionPolicySchema:
                 tenant_id="tenant123",
                 scope="visit_sessions",
                 retention_days=1095,
-                action="invalid_action"
+                action="invalid_action",
             )
 
 
@@ -1120,15 +1142,13 @@ class TestRetentionPolicySchema:
 # SUB PROCESSOR SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestSubProcessorSchema:
-
     def test_sub_processor_create_required_fields(self):
         """Test SubProcessorCreate with required fields."""
         payload = SubProcessorCreate(
-            tenant_id="tenant123",
-            provider="AWS",
-            purpose="Cloud storage"
+            tenant_id="tenant123", provider="AWS", purpose="Cloud storage"
         )
         assert payload.tenant_id == "tenant123"
         assert payload.provider == "AWS"
@@ -1145,7 +1165,7 @@ class TestSubProcessorSchema:
             purpose="Email service",
             jurisdiction="US",
             dpa_signed=True,
-            uses_data_for_training=False
+            uses_data_for_training=False,
         )
         assert payload.jurisdiction == "US"
         assert payload.dpa_signed is True
@@ -1161,10 +1181,7 @@ class TestSubProcessorSchema:
 
     def test_sub_processor_update_partial(self):
         """Test SubProcessorUpdate with partial updates."""
-        payload = SubProcessorUpdate(
-            jurisdiction="EU",
-            dpa_signed=True
-        )
+        payload = SubProcessorUpdate(jurisdiction="EU", dpa_signed=True)
         assert payload.jurisdiction == "EU"
         assert payload.dpa_signed is True
         assert payload.provider is None
@@ -1180,7 +1197,7 @@ class TestSubProcessorSchema:
             "purpose": "Cloud storage",
             "dpa_signed": False,
             "uses_data_for_training": False,
-            "date_created": now
+            "date_created": now,
         }
         out = SubProcessorOut(**data)
         assert out.id == str(oid)
@@ -1190,9 +1207,9 @@ class TestSubProcessorSchema:
 # DELETION LOG SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestDeletionLogSchema:
-
     def test_deletion_log_create_required_fields(self):
         """Test DeletionLogCreate with required fields."""
         payload = DeletionLogCreate(
@@ -1200,7 +1217,7 @@ class TestDeletionLogSchema:
             entity_type="VisitorProfile",
             entity_id="visitor456",
             reason="Data subject request",
-            action=DeletionAction.DELETE
+            action=DeletionAction.DELETE,
         )
         assert payload.tenant_id == "tenant123"
         assert payload.entity_type == "VisitorProfile"
@@ -1217,7 +1234,7 @@ class TestDeletionLogSchema:
             entity_id="session789",
             reason="Retention policy",
             action=DeletionAction.ANONYMISE,
-            performed_by="admin123"
+            performed_by="admin123",
         )
         assert payload.performed_by == "admin123"
         assert payload.action == DeletionAction.ANONYMISE
@@ -1233,7 +1250,7 @@ class TestDeletionLogSchema:
             "entity_id": "visitor456",
             "reason": "Data subject request",
             "action": "delete",
-            "timestamp": now
+            "timestamp": now,
         }
         out = DeletionLogOut(**data)
         assert out.id == str(oid)
@@ -1246,7 +1263,7 @@ class TestDeletionLogSchema:
                 entity_type="VisitorProfile",
                 entity_id="visitor456",
                 reason="Test",
-                action="invalid_action"
+                action="invalid_action",
             )
 
 
@@ -1254,15 +1271,12 @@ class TestDeletionLogSchema:
 # USER SESSION SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestUserSessionSchema:
-
     def test_user_session_create_required_fields(self):
         """Test UserSessionCreate with required fields."""
-        payload = UserSessionCreate(
-            user_id="user123",
-            tenant_id="tenant456"
-        )
+        payload = UserSessionCreate(user_id="user123", tenant_id="tenant456")
         assert payload.user_id == "user123"
         assert payload.tenant_id == "tenant456"
         assert payload.mfa_passed is False
@@ -1280,7 +1294,7 @@ class TestUserSessionSchema:
             device_signature="device_sig_123",
             user_agent="Mozilla/5.0...",
             mfa_passed=True,
-            expires_at=now + 3600
+            expires_at=now + 3600,
         )
         assert payload.ip_address == "192.168.1.1"
         assert payload.device_signature == "device_sig_123"
@@ -1290,10 +1304,7 @@ class TestUserSessionSchema:
     def test_user_session_create_auto_timestamps(self):
         """Test UserSessionCreate generates timestamps."""
         before = int(time.time())
-        payload = UserSessionCreate(
-            user_id="user123",
-            tenant_id="tenant456"
-        )
+        payload = UserSessionCreate(user_id="user123", tenant_id="tenant456")
         after = int(time.time())
         assert before <= payload.started_at <= after
         assert before <= payload.last_activity_at <= after
@@ -1307,10 +1318,7 @@ class TestUserSessionSchema:
     def test_user_session_update_partial(self):
         """Test UserSessionUpdate with partial updates."""
         now = int(time.time())
-        payload = UserSessionUpdate(
-            last_activity_at=now,
-            ended_at=now + 100
-        )
+        payload = UserSessionUpdate(last_activity_at=now, ended_at=now + 100)
         assert payload.last_activity_at == now
         assert payload.ended_at == now + 100
 
@@ -1324,7 +1332,7 @@ class TestUserSessionSchema:
             "tenant_id": "tenant456",
             "mfa_passed": False,
             "started_at": now,
-            "last_activity_at": now
+            "last_activity_at": now,
         }
         out = UserSessionOut(**data)
         assert out.id == str(oid)
@@ -1339,7 +1347,7 @@ class TestUserSessionSchema:
             "tenant_id": "tenant456",
             "mfa_passed": False,
             "started_at": now,
-            "last_activity_at": now
+            "last_activity_at": now,
         }
         out = UserSessionOut(**data)
         assert out.id == oid
@@ -1349,9 +1357,9 @@ class TestUserSessionSchema:
 # TENANT BOOTSTRAP SCHEMA TESTS
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestTenantBootstrapSchema:
-
     def test_bootstrap_request_with_required_fields(self):
         """Test TenantBootstrapRequest with all required fields."""
         payload = TenantBootstrapRequest(

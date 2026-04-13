@@ -19,7 +19,12 @@ async def get_dsr(filter_dict: dict) -> Optional[DSROut]:
 
 
 async def get_dsrs(filter_dict: dict = {}, start=0, stop=100) -> List[DSROut]:
-    cursor = db.data_subject_requests.find(filter_dict).sort("date_created", -1).skip(start).limit(stop - start)
+    cursor = (
+        db.data_subject_requests.find(filter_dict)
+        .sort("date_created", -1)
+        .skip(start)
+        .limit(stop - start)
+    )
     dsr_list = []
     async for doc in cursor:
         dsr_list.append(DSROut(**doc))
@@ -29,6 +34,8 @@ async def get_dsrs(filter_dict: dict = {}, start=0, stop=100) -> List[DSROut]:
 async def update_dsr(filter_dict: dict, dsr_data: DSRUpdate) -> DSROut:
     update_dict = {k: v for k, v in dsr_data.model_dump().items() if v is not None}
     result = await db.data_subject_requests.find_one_and_update(
-        filter_dict, {"$set": update_dict}, return_document=ReturnDocument.AFTER,
+        filter_dict,
+        {"$set": update_dict},
+        return_document=ReturnDocument.AFTER,
     )
     return DSROut(**result)

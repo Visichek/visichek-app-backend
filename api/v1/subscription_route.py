@@ -28,6 +28,7 @@ router = APIRouter(prefix="/subscriptions", tags=["Subscriptions"])
 
 # --- Request bodies ---
 
+
 class SubscribeTenantRequest(BaseModel):
     tenant_id: str
     plan_id: str
@@ -61,6 +62,7 @@ class UpdateOverridesRequest(BaseModel):
 
 
 # --- Endpoints ---
+
 
 @router.post("")
 @document_response(

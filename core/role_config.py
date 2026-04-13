@@ -32,9 +32,13 @@ def normalize_role(role: str | None) -> str:
     return APP_ROLE_ALIASES.get(value, value)
 
 
-def build_role_rate_limits_csv(non_admin_roles: Sequence[str], include_admin: bool = True) -> str:
+def build_role_rate_limits_csv(
+    non_admin_roles: Sequence[str], include_admin: bool = True
+) -> str:
     entries = [f"anonymous:{DEFAULT_ANONYMOUS_RATE}"]
-    entries.extend(f"{normalize_role(role)}:{DEFAULT_ROLE_RATE}" for role in non_admin_roles)
+    entries.extend(
+        f"{normalize_role(role)}:{DEFAULT_ROLE_RATE}" for role in non_admin_roles
+    )
     if include_admin:
         entries.append(f"admin:{DEFAULT_ADMIN_RATE}")
     return ",".join(entries)

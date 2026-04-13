@@ -7,6 +7,7 @@ Run with: pytest tests/integration/test_saas_lifecycle.py -v
 Note: This is a comprehensive lifecycle test that chains multiple operations together.
 It validates the entire billing pipeline from plan to subscription to renewal to invoicing.
 """
+
 from __future__ import annotations
 
 import time
@@ -321,7 +322,9 @@ class TestSaaSLifecycle:
             assert "total_revenue_minor" in summary_data
             assert "active_subscriptions" in summary_data
 
-    async def test_subscription_state_transitions(self, client: AsyncClient, setup_auth):
+    async def test_subscription_state_transitions(
+        self, client: AsyncClient, setup_auth
+    ):
         """Test valid and invalid subscription state transitions."""
         headers = setup_auth
         now = int(time.time())

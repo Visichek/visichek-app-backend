@@ -5,6 +5,7 @@ Tests:
 - Visitor log filter by host_id
 - Visitor log filter by verification_status
 """
+
 from __future__ import annotations
 
 import pytest
@@ -38,7 +39,7 @@ def _make_visit_session_out(
     host_id: str = "host-001",
     verification_status: VerificationStatus = VerificationStatus.UNVERIFIED,
     visitor_name_snapshot: str = "John Doe",
-    **kwargs
+    **kwargs,
 ) -> dict:
     """Factory function for visit session."""
     return {
@@ -78,7 +79,7 @@ def _make_visit_session_out(
         "check_out_time": None,
         "date_created": 1712532000,
         "visit_duration": None,
-        **kwargs
+        **kwargs,
     }
 
 
@@ -103,7 +104,9 @@ class TestDashboardFilters:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_DEPT_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_DEPT_ADMIN_PRINCIPAL
+        )
 
         session_host1_a = _make_visit_session_out(
             id="session-001",
@@ -121,7 +124,10 @@ class TestDashboardFilters:
             visitor_name_snapshot="Bob Johnson",
         )
 
-        with patch("services.visit_session_service.retrieve_visit_sessions", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.visit_session_service.retrieve_visit_sessions",
+            new_callable=AsyncMock,
+        ) as mock_list:
             # Return all sessions first
             mock_list.return_value = [session_host1_a, session_host1_b, session_host2]
 
@@ -147,7 +153,9 @@ class TestDashboardFilters:
             assert call_args is not None
 
     @pytest.mark.asyncio
-    async def test_visitor_log_filter_by_host_id_single_result(self, cleanup_dependency_overrides):
+    async def test_visitor_log_filter_by_host_id_single_result(
+        self, cleanup_dependency_overrides
+    ):
         """
         5A: Visitor log with host_id filter returns only matching sessions.
 
@@ -156,7 +164,9 @@ class TestDashboardFilters:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_DEPT_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_DEPT_ADMIN_PRINCIPAL
+        )
 
         session_host1 = _make_visit_session_out(
             id="session-001",
@@ -164,7 +174,10 @@ class TestDashboardFilters:
             visitor_name_snapshot="John Doe",
         )
 
-        with patch("services.visit_session_service.retrieve_visit_sessions", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.visit_session_service.retrieve_visit_sessions",
+            new_callable=AsyncMock,
+        ) as mock_list:
             mock_list.return_value = [session_host1]
 
             async with AsyncClient(
@@ -181,7 +194,9 @@ class TestDashboardFilters:
             assert data["data"][0]["host_id"] == "host-001"
 
     @pytest.mark.asyncio
-    async def test_visitor_log_filter_by_verification_status(self, cleanup_dependency_overrides):
+    async def test_visitor_log_filter_by_verification_status(
+        self, cleanup_dependency_overrides
+    ):
         """
         5B: Visitor log accepts verification_status filter.
 
@@ -191,7 +206,9 @@ class TestDashboardFilters:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_DEPT_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_DEPT_ADMIN_PRINCIPAL
+        )
 
         verified_session = _make_visit_session_out(
             id="session-001",
@@ -209,7 +226,10 @@ class TestDashboardFilters:
             visitor_name_snapshot="Bob Johnson",
         )
 
-        with patch("services.visit_session_service.retrieve_visit_sessions", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.visit_session_service.retrieve_visit_sessions",
+            new_callable=AsyncMock,
+        ) as mock_list:
             # Return only verified sessions
             mock_list.return_value = [verified_session]
 
@@ -228,7 +248,9 @@ class TestDashboardFilters:
             assert data["data"][0]["verification_status"] == "verified"
 
     @pytest.mark.asyncio
-    async def test_visitor_log_filter_by_verification_status_unverified(self, cleanup_dependency_overrides):
+    async def test_visitor_log_filter_by_verification_status_unverified(
+        self, cleanup_dependency_overrides
+    ):
         """
         5B: Visitor log can filter by unverified status.
 
@@ -236,7 +258,9 @@ class TestDashboardFilters:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_DEPT_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_DEPT_ADMIN_PRINCIPAL
+        )
 
         unverified_session = _make_visit_session_out(
             id="session-001",
@@ -244,7 +268,10 @@ class TestDashboardFilters:
             visitor_name_snapshot="Jane Smith",
         )
 
-        with patch("services.visit_session_service.retrieve_visit_sessions", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.visit_session_service.retrieve_visit_sessions",
+            new_callable=AsyncMock,
+        ) as mock_list:
             mock_list.return_value = [unverified_session]
 
             async with AsyncClient(
@@ -270,7 +297,9 @@ class TestDashboardFilters:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_DEPT_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_DEPT_ADMIN_PRINCIPAL
+        )
 
         # Only this session matches both filters
         matching_session = _make_visit_session_out(
@@ -280,7 +309,10 @@ class TestDashboardFilters:
             visitor_name_snapshot="John Doe",
         )
 
-        with patch("services.visit_session_service.retrieve_visit_sessions", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.visit_session_service.retrieve_visit_sessions",
+            new_callable=AsyncMock,
+        ) as mock_list:
             mock_list.return_value = [matching_session]
 
             async with AsyncClient(

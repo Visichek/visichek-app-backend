@@ -4,7 +4,14 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from core.response_envelope import document_response, success_payload
 from core.settings import get_settings
-from schemas.user_schema import LoginType, UserBase, UserLogin, UserOut, UserRefresh, UserSignupRequest
+from schemas.user_schema import (
+    LoginType,
+    UserBase,
+    UserLogin,
+    UserOut,
+    UserRefresh,
+    UserSignupRequest,
+)
 from services.user_service import (
     add_user_from_signup,
     authenticate_user,
@@ -16,7 +23,11 @@ from services.user_service import (
 )
 from security.account_status_check import check_user_account_status_and_permissions
 from security.auth import verify_user_refresh_token
-from security.cookie_utils import set_auth_cookies, clear_auth_cookies, REFRESH_TOKEN_COOKIE
+from security.cookie_utils import (
+    set_auth_cookies,
+    clear_auth_cookies,
+    REFRESH_TOKEN_COOKIE,
+)
 from security.principal import AuthPrincipal
 import os
 from dotenv import load_dotenv
@@ -80,7 +91,7 @@ async def auth_callback_user(request: Request):
             "accountStatus": "ACTIVE",
             "permissionList": None,
             "date_created": 1712510000,
-            "last_updated": 1712510800
+            "last_updated": 1712510800,
         }
     ],
     description="Retrieve a paginated list of all users in the system.",
@@ -91,8 +102,16 @@ async def auth_callback_user(request: Request):
         403: "Forbidden - insufficient permissions",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "You do not have permission to perform this action",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def list_users(start: int = 0, stop: int = 100):
@@ -114,7 +133,7 @@ async def list_users(start: int = 0, stop: int = 100):
         "accountStatus": "ACTIVE",
         "permissionList": None,
         "date_created": 1712510000,
-        "last_updated": 1712510800
+        "last_updated": 1712510800,
     },
     description="Retrieve the authenticated user's profile information.",
     summary="Get user profile",
@@ -122,10 +141,16 @@ async def list_users(start: int = 0, stop: int = 100):
         401: "Unauthorized - invalid or missing token",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
     },
 )
-async def get_my_users(user: UserOut = Depends(check_user_account_status_and_permissions)):
+async def get_my_users(
+    user: UserOut = Depends(check_user_account_status_and_permissions),
+):
     return user
 
 
@@ -141,7 +166,7 @@ async def get_my_users(user: UserOut = Depends(check_user_account_status_and_per
         "accountStatus": "ACTIVE",
         "permissionList": None,
         "date_created": 1712511000,
-        "last_updated": 1712511000
+        "last_updated": 1712511000,
     },
     status_code=status.HTTP_201_CREATED,
     description="Create a new user account with email and password. Account status and permissions are system-assigned.",
@@ -151,8 +176,16 @@ async def get_my_users(user: UserOut = Depends(check_user_account_status_and_per
         422: "Validation error - invalid input data or weak password",
     },
     error_examples={
-        409: {"success": False, "message": "A user with this email already exists", "code": "VALIDATION_FAILED"},
-        422: {"success": False, "message": "Password does not meet strength requirements", "code": "VALIDATION_FAILED"},
+        409: {
+            "success": False,
+            "message": "A user with this email already exists",
+            "code": "VALIDATION_FAILED",
+        },
+        422: {
+            "success": False,
+            "message": "Password does not meet strength requirements",
+            "code": "VALIDATION_FAILED",
+        },
     },
 )
 async def signup_new_user(signup_data: UserSignupRequest):
@@ -173,7 +206,7 @@ async def signup_new_user(signup_data: UserSignupRequest):
         "date_created": 1712510000,
         "last_updated": 1712510800,
         "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDMiLCJyb2xlIjoidXNlciJ9.def456",
-        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDMiLCJ0eXBlIjoicmVmcmVzaCJ9.uvw012"
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDMiLCJ0eXBlIjoicmVmcmVzaCJ9.uvw012",
     },
     description="Authenticate a user with email and password. Returns access and refresh tokens.",
     summary="User login",
@@ -182,8 +215,16 @@ async def signup_new_user(signup_data: UserSignupRequest):
         422: "Validation error - missing or invalid email/password",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid email or password", "code": "AUTH_INVALID_TOKEN"},
-        422: {"success": False, "message": "Email and password are required", "code": "VALIDATION_FAILED"},
+        401: {
+            "success": False,
+            "message": "Invalid email or password",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        422: {
+            "success": False,
+            "message": "Email and password are required",
+            "code": "VALIDATION_FAILED",
+        },
     },
 )
 async def login_user(request: Request, login_data: UserLogin):
@@ -192,9 +233,16 @@ async def login_user(request: Request, login_data: UserLogin):
     is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(user, message="Login successful", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(user, message="Login successful", request_id=request_id)
+        ),
     )
-    set_auth_cookies(response, user.access_token or "", user.refresh_token or "", is_production=is_prod)
+    set_auth_cookies(
+        response,
+        user.access_token or "",
+        user.refresh_token or "",
+        is_production=is_prod,
+    )
     return response
 
 
@@ -212,7 +260,7 @@ async def login_user(request: Request, login_data: UserLogin):
         "date_created": 1712510000,
         "last_updated": 1712510800,
         "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDMiLCJyb2xlIjoidXNlciJ9.def456",
-        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDMiLCJ0eXBlIjoicmVmcmVzaCJ9.uvw012"
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDMiLCJ0eXBlIjoicmVmcmVzaCJ9.uvw012",
     },
     description="Refresh expired access tokens using a valid refresh token. Expired access token must be provided in Authorization header.",
     summary="Refresh user tokens",
@@ -221,8 +269,16 @@ async def login_user(request: Request, login_data: UserLogin):
         422: "Validation error - missing refresh token",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired refresh token", "code": "AUTH_INVALID_TOKEN"},
-        422: {"success": False, "message": "Refresh token is required", "code": "VALIDATION_FAILED"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired refresh token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        422: {
+            "success": False,
+            "message": "Refresh token is required",
+            "code": "VALIDATION_FAILED",
+        },
     },
 )
 async def refresh_user_tokens(
@@ -241,9 +297,18 @@ async def refresh_user_tokens(
     is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(user, message="Tokens refreshed successfully", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(
+                user, message="Tokens refreshed successfully", request_id=request_id
+            )
+        ),
     )
-    set_auth_cookies(response, user.access_token or "", user.refresh_token or "", is_production=is_prod)
+    set_auth_cookies(
+        response,
+        user.access_token or "",
+        user.refresh_token or "",
+        is_production=is_prod,
+    )
     return response
 
 
@@ -257,7 +322,11 @@ async def logout_user(request: Request):
     is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(None, message="Logged out successfully", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(
+                None, message="Logged out successfully", request_id=request_id
+            )
+        ),
     )
     clear_auth_cookies(response, is_production=is_prod)
     return response
@@ -273,9 +342,15 @@ async def logout_user(request: Request):
         401: "Unauthorized - invalid or missing token",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
     },
 )
-async def delete_user_account(user: UserOut = Depends(check_user_account_status_and_permissions)):
-    result = await remove_user(user_id=user.id) # type: ignore
+async def delete_user_account(
+    user: UserOut = Depends(check_user_account_status_and_permissions),
+):
+    result = await remove_user(user_id=user.id)  # type: ignore
     return result

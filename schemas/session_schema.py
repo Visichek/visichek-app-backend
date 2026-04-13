@@ -5,6 +5,7 @@ from schemas.imports import *
 
 # --- Enums ---
 
+
 class DeviceType(str, Enum):
     DESKTOP = "desktop"
     TABLET = "tablet"
@@ -14,8 +15,10 @@ class DeviceType(str, Enum):
 
 # --- Session ---
 
+
 class SessionBase(BaseModel):
     """An active user session."""
+
     user_id: str
     user_type: str  # "admin" or "system_user"
     ip_address: Optional[str] = None
@@ -28,6 +31,7 @@ class SessionBase(BaseModel):
 
 class SessionCreate(SessionBase):
     """Internal creation schema."""
+
     access_token_id: str
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_active_at: int = Field(default_factory=lambda: int(time.time()))
@@ -35,6 +39,7 @@ class SessionCreate(SessionBase):
 
 class SessionOut(SessionBase):
     """Response schema for a session."""
+
     id: Optional[str] = Field(default=None, alias="_id")
     access_token_id: Optional[str] = None
     date_created: Optional[int] = None
@@ -56,16 +61,20 @@ class SessionOut(SessionBase):
 
 # --- Password Change ---
 
+
 class ChangePasswordRequest(BaseModel):
     """Request body for changing a password."""
+
     current_password: str
     new_password: str
 
 
 # --- Two-Factor Authentication ---
 
+
 class TwoFactorSetupOut(BaseModel):
     """Returned when initiating 2FA setup."""
+
     secret: str
     qr_code_uri: str
     backup_codes: List[str]
@@ -73,25 +82,30 @@ class TwoFactorSetupOut(BaseModel):
 
 class TwoFactorVerifyRequest(BaseModel):
     """Verify a TOTP code or backup code."""
+
     code: str
 
 
 class TwoFactorAuthenticateRequest(BaseModel):
     """Step 2 of 2FA login — verify code with temp token."""
+
     temp_token: str
     code: str
 
 
 class TwoFactorDisableRequest(BaseModel):
     """Disable 2FA — requires password for confirmation."""
+
     password: str
 
 
 class BackupCodesRegenerateRequest(BaseModel):
     """Regenerate backup codes — requires password for confirmation."""
+
     password: str
 
 
 class AccountDeleteRequest(BaseModel):
     """Request account deletion — requires password confirmation."""
+
     password: str

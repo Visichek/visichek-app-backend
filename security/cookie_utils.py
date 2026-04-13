@@ -5,8 +5,8 @@ from fastapi.responses import Response
 ACCESS_TOKEN_COOKIE = "access_token"
 REFRESH_TOKEN_COOKIE = "refresh_token"
 
-ACCESS_TOKEN_MAX_AGE = 900        # 15 minutes
-REFRESH_TOKEN_MAX_AGE = 604_800   # 7 days
+ACCESS_TOKEN_MAX_AGE = 900  # 15 minutes
+REFRESH_TOKEN_MAX_AGE = 604_800  # 7 days
 
 
 def set_auth_cookies(

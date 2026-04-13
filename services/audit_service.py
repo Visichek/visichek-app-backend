@@ -28,17 +28,19 @@ async def log_action(
 ) -> None:
     """Record an admin/system action in the immutable audit log."""
     try:
-        await create_audit_log(AuditLogCreate(
-            tenant_id=tenant_id,
-            actor_id=actor_id,
-            actor_name_snapshot=actor_name_snapshot,
-            action=action,
-            target_entity=target_entity,
-            target_id=target_id,
-            ip=ip,
-            device_signature=device_signature,
-            reason=reason,
-        ))
+        await create_audit_log(
+            AuditLogCreate(
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                actor_name_snapshot=actor_name_snapshot,
+                action=action,
+                target_entity=target_entity,
+                target_id=target_id,
+                ip=ip,
+                device_signature=device_signature,
+                reason=reason,
+            )
+        )
     except Exception as e:
         logger.error(f"Failed to write audit log: {e}")
 
@@ -181,5 +183,6 @@ async def retrieve_audit_logs_with_summary(
 ) -> List[AuditLogWithSummaryOut]:
     """Retrieve audit logs with actor + tenant summaries embedded."""
     import asyncio
+
     logs = await get_audit_logs(filter_dict, start=start, stop=stop)
     return list(await asyncio.gather(*[_enrich_audit_log(log) for log in logs]))

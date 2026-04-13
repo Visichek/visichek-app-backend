@@ -29,8 +29,12 @@ class QueueManager:
     def enqueue(self, task_key: str, payload: dict[str, Any]) -> QueueJobResult:
         return self._provider.enqueue(QueueTaskKey(task_key), payload)
 
-    def enqueue_in(self, seconds: int, task_key: str, payload: dict[str, Any]) -> QueueJobResult:
-        return self._provider.enqueue_in(seconds=seconds, task_key=QueueTaskKey(task_key), payload=payload)
+    def enqueue_in(
+        self, seconds: int, task_key: str, payload: dict[str, Any]
+    ) -> QueueJobResult:
+        return self._provider.enqueue_in(
+            seconds=seconds, task_key=QueueTaskKey(task_key), payload=payload
+        )
 
     def get_status(self, task_id: str) -> str:
         return self._provider.get_status(task_id)

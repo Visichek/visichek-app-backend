@@ -25,7 +25,12 @@ from schemas.subscription_schema import (
     BillingCycle,
 )
 from schemas.plan_schema import PlanOut, PlanStatus
-from schemas.discount_schema import DiscountOut, DiscountScope, DiscountStatus, DiscountType
+from schemas.discount_schema import (
+    DiscountOut,
+    DiscountScope,
+    DiscountStatus,
+    DiscountType,
+)
 from services.audit_service import record_audit_event
 
 
@@ -43,7 +48,11 @@ def _calculate_effective_price(
     discounts: List[DiscountOut],
 ) -> float:
     """Calculate final price after applying all valid discounts."""
-    base = plan.base_price_monthly if billing_cycle == BillingCycle.MONTHLY else plan.base_price_yearly
+    base = (
+        plan.base_price_monthly
+        if billing_cycle == BillingCycle.MONTHLY
+        else plan.base_price_yearly
+    )
     total_percentage_off = 0.0
     total_fixed_off = 0.0
 
@@ -88,17 +97,29 @@ async def _validate_and_collect_discounts(
             continue
 
         # Check max redemptions
-        if discount.max_redemptions and discount.current_redemptions >= discount.max_redemptions:
+        if (
+            discount.max_redemptions
+            and discount.current_redemptions >= discount.max_redemptions
+        ):
             continue
 
         # Check scope
-        if discount.scope == DiscountScope.TENANT and discount.target_tenant_id != tenant_id:
+        if (
+            discount.scope == DiscountScope.TENANT
+            and discount.target_tenant_id != tenant_id
+        ):
             continue
-        if discount.scope == DiscountScope.PLAN and plan.id not in discount.target_plan_ids:
+        if (
+            discount.scope == DiscountScope.PLAN
+            and plan.id not in discount.target_plan_ids
+        ):
             continue
 
         # Check minimum subscription value
-        if discount.min_subscription_value and effective_price < discount.min_subscription_value:
+        if (
+            discount.min_subscription_value
+            and effective_price < discount.min_subscription_value
+        ):
             continue
 
         # Check stackability (first discount is always allowed)
@@ -135,13 +156,17 @@ async def subscribe_tenant(
         raise HTTPException(status_code=400, detail="Plan is not active")
 
     # Check if tenant already has an active subscription
-    existing = await get_subscription({
-        "tenant_id": tenant_id,
-        "status": {"$in": [
-            SubscriptionStatus.ACTIVE.value,
-            SubscriptionStatus.TRIALING.value,
-        ]},
-    })
+    existing = await get_subscription(
+        {
+            "tenant_id": tenant_id,
+            "status": {
+                "$in": [
+                    SubscriptionStatus.ACTIVE.value,
+                    SubscriptionStatus.TRIALING.value,
+                ]
+            },
+        }
+    )
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -150,12 +175,19 @@ async def subscribe_tenant(
 
     # Calculate pricing with discounts
     now = int(time.time())
-    base_price = plan.base_price_monthly if billing_cycle == BillingCycle.MONTHLY else plan.base_price_yearly
+    base_price = (
+        plan.base_price_monthly
+        if billing_cycle == BillingCycle.MONTHLY
+        else plan.base_price_yearly
+    )
 
     valid_discounts: List[DiscountOut] = []
     if discount_ids:
         valid_discounts = await _validate_and_collect_discounts(
-            discount_ids, tenant_id, plan, base_price,
+            discount_ids,
+            tenant_id,
+            plan,
+            base_price,
         )
 
     effective_price = _calculate_effective_price(plan, billing_cycle, valid_discounts)
@@ -166,7 +198,9 @@ async def subscribe_tenant(
         await increment_redemptions({"_id": ObjectId(d.id)})
         applied_ids.append(d.id)
 
-    sub_status = SubscriptionStatus.TRIALING if trial_days > 0 else SubscriptionStatus.ACTIVE
+    sub_status = (
+        SubscriptionStatus.TRIALING if trial_days > 0 else SubscriptionStatus.ACTIVE
+    )
     trial_ends_at = (now + trial_days * 86400) if trial_days > 0 else None
     period_end = _calculate_period_end(now, billing_cycle)
 
@@ -211,6 +245,7 @@ async def subscribe_tenant(
 
     # Invalidate cached plan data for this tenant
     from services.plan_cache_service import invalidate_tenant_plan_cache
+
     await invalidate_tenant_plan_cache(tenant_id)
 
     return sub
@@ -222,15 +257,21 @@ async def retrieve_subscription_by_id(sub_id: str) -> Optional[SubscriptionOut]:
     return await get_subscription({"_id": ObjectId(sub_id)})
 
 
-async def retrieve_tenant_active_subscription(tenant_id: str) -> Optional[SubscriptionOut]:
+async def retrieve_tenant_active_subscription(
+    tenant_id: str,
+) -> Optional[SubscriptionOut]:
     """Get the tenant's current active/trialing subscription."""
-    return await get_subscription({
-        "tenant_id": tenant_id,
-        "status": {"$in": [
-            SubscriptionStatus.ACTIVE.value,
-            SubscriptionStatus.TRIALING.value,
-        ]},
-    })
+    return await get_subscription(
+        {
+            "tenant_id": tenant_id,
+            "status": {
+                "$in": [
+                    SubscriptionStatus.ACTIVE.value,
+                    SubscriptionStatus.TRIALING.value,
+                ]
+            },
+        }
+    )
 
 
 async def retrieve_subscriptions(
@@ -311,6 +352,7 @@ async def retrieve_subscriptions_with_details(
     stop: int = 100,
 ) -> List[SubscriptionWithDetailsOut]:
     import asyncio
+
     subs = await retrieve_subscriptions(
         tenant_id=tenant_id, status_filter=status_filter, start=start, stop=stop
     )
@@ -325,7 +367,9 @@ async def change_plan(
     """Immediately switch a tenant to a different plan. Takes effect now."""
     current = await retrieve_tenant_active_subscription(tenant_id)
     if not current:
-        raise HTTPException(status_code=404, detail="No active subscription found for tenant")
+        raise HTTPException(
+            status_code=404, detail="No active subscription found for tenant"
+        )
 
     if not ObjectId.is_valid(new_plan_id):
         raise HTTPException(status_code=400, detail="Invalid new_plan_id")
@@ -382,6 +426,7 @@ async def change_plan(
 
     # Invalidate cache
     from services.plan_cache_service import invalidate_tenant_plan_cache
+
     await invalidate_tenant_plan_cache(tenant_id)
 
     return updated
@@ -398,7 +443,9 @@ async def cancel_subscription(
         raise HTTPException(status_code=404, detail="No active subscription to cancel")
 
     now = int(time.time())
-    new_status = SubscriptionStatus.CANCELLED if immediate else SubscriptionStatus.ACTIVE
+    new_status = (
+        SubscriptionStatus.CANCELLED if immediate else SubscriptionStatus.ACTIVE
+    )
 
     update_data = SubscriptionUpdate(
         status=new_status,
@@ -432,6 +479,7 @@ async def cancel_subscription(
         pass
 
     from services.plan_cache_service import invalidate_tenant_plan_cache
+
     await invalidate_tenant_plan_cache(tenant_id)
 
     return updated
@@ -475,7 +523,8 @@ async def update_subscription_overrides(
             details={
                 "feature_overrides_updated": feature_overrides is not None,
                 "crud_limit_overrides_updated": crud_limit_overrides is not None,
-                "retrieval_quota_overrides_updated": retrieval_quota_overrides is not None,
+                "retrieval_quota_overrides_updated": retrieval_quota_overrides
+                is not None,
                 "tenant_cap_overrides_updated": tenant_cap_overrides is not None,
             },
         )
@@ -483,6 +532,7 @@ async def update_subscription_overrides(
         pass
 
     from services.plan_cache_service import invalidate_tenant_plan_cache
+
     await invalidate_tenant_plan_cache(sub.tenant_id)
 
     return updated

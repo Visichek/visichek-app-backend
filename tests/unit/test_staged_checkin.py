@@ -7,6 +7,7 @@ Tests:
 - Deny visitor sets DENIED status
 - Pending sessions returns only REGISTERED and PENDING_VERIFICATION
 """
+
 from __future__ import annotations
 
 import pytest
@@ -16,7 +17,6 @@ from httpx import AsyncClient, ASGITransport
 from main import app
 from schemas.imports import VisitStatus, VerificationStatus
 from security.principal import AuthPrincipal
-
 
 
 # Mock auth principal for receptionist
@@ -43,7 +43,7 @@ def _make_visit_session_out(
     verification_status: VerificationStatus = VerificationStatus.UNVERIFIED,
     visitor_name_snapshot: str = "John Doe",
     department_id: str = "dept-001",
-    **kwargs
+    **kwargs,
 ) -> dict:
     """Factory function to create a VisitSessionOut dict for testing."""
     return {
@@ -83,7 +83,7 @@ def _make_visit_session_out(
         "check_out_time": None,
         "date_created": 1712532000,
         "visit_duration": None,
-        **kwargs
+        **kwargs,
     }
 
 
@@ -98,7 +98,9 @@ class TestStagedCheckIn:
     """Tests for staged check-in flow (1A-1D)."""
 
     @pytest.mark.asyncio
-    async def test_check_in_creates_registered_session(self, cleanup_dependency_overrides):
+    async def test_check_in_creates_registered_session(
+        self, cleanup_dependency_overrides
+    ):
         """
         1A: Check-in should create session with REGISTERED status, not CHECKED_IN.
 
@@ -107,11 +109,15 @@ class TestStagedCheckIn:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_RECEPTIONIST_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_RECEPTIONIST_PRINCIPAL
+        )
 
         session_out = _make_visit_session_out(status=VisitStatus.REGISTERED)
 
-        with patch("services.visit_session_service.check_in_visitor", new_callable=AsyncMock) as mock_checkin:
+        with patch(
+            "services.visit_session_service.check_in_visitor", new_callable=AsyncMock
+        ) as mock_checkin:
             mock_checkin.return_value = session_out
 
             async with AsyncClient(
@@ -139,7 +145,9 @@ class TestStagedCheckIn:
             mock_checkin.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_confirm_check_in_validates_status(self, cleanup_dependency_overrides):
+    async def test_confirm_check_in_validates_status(
+        self, cleanup_dependency_overrides
+    ):
         """
         1A: Confirm should only work on REGISTERED/PENDING_VERIFICATION sessions.
 
@@ -148,16 +156,20 @@ class TestStagedCheckIn:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_RECEPTIONIST_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_RECEPTIONIST_PRINCIPAL
+        )
 
         # Test successful confirmation on REGISTERED
         session_out = _make_visit_session_out(
             status=VisitStatus.REGISTERED,
             visitor_name_snapshot="John Doe",
-            department_id="dept-001"
+            department_id="dept-001",
         )
 
-        with patch("services.visit_session_service.confirm_check_in", new_callable=AsyncMock) as mock_confirm:
+        with patch(
+            "services.visit_session_service.confirm_check_in", new_callable=AsyncMock
+        ) as mock_confirm:
             mock_confirm.return_value = {
                 **session_out,
                 "status": VisitStatus.CHECKED_IN,
@@ -179,7 +191,9 @@ class TestStagedCheckIn:
             mock_confirm.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_confirm_check_in_validates_required_fields(self, cleanup_dependency_overrides):
+    async def test_confirm_check_in_validates_required_fields(
+        self, cleanup_dependency_overrides
+    ):
         """
         1D: Confirm should fail if visitor_name_snapshot or department_id is missing.
 
@@ -188,10 +202,16 @@ class TestStagedCheckIn:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_RECEPTIONIST_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_RECEPTIONIST_PRINCIPAL
+        )
 
-        with patch("services.visit_session_service.confirm_check_in", new_callable=AsyncMock) as mock_confirm:
-            mock_confirm.side_effect = ValueError("Missing required field: visitor_name_snapshot")
+        with patch(
+            "services.visit_session_service.confirm_check_in", new_callable=AsyncMock
+        ) as mock_confirm:
+            mock_confirm.side_effect = ValueError(
+                "Missing required field: visitor_name_snapshot"
+            )
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -215,14 +235,17 @@ class TestStagedCheckIn:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_RECEPTIONIST_PRINCIPAL
-
-        denied_session = _make_visit_session_out(
-            status=VisitStatus.DENIED,
-            denial_reason="Not on visitor list"
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_RECEPTIONIST_PRINCIPAL
         )
 
-        with patch("services.visit_session_service.deny_visitor", new_callable=AsyncMock) as mock_deny:
+        denied_session = _make_visit_session_out(
+            status=VisitStatus.DENIED, denial_reason="Not on visitor list"
+        )
+
+        with patch(
+            "services.visit_session_service.deny_visitor", new_callable=AsyncMock
+        ) as mock_deny:
             mock_deny.return_value = denied_session
 
             async with AsyncClient(
@@ -251,9 +274,13 @@ class TestStagedCheckIn:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_RECEPTIONIST_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_RECEPTIONIST_PRINCIPAL
+        )
 
-        with patch("services.visit_session_service.deny_visitor", new_callable=AsyncMock) as mock_deny:
+        with patch(
+            "services.visit_session_service.deny_visitor", new_callable=AsyncMock
+        ) as mock_deny:
             mock_deny.side_effect = ValueError("Cannot deny a checked-in visitor")
 
             async with AsyncClient(
@@ -268,7 +295,9 @@ class TestStagedCheckIn:
             assert response.status_code in [400, 422]
 
     @pytest.mark.asyncio
-    async def test_pending_sessions_returns_correct_statuses(self, cleanup_dependency_overrides):
+    async def test_pending_sessions_returns_correct_statuses(
+        self, cleanup_dependency_overrides
+    ):
         """
         1C: Pending endpoint returns only REGISTERED and PENDING_VERIFICATION sessions.
 
@@ -278,7 +307,9 @@ class TestStagedCheckIn:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_RECEPTIONIST_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_RECEPTIONIST_PRINCIPAL
+        )
 
         registered_session = _make_visit_session_out(
             id="session-001",
@@ -293,9 +324,15 @@ class TestStagedCheckIn:
             status=VisitStatus.CHECKED_IN,
         )
 
-        with patch("services.visit_session_service.retrieve_pending_sessions", new_callable=AsyncMock) as mock_pending:
+        with patch(
+            "services.visit_session_service.retrieve_pending_sessions",
+            new_callable=AsyncMock,
+        ) as mock_pending:
             # Only return REGISTERED and PENDING_VERIFICATION
-            mock_pending.return_value = [registered_session, pending_verification_session]
+            mock_pending.return_value = [
+                registered_session,
+                pending_verification_session,
+            ]
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"

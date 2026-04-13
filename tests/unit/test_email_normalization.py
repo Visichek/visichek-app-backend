@@ -1,4 +1,5 @@
 """Tests for email normalization utility."""
+
 from __future__ import annotations
 
 from core.email_utils import normalize_email
@@ -42,7 +43,9 @@ class TestNormalizeEmail:
         assert normalize_email("User@Company.Com") == "user@company.com"
 
     def test_non_gmail_strips_plus_preserves_dots(self):
-        assert normalize_email("first.last+alias@outlook.com") == "first.last@outlook.com"
+        assert (
+            normalize_email("first.last+alias@outlook.com") == "first.last@outlook.com"
+        )
 
     # --- Edge cases ---
 

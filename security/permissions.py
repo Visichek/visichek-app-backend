@@ -7,11 +7,15 @@ from schemas.imports import Permission, PermissionList
 
 
 def make_permission_key(*, method: str, path: str) -> str:
-    normalized_path = "/" + "/".join(segment for segment in path.strip("/").split("/") if segment)
+    normalized_path = "/" + "/".join(
+        segment for segment in path.strip("/").split("/") if segment
+    )
     return f"{method.upper()}:{normalized_path}"
 
 
-def _route_permissions(router: APIRouter, *, methods: set[str] | None = None) -> PermissionList:
+def _route_permissions(
+    router: APIRouter, *, methods: set[str] | None = None
+) -> PermissionList:
     permissions: list[Permission] = []
     seen_keys: set[str] = set()
 

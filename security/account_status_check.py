@@ -122,10 +122,13 @@ async def check_member_account_status_and_permissions(
     request: Request,
     principal: AuthPrincipal = Depends(verify_user_token),
 ):
-    return await check_user_account_status_and_permissions(request=request, principal=principal)
+    return await check_user_account_status_and_permissions(
+        request=request, principal=principal
+    )
 
 
 # --- VisiChek System User Permission Check ---
+
 
 async def check_system_user_status(
     principal: AuthPrincipal,
@@ -133,7 +136,9 @@ async def check_system_user_status(
     """Verify a system user exists and is active. No fine-grained permission check."""
     from repositories.system_user_repo import get_system_user
 
-    system_user = await get_system_user({"_id": __import__("bson").ObjectId(principal.user_id)})
+    system_user = await get_system_user(
+        {"_id": __import__("bson").ObjectId(principal.user_id)}
+    )
     if not system_user:
         raise AppException(
             status_code=status.HTTP_401_UNAUTHORIZED,

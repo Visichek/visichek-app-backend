@@ -10,7 +10,9 @@ async def delete_tokens_task(userId: str) -> bool:
 
 
 @task("send_email")
-async def send_email_task(to_email: str, template_key: str, context: dict | None = None) -> bool:
+async def send_email_task(
+    to_email: str, template_key: str, context: dict | None = None
+) -> bool:
     manager = EmailManager.get_instance()
     await manager.send_template(
         EmailDispatchRequest(

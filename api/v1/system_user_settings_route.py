@@ -104,7 +104,10 @@ async def get_system_user_preferences(
     message="Preference saved successfully",
     description="Save a single preference key-value pair. Max 50 keys, 16 KB per value.",
     summary="Save system user preference",
-    response_codes={401: "Unauthorized", 422: "Validation error — key limit or size exceeded"},
+    response_codes={
+        401: "Unauthorized",
+        422: "Validation error — key limit or size exceeded",
+    },
 )
 async def save_system_user_preference(
     data: UserPreferenceUpdate,
@@ -135,7 +138,9 @@ async def change_password(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     """Change system user password."""
-    await change_system_user_password(principal.user_id, data.current_password, data.new_password)
+    await change_system_user_password(
+        principal.user_id, data.current_password, data.new_password
+    )
     return {"changed": True}
 
 
@@ -163,6 +168,7 @@ async def setup_2fa(
     """Initiate 2FA setup for the authenticated system user."""
     from repositories.system_user_repo import get_system_user
     from bson import ObjectId
+
     user = await get_system_user({"_id": ObjectId(principal.user_id)})
     email = user.email if user else "user@visichek.com"
     return await setup_two_factor(principal.user_id, "system_user", email)
@@ -286,6 +292,8 @@ async def revoke_all_other_sessions(
 ):
     """Revoke all sessions except current."""
     count = await revoke_all_sessions_except_current(
-        principal.user_id, "system_user", principal.access_token_id,
+        principal.user_id,
+        "system_user",
+        principal.access_token_id,
     )
     return {"revoked_count": count}

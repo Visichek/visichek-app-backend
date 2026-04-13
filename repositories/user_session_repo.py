@@ -2,7 +2,11 @@ from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
 from typing import List, Optional
-from schemas.user_session_schema import UserSessionCreate, UserSessionUpdate, UserSessionOut
+from schemas.user_session_schema import (
+    UserSessionCreate,
+    UserSessionUpdate,
+    UserSessionOut,
+)
 
 
 async def create_user_session(session_data: UserSessionCreate) -> UserSessionOut:
@@ -25,7 +29,9 @@ async def get_user_session(filter_dict: dict) -> Optional[UserSessionOut]:
         )
 
 
-async def get_user_sessions(filter_dict: dict = {}, start=0, stop=100) -> List[UserSessionOut]:
+async def get_user_sessions(
+    filter_dict: dict = {}, start=0, stop=100
+) -> List[UserSessionOut]:
     try:
         if filter_dict is None:
             filter_dict = {}
@@ -46,7 +52,9 @@ async def get_user_sessions(filter_dict: dict = {}, start=0, stop=100) -> List[U
         )
 
 
-async def update_user_session(filter_dict: dict, session_data: UserSessionUpdate) -> UserSessionOut:
+async def update_user_session(
+    filter_dict: dict, session_data: UserSessionUpdate
+) -> UserSessionOut:
     update_dict = {k: v for k, v in session_data.model_dump().items() if v is not None}
     result = await db.user_sessions.find_one_and_update(
         filter_dict,

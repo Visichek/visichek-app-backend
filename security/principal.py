@@ -18,16 +18,25 @@ APP_ROLES = ("user", "admin")
 # - "security_officer" = Manages incidents
 # - "dpo"              = Data Protection Officer
 TENANT_USER_ROLES = (
-    "receptionist", "dept_admin", "super_admin",
-    "auditor", "security_officer", "dpo",
+    "receptionist",
+    "dept_admin",
+    "super_admin",
+    "auditor",
+    "security_officer",
+    "dpo",
 )
 
 ALL_ROLES = APP_ROLES + TENANT_USER_ROLES
 
 AllRolesLiteral = Literal[
-    "user", "admin",
-    "receptionist", "dept_admin", "super_admin",
-    "auditor", "security_officer", "dpo",
+    "user",
+    "admin",
+    "receptionist",
+    "dept_admin",
+    "super_admin",
+    "auditor",
+    "security_officer",
+    "dpo",
 ]
 
 

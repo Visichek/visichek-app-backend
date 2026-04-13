@@ -1,4 +1,3 @@
-
 from bson import ObjectId
 from fastapi import HTTPException
 from typing import List
@@ -10,9 +9,22 @@ from repositories.user_repo import (
     update_user,
     delete_user,
 )
-from schemas.user_schema import UserCreate, UserUpdate, UserOut, UserBase, UserLogin, UserRefresh, UserSignupRequest
+from schemas.user_schema import (
+    UserCreate,
+    UserUpdate,
+    UserOut,
+    UserBase,
+    UserLogin,
+    UserRefresh,
+    UserSignupRequest,
+)
 from security.hash import check_password
-from repositories.tokens_repo import get_refresh_tokens, delete_access_token, delete_refresh_token, delete_all_tokens_with_user_id
+from repositories.tokens_repo import (
+    get_refresh_tokens,
+    delete_access_token,
+    delete_refresh_token,
+    delete_all_tokens_with_user_id,
+)
 from services.auth_helpers import issue_tokens_for_user
 from core.email_utils import normalize_email
 from config.role_permissions import get_default_permissions_for_role
@@ -27,11 +39,11 @@ load_dotenv()
 
 oauth = OAuth()
 oauth.register(
-    name='google',
+    name="google",
     client_id=os.getenv("GOOGLE_CLIENT_ID"),
     client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
-    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-    client_kwargs={'scope': 'openid email profile'},
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
 )
 
 
@@ -53,7 +65,9 @@ async def add_user_from_signup(signup_data: UserSignupRequest) -> UserOut:
     all_users = await get_users(start=0, stop=50000)
     for u in all_users:
         if normalize_email(u.email) == normalized:
-            raise HTTPException(status_code=409, detail="A user with this email already exists")
+            raise HTTPException(
+                status_code=409, detail="A user with this email already exists"
+            )
 
     # Auto-assign permissions based on role
     permission_list = get_default_permissions_for_role("user")
@@ -70,7 +84,9 @@ async def add_user_from_signup(signup_data: UserSignupRequest) -> UserOut:
     )
 
     new_user = await create_user(user_data)
-    access_token, refresh_token = await issue_tokens_for_user(user_id=new_user.id, role="user")  # type: ignore
+    access_token, refresh_token = await issue_tokens_for_user(
+        user_id=new_user.id or "", role="user"
+    )  # type: ignore
     new_user.password = ""
     new_user.access_token = access_token
     new_user.refresh_token = refresh_token
@@ -86,7 +102,9 @@ async def add_user(user_data: UserCreate) -> UserOut:
     user = await get_user(filter_dict={"email": user_data.email})
     if user is None:
         new_user = await create_user(user_data)
-        access_token, refresh_token = await issue_tokens_for_user(user_id=new_user.id, role="user")  # type: ignore
+        access_token, refresh_token = await issue_tokens_for_user(
+            user_id=new_user.id or "", role="user"
+        )  # type: ignore
         new_user.password = ""
         new_user.access_token = access_token
         new_user.refresh_token = refresh_token
@@ -117,7 +135,9 @@ async def authenticate_user(login_data: UserLogin) -> UserOut:
         if check_password(password=login_data.password, hashed=user.password):  # type: ignore
             await clear_failed_logins(login_data.email)
             user.password = ""
-            access_token, refresh_token = await issue_tokens_for_user(user_id=user.id, role="user")  # type: ignore
+            access_token, refresh_token = await issue_tokens_for_user(
+                user_id=user.id or "", role="user"
+            )  # type: ignore
             user.access_token = access_token
             user.refresh_token = refresh_token
             return user
@@ -137,14 +157,18 @@ async def authenticate_user(login_data: UserLogin) -> UserOut:
         raise HTTPException(status_code=401, detail="Invalid login credentials")
 
 
-async def refresh_user_tokens_reduce_number_of_logins(user_refresh_data: UserRefresh, expired_access_token):
+async def refresh_user_tokens_reduce_number_of_logins(
+    user_refresh_data: UserRefresh, expired_access_token
+):
     refreshObj = await get_refresh_tokens(user_refresh_data.refresh_token)
     if refreshObj:
         if refreshObj.previousAccessToken == expired_access_token:
             user = await get_user(filter_dict={"_id": ObjectId(refreshObj.userId)})
 
             if user is not None:
-                access_token, refresh_token = await issue_tokens_for_user(user_id=user.id, role="user")  # type: ignore
+                access_token, refresh_token = await issue_tokens_for_user(
+                    user_id=user.id or "", role="user"
+                )  # type: ignore
                 user.access_token = access_token
                 user.refresh_token = refresh_token
                 await delete_access_token(accessToken=expired_access_token)
@@ -186,8 +210,11 @@ async def retrieve_users(start=0, stop=100) -> List[UserOut]:
     return await get_users(start=start, stop=stop)
 
 
-async def update_user_by_id(user_id: str, user_data: UserUpdate, is_password_getting_changed: bool = False) -> UserOut:
+async def update_user_by_id(
+    user_id: str, user_data: UserUpdate, is_password_getting_changed: bool = False
+) -> UserOut:
     from core.queue.manager import QueueManager
+
     if not ObjectId.is_valid(user_id):
         raise HTTPException(status_code=400, detail="Invalid user ID format")
 
@@ -219,7 +246,9 @@ async def authenticate_user_google(user_data: UserBase) -> UserOut:
         new_user = await create_user(create_data)
         user = new_user
 
-    access_token, refresh_token = await issue_tokens_for_user(user_id=user.id, role="user")  # type: ignore
+    access_token, refresh_token = await issue_tokens_for_user(
+        user_id=user.id or "", role="user"
+    )  # type: ignore
     user.password = ""
     user.access_token = access_token
     user.refresh_token = refresh_token

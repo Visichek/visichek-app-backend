@@ -7,7 +7,11 @@ from typing import Optional
 from fastapi import HTTPException
 
 from core.database import db
-from repositories.visitor_profile_repo import get_visitor_profile, get_visitor_profile_by_phone, update_visitor_profile
+from repositories.visitor_profile_repo import (
+    get_visitor_profile,
+    get_visitor_profile_by_phone,
+    update_visitor_profile,
+)
 from repositories.data_subject_request_repo import create_dsr, get_dsr
 from schemas.data_subject_request_schema import DSRCreate
 from schemas.visitor_profile_schema import VisitorProfileUpdate
@@ -16,25 +20,37 @@ from schemas.imports import DSRType, DSRStatus, ProfilingPreference
 VERIFICATION_TOKEN_COLLECTION = "dsr_verification_tokens"
 
 
-async def _find_visitor_profile(tenant_id: str, phone: Optional[str] = None, email: Optional[str] = None):
+async def _find_visitor_profile(
+    tenant_id: str, phone: Optional[str] = None, email: Optional[str] = None
+):
     """Look up a visitor profile by phone or email."""
     if not phone and not email:
-        raise HTTPException(status_code=400, detail="Must provide phone or email for identity verification")
+        raise HTTPException(
+            status_code=400,
+            detail="Must provide phone or email for identity verification",
+        )
 
     profile = None
     if phone:
         profile = await get_visitor_profile_by_phone(tenant_id=tenant_id, phone=phone)
     if not profile and email:
-        profile = await get_visitor_profile({"tenant_id": tenant_id, "email_address": email})
+        profile = await get_visitor_profile(
+            {"tenant_id": tenant_id, "email_address": email}
+        )
 
     if not profile:
-        raise HTTPException(status_code=404, detail="Visitor profile not found for the provided contact info")
+        raise HTTPException(
+            status_code=404,
+            detail="Visitor profile not found for the provided contact info",
+        )
     return profile
 
 
 async def submit_data_subject_request(request) -> dict:
     """Create a DSR record with verification token and 30-day SLA deadline."""
-    profile = await _find_visitor_profile(request.tenant_id, request.phone, getattr(request, 'email', None))
+    profile = await _find_visitor_profile(
+        request.tenant_id, request.phone, getattr(request, "email", None)
+    )
 
     verification_token = secrets.token_urlsafe(32)
     sla_deadline = int(time.time()) + (30 * 24 * 3600)  # 30 days
@@ -45,16 +61,18 @@ async def submit_data_subject_request(request) -> dict:
         request_type=request.request_type,
         status=DSRStatus.PENDING,
         sla_deadline=sla_deadline,
-        notes=getattr(request, 'details', None),
+        notes=getattr(request, "details", None),
     )
     created = await create_dsr(dsr)
 
     # Store verification token
-    await db[VERIFICATION_TOKEN_COLLECTION].insert_one({
-        "dsr_id": created.id,
-        "token": verification_token,
-        "created_at": int(time.time()),
-    })
+    await db[VERIFICATION_TOKEN_COLLECTION].insert_one(
+        {
+            "dsr_id": created.id,
+            "token": verification_token,
+            "created_at": int(time.time()),
+        }
+    )
 
     return {
         "request_id": created.id,
@@ -70,10 +88,12 @@ async def check_request_status(request_id: str, verification_token: str) -> dict
     if not ObjectId.is_valid(request_id):
         raise HTTPException(status_code=400, detail="Invalid request ID")
 
-    token_record = await db[VERIFICATION_TOKEN_COLLECTION].find_one({
-        "dsr_id": request_id,
-        "token": verification_token,
-    })
+    token_record = await db[VERIFICATION_TOKEN_COLLECTION].find_one(
+        {
+            "dsr_id": request_id,
+            "token": verification_token,
+        }
+    )
     if not token_record:
         raise HTTPException(status_code=400, detail="Invalid verification token")
 
@@ -87,17 +107,23 @@ async def check_request_status(request_id: str, verification_token: str) -> dict
         "request_type": dsr.request_type,
         "due_date": dsr.sla_deadline,
         "received_at": dsr.received_at,
-        "resolved_at": getattr(dsr, 'resolved_at', None),
+        "resolved_at": getattr(dsr, "resolved_at", None),
     }
 
 
 async def withdraw_visitor_consent(request) -> dict:
     """Withdraw consent for all active sessions belonging to the visitor."""
-    profile = await _find_visitor_profile(request.tenant_id, request.phone, getattr(request, 'email', None))
+    profile = await _find_visitor_profile(
+        request.tenant_id, request.phone, getattr(request, "email", None)
+    )
 
     now = int(time.time())
     result = await db.visit_sessions.update_many(
-        {"visitor_profile_id": profile.id, "tenant_id": request.tenant_id, "consent_withdrawal_at": None},
+        {
+            "visitor_profile_id": profile.id,
+            "tenant_id": request.tenant_id,
+            "consent_withdrawal_at": None,
+        },
         {"$set": {"consent_withdrawal_at": now, "last_updated": now}},
     )
 
@@ -120,7 +146,9 @@ async def withdraw_visitor_consent(request) -> dict:
 
 async def opt_out_profiling(request) -> dict:
     """Opt visitor out of repeat visitor profiling."""
-    profile = await _find_visitor_profile(request.tenant_id, request.phone, getattr(request, 'email', None))
+    profile = await _find_visitor_profile(
+        request.tenant_id, request.phone, getattr(request, "email", None)
+    )
 
     await update_visitor_profile(
         {"_id": ObjectId(profile.id)},

@@ -62,7 +62,9 @@ async def retrieve_discounts(
     return await get_discounts(filter_dict, start=start, stop=stop)
 
 
-async def update_discount_by_id(discount_id: str, data: DiscountUpdate) -> Optional[DiscountOut]:
+async def update_discount_by_id(
+    discount_id: str, data: DiscountUpdate
+) -> Optional[DiscountOut]:
     if not ObjectId.is_valid(discount_id):
         return None
     return await update_discount({"_id": ObjectId(discount_id)}, data)
@@ -99,16 +101,31 @@ async def validate_discount_code(
     if discount.valid_until and now > discount.valid_until:
         raise HTTPException(status_code=400, detail="Discount code has expired")
 
-    if discount.max_redemptions and discount.current_redemptions >= discount.max_redemptions:
-        raise HTTPException(status_code=400, detail="Discount code has reached max redemptions")
+    if (
+        discount.max_redemptions
+        and discount.current_redemptions >= discount.max_redemptions
+    ):
+        raise HTTPException(
+            status_code=400, detail="Discount code has reached max redemptions"
+        )
 
-    if discount.scope == DiscountScope.TENANT and discount.target_tenant_id != tenant_id:
-        raise HTTPException(status_code=400, detail="Discount code is not valid for this tenant")
+    if (
+        discount.scope == DiscountScope.TENANT
+        and discount.target_tenant_id != tenant_id
+    ):
+        raise HTTPException(
+            status_code=400, detail="Discount code is not valid for this tenant"
+        )
 
     if discount.scope == DiscountScope.PLAN and plan_id not in discount.target_plan_ids:
-        raise HTTPException(status_code=400, detail="Discount code is not valid for this plan")
+        raise HTTPException(
+            status_code=400, detail="Discount code is not valid for this plan"
+        )
 
-    if discount.min_subscription_value and subscription_value < discount.min_subscription_value:
+    if (
+        discount.min_subscription_value
+        and subscription_value < discount.min_subscription_value
+    ):
         raise HTTPException(
             status_code=400,
             detail=f"Subscription value must be at least {discount.min_subscription_value}",
@@ -139,10 +156,12 @@ async def remove_discount(discount_id: str) -> bool:
 async def expire_stale_discounts() -> int:
     """Background task: mark expired discounts whose valid_until has passed."""
     now = int(time.time())
-    discounts = await get_discounts({
-        "status": DiscountStatus.ACTIVE.value,
-        "valid_until": {"$lt": now, "$ne": None},
-    })
+    discounts = await get_discounts(
+        {
+            "status": DiscountStatus.ACTIVE.value,
+            "valid_until": {"$lt": now, "$ne": None},
+        }
+    )
     count = 0
     for d in discounts:
         await update_discount(

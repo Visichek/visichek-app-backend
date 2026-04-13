@@ -29,7 +29,9 @@ def _epoch() -> int:
     return int(time.time())
 
 
-async def _enforce_tenant_storage_limits(tenant_id: str | None, new_file_bytes: int) -> None:
+async def _enforce_tenant_storage_limits(
+    tenant_id: str | None, new_file_bytes: int
+) -> None:
     """Check the tenant's plan storage limits before creating a document.
 
     App admins / users without a tenant bypass plan storage checks.
@@ -167,6 +169,7 @@ async def fetch_document(document_id: str) -> tuple[DocumentOut, str]:
 
 async def _enrich_document(doc: DocumentOut) -> DocumentWithSummaryOut:
     from services.summary_resolver import resolve_user_summary
+
     owner_summary = await resolve_user_summary(doc.owner_id)
     data = doc.model_dump(by_alias=False)
     data["owner_summary"] = owner_summary

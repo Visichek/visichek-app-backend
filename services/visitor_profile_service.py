@@ -43,7 +43,9 @@ async def get_or_create_visitor_profile(
             return existing
     # Try id_number last
     if id_number:
-        existing = await get_visitor_profile_by_id_number(tenant_id=tenant_id, id_number=id_number)
+        existing = await get_visitor_profile_by_id_number(
+            tenant_id=tenant_id, id_number=id_number
+        )
         if existing:
             return existing
 
@@ -59,21 +61,33 @@ async def get_or_create_visitor_profile(
     return await create_visitor_profile(profile)
 
 
-async def retrieve_visitor_profile_by_id(profile_id: str, tenant_id: str) -> VisitorProfileOut:
+async def retrieve_visitor_profile_by_id(
+    profile_id: str, tenant_id: str
+) -> VisitorProfileOut:
     if not ObjectId.is_valid(profile_id):
         raise HTTPException(status_code=400, detail="Invalid profile ID format")
-    result = await get_visitor_profile({"_id": ObjectId(profile_id), "tenant_id": tenant_id})
+    result = await get_visitor_profile(
+        {"_id": ObjectId(profile_id), "tenant_id": tenant_id}
+    )
     if not result:
         raise HTTPException(status_code=404, detail="Visitor profile not found")
     return result
 
 
-async def retrieve_visitor_profiles(tenant_id: str, start=0, stop=100) -> List[VisitorProfileOut]:
-    return await get_visitor_profiles(filter_dict={"tenant_id": tenant_id}, start=start, stop=stop)
+async def retrieve_visitor_profiles(
+    tenant_id: str, start=0, stop=100
+) -> List[VisitorProfileOut]:
+    return await get_visitor_profiles(
+        filter_dict={"tenant_id": tenant_id}, start=start, stop=stop
+    )
 
 
-async def search_profiles(tenant_id: str, query: str, start=0, stop=20) -> List[VisitorProfileOut]:
-    return await search_visitor_profiles(tenant_id=tenant_id, query=query, start=start, stop=stop)
+async def search_profiles(
+    tenant_id: str, query: str, start=0, stop=20
+) -> List[VisitorProfileOut]:
+    return await search_visitor_profiles(
+        tenant_id=tenant_id, query=query, start=start, stop=stop
+    )
 
 
 async def update_profile_by_id(
@@ -85,12 +99,17 @@ async def update_profile_by_id(
         {"_id": ObjectId(profile_id), "tenant_id": tenant_id}, profile_data
     )
     if not result:
-        raise HTTPException(status_code=404, detail="Visitor profile not found or update failed")
+        raise HTTPException(
+            status_code=404, detail="Visitor profile not found or update failed"
+        )
     return result
 
 
-async def _enrich_visitor_profile(profile: VisitorProfileOut) -> VisitorProfileWithSummaryOut:
+async def _enrich_visitor_profile(
+    profile: VisitorProfileOut,
+) -> VisitorProfileWithSummaryOut:
     from services.summary_resolver import resolve_tenant_summary
+
     tenant_summary = await resolve_tenant_summary(profile.tenant_id)
     data = profile.model_dump(by_alias=False)
     data["tenant_summary"] = tenant_summary
@@ -101,14 +120,19 @@ async def retrieve_visitor_profiles_with_summary(
     tenant_id: str, start: int = 0, stop: int = 100
 ) -> List[VisitorProfileWithSummaryOut]:
     import asyncio
-    profiles = await retrieve_visitor_profiles(tenant_id=tenant_id, start=start, stop=stop)
+
+    profiles = await retrieve_visitor_profiles(
+        tenant_id=tenant_id, start=start, stop=stop
+    )
     return list(await asyncio.gather(*[_enrich_visitor_profile(p) for p in profiles]))
 
 
 async def retrieve_visitor_profile_by_id_with_summary(
     profile_id: str, tenant_id: str
 ) -> VisitorProfileWithSummaryOut:
-    profile = await retrieve_visitor_profile_by_id(profile_id=profile_id, tenant_id=tenant_id)
+    profile = await retrieve_visitor_profile_by_id(
+        profile_id=profile_id, tenant_id=tenant_id
+    )
     return await _enrich_visitor_profile(profile)
 
 

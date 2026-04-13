@@ -12,7 +12,9 @@ class PaymentManager:
     _instance: "PaymentManager | None" = None
     _lock = Lock()
 
-    def __init__(self, providers: dict[str, PaymentProvider], default_provider: str) -> None:
+    def __init__(
+        self, providers: dict[str, PaymentProvider], default_provider: str
+    ) -> None:
         self._providers = providers
         self._default_provider = default_provider
 

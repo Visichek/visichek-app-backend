@@ -5,6 +5,7 @@ from schemas.imports import *
 
 # --- Enums ---
 
+
 class ThemePreference(str, Enum):
     LIGHT = "light"
     DARK = "dark"
@@ -31,6 +32,7 @@ class DigestFrequency(str, Enum):
 
 
 # --- User Settings ---
+
 
 class UserSettingsBase(BaseModel):
     """Personal user preferences that follow the individual across devices."""
@@ -59,6 +61,7 @@ class UserSettingsBase(BaseModel):
 
 class UserSettingsCreate(UserSettingsBase):
     """Internal creation schema — built by the service layer."""
+
     user_id: str
     user_type: str  # "admin" or "system_user"
     date_created: int = Field(default_factory=lambda: int(time.time()))
@@ -94,6 +97,7 @@ class UserSettingsUpdate(BaseModel):
 
 class UserSettingsOut(UserSettingsBase):
     """Response schema for user settings."""
+
     id: Optional[str] = Field(default=None, alias="_id")
     user_id: Optional[str] = None
     user_type: Optional[str] = None
@@ -116,14 +120,17 @@ class UserSettingsOut(UserSettingsBase):
 
 # --- User Preferences (key-value store) ---
 
+
 class UserPreferenceUpdate(BaseModel):
     """Single preference key-value pair."""
+
     key: str = Field(..., max_length=100)
     value: Any = Field(...)
 
     @model_validator(mode="after")
     def validate_value_size(self):
         import json
+
         serialized = json.dumps(self.value)
         if len(serialized) > 16384:  # 16 KB limit per key
             raise ValueError("Preference value must be under 16 KB")
@@ -132,4 +139,5 @@ class UserPreferenceUpdate(BaseModel):
 
 class UserPreferencesOut(BaseModel):
     """All preferences as a flat dict."""
+
     preferences: dict[str, Any] = Field(default_factory=dict)

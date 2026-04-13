@@ -3,6 +3,7 @@ Integration tests for audit log retrieval and incident lifecycle.
 
 Requires: MongoDB on localhost:27017, Redis on localhost:6379
 """
+
 from __future__ import annotations
 
 import time
@@ -19,6 +20,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 # Audit Logs
 # ---------------------------------------------------------------------------
 
+
 class TestAuditLogFlow:
     """Verify audit-log listing endpoint."""
 
@@ -32,9 +34,7 @@ class TestAuditLogFlow:
         assert body["success"] is True
         assert isinstance(body["data"], list)
 
-    async def test_list_audit_logs_unauthorized(
-        self, integration_client: AsyncClient
-    ):
+    async def test_list_audit_logs_unauthorized(self, integration_client: AsyncClient):
         """Request without auth should be rejected."""
         resp = await integration_client.get("/v1/audit-logs/")
         assert resp.status_code in (401, 403)
@@ -43,6 +43,7 @@ class TestAuditLogFlow:
 # ---------------------------------------------------------------------------
 # Incident Lifecycle
 # ---------------------------------------------------------------------------
+
 
 class TestIncidentLifecycleFlow:
     """Full CRUD cycle for security / data-breach incidents."""
@@ -130,7 +131,9 @@ class TestIncidentLifecycleFlow:
                 json=patch_payload,
                 headers=auth_headers,
             )
-            assert resp.status_code == 200, f"Failed transitioning to {next_status}: {resp.text}"
+            assert resp.status_code == 200, (
+                f"Failed transitioning to {next_status}: {resp.text}"
+            )
             assert resp.json()["data"]["status"] == next_status
 
     async def test_update_ndpc_notification(

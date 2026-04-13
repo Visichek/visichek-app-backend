@@ -29,18 +29,25 @@ async def _receptionist_stats(tenant_id: str, department_id: str | None) -> dict
         base["department_id"] = department_id
 
     recent_check_ins = await get_visit_sessions(
-        filter_dict=base, start=0, stop=20,
+        filter_dict=base,
+        start=0,
+        stop=20,
     )
     active = await get_active_visitors(tenant_id=tenant_id, department_id=department_id)
     visitors_today = await count_visit_sessions(
         {**base, "check_in_time": {"$gte": start_today}}
     )
-    appt_filter: Dict[str, Any] = {"tenant_id": tenant_id, "scheduled_datetime": {"$gte": start_today, "$lt": start_today + 86400}}
+    appt_filter: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "scheduled_datetime": {"$gte": start_today, "$lt": start_today + 86400},
+    }
     if department_id:
         appt_filter["department_id"] = department_id
     expected_today = await count_appointments(appt_filter)
     upcoming_appointments = await get_appointments(
-        filter_dict=appt_filter, start=0, stop=10,
+        filter_dict=appt_filter,
+        start=0,
+        stop=10,
     )
 
     return {
@@ -56,12 +63,16 @@ async def _receptionist_stats(tenant_id: str, department_id: str | None) -> dict
 
 
 async def _dept_admin_stats(tenant_id: str, department_id: str | None) -> dict:
-    stats = await get_visitor_session_stats(tenant_id=tenant_id, department_id=department_id)
+    stats = await get_visitor_session_stats(
+        tenant_id=tenant_id, department_id=department_id
+    )
     active = await get_active_visitors(tenant_id=tenant_id, department_id=department_id)
     incident_filter: Dict[str, Any] = {"tenant_id": tenant_id}
     if department_id:
         incident_filter["department_id"] = department_id
-    open_incidents = await db.incident_logs.count_documents({**incident_filter, "status": {"$ne": "resolved"}})
+    open_incidents = await db.incident_logs.count_documents(
+        {**incident_filter, "status": {"$ne": "resolved"}}
+    )
     return {
         "role_view": "dept_admin",
         **stats,
@@ -78,9 +89,13 @@ async def _super_admin_stats(tenant_id: str) -> dict:
     total_branches = await db.branches.count_documents({"tenant_id": tenant_id})
     total_system_users = await db.system_users.count_documents({"tenant_id": tenant_id})
     total_incidents = await db.incident_logs.count_documents({"tenant_id": tenant_id})
-    open_incidents = await db.incident_logs.count_documents({"tenant_id": tenant_id, "status": {"$ne": "resolved"}})
+    open_incidents = await db.incident_logs.count_documents(
+        {"tenant_id": tenant_id, "status": {"$ne": "resolved"}}
+    )
     start_today = _start_of_today_ts()
-    visitors_today = await count_visit_sessions({"tenant_id": tenant_id, "check_in_time": {"$gte": start_today}})
+    visitors_today = await count_visit_sessions(
+        {"tenant_id": tenant_id, "check_in_time": {"$gte": start_today}}
+    )
     return {
         "role_view": "super_admin",
         **stats,
@@ -96,10 +111,16 @@ async def _super_admin_stats(tenant_id: str) -> dict:
 
 
 async def _security_officer_stats(tenant_id: str) -> dict:
-    open_incidents = await db.incident_logs.count_documents({"tenant_id": tenant_id, "status": {"$ne": "resolved"}})
+    open_incidents = await db.incident_logs.count_documents(
+        {"tenant_id": tenant_id, "status": {"$ne": "resolved"}}
+    )
     total_incidents = await db.incident_logs.count_documents({"tenant_id": tenant_id})
-    approaching = await get_incidents_approaching_deadline(tenant_id=tenant_id, start=0, stop=20)
-    recent_incidents = await get_incident_logs({"tenant_id": tenant_id}, start=0, stop=20)
+    approaching = await get_incidents_approaching_deadline(
+        tenant_id=tenant_id, start=0, stop=20
+    )
+    recent_incidents = await get_incident_logs(
+        {"tenant_id": tenant_id}, start=0, stop=20
+    )
     active = await get_active_visitors(tenant_id=tenant_id)
     return {
         "role_view": "security_officer",
@@ -115,10 +136,17 @@ async def _security_officer_stats(tenant_id: str) -> dict:
 async def _auditor_stats(tenant_id: str) -> dict:
     total_audit_events = await db.audit_trail.count_documents({"tenant_id": tenant_id})
     start_today = _start_of_today_ts()
-    events_today = await db.audit_trail.count_documents({"tenant_id": tenant_id, "timestamp": {"$gte": start_today}})
+    events_today = await db.audit_trail.count_documents(
+        {"tenant_id": tenant_id, "timestamp": {"$gte": start_today}}
+    )
     total_incidents = await db.incident_logs.count_documents({"tenant_id": tenant_id})
     total_visits = await count_visit_sessions({"tenant_id": tenant_id})
-    recent_events = await db.audit_trail.find({"tenant_id": tenant_id}).sort("timestamp", -1).limit(20).to_list(20)
+    recent_events = (
+        await db.audit_trail.find({"tenant_id": tenant_id})
+        .sort("timestamp", -1)
+        .limit(20)
+        .to_list(20)
+    )
     for e in recent_events:
         e["_id"] = str(e.get("_id"))
     return {
@@ -134,11 +162,17 @@ async def _auditor_stats(tenant_id: str) -> dict:
 
 async def _dpo_stats(tenant_id: str) -> dict:
     dsr_total = await db.data_subject_requests.count_documents({"tenant_id": tenant_id})
-    dsr_open = await db.data_subject_requests.count_documents({"tenant_id": tenant_id, "status": {"$nin": ["completed", "rejected"]}})
+    dsr_open = await db.data_subject_requests.count_documents(
+        {"tenant_id": tenant_id, "status": {"$nin": ["completed", "rejected"]}}
+    )
     privacy_notices = await db.privacy_notices.count_documents({"tenant_id": tenant_id})
     sub_processors = await db.sub_processors.count_documents({"tenant_id": tenant_id})
-    retention_policies = await db.retention_policies.count_documents({"tenant_id": tenant_id})
-    open_incidents = await db.incident_logs.count_documents({"tenant_id": tenant_id, "status": {"$ne": "resolved"}})
+    retention_policies = await db.retention_policies.count_documents(
+        {"tenant_id": tenant_id}
+    )
+    open_incidents = await db.incident_logs.count_documents(
+        {"tenant_id": tenant_id, "status": {"$ne": "resolved"}}
+    )
     return {
         "role_view": "dpo",
         "data_subject_requests_total": dsr_total,
@@ -169,7 +203,9 @@ async def get_dashboard_stats(
     if role == "dpo":
         return await _dpo_stats(tenant_id)
 
-    stats = await get_visitor_session_stats(tenant_id=tenant_id, department_id=department_id)
+    stats = await get_visitor_session_stats(
+        tenant_id=tenant_id, department_id=department_id
+    )
     active = await get_active_visitors(tenant_id=tenant_id, department_id=department_id)
     stats["currently_active"] = len(active)
     return stats

@@ -5,6 +5,7 @@ Verifies that:
 - Login schemas only have email + password
 - Internal *Create schemas still have system-assigned fields
 """
+
 from __future__ import annotations
 
 
@@ -47,7 +48,10 @@ class TestAdminSignupRequest:
             password="StrongP@ss1!",
         )
         # The field should not appear on the model
-        assert not hasattr(data, "accountStatus") or "accountStatus" not in data.model_fields
+        assert (
+            not hasattr(data, "accountStatus")
+            or "accountStatus" not in data.model_fields
+        )
 
 
 class TestUserSignupRequest:

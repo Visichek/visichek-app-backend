@@ -5,6 +5,7 @@ from schemas.imports import *
 
 class PlanDistribution(BaseModel):
     """Breakdown of subscriptions per plan."""
+
     plan_id: str
     plan_name: str
     plan_tier: str
@@ -13,6 +14,7 @@ class PlanDistribution(BaseModel):
 
 class TopTenantByIncidents(BaseModel):
     """Tenant ranked by incident count."""
+
     tenant_id: str
     company_name: str
     incident_count: int
@@ -20,6 +22,7 @@ class TopTenantByIncidents(BaseModel):
 
 class TopTenantByVisitors(BaseModel):
     """Tenant ranked by visitor count."""
+
     tenant_id: str
     company_name: str
     visitor_count: int
@@ -27,6 +30,7 @@ class TopTenantByVisitors(BaseModel):
 
 class SubscriptionStatusBreakdown(BaseModel):
     """Count of subscriptions by status."""
+
     active: int = 0
     trialing: int = 0
     past_due: int = 0
@@ -37,6 +41,7 @@ class SubscriptionStatusBreakdown(BaseModel):
 
 class AdminDashboardStats(BaseModel):
     """Platform-wide statistics for application admin dashboard."""
+
     # User & tenant counts
     total_tenants: int = 0
     active_tenants: int = 0

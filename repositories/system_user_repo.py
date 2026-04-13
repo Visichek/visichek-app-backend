@@ -25,7 +25,9 @@ async def get_system_user(filter_dict: dict) -> Optional[SystemUserOut]:
         )
 
 
-async def get_system_users(filter_dict: dict = {}, start=0, stop=100) -> List[SystemUserOut]:
+async def get_system_users(
+    filter_dict: dict = {}, start=0, stop=100
+) -> List[SystemUserOut]:
     try:
         if filter_dict is None:
             filter_dict = {}
@@ -42,7 +44,9 @@ async def get_system_users(filter_dict: dict = {}, start=0, stop=100) -> List[Sy
         )
 
 
-async def update_system_user(filter_dict: dict, user_data: SystemUserUpdate) -> SystemUserOut:
+async def update_system_user(
+    filter_dict: dict, user_data: SystemUserUpdate
+) -> SystemUserOut:
     update_dict = {k: v for k, v in user_data.model_dump().items() if v is not None}
     result = await db.system_users.find_one_and_update(
         filter_dict,

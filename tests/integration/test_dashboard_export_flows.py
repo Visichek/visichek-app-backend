@@ -7,6 +7,7 @@ Integration tests for dashboard endpoints:
 
 Requires: MongoDB on localhost:27017, Redis on localhost:6379
 """
+
 from __future__ import annotations
 
 import time
@@ -32,9 +33,7 @@ class TestDashboardStats:
     async def test_stats_empty_db(
         self, integration_client: AsyncClient, auth_headers: dict
     ):
-        resp = await integration_client.get(
-            "/v1/dashboard/stats", headers=auth_headers
-        )
+        resp = await integration_client.get("/v1/dashboard/stats", headers=auth_headers)
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True

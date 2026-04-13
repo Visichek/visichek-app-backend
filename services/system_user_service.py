@@ -79,12 +79,16 @@ async def add_system_user(user_data: SystemUserCreate) -> SystemUserOut:
     # Enforce email uniqueness with normalization
     await _check_email_uniqueness(
         email=user_data.email,
-        role=user_data.role.value if hasattr(user_data.role, 'value') else user_data.role,
+        role=user_data.role.value
+        if hasattr(user_data.role, "value")
+        else user_data.role,
         tenant_id=user_data.tenant_id,
     )
 
     # Auto-assign permissions based on role
-    role_str = user_data.role.value if hasattr(user_data.role, 'value') else user_data.role
+    role_str = (
+        user_data.role.value if hasattr(user_data.role, "value") else user_data.role
+    )
     user_data.permissionList = get_default_permissions_for_role(role_str)
 
     new_user = await create_system_user(user_data)
@@ -107,7 +111,9 @@ async def add_system_user(user_data: SystemUserCreate) -> SystemUserOut:
             tenant_id=new_user.tenant_id,
             details={
                 "email": new_user.email,
-                "role": new_user.role.value if hasattr(new_user.role, 'value') else new_user.role,
+                "role": new_user.role.value
+                if hasattr(new_user.role, "value")
+                else new_user.role,
                 "department_id": new_user.department_id,
                 "full_name": new_user.full_name,
             },
@@ -127,7 +133,7 @@ async def add_system_user_from_invite(
     - Auto-assigns permissions based on role
     - Normalizes and checks email uniqueness
     """
-    signup_data.role.value if hasattr(signup_data.role, 'value') else signup_data.role
+    signup_data.role.value if hasattr(signup_data.role, "value") else signup_data.role
 
     # Build internal SystemUserCreate with system-assigned fields
     create_data = SystemUserCreate(
@@ -143,7 +149,9 @@ async def add_system_user_from_invite(
     return await add_system_user(create_data)
 
 
-async def authenticate_system_user(login_data: SystemUserLogin, tenant_id: str | None = None) -> SystemUserOut:
+async def authenticate_system_user(
+    login_data: SystemUserLogin, tenant_id: str | None = None
+) -> SystemUserOut:
     """Authenticate a system user. If tenant_id is provided, scope the lookup to that tenant."""
     from security.password_policy import (
         check_login_lockout,
@@ -171,11 +179,14 @@ async def authenticate_system_user(login_data: SystemUserLogin, tenant_id: str |
 
     # Retrieve the raw document to get the hashed password
     from core.database import db
+
     raw_filter: dict = {"email": login_data.email}
     if tenant_id:
         raw_filter["tenant_id"] = tenant_id
     raw = await db.system_users.find_one(raw_filter)
-    if not raw or not check_password(password=login_data.password, hashed=raw["password_hash"]):
+    if not raw or not check_password(
+        password=login_data.password, hashed=raw["password_hash"]
+    ):
         lockout_status = await record_failed_login(login_data.email)
         if lockout_status.get("locked"):
             raise HTTPException(
@@ -195,10 +206,13 @@ async def authenticate_system_user(login_data: SystemUserLogin, tenant_id: str |
 
     # 2FA check
     from services.otp_service import is_mfa_required, create_otp_challenge
+
     if await is_mfa_required("system_user", user.id):  # type: ignore
         challenge_id, _code = await create_otp_challenge(
-            user_id=user.id, user_type="system_user",  # type: ignore
-            role=user.role.value, tenant_id=user.tenant_id,
+            user_id=user.id or "",
+            user_type="system_user",  # type: ignore
+            role=user.role.value,
+            tenant_id=user.tenant_id,
         )
         return {"otp_required": True, "otp_challenge_id": challenge_id}  # type: ignore[return-value]
 
@@ -233,7 +247,7 @@ async def authenticate_super_admin_global(login_data: SystemUserLogin) -> dict:
         return user
 
     # Only super_admins get this enriched response
-    role_str = user.role.value if hasattr(user.role, 'value') else user.role
+    role_str = user.role.value if hasattr(user.role, "value") else user.role
     if role_str != "super_admin":
         raise HTTPException(
             status_code=403,
@@ -246,6 +260,7 @@ async def authenticate_super_admin_global(login_data: SystemUserLogin) -> dict:
     if user.tenant_id:
         try:
             from services.tenant_service import retrieve_tenant_by_id
+
             tenant = await retrieve_tenant_by_id(user.tenant_id)
             tenant_info = {
                 "tenant_id": tenant.id,
@@ -268,6 +283,7 @@ async def authenticate_system_user_by_tenant(
     """Authenticate a system user scoped to a specific tenant (via URL path)."""
     # Validate that the tenant exists
     from services.tenant_service import retrieve_tenant_by_id
+
     await retrieve_tenant_by_id(tenant_id)
 
     # Reuse the main auth function with tenant scoping
@@ -275,7 +291,9 @@ async def authenticate_system_user_by_tenant(
     return await authenticate_system_user(login_data=login, tenant_id=tenant_id)
 
 
-async def refresh_system_user_tokens(refresh_data: SystemUserRefresh, expired_access_token: str):
+async def refresh_system_user_tokens(
+    refresh_data: SystemUserRefresh, expired_access_token: str
+):
     refresh_obj = await get_refresh_tokens(refresh_data.refresh_token)
     if not refresh_obj:
         raise HTTPException(status_code=404, detail="Invalid refresh token")
@@ -310,8 +328,12 @@ async def retrieve_system_user_by_id(user_id: str) -> SystemUserOut:
     return result
 
 
-async def retrieve_system_users(tenant_id: str, start=0, stop=100) -> List[SystemUserOut]:
-    return await get_system_users(filter_dict={"tenant_id": tenant_id}, start=start, stop=stop)
+async def retrieve_system_users(
+    tenant_id: str, start=0, stop=100
+) -> List[SystemUserOut]:
+    return await get_system_users(
+        filter_dict={"tenant_id": tenant_id}, start=start, stop=stop
+    )
 
 
 async def update_system_user_by_id(
@@ -323,7 +345,9 @@ async def update_system_user_by_id(
         {"_id": ObjectId(user_id), "tenant_id": tenant_id}, user_data
     )
     if not result:
-        raise HTTPException(status_code=404, detail="System user not found or update failed")
+        raise HTTPException(
+            status_code=404, detail="System user not found or update failed"
+        )
     return result
 
 
@@ -336,7 +360,9 @@ async def remove_system_user(user_id: str, tenant_id: str):
     if not user:
         raise HTTPException(status_code=404, detail="System user not found")
 
-    result = await delete_system_user({"_id": ObjectId(user_id), "tenant_id": tenant_id})
+    result = await delete_system_user(
+        {"_id": ObjectId(user_id), "tenant_id": tenant_id}
+    )
     await delete_all_tokens_with_user_id(userId=user_id)
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="System user not found")
@@ -352,7 +378,7 @@ async def remove_system_user(user_id: str, tenant_id: str):
             tenant_id=tenant_id,
             details={
                 "email": user.email,
-                "role": user.role.value if hasattr(user.role, 'value') else user.role,
+                "role": user.role.value if hasattr(user.role, "value") else user.role,
                 "full_name": user.full_name,
             },
         )
@@ -390,12 +416,17 @@ async def toggle_user_mfa(
         raise HTTPException(status_code=404, detail="System user not found")
 
     if getattr(user, "mfa_locked_by_admin", False):
-        raise HTTPException(status_code=403, detail="MFA setting is locked by your administrator")
+        raise HTTPException(
+            status_code=403, detail="MFA setting is locked by your administrator"
+        )
 
     from services.tenant_service import retrieve_tenant_by_id
+
     tenant = await retrieve_tenant_by_id(tenant_id)
     if not getattr(tenant, "mfa_user_override_allowed", True):
-        raise HTTPException(status_code=403, detail="MFA settings are managed by your administrator")
+        raise HTTPException(
+            status_code=403, detail="MFA settings are managed by your administrator"
+        )
 
     update_data = SystemUserUpdate(mfa_enabled=mfa_enabled)
     updated = await update_system_user(

@@ -87,9 +87,7 @@ async def upload_document(
         "upload_url": "https://s3.amazonaws.com/visichek-bucket/documents/user-123/invoice-2026-04-07.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...",
         "expires_in": 3600,
         "method": "PUT",
-        "headers": {
-            "Content-Type": "application/pdf"
-        }
+        "headers": {"Content-Type": "application/pdf"},
     },
 )
 async def create_document_upload_intent(
@@ -143,12 +141,9 @@ async def create_document_upload_intent(
         "size": 245678,
         "checksum": "d41d8cd98f00b204e9800998ecf8427e",
         "status": "ready",
-        "metadata": {
-            "document_type": "invoice",
-            "invoice_number": "INV-2026-001"
-        },
+        "metadata": {"document_type": "invoice", "invoice_number": "INV-2026-001"},
         "created_at": 1712520000,
-        "updated_at": 1712520000
+        "updated_at": 1712520000,
     },
 )
 async def complete_document_upload(
@@ -202,17 +197,16 @@ async def complete_document_upload(
             "size": 245678,
             "checksum": "d41d8cd98f00b204e9800998ecf8427e",
             "status": "ready",
-            "metadata": {
-                "document_type": "invoice",
-                "invoice_number": "INV-2026-001"
-            },
+            "metadata": {"document_type": "invoice", "invoice_number": "INV-2026-001"},
             "created_at": 1712520000,
-            "updated_at": 1712520000
+            "updated_at": 1712520000,
         },
-        "download_url": "https://s3.amazonaws.com/visichek-bucket/documents/user-123/invoice-2026-04-07.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=..."
+        "download_url": "https://s3.amazonaws.com/visichek-bucket/documents/user-123/invoice-2026-04-07.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...",
     },
 )
-async def get_document(document_id: str, principal: AuthPrincipal = Depends(verify_any_token)):
+async def get_document(
+    document_id: str, principal: AuthPrincipal = Depends(verify_any_token)
+):
     try:
         doc, download_url = await fetch_document_with_summary(document_id=document_id)
     except Exception:
@@ -264,11 +258,11 @@ async def get_document(document_id: str, principal: AuthPrincipal = Depends(veri
             "code": "RESOURCE_NOT_FOUND",
         },
     },
-    success_example={
-        "deleted": True
-    },
+    success_example={"deleted": True},
 )
-async def delete_document(document_id: str, principal: AuthPrincipal = Depends(verify_any_token)):
+async def delete_document(
+    document_id: str, principal: AuthPrincipal = Depends(verify_any_token)
+):
     doc, _download_url = await fetch_document(document_id=document_id)
     if doc.owner_id != principal.user_id and not principal.is_admin:
         raise auth_permission_denied("DELETE:/v1/documents/{document_id}")

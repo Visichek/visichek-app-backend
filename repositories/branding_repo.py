@@ -24,7 +24,9 @@ async def get_branding(filter_dict: dict) -> Optional[BrandingOut]:
     return None
 
 
-async def update_branding(filter_dict: dict, branding_data: BrandingUpdate) -> Optional[BrandingOut]:
+async def update_branding(
+    filter_dict: dict, branding_data: BrandingUpdate
+) -> Optional[BrandingOut]:
     """Update a branding document. Returns updated doc or None."""
     update_fields = branding_data.model_dump(exclude_none=True)
     if not update_fields:

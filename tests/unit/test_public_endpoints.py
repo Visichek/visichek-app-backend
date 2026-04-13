@@ -9,6 +9,7 @@ Tests:
 - DSR submission creates record
 - Consent withdrawal
 """
+
 from __future__ import annotations
 
 import pytest
@@ -23,7 +24,7 @@ def _make_visit_session_out(
     id: str = "session-001",
     status: VisitStatus = VisitStatus.REGISTERED,
     consent_granted: bool | None = None,
-    **kwargs
+    **kwargs,
 ) -> dict:
     """Factory function for visit session."""
     return {
@@ -63,7 +64,7 @@ def _make_visit_session_out(
         "check_out_time": None,
         "date_created": 1712532000,
         "visit_duration": None,
-        **kwargs
+        **kwargs,
     }
 
 
@@ -78,7 +79,9 @@ class TestPublicEndpoints:
     """Tests for public endpoints (4B-4C, 8A, 8D-8E)."""
 
     @pytest.mark.asyncio
-    async def test_public_registration_no_auth_required(self, cleanup_dependency_overrides):
+    async def test_public_registration_no_auth_required(
+        self, cleanup_dependency_overrides
+    ):
         """
         4B: Public registration doesn't require auth token.
 
@@ -91,7 +94,10 @@ class TestPublicEndpoints:
             consent_granted=True,
         )
 
-        with patch("services.visit_session_service.resume_draft_registration", new_callable=AsyncMock) as mock_reg:
+        with patch(
+            "services.visit_session_service.resume_draft_registration",
+            new_callable=AsyncMock,
+        ) as mock_reg:
             mock_reg.return_value = session_out
 
             async with AsyncClient(
@@ -117,7 +123,9 @@ class TestPublicEndpoints:
             assert data["data"]["status"] == "registered"
 
     @pytest.mark.asyncio
-    async def test_public_registration_creates_registered_session(self, cleanup_dependency_overrides):
+    async def test_public_registration_creates_registered_session(
+        self, cleanup_dependency_overrides
+    ):
         """
         4B: Public registration creates REGISTERED session.
 
@@ -130,7 +138,10 @@ class TestPublicEndpoints:
             consent_granted=True,
         )
 
-        with patch("services.visit_session_service.resume_draft_registration", new_callable=AsyncMock) as mock_reg:
+        with patch(
+            "services.visit_session_service.resume_draft_registration",
+            new_callable=AsyncMock,
+        ) as mock_reg:
             mock_reg.return_value = session_out
 
             async with AsyncClient(
@@ -170,7 +181,9 @@ class TestPublicEndpoints:
             check_out_time=1712535600,
         )
 
-        with patch("services.visit_session_service.check_out_visitor", new_callable=AsyncMock) as mock_checkout:
+        with patch(
+            "services.visit_session_service.check_out_visitor", new_callable=AsyncMock
+        ) as mock_checkout:
             mock_checkout.return_value = checked_out_session
 
             async with AsyncClient(
@@ -198,7 +211,9 @@ class TestPublicEndpoints:
         If the QR token is invalid or expired, the checkout should fail
         with an appropriate error message.
         """
-        with patch("services.visit_session_service.check_out_visitor", new_callable=AsyncMock) as mock_checkout:
+        with patch(
+            "services.visit_session_service.check_out_visitor", new_callable=AsyncMock
+        ) as mock_checkout:
             mock_checkout.side_effect = ValueError("Invalid or expired QR token")
 
             async with AsyncClient(
@@ -214,7 +229,9 @@ class TestPublicEndpoints:
             assert response.status_code in [400, 404]
 
     @pytest.mark.asyncio
-    async def test_public_registration_consent_enforcement_required(self, cleanup_dependency_overrides):
+    async def test_public_registration_consent_enforcement_required(
+        self, cleanup_dependency_overrides
+    ):
         """
         8A: Registration requires consent when tenant lawful_basis=consent.
 
@@ -222,7 +239,10 @@ class TestPublicEndpoints:
         endpoint must enforce that consent_granted is True. Registration without
         consent should be rejected.
         """
-        with patch("services.visit_session_service.resume_draft_registration", new_callable=AsyncMock) as mock_reg:
+        with patch(
+            "services.visit_session_service.resume_draft_registration",
+            new_callable=AsyncMock,
+        ) as mock_reg:
             mock_reg.side_effect = ValueError(
                 "Consent is required for registration at this location"
             )
@@ -270,7 +290,9 @@ class TestPublicEndpoints:
             "date_updated": 1712532000,
         }
 
-        with patch("services.data_subject_request_service.create_dsr", new_callable=AsyncMock) as mock_create:
+        with patch(
+            "services.data_subject_request_service.create_dsr", new_callable=AsyncMock
+        ) as mock_create:
             mock_create.return_value = dsr_record
 
             async with AsyncClient(
@@ -303,7 +325,9 @@ class TestPublicEndpoints:
         """
         timestamp = 1712532000
 
-        with patch("services.visitor_profile_service.withdraw_consent", new_callable=AsyncMock) as mock_withdraw:
+        with patch(
+            "services.visitor_profile_service.withdraw_consent", new_callable=AsyncMock
+        ) as mock_withdraw:
             mock_withdraw.return_value = {
                 "visitor_id": "visitor-001",
                 "consent_withdrawn_at": timestamp,
@@ -328,7 +352,9 @@ class TestPublicEndpoints:
             assert data["data"]["sessions_updated"] == 3
 
     @pytest.mark.asyncio
-    async def test_public_registration_returns_badge_qr_token(self, cleanup_dependency_overrides):
+    async def test_public_registration_returns_badge_qr_token(
+        self, cleanup_dependency_overrides
+    ):
         """
         4B: Public registration returns badge QR token for checkout.
 
@@ -341,7 +367,10 @@ class TestPublicEndpoints:
             badge_qr_token="VIS_20240407_1234567890AB",
         )
 
-        with patch("services.visit_session_service.resume_draft_registration", new_callable=AsyncMock) as mock_reg:
+        with patch(
+            "services.visit_session_service.resume_draft_registration",
+            new_callable=AsyncMock,
+        ) as mock_reg:
             mock_reg.return_value = session_out
 
             async with AsyncClient(

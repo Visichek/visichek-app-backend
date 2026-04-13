@@ -43,8 +43,12 @@ async def add_plan(plan_data: PlanCreate) -> PlanOut:
             resource_id=str(plan.id),
             details={
                 "name": plan_data.name,
-                "tier": plan_data.tier.value if hasattr(plan_data.tier, 'value') else plan_data.tier,
-                "status": plan.status.value if hasattr(plan.status, 'value') else plan.status,
+                "tier": plan_data.tier.value
+                if hasattr(plan_data.tier, "value")
+                else plan_data.tier,
+                "status": plan.status.value
+                if hasattr(plan.status, "value")
+                else plan.status,
                 "base_price_monthly": plan_data.base_price_monthly,
                 "base_price_yearly": plan_data.base_price_yearly,
             },
@@ -113,7 +117,9 @@ async def archive_plan(plan_id: str) -> Optional[PlanOut]:
                 resource_id=plan_id,
                 details={
                     "name": archived.name,
-                    "tier": archived.tier.value if hasattr(archived.tier, 'value') else archived.tier,
+                    "tier": archived.tier.value
+                    if hasattr(archived.tier, "value")
+                    else archived.tier,
                 },
             )
         except Exception:
@@ -148,7 +154,9 @@ async def activate_plan(plan_id: str) -> Optional[PlanOut]:
                 resource_id=plan_id,
                 details={
                     "name": activated.name,
-                    "tier": activated.tier.value if hasattr(activated.tier, 'value') else activated.tier,
+                    "tier": activated.tier.value
+                    if hasattr(activated.tier, "value")
+                    else activated.tier,
                 },
             )
         except Exception:
@@ -157,7 +165,9 @@ async def activate_plan(plan_id: str) -> Optional[PlanOut]:
     return activated
 
 
-async def clone_plan(source_plan_id: str, new_name: str, new_display_name: str) -> PlanOut:
+async def clone_plan(
+    source_plan_id: str, new_name: str, new_display_name: str
+) -> PlanOut:
     """Clone an existing plan with a new name (for creating variants)."""
     source = await retrieve_plan_by_id(source_plan_id)
     if not source:
@@ -232,7 +242,7 @@ async def remove_plan(plan_id: str) -> bool:
             resource_id=plan_id,
             details={
                 "name": plan.name,
-                "tier": plan.tier.value if hasattr(plan.tier, 'value') else plan.tier,
+                "tier": plan.tier.value if hasattr(plan.tier, "value") else plan.tier,
             },
         )
     except Exception:

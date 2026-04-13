@@ -5,6 +5,7 @@ from schemas.imports import *
 
 # --- Enums ---
 
+
 class SmtpEncryption(str, Enum):
     TLS = "tls"
     SSL = "ssl"
@@ -12,6 +13,7 @@ class SmtpEncryption(str, Enum):
 
 
 # --- Platform Settings ---
+
 
 class PlatformSettingsBase(BaseModel):
     """Global platform configuration managed by application admins."""
@@ -55,6 +57,7 @@ class PlatformSettingsBase(BaseModel):
 
 class PlatformSettingsCreate(PlatformSettingsBase):
     """Internal creation schema."""
+
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
@@ -103,6 +106,7 @@ class PlatformSettingsUpdate(BaseModel):
 
 class PlatformSettingsOut(PlatformSettingsBase):
     """Response schema for platform settings."""
+
     id: Optional[str] = Field(default=None, alias="_id")
     date_created: Optional[int] = None
     last_updated: Optional[int] = None

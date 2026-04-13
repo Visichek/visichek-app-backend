@@ -42,7 +42,11 @@ router = APIRouter(prefix="/branding", tags=["Tenant Branding"])
         404: "Not found - tenant has no branding configured",
     },
     error_examples={
-        404: {"success": False, "message": "Branding not found for this tenant", "code": "RESOURCE_NOT_FOUND"},
+        404: {
+            "success": False,
+            "message": "Branding not found for this tenant",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def get_public_tenant_branding(tenant_id: str):
@@ -83,7 +87,11 @@ async def get_public_tenant_branding(tenant_id: str):
         401: "Unauthorized - invalid or missing token",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
     },
 )
 async def get_tenant_branding(
@@ -127,9 +135,21 @@ async def get_tenant_branding(
         422: "Validation error - invalid color format or input data",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "You do not have permission", "code": "AUTH_PERMISSION_DENIED"},
-        422: {"success": False, "message": "primary_color must be a valid hex color", "code": "VALIDATION_FAILED"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "You do not have permission",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+        422: {
+            "success": False,
+            "message": "primary_color must be a valid hex color",
+            "code": "VALIDATION_FAILED",
+        },
     },
 )
 async def set_tenant_branding(
@@ -156,8 +176,16 @@ async def set_tenant_branding(
         404: "Not found - no branding configured for this tenant",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        404: {"success": False, "message": "Branding not found for this tenant", "code": "RESOURCE_NOT_FOUND"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        404: {
+            "success": False,
+            "message": "Branding not found for this tenant",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def reset_tenant_branding(

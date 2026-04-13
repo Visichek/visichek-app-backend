@@ -1,4 +1,5 @@
 """Unit tests for security/password_policy.py — password strength, common passwords, lockout, history."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -159,6 +160,7 @@ async def test_check_login_lockout_not_locked():
     with patch("security.password_policy.db", fake_db):
         # Re-import to get patched version
         from security.password_policy import check_login_lockout
+
         result = await check_login_lockout("test@example.com")
         assert result is None
 
@@ -166,16 +168,20 @@ async def test_check_login_lockout_not_locked():
 @pytest.mark.asyncio
 async def test_check_login_lockout_locked():
     import time
+
     locked_record = {
         "identifier": "test@example.com",
         "failed_count": 5,
         "locked_until": int(time.time()) + 600,
     }
     fake_db = MagicMock()
-    fake_db.__getitem__ = MagicMock(return_value=_FakeCollection(find_one_val=locked_record))
+    fake_db.__getitem__ = MagicMock(
+        return_value=_FakeCollection(find_one_val=locked_record)
+    )
 
     with patch("security.password_policy.db", fake_db):
         from security.password_policy import check_login_lockout
+
         result = await check_login_lockout("test@example.com")
         assert result is not None
         assert result["locked"] is True
@@ -192,6 +198,7 @@ async def test_record_failed_login_increments():
 
     with patch("security.password_policy.db", fake_db):
         from security.password_policy import record_failed_login
+
         result = await record_failed_login("test@example.com")
         assert result["locked"] is False
         assert result["failed_count"] == 2
@@ -199,13 +206,17 @@ async def test_record_failed_login_increments():
 
 @pytest.mark.asyncio
 async def test_record_failed_login_triggers_lockout():
-    fake_result = {"identifier": "test@example.com", "failed_count": MAX_FAILED_ATTEMPTS}
+    fake_result = {
+        "identifier": "test@example.com",
+        "failed_count": MAX_FAILED_ATTEMPTS,
+    }
     fake_col = _FakeCollection(find_and_update_val=fake_result)
     fake_db = MagicMock()
     fake_db.__getitem__ = MagicMock(return_value=fake_col)
 
     with patch("security.password_policy.db", fake_db):
         from security.password_policy import record_failed_login
+
         result = await record_failed_login("test@example.com")
         assert result["locked"] is True
 
@@ -218,10 +229,16 @@ async def test_record_failed_login_triggers_lockout():
 @pytest.mark.asyncio
 async def test_check_password_history_no_reuse():
     """Password not in history should return True (safe to use)."""
+
     class FakeCursor:
-        def sort(self, *a, **kw): return self
-        def limit(self, *a, **kw): return self
-        async def to_list(self, length): return []
+        def sort(self, *a, **kw):
+            return self
+
+        def limit(self, *a, **kw):
+            return self
+
+        async def to_list(self, length):
+            return []
 
     fake_col = MagicMock()
     fake_col.find = MagicMock(return_value=FakeCursor())
@@ -230,6 +247,7 @@ async def test_check_password_history_no_reuse():
 
     with patch("security.password_policy.db", fake_db):
         from security.password_policy import check_password_history
+
         result = await check_password_history("user1", "NewStrongP@ss1", role="admin")
         assert result is True
 
@@ -242,6 +260,7 @@ async def test_check_password_history_no_reuse():
 class TestSchemaPasswordValidation:
     def test_admin_create_weak_password_fails(self):
         from schemas.admin_schema import AdminCreate
+
         with pytest.raises(ValueError, match="at least"):
             AdminCreate(
                 full_name="Test",
@@ -252,6 +271,7 @@ class TestSchemaPasswordValidation:
 
     def test_admin_create_common_password_fails(self):
         from schemas.admin_schema import AdminCreate
+
         with pytest.raises(ValueError, match="common"):
             AdminCreate(
                 full_name="Test",
@@ -262,6 +282,7 @@ class TestSchemaPasswordValidation:
 
     def test_admin_create_strong_password_succeeds(self):
         from schemas.admin_schema import AdminCreate
+
         admin = AdminCreate(
             full_name="Test Admin",
             email="test@example.com",
@@ -273,6 +294,7 @@ class TestSchemaPasswordValidation:
 
     def test_system_user_create_weak_password_fails(self):
         from schemas.system_user_schema import SystemUserCreate
+
         with pytest.raises(ValueError):
             SystemUserCreate(
                 tenant_id="t1",
@@ -284,6 +306,7 @@ class TestSchemaPasswordValidation:
 
     def test_system_user_create_strong_password_succeeds(self):
         from schemas.system_user_schema import SystemUserCreate
+
         user = SystemUserCreate(
             tenant_id="t1",
             full_name="Test User",

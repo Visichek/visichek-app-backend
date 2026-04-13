@@ -30,6 +30,7 @@ def _generate_backup_codes(count: int = 8) -> List[str]:
 def _build_otpauth_uri(secret: str, email: str, issuer: str = "VisiChek") -> str:
     """Build an otpauth:// URI for QR code rendering."""
     from urllib.parse import quote
+
     return f"otpauth://totp/{quote(issuer)}:{quote(email)}?secret={secret}&issuer={quote(issuer)}&digits=6&period=30"
 
 
@@ -47,7 +48,9 @@ async def setup_two_factor(
         {"user_id": user_id, "user_type": user_type, "verified": True}
     )
     if existing:
-        raise HTTPException(status_code=409, detail="Two-factor authentication is already enabled")
+        raise HTTPException(
+            status_code=409, detail="Two-factor authentication is already enabled"
+        )
 
     secret = _generate_totp_secret()
     backup_codes = _generate_backup_codes()
@@ -56,24 +59,28 @@ async def setup_two_factor(
     await db[TOTP_COLLECTION].delete_many(
         {"user_id": user_id, "user_type": user_type, "verified": False}
     )
-    await db[TOTP_COLLECTION].insert_one({
-        "user_id": user_id,
-        "user_type": user_type,
-        "secret": secret,
-        "verified": False,
-    })
+    await db[TOTP_COLLECTION].insert_one(
+        {
+            "user_id": user_id,
+            "user_type": user_type,
+            "secret": secret,
+            "verified": False,
+        }
+    )
 
     # Store hashed backup codes
     await db[BACKUP_CODES_COLLECTION].delete_many(
         {"user_id": user_id, "user_type": user_type}
     )
     for code in backup_codes:
-        await db[BACKUP_CODES_COLLECTION].insert_one({
-            "user_id": user_id,
-            "user_type": user_type,
-            "code_hash": hashlib.sha256(code.encode()).hexdigest(),
-            "used": False,
-        })
+        await db[BACKUP_CODES_COLLECTION].insert_one(
+            {
+                "user_id": user_id,
+                "user_type": user_type,
+                "code_hash": hashlib.sha256(code.encode()).hexdigest(),
+                "used": False,
+            }
+        )
 
     qr_uri = _build_otpauth_uri(secret, email)
 
@@ -127,12 +134,14 @@ async def verify_two_factor_setup(
         {"user_id": user_id, "user_type": user_type}
     )
     for c in new_codes:
-        await db[BACKUP_CODES_COLLECTION].insert_one({
-            "user_id": user_id,
-            "user_type": user_type,
-            "code_hash": hashlib.sha256(c.encode()).hexdigest(),
-            "used": False,
-        })
+        await db[BACKUP_CODES_COLLECTION].insert_one(
+            {
+                "user_id": user_id,
+                "user_type": user_type,
+                "code_hash": hashlib.sha256(c.encode()).hexdigest(),
+                "used": False,
+            }
+        )
 
     return new_codes
 
@@ -147,7 +156,9 @@ async def disable_two_factor(
         {"user_id": user_id, "user_type": user_type, "verified": True}
     )
     if not totp_record:
-        raise HTTPException(status_code=404, detail="Two-factor authentication is not enabled")
+        raise HTTPException(
+            status_code=404, detail="Two-factor authentication is not enabled"
+        )
 
     if not _verify_totp_code(totp_record["secret"], code):
         if not await _consume_backup_code(user_id, user_type, code):
@@ -155,7 +166,9 @@ async def disable_two_factor(
 
     # Remove TOTP secret and backup codes
     await db[TOTP_COLLECTION].delete_many({"user_id": user_id, "user_type": user_type})
-    await db[BACKUP_CODES_COLLECTION].delete_many({"user_id": user_id, "user_type": user_type})
+    await db[BACKUP_CODES_COLLECTION].delete_many(
+        {"user_id": user_id, "user_type": user_type}
+    )
 
     # Update user record
     collection = "admins" if user_type == "admin" else "system_users"
@@ -185,10 +198,14 @@ async def disable_two_factor_with_password(
         {"user_id": user_id, "user_type": user_type, "verified": True}
     )
     if not totp_record:
-        raise HTTPException(status_code=404, detail="Two-factor authentication is not enabled")
+        raise HTTPException(
+            status_code=404, detail="Two-factor authentication is not enabled"
+        )
 
     await db[TOTP_COLLECTION].delete_many({"user_id": user_id, "user_type": user_type})
-    await db[BACKUP_CODES_COLLECTION].delete_many({"user_id": user_id, "user_type": user_type})
+    await db[BACKUP_CODES_COLLECTION].delete_many(
+        {"user_id": user_id, "user_type": user_type}
+    )
 
     await db[collection].update_one(
         {"_id": ObjectId(user_id)},
@@ -224,7 +241,9 @@ async def regenerate_backup_codes(
         {"user_id": user_id, "user_type": user_type, "verified": True}
     )
     if not totp_record:
-        raise HTTPException(status_code=404, detail="Two-factor authentication is not enabled")
+        raise HTTPException(
+            status_code=404, detail="Two-factor authentication is not enabled"
+        )
 
     backup_codes = _generate_backup_codes()
 
@@ -232,12 +251,14 @@ async def regenerate_backup_codes(
         {"user_id": user_id, "user_type": user_type}
     )
     for code in backup_codes:
-        await db[BACKUP_CODES_COLLECTION].insert_one({
-            "user_id": user_id,
-            "user_type": user_type,
-            "code_hash": hashlib.sha256(code.encode()).hexdigest(),
-            "used": False,
-        })
+        await db[BACKUP_CODES_COLLECTION].insert_one(
+            {
+                "user_id": user_id,
+                "user_type": user_type,
+                "code_hash": hashlib.sha256(code.encode()).hexdigest(),
+                "used": False,
+            }
+        )
 
     return backup_codes
 
@@ -263,7 +284,7 @@ def _verify_totp_code(secret: str, code: str) -> bool:
         msg = struct.pack(">Q", counter)
         h = hmac.new(key, msg, hashlib.sha1).digest()
         offset_byte = h[-1] & 0x0F
-        truncated = struct.unpack(">I", h[offset_byte:offset_byte + 4])[0]
+        truncated = struct.unpack(">I", h[offset_byte : offset_byte + 4])[0]
         truncated &= 0x7FFFFFFF
         expected = str(truncated % 10**6).zfill(6)
         if hmac.compare_digest(expected, code):

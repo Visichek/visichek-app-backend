@@ -21,7 +21,9 @@ class StripePaymentProvider(PaymentProvider):
         try:
             import stripe
         except ModuleNotFoundError as err:
-            raise RuntimeError("stripe package is required for StripePaymentProvider") from err
+            raise RuntimeError(
+                "stripe package is required for StripePaymentProvider"
+            ) from err
 
         self._stripe = stripe
         self._stripe.api_key = secret_key
@@ -83,7 +85,9 @@ class StripePaymentProvider(PaymentProvider):
         )
 
     def fetch_transaction(self, *, reference: str) -> PaymentTransaction:
-        intents = self._stripe.PaymentIntent.search(query=f"metadata['reference']:'{reference}'", limit=1)
+        intents = self._stripe.PaymentIntent.search(
+            query=f"metadata['reference']:'{reference}'", limit=1
+        )
         if not intents.data:
             raise AppException(
                 status_code=404,
@@ -93,7 +97,11 @@ class StripePaymentProvider(PaymentProvider):
             )
 
         intent = intents.data[0]
-        status = PaymentStatus.SUCCEEDED if getattr(intent, "status", None) == "succeeded" else PaymentStatus.PENDING
+        status = (
+            PaymentStatus.SUCCEEDED
+            if getattr(intent, "status", None) == "succeeded"
+            else PaymentStatus.PENDING
+        )
         return PaymentTransaction(
             provider=PaymentProviderName.STRIPE,
             reference=reference,
@@ -101,7 +109,9 @@ class StripePaymentProvider(PaymentProvider):
             raw=json.loads(json.dumps(intent, default=str)),
         )
 
-    def refund(self, *, reference: str, amount_minor: int | None = None) -> PaymentTransaction:
+    def refund(
+        self, *, reference: str, amount_minor: int | None = None
+    ) -> PaymentTransaction:
         tx = self.fetch_transaction(reference=reference)
         payment_intent_id = tx.raw.get("id")
         if not payment_intent_id:

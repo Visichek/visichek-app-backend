@@ -6,7 +6,12 @@ from threading import Lock
 from typing import Any
 
 from core.email.transport import SMTPTransport, SmtpConfig
-from core.email.types import EmailDispatchRequest, EmailMessage, EmailSendResult, MountedTemplate
+from core.email.types import (
+    EmailDispatchRequest,
+    EmailMessage,
+    EmailSendResult,
+    MountedTemplate,
+)
 from core.settings import get_settings
 
 
@@ -68,7 +73,9 @@ class EmailManager:
             for mounted in get_mounted_templates():
                 manager.mount_template(mounted)
         except Exception as exc:
-            manager._logger.warning("Email templates could not be loaded during startup: %s", exc)
+            manager._logger.warning(
+                "Email templates could not be loaded during startup: %s", exc
+            )
 
         return cls.configure(manager)
 
@@ -107,11 +114,17 @@ class EmailManager:
                         "context": dict(request.context),
                     },
                 )
-                return EmailSendResult(status="queued", attempts=0, task_id=queue_result.task_id)
+                return EmailSendResult(
+                    status="queued", attempts=0, task_id=queue_result.task_id
+                )
             except Exception as exc:
-                self._logger.warning("Queue dispatch unavailable. Falling back to sync send: %s", exc)
+                self._logger.warning(
+                    "Queue dispatch unavailable. Falling back to sync send: %s", exc
+                )
 
-        subject, html_body, text_body = self._render(request.template_key, request.context)
+        subject, html_body, text_body = self._render(
+            request.template_key, request.context
+        )
         return await self.send_message(
             EmailMessage(
                 to_email=request.to_email,
@@ -148,12 +161,16 @@ class EmailManager:
             f"Unable to send email after {self._retry_attempts} attempts"
         ) from last_error
 
-    def _render(self, template_key: str, context: dict[str, Any] | Any) -> tuple[str, str, str]:
+    def _render(
+        self, template_key: str, context: dict[str, Any] | Any
+    ) -> tuple[str, str, str]:
         key = template_key.strip().lower()
         template = self._templates.get(key)
         if template is None:
             available = ", ".join(self.list_template_keys()) or "<none>"
-            raise ValueError(f"Template '{template_key}' is not mounted. Available: {available}")
+            raise ValueError(
+                f"Template '{template_key}' is not mounted. Available: {available}"
+            )
 
         payload = dict(context or {})
         try:

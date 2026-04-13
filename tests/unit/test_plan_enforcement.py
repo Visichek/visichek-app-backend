@@ -2,6 +2,7 @@
 Unit tests for the PlanEnforcementMiddleware logic.
 Tests feature gating, quota checking, and path extraction.
 """
+
 from __future__ import annotations
 
 
@@ -13,7 +14,6 @@ from core.plan_enforcement import (
 
 
 class TestPathExtraction:
-
     def test_extract_visitors(self):
         assert _extract_collection_from_path("/v1/visitors/abc123") == "visitors"
 
@@ -21,7 +21,9 @@ class TestPathExtraction:
         assert _extract_collection_from_path("/v1/appointments") == "appointments"
 
     def test_extract_system_users(self):
-        assert _extract_collection_from_path("/v1/system-users/signup") == "system_users"
+        assert (
+            _extract_collection_from_path("/v1/system-users/signup") == "system_users"
+        )
 
     def test_extract_dashboard(self):
         assert _extract_collection_from_path("/v1/dashboard/stats") == "dashboard"
@@ -43,7 +45,6 @@ class TestPathExtraction:
 
 
 class TestExemptPaths:
-
     def test_root_is_exempt(self):
         assert _is_exempt_path("/") is True
 
@@ -72,7 +73,6 @@ class TestExemptPaths:
 
 
 class TestFeatureAccess:
-
     def test_no_rules_allows_all(self):
         allowed, reason = _check_feature_access("/v1/visitors", "POST", [])
         assert allowed is True
@@ -80,7 +80,11 @@ class TestFeatureAccess:
 
     def test_enabled_rule_allows(self):
         rules = [
-            {"endpoint_pattern": "/v1/visitors/*", "methods": ["GET", "POST"], "enabled": True},
+            {
+                "endpoint_pattern": "/v1/visitors/*",
+                "methods": ["GET", "POST"],
+                "enabled": True,
+            },
         ]
         allowed, reason = _check_feature_access("/v1/visitors/abc", "GET", rules)
         assert allowed is True
@@ -100,7 +104,11 @@ class TestFeatureAccess:
 
     def test_method_mismatch_allows(self):
         rules = [
-            {"endpoint_pattern": "/v1/visitors/*", "methods": ["POST"], "enabled": False},
+            {
+                "endpoint_pattern": "/v1/visitors/*",
+                "methods": ["POST"],
+                "enabled": False,
+            },
         ]
         # GET is not in the disabled methods list
         allowed, reason = _check_feature_access("/v1/visitors/abc", "GET", rules)
@@ -116,7 +124,12 @@ class TestFeatureAccess:
 
     def test_multiple_rules_first_match_wins(self):
         rules = [
-            {"endpoint_pattern": "/v1/visitors/*", "methods": ["GET"], "enabled": False, "description": "Blocked"},
+            {
+                "endpoint_pattern": "/v1/visitors/*",
+                "methods": ["GET"],
+                "enabled": False,
+                "description": "Blocked",
+            },
             {"endpoint_pattern": "/v1/*", "methods": ["GET"], "enabled": True},
         ]
         # First matching rule blocks
@@ -125,22 +138,28 @@ class TestFeatureAccess:
 
     def test_wildcard_pattern(self):
         rules = [
-            {"endpoint_pattern": "/v1/*", "methods": ["DELETE"], "enabled": False, "description": "No deletes"},
+            {
+                "endpoint_pattern": "/v1/*",
+                "methods": ["DELETE"],
+                "enabled": False,
+                "description": "No deletes",
+            },
         ]
         allowed, reason = _check_feature_access("/v1/departments/abc", "DELETE", rules)
         assert allowed is False
 
 
 class TestPlanCacheMerge:
-
     def test_merge_feature_rules_no_overrides(self):
         from services.plan_cache_service import _merge_feature_rules
+
         rules = [{"endpoint_pattern": "/v1/visitors/*", "enabled": True}]
         merged = _merge_feature_rules(rules, None)
         assert merged == rules
 
     def test_merge_feature_rules_with_override(self):
         from services.plan_cache_service import _merge_feature_rules
+
         rules = [{"endpoint_pattern": "/v1/audit/*", "enabled": False}]
         overrides = {"/v1/audit/*": {"enabled": True}}
         merged = _merge_feature_rules(rules, overrides)
@@ -148,12 +167,14 @@ class TestPlanCacheMerge:
 
     def test_merge_crud_limits_no_overrides(self):
         from services.plan_cache_service import _merge_crud_limits
+
         limits = [{"collection": "visitors", "max_create": 100}]
         merged = _merge_crud_limits(limits, None)
         assert merged == limits
 
     def test_merge_crud_limits_with_override(self):
         from services.plan_cache_service import _merge_crud_limits
+
         limits = [{"collection": "visitors", "max_create": 100}]
         overrides = {"visitors": {"max_create": 999}}
         merged = _merge_crud_limits(limits, overrides)
@@ -161,12 +182,14 @@ class TestPlanCacheMerge:
 
     def test_merge_tenant_caps_no_overrides(self):
         from services.plan_cache_service import _merge_tenant_caps
+
         caps = {"max_system_users": 10}
         merged = _merge_tenant_caps(caps, None)
         assert merged == caps
 
     def test_merge_tenant_caps_with_override(self):
         from services.plan_cache_service import _merge_tenant_caps
+
         caps = {"max_system_users": 10, "max_departments": 5}
         overrides = {"max_system_users": 50}
         merged = _merge_tenant_caps(caps, overrides)

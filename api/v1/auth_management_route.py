@@ -58,9 +58,12 @@ async def _get_email(principal: AuthPrincipal) -> str:
     """Resolve the user's email from the database."""
     from core.database import db
     from bson import ObjectId
+
     user_type = _user_type(principal)
     collection = "admins" if user_type == "admin" else "system_users"
-    doc = await db[collection].find_one({"_id": ObjectId(principal.user_id)}, {"email": 1})
+    doc = await db[collection].find_one(
+        {"_id": ObjectId(principal.user_id)}, {"email": 1}
+    )
     return doc["email"] if doc else "user@visichek.com"
 
 
@@ -85,8 +88,16 @@ async def _get_email(principal: AuthPrincipal) -> str:
         422: "Validation error — new password doesn't meet policy or was recently used",
     },
     error_examples={
-        401: {"success": False, "message": "Current password is incorrect", "code": "AUTH_INVALID_CREDENTIALS"},
-        422: {"success": False, "message": "Password does not meet strength requirements", "code": "VALIDATION_FAILED"},
+        401: {
+            "success": False,
+            "message": "Current password is incorrect",
+            "code": "AUTH_INVALID_CREDENTIALS",
+        },
+        422: {
+            "success": False,
+            "message": "Password does not meet strength requirements",
+            "code": "VALIDATION_FAILED",
+        },
     },
 )
 async def change_password(
@@ -95,9 +106,13 @@ async def change_password(
 ):
     """Change password for the authenticated user."""
     if _user_type(principal) == "admin":
-        await change_admin_password(principal.user_id, data.current_password, data.new_password)
+        await change_admin_password(
+            principal.user_id, data.current_password, data.new_password
+        )
     else:
-        await change_system_user_password(principal.user_id, data.current_password, data.new_password)
+        await change_system_user_password(
+            principal.user_id, data.current_password, data.new_password
+        )
     return {"changed": True}
 
 
@@ -164,7 +179,9 @@ async def verify_2fa(
 ):
     """Verify TOTP code to activate 2FA. Returns backup codes."""
     user_type = _user_type(principal)
-    backup_codes = await verify_two_factor_setup(principal.user_id, user_type, data.code)
+    backup_codes = await verify_two_factor_setup(
+        principal.user_id, user_type, data.code
+    )
     return {"enabled": True, "backup_codes": backup_codes}
 
 
@@ -207,7 +224,9 @@ async def regenerate_backup(
     """Regenerate backup codes with password confirmation."""
     user_type = _user_type(principal)
     codes = await regenerate_backup_codes_with_password(
-        principal.user_id, user_type, data.password,
+        principal.user_id,
+        user_type,
+        data.password,
     )
     return {"backup_codes": codes}
 
@@ -240,8 +259,16 @@ async def regenerate_backup(
         422: "Validation error — missing refresh token",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired refresh token", "code": "AUTH_INVALID_TOKEN"},
-        404: {"success": False, "message": "Invalid refresh token", "code": "RESOURCE_NOT_FOUND"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired refresh token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        404: {
+            "success": False,
+            "message": "Invalid refresh token",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def refresh_tokens(
@@ -278,8 +305,12 @@ async def refresh_tokens(
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
         content=jsonable_encoder(
-            success_payload(result, message="Tokens refreshed successfully", request_id=request_id),
+            success_payload(
+                result, message="Tokens refreshed successfully", request_id=request_id
+            ),
         ),
     )
-    set_auth_cookies(response, result.access_token, result.refresh_token, is_production=is_prod)
+    set_auth_cookies(
+        response, result.access_token, result.refresh_token, is_production=is_prod
+    )
     return response

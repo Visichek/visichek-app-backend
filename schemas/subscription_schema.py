@@ -39,7 +39,9 @@ class SubscriptionBase(BaseModel):
     # Plan overrides: tenant-specific feature/limit adjustments
     # These MERGE with the plan defaults (override wins)
     feature_overrides: Optional[dict] = None  # endpoint_pattern -> {enabled: bool}
-    crud_limit_overrides: Optional[dict] = None  # collection -> {max_create, max_update, ...}
+    crud_limit_overrides: Optional[dict] = (
+        None  # collection -> {max_create, max_update, ...}
+    )
     retrieval_quota_overrides: Optional[dict] = None  # collection -> {max_reads}
     tenant_cap_overrides: Optional[dict] = None  # field -> value
 
@@ -116,6 +118,7 @@ class SubscriptionOut(SubscriptionBase):
 
 class SubscriptionTenantInfo(BaseModel):
     """Tenant snapshot embedded in subscription responses."""
+
     id: str
     company_name: str
     is_active: bool
@@ -128,6 +131,7 @@ class SubscriptionTenantInfo(BaseModel):
 
 class SubscriptionPlanInfo(BaseModel):
     """Plan snapshot embedded in subscription responses."""
+
     id: str
     name: str
     display_name: str
@@ -144,5 +148,6 @@ class SubscriptionPlanInfo(BaseModel):
 
 class SubscriptionWithDetailsOut(SubscriptionOut):
     """SubscriptionOut enriched with full tenant and plan info."""
+
     tenant: Optional[SubscriptionTenantInfo] = None
     plan: Optional[SubscriptionPlanInfo] = None

@@ -1,4 +1,5 @@
 """Tests for static role permission configuration."""
+
 from __future__ import annotations
 
 import pytest
@@ -41,7 +42,9 @@ class TestRolePermissionsConfig:
     @pytest.mark.parametrize("role", ALL_ROLE_NAMES)
     def test_permissions_are_permission_instances(self, role: str):
         for p in DEFAULT_ROLE_PERMISSIONS[role]:
-            assert isinstance(p, Permission), f"Role {role} has non-Permission item: {p}"
+            assert isinstance(p, Permission), (
+                f"Role {role} has non-Permission item: {p}"
+            )
 
     @pytest.mark.parametrize("role", ALL_ROLE_NAMES)
     def test_permissions_have_required_fields(self, role: str):
@@ -54,7 +57,9 @@ class TestRolePermissionsConfig:
     @pytest.mark.parametrize("role", ALL_ROLE_NAMES)
     def test_permission_keys_are_unique(self, role: str):
         keys = [p.key for p in DEFAULT_ROLE_PERMISSIONS[role]]
-        assert len(keys) == len(set(keys)), f"Duplicate keys in role {role}: {[k for k in keys if keys.count(k) > 1]}"
+        assert len(keys) == len(set(keys)), (
+            f"Duplicate keys in role {role}: {[k for k in keys if keys.count(k) > 1]}"
+        )
 
 
 class TestGetDefaultPermissionsForRole:
@@ -104,7 +109,16 @@ class TestRolePermissionScoping:
         assert "/v1/branches" in paths
 
     def test_all_tenant_roles_can_view_own_profile(self):
-        tenant_roles = ["super_admin", "dept_admin", "receptionist", "auditor", "security_officer", "dpo"]
+        tenant_roles = [
+            "super_admin",
+            "dept_admin",
+            "receptionist",
+            "auditor",
+            "security_officer",
+            "dpo",
+        ]
         for role in tenant_roles:
             paths = self._paths_for_role(role)
-            assert "/v1/system-users/me" in paths, f"Role {role} cannot view own profile"
+            assert "/v1/system-users/me" in paths, (
+                f"Role {role} cannot view own profile"
+            )

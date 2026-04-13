@@ -47,6 +47,7 @@ class DepartmentBriefSummary(BaseModel):
 
 class UserBriefSummary(BaseModel):
     """Brief snapshot for any user — application admin or system user."""
+
     id: str
     full_name: Optional[str] = None
     email: Optional[str] = None

@@ -118,7 +118,11 @@ async def get_tenant_usage_summary(
             max_key = f"max_{op}"
             limit = cl.get(max_key)
             current = await get_current_count(
-                tenant_id, subscription_id, collection, op, period,
+                tenant_id,
+                subscription_id,
+                collection,
+                op,
+                period,
             )
             crud_usage[collection][op] = {"used": current, "limit": limit}
 
@@ -127,7 +131,11 @@ async def get_tenant_usage_summary(
         collection = rq["collection"]
         period = get_period_key(QuotaResetInterval(rq.get("reset_interval", "daily")))
         current = await get_current_count(
-            tenant_id, subscription_id, collection, "read", period,
+            tenant_id,
+            subscription_id,
+            collection,
+            "read",
+            period,
         )
         retrieval_usage[collection] = {
             "read": {"used": current, "limit": rq.get("max_reads")}

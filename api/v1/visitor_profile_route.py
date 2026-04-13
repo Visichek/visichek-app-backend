@@ -96,7 +96,9 @@ async def search_visitor_profiles_endpoint(
 async def list_visitor_profiles(
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
-    principal: AuthPrincipal = Depends(verify_system_user_token("dept_admin", "super_admin", "auditor")),
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("dept_admin", "super_admin", "auditor")
+    ),
 ) -> list[VisitorProfileWithSummaryOut]:
     tenant_id = principal.tenant_id or ""
     return await retrieve_visitor_profiles_with_summary(
@@ -134,7 +136,11 @@ async def list_visitor_profiles(
         404: "Visitor profile not found",
     },
     error_examples={
-        404: {"success": False, "message": "Visitor profile not found", "code": "RESOURCE_NOT_FOUND"},
+        404: {
+            "success": False,
+            "message": "Visitor profile not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def get_visitor_profile_endpoint(
@@ -177,13 +183,19 @@ async def get_visitor_profile_endpoint(
         404: "Visitor profile not found",
     },
     error_examples={
-        404: {"success": False, "message": "Visitor profile not found", "code": "RESOURCE_NOT_FOUND"},
+        404: {
+            "success": False,
+            "message": "Visitor profile not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def update_visitor_profile_endpoint(
     profile_id: str,
     profile_data: VisitorProfileUpdate,
-    principal: AuthPrincipal = Depends(verify_system_user_token("receptionist", "dept_admin", "super_admin")),
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("receptionist", "dept_admin", "super_admin")
+    ),
 ):
     tenant_id = principal.tenant_id or ""
     return await update_profile_by_id(

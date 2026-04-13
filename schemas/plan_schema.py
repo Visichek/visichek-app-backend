@@ -28,6 +28,7 @@ class QuotaResetInterval(str, Enum):
 
 class FeatureRule(BaseModel):
     """Controls access to a specific endpoint/feature."""
+
     endpoint_pattern: str  # e.g. "/v1/visitors/*" or "/v1/appointments"
     methods: List[str] = Field(default_factory=lambda: ["GET", "POST", "PUT", "DELETE"])
     enabled: bool = True
@@ -36,6 +37,7 @@ class FeatureRule(BaseModel):
 
 class CrudLimit(BaseModel):
     """Limits on create/update/delete operations for a resource collection."""
+
     collection: str  # e.g. "visitors", "appointments", "departments"
     max_create: Optional[int] = None  # None = unlimited
     max_update: Optional[int] = None
@@ -46,6 +48,7 @@ class CrudLimit(BaseModel):
 
 class RetrievalQuota(BaseModel):
     """Limits on how many read/list operations per interval."""
+
     collection: str  # e.g. "visitors", "dashboard", "audit_logs"
     max_reads: Optional[int] = None  # None = unlimited
     reset_interval: QuotaResetInterval = QuotaResetInterval.DAILY
@@ -54,6 +57,7 @@ class RetrievalQuota(BaseModel):
 
 class StorageLimit(BaseModel):
     """Storage limits for the tenant."""
+
     max_documents: Optional[int] = None  # total document uploads
     max_storage_mb: Optional[int] = None  # total storage in MB
     max_file_size_mb: int = 10  # per-file size cap
@@ -61,6 +65,7 @@ class StorageLimit(BaseModel):
 
 class TenantCapLimit(BaseModel):
     """Hard caps on entity counts within the tenant."""
+
     max_system_users: Optional[int] = None
     max_departments: Optional[int] = None
     max_branches: Optional[int] = None
@@ -120,7 +125,9 @@ class PlanCreate(PlanBase):
             raise ValueError("base_price_yearly must be non-negative")
         # Ensure plan name is URL-safe slug
         if not self.name.replace("-", "").replace("_", "").isalnum():
-            raise ValueError("Plan name must be alphanumeric with hyphens/underscores only")
+            raise ValueError(
+                "Plan name must be alphanumeric with hyphens/underscores only"
+            )
         return self
 
 

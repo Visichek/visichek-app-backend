@@ -30,7 +30,9 @@ async def get_plan(filter_dict: dict) -> Optional[PlanOut]:
         )
 
 
-async def get_plans(filter_dict: dict = {}, start: int = 0, stop: int = 100) -> List[PlanOut]:
+async def get_plans(
+    filter_dict: dict = {}, start: int = 0, stop: int = 100
+) -> List[PlanOut]:
     try:
         if filter_dict is None:
             filter_dict = {}
@@ -47,7 +49,9 @@ async def get_plans(filter_dict: dict = {}, start: int = 0, stop: int = 100) -> 
 
 
 async def update_plan(filter_dict: dict, plan_data: PlanUpdate) -> Optional[PlanOut]:
-    update_dict = {k: v for k, v in plan_data.model_dump(mode="json").items() if v is not None}
+    update_dict = {
+        k: v for k, v in plan_data.model_dump(mode="json").items() if v is not None
+    }
     if not update_dict:
         return await get_plan(filter_dict)
     result = await db[COLLECTION].find_one_and_update(

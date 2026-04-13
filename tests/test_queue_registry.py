@@ -1,6 +1,7 @@
 import pytest
 from core.queue.tasks import execute_registered_task, register_task
 
+
 @pytest.mark.asyncio
 async def test_queue_registry_executes_task():
     async def _sample_task(value: int) -> int:

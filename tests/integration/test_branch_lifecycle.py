@@ -7,6 +7,7 @@ Requires a running MongoDB + Redis instance.
 Run with:
     pytest tests/integration/test_branch_lifecycle.py -v
 """
+
 from __future__ import annotations
 
 import time
@@ -42,7 +43,8 @@ async def client(mongo_db: AsyncIOMotorDatabase):
     app.dependency_overrides[_super_admin_dep] = lambda: _mock_super_admin()
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"  # type: ignore[arg-type]
+        transport=ASGITransport(app=app),  # type: ignore[arg-type]
+        base_url="http://test",
     ) as c:
         yield c
 

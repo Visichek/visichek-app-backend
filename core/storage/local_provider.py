@@ -5,7 +5,12 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from core.storage.provider import DocumentStorageProvider
-from core.storage.types import DocumentMetadata, StorageBackend, StoredDocument, UploadIntent
+from core.storage.types import (
+    DocumentMetadata,
+    StorageBackend,
+    StoredDocument,
+    UploadIntent,
+)
 
 
 class LocalStorageProvider(DocumentStorageProvider):

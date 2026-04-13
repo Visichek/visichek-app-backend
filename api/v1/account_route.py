@@ -31,8 +31,16 @@ router = APIRouter(prefix="/account", tags=["Account"])
         404: "Account not found",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid password", "code": "AUTH_INVALID_CREDENTIALS"},
-        403: {"success": False, "message": "Cannot delete the sole super admin of a tenant", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid password",
+            "code": "AUTH_INVALID_CREDENTIALS",
+        },
+        403: {
+            "success": False,
+            "message": "Cannot delete the sole super admin of a tenant",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def delete_account(

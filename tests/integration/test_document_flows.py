@@ -7,6 +7,7 @@ Integration tests for document management endpoints:
 
 Requires: MongoDB on localhost:27017, Redis on localhost:6379
 """
+
 from __future__ import annotations
 
 
@@ -173,9 +174,7 @@ class TestDocumentUploadFlow:
         )
         assert resp.status_code == 422
 
-    async def test_upload_intent_unauthorized(
-        self, integration_client: AsyncClient
-    ):
+    async def test_upload_intent_unauthorized(self, integration_client: AsyncClient):
         resp = await integration_client.post(
             "/v1/documents/upload-intents",
             json={"file_name": "test.pdf", "mime_type": "application/pdf", "size": 100},

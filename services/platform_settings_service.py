@@ -36,7 +36,9 @@ async def update_platform_settings_data(
 
     result = await update_platform_settings(data)
     if not result:
-        raise HTTPException(status_code=500, detail="Failed to update platform settings")
+        raise HTTPException(
+            status_code=500, detail="Failed to update platform settings"
+        )
 
     # Record audit event (fire-and-forget)
     try:

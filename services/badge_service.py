@@ -26,7 +26,9 @@ def generate_badge_pdf(
         from reportlab.lib.units import mm  # type: ignore[import-untyped]
         from reportlab.pdfgen import canvas  # type: ignore[import-untyped]
     except ImportError:
-        raise RuntimeError("reportlab is required for badge generation. Install with: pip install reportlab")
+        raise RuntimeError(
+            "reportlab is required for badge generation. Install with: pip install reportlab"
+        )
 
     page_size = A7 if badge_format == "A7" else A6
     buffer = io.BytesIO()
@@ -66,6 +68,7 @@ def generate_badge_pdf(
     if visitor_photo_bytes:
         try:
             from reportlab.lib.utils import ImageReader
+
             photo_buffer = io.BytesIO(visitor_photo_bytes)
             photo_size = 20 * mm
             c.drawImage(

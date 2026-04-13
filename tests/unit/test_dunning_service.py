@@ -1,6 +1,7 @@
 """
 Unit tests for dunning service with mocked repositories and providers.
 """
+
 from __future__ import annotations
 
 import time
@@ -89,7 +90,9 @@ class TestDunningService:
         assert result["failed_count"] == 0
 
     @patch("services.dunning_service.get_settings")
-    @patch("services.dunning_service.invalidate_tenant_plan_cache", new_callable=AsyncMock)
+    @patch(
+        "services.dunning_service.invalidate_tenant_plan_cache", new_callable=AsyncMock
+    )
     @patch("services.dunning_service.generate_invoice", new_callable=AsyncMock)
     @patch("services.dunning_service.update_subscription", new_callable=AsyncMock)
     @patch("services.dunning_service.get_plan", new_callable=AsyncMock)

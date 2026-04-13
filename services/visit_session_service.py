@@ -15,7 +15,11 @@ from repositories.visit_session_repo import (
     update_visit_session,
     get_visit_sessions,
 )
-from repositories.visitor_profile_repo import get_visitor_profile, update_visitor_profile, increment_visitor_profile_visits
+from repositories.visitor_profile_repo import (
+    get_visitor_profile,
+    update_visitor_profile,
+    increment_visitor_profile_visits,
+)
 from repositories.appointment_repo import get_appointment, update_appointment
 from repositories.privacy_notice_repo import get_active_notice_for_tenant
 from repositories.tenant_repo import get_tenant
@@ -55,10 +59,12 @@ async def check_in_visitor(
     """Phase 1A: Register visitor — create session with status=REGISTERED, no badge yet."""
     # 0. Enforce plan cap on visit sessions created this calendar month
     month_start, month_end = get_month_bounds()
-    month_count = await count_visit_sessions({
-        "tenant_id": tenant_id,
-        "check_in_time": {"$gte": month_start, "$lt": month_end},
-    })
+    month_count = await count_visit_sessions(
+        {
+            "tenant_id": tenant_id,
+            "check_in_time": {"$gte": month_start, "$lt": month_end},
+        }
+    )
     await enforce_entity_cap(
         tenant_id=tenant_id,
         cap_key="max_visitors_per_month",
@@ -81,7 +87,10 @@ async def check_in_visitor(
     )
 
     # 2A. Check tenant-level profiling config and respect profile opt-out preference
-    if hasattr(tenant, 'enable_repeat_visitor_recognition') and tenant.enable_repeat_visitor_recognition is False:
+    if (
+        hasattr(tenant, "enable_repeat_visitor_recognition")
+        and tenant.enable_repeat_visitor_recognition is False
+    ):
         pass
     if profile.profiling_preference == ProfilingPreference.OPTED_OUT:
         pass
@@ -95,16 +104,25 @@ async def check_in_visitor(
         if not ObjectId.is_valid(request.appointment_id):
             raise HTTPException(status_code=400, detail="Invalid appointment ID format")
 
-        appointment = await get_appointment({"_id": ObjectId(request.appointment_id), "tenant_id": tenant_id})
+        appointment = await get_appointment(
+            {"_id": ObjectId(request.appointment_id), "tenant_id": tenant_id}
+        )
         if not appointment:
             raise HTTPException(status_code=404, detail="Appointment not found")
 
         # Check appointment status is scheduled
-        appt_status = appointment.status if isinstance(appointment.status, str) else appointment.status.value
-        if appt_status != AppointmentStatus.SCHEDULED.value and appt_status != "scheduled":
+        appt_status = (
+            appointment.status
+            if isinstance(appointment.status, str)
+            else appointment.status.value
+        )
+        if (
+            appt_status != AppointmentStatus.SCHEDULED.value
+            and appt_status != "scheduled"
+        ):
             raise HTTPException(
                 status_code=400,
-                detail=f"Appointment status must be SCHEDULED, got {appt_status}"
+                detail=f"Appointment status must be SCHEDULED, got {appt_status}",
             )
 
         # Use appointment's host_id and department_id if not provided in request
@@ -117,9 +135,13 @@ async def check_in_visitor(
     # Use appointment's department if request didn't provide one
     dept_id = request.department_id or appointment_department_id
     if not dept_id:
-        raise HTTPException(status_code=400, detail="Missing required field: department_id")
+        raise HTTPException(
+            status_code=400, detail="Missing required field: department_id"
+        )
 
-    department = await get_department({"_id": ObjectId(dept_id), "tenant_id": tenant_id})
+    department = await get_department(
+        {"_id": ObjectId(dept_id), "tenant_id": tenant_id}
+    )
     if not department:
         raise HTTPException(status_code=404, detail="Department not found")
 
@@ -140,7 +162,11 @@ async def check_in_visitor(
     notice_id = notice.id if notice else None
 
     # 5. Determine consent requirements based on tenant lawful basis
-    lawful_basis = LawfulBasis(tenant.lawful_basis) if isinstance(tenant.lawful_basis, str) else tenant.lawful_basis
+    lawful_basis = (
+        LawfulBasis(tenant.lawful_basis)
+        if isinstance(tenant.lawful_basis, str)
+        else tenant.lawful_basis
+    )
     consent_granted = None
     consent_method = None
     consent_timestamp_val = None
@@ -221,13 +247,22 @@ async def confirm_check_in(
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID format")
 
-    session = await get_visit_session({"_id": ObjectId(session_id), "tenant_id": tenant_id})
+    session = await get_visit_session(
+        {"_id": ObjectId(session_id), "tenant_id": tenant_id}
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Visit session not found")
 
     # Ensure status is REGISTERED or PENDING_VERIFICATION
-    current_status = session.status if isinstance(session.status, str) else session.status.value
-    if current_status not in (VisitStatus.REGISTERED.value, VisitStatus.PENDING_VERIFICATION.value, "registered", "pending_verification"):
+    current_status = (
+        session.status if isinstance(session.status, str) else session.status.value
+    )
+    if current_status not in (
+        VisitStatus.REGISTERED.value,
+        VisitStatus.PENDING_VERIFICATION.value,
+        "registered",
+        "pending_verification",
+    ):
         raise HTTPException(
             status_code=400,
             detail=f"Cannot confirm check-in with status: {current_status}. Expected REGISTERED or PENDING_VERIFICATION.",
@@ -250,25 +285,38 @@ async def confirm_check_in(
             {"_id": ObjectId(session_id), "tenant_id": tenant_id},
             VisitSessionUpdate(**patch_fields),
         )
-        session = await get_visit_session({"_id": ObjectId(session_id), "tenant_id": tenant_id})
+        session = await get_visit_session(
+            {"_id": ObjectId(session_id), "tenant_id": tenant_id}
+        )
 
     if session is None:
-        raise HTTPException(status_code=404, detail="Visit session not found after update")
+        raise HTTPException(
+            status_code=404, detail="Visit session not found after update"
+        )
 
     # Validate minimum required fields
     if not session.visitor_name_snapshot:
-        raise HTTPException(status_code=400, detail="Missing required field: visitor_name_snapshot")
+        raise HTTPException(
+            status_code=400, detail="Missing required field: visitor_name_snapshot"
+        )
     if not session.department_id:
-        raise HTTPException(status_code=400, detail="Missing required field: department_id")
+        raise HTTPException(
+            status_code=400, detail="Missing required field: department_id"
+        )
     if not session.host_id and not session.purpose:
-        raise HTTPException(status_code=400, detail="Missing required fields: either host_id or purpose must be provided")
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required fields: either host_id or purpose must be provided",
+        )
 
     # Fetch profile and department for badge generation
     profile = await get_visitor_profile({"_id": ObjectId(session.visitor_profile_id)})
     if not profile:
         raise HTTPException(status_code=404, detail="Visitor profile not found")
 
-    department = await get_department({"_id": ObjectId(session.department_id), "tenant_id": tenant_id})
+    department = await get_department(
+        {"_id": ObjectId(session.department_id), "tenant_id": tenant_id}
+    )
     if not department:
         raise HTTPException(status_code=404, detail="Department not found")
 
@@ -277,8 +325,11 @@ async def confirm_check_in(
     if profile and profile.photo_object_key:
         try:
             from core.storage.manager import DocumentStorageManager
+
             storage_mgr = DocumentStorageManager.get_instance()
-            visitor_photo_bytes = await storage_mgr.provider.download_bytes(profile.photo_object_key)
+            visitor_photo_bytes = await storage_mgr.provider.download_bytes(
+                profile.photo_object_key
+            )
         except Exception:
             pass  # Photo is optional for badge
 
@@ -300,6 +351,7 @@ async def confirm_check_in(
     badge_object_key = None
     try:
         from core.storage.manager import DocumentStorageManager
+
         storage = DocumentStorageManager.get_instance()
         badge_object_key = f"badges/{tenant_id}/{session.id}.pdf"
         storage.provider.upload_bytes(
@@ -309,6 +361,7 @@ async def confirm_check_in(
         )
     except Exception as e:
         import logging
+
         logging.getLogger(__name__).warning("Badge PDF storage failed: %s", e)
         badge_object_key = None
 
@@ -328,7 +381,9 @@ async def confirm_check_in(
     # PHASE 1A: Return session + badge info
     return {
         "session": updated_session,
-        "badge_pdf_base64": __import__("base64").b64encode(badge_pdf_bytes).decode("utf-8"),
+        "badge_pdf_base64": __import__("base64")
+        .b64encode(badge_pdf_bytes)
+        .decode("utf-8"),
         "badge_qr_token": badge_token,
     }
 
@@ -343,12 +398,21 @@ async def deny_visitor(
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID format")
 
-    session = await get_visit_session({"_id": ObjectId(session_id), "tenant_id": tenant_id})
+    session = await get_visit_session(
+        {"_id": ObjectId(session_id), "tenant_id": tenant_id}
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Visit session not found")
 
-    current_status = session.status if isinstance(session.status, str) else session.status.value
-    if current_status not in (VisitStatus.REGISTERED.value, VisitStatus.PENDING_VERIFICATION.value, "registered", "pending_verification"):
+    current_status = (
+        session.status if isinstance(session.status, str) else session.status.value
+    )
+    if current_status not in (
+        VisitStatus.REGISTERED.value,
+        VisitStatus.PENDING_VERIFICATION.value,
+        "registered",
+        "pending_verification",
+    ):
         raise HTTPException(
             status_code=400,
             detail=f"Cannot deny visitor with status: {current_status}. Can only deny REGISTERED or PENDING_VERIFICATION visitors.",
@@ -365,18 +429,27 @@ async def deny_visitor(
     return updated
 
 
-async def retrieve_pending_sessions(tenant_id: str, department_id: Optional[str] = None, start=0, stop=100):
+async def retrieve_pending_sessions(
+    tenant_id: str, department_id: Optional[str] = None, start=0, stop=100
+):
     """Phase 1C: Get sessions with status in (REGISTERED, PENDING_VERIFICATION)."""
     filter_dict: dict = {
         "tenant_id": tenant_id,
-        "status": {"$in": [VisitStatus.REGISTERED.value, VisitStatus.PENDING_VERIFICATION.value]},
+        "status": {
+            "$in": [
+                VisitStatus.REGISTERED.value,
+                VisitStatus.PENDING_VERIFICATION.value,
+            ]
+        },
     }
     if department_id:
         filter_dict["department_id"] = department_id
     return await get_visit_sessions(filter_dict=filter_dict, start=start, stop=stop)
 
 
-async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> VisitSessionOut:
+async def check_out_visitor(
+    request: CheckOutRequest, tenant_id: str
+) -> VisitSessionOut:
     """Check out a visitor by badge QR token or session ID."""
     session = None
 
@@ -384,18 +457,30 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> VisitSe
         # Verify the HMAC-signed token
         session_id = verify_badge_token(request.badge_qr_token)
         if not session_id:
-            raise HTTPException(status_code=400, detail="Invalid or expired badge QR token")
-        session = await get_visit_session({"_id": ObjectId(session_id), "tenant_id": tenant_id})
+            raise HTTPException(
+                status_code=400, detail="Invalid or expired badge QR token"
+            )
+        session = await get_visit_session(
+            {"_id": ObjectId(session_id), "tenant_id": tenant_id}
+        )
     elif request.session_id:
         if not ObjectId.is_valid(request.session_id):
             raise HTTPException(status_code=400, detail="Invalid session ID format")
-        session = await get_visit_session({"_id": ObjectId(request.session_id), "tenant_id": tenant_id})
+        session = await get_visit_session(
+            {"_id": ObjectId(request.session_id), "tenant_id": tenant_id}
+        )
 
     if not session:
         raise HTTPException(status_code=404, detail="Visit session not found")
 
-    if session.status != VisitStatus.CHECKED_IN.value and session.status != "checked_in":
-        raise HTTPException(status_code=400, detail=f"Visitor is not currently checked in (status: {session.status})")
+    if (
+        session.status != VisitStatus.CHECKED_IN.value
+        and session.status != "checked_in"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Visitor is not currently checked in (status: {session.status})",
+        )
 
     updated = await update_visit_session(
         {"_id": ObjectId(session.id)},
@@ -412,16 +497,22 @@ async def retrieve_active_visitors(tenant_id: str, department_id: Optional[str] 
     return await get_active_visitors(tenant_id=tenant_id, department_id=department_id)
 
 
-async def retrieve_visit_session_by_id(session_id: str, tenant_id: str) -> VisitSessionOut:
+async def retrieve_visit_session_by_id(
+    session_id: str, tenant_id: str
+) -> VisitSessionOut:
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID format")
-    result = await get_visit_session({"_id": ObjectId(session_id), "tenant_id": tenant_id})
+    result = await get_visit_session(
+        {"_id": ObjectId(session_id), "tenant_id": tenant_id}
+    )
     if not result:
         raise HTTPException(status_code=404, detail="Visit session not found")
     return result
 
 
-async def retrieve_visit_sessions(tenant_id: str, department_id: Optional[str] = None, start=0, stop=100):
+async def retrieve_visit_sessions(
+    tenant_id: str, department_id: Optional[str] = None, start=0, stop=100
+):
     filter_dict: dict = {"tenant_id": tenant_id}
     if department_id:
         filter_dict["department_id"] = department_id
@@ -476,6 +567,7 @@ async def retrieve_visit_sessions_with_summary(
     tenant_id: str, department_id: Optional[str] = None, start: int = 0, stop: int = 100
 ):
     import asyncio
+
     sessions = await retrieve_visit_sessions(
         tenant_id=tenant_id, department_id=department_id, start=start, stop=stop
     )
@@ -485,7 +577,9 @@ async def retrieve_visit_sessions_with_summary(
 async def retrieve_visit_session_by_id_with_summary(
     session_id: str, tenant_id: str
 ) -> VisitSessionWithSummaryOut:
-    session = await retrieve_visit_session_by_id(session_id=session_id, tenant_id=tenant_id)
+    session = await retrieve_visit_session_by_id(
+        session_id=session_id, tenant_id=tenant_id
+    )
     return await _enrich_visit_session(session)
 
 
@@ -493,6 +587,7 @@ async def verify_id_with_ocr(id_image_object_key: str) -> dict:
     """Run OCR on an ID image and return extracted fields."""
     try:
         from core.ocr.manager import OCRManager
+
         ocr = OCRManager.get_instance()
     except RuntimeError:
         raise HTTPException(status_code=503, detail="OCR service is not configured")
@@ -500,10 +595,13 @@ async def verify_id_with_ocr(id_image_object_key: str) -> dict:
     try:
         # Download image bytes from storage
         from core.storage.manager import DocumentStorageManager
+
         storage = DocumentStorageManager.get_instance()
         image_bytes = await storage.provider.download_bytes(id_image_object_key)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to retrieve ID image: {str(e)}")
+        raise HTTPException(
+            status_code=400, detail=f"Failed to retrieve ID image: {str(e)}"
+        )
 
     try:
         result = await ocr.extract_id(image_bytes)
@@ -528,7 +626,9 @@ async def apply_id_scan_verification(
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID format")
 
-    session = await get_visit_session({"_id": ObjectId(session_id), "tenant_id": tenant_id})
+    session = await get_visit_session(
+        {"_id": ObjectId(session_id), "tenant_id": tenant_id}
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Visit session not found")
 
@@ -559,19 +659,29 @@ async def apply_id_scan_verification(
     # Auto-link OCR vendor as sub-processor (8L)
     try:
         from core.settings import get_settings
-        from repositories.sub_processor_repo import get_sub_processor, create_sub_processor
+        from repositories.sub_processor_repo import (
+            get_sub_processor,
+            create_sub_processor,
+        )
         from schemas.sub_processor_schema import SubProcessorCreate
+
         settings = get_settings()
-        ocr_provider_name = settings.ocr_provider if hasattr(settings, 'ocr_provider') else None
+        ocr_provider_name = (
+            settings.ocr_provider if hasattr(settings, "ocr_provider") else None
+        )
         if ocr_provider_name and ocr_provider_name != "none":
-            existing = await get_sub_processor({"tenant_id": tenant_id, "provider": ocr_provider_name})
+            existing = await get_sub_processor(
+                {"tenant_id": tenant_id, "provider": ocr_provider_name}
+            )
             if not existing:
-                await create_sub_processor(SubProcessorCreate(
-                    tenant_id=tenant_id,
-                    provider=ocr_provider_name,
-                    purpose="Identity document OCR verification",
-                    uses_data_for_training=False,
-                ))
+                await create_sub_processor(
+                    SubProcessorCreate(
+                        tenant_id=tenant_id,
+                        provider=ocr_provider_name,
+                        purpose="Identity document OCR verification",
+                        uses_data_for_training=False,
+                    )
+                )
     except Exception:
         pass  # Non-blocking
 
@@ -587,7 +697,9 @@ async def approve_visitor_by_host(
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID format")
 
-    session = await get_visit_session({"_id": ObjectId(session_id), "tenant_id": tenant_id})
+    session = await get_visit_session(
+        {"_id": ObjectId(session_id), "tenant_id": tenant_id}
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Visit session not found")
 
@@ -618,10 +730,15 @@ async def approve_visitor_by_host(
     return updated
 
 
-async def generate_tenant_registration_qr(tenant_id: str, department_id: str | None = None, branch_id: str | None = None) -> dict:
+async def generate_tenant_registration_qr(
+    tenant_id: str, department_id: str | None = None, branch_id: str | None = None
+) -> dict:
     """Generate a signed registration URL/token for visitor QR-based registration."""
     from services.qr_service import sign_registration_token
-    token = sign_registration_token(tenant_id, department_id=department_id, branch_id=branch_id)
+
+    token = sign_registration_token(
+        tenant_id, department_id=department_id, branch_id=branch_id
+    )
     registration_url = f"/public/register/{tenant_id}"
     return {
         "registration_url": registration_url,
@@ -637,17 +754,24 @@ async def download_badge_pdf(session_id: str, tenant_id: str) -> bytes:
     """Download badge PDF bytes from storage."""
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID format")
-    session = await get_visit_session({"_id": ObjectId(session_id), "tenant_id": tenant_id})
+    session = await get_visit_session(
+        {"_id": ObjectId(session_id), "tenant_id": tenant_id}
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Visit session not found")
     if not session.badge_pdf_object_key:
-        raise HTTPException(status_code=404, detail="Badge PDF not available for this session")
+        raise HTTPException(
+            status_code=404, detail="Badge PDF not available for this session"
+        )
     try:
         from core.storage.manager import DocumentStorageManager
+
         storage = DocumentStorageManager.get_instance()
         return await storage.provider.download_bytes(session.badge_pdf_object_key)
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Failed to retrieve badge PDF: {str(e)}")
+        raise HTTPException(
+            status_code=503, detail=f"Failed to retrieve badge PDF: {str(e)}"
+        )
 
 
 async def resume_draft_registration(
@@ -657,16 +781,20 @@ async def resume_draft_registration(
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID format")
 
-    session = await get_visit_session({"_id": ObjectId(session_id), "tenant_id": tenant_id})
+    session = await get_visit_session(
+        {"_id": ObjectId(session_id), "tenant_id": tenant_id}
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Visit session not found")
 
     # Ensure session is in REGISTERED status (draft)
-    current_status = session.status if isinstance(session.status, str) else session.status.value
+    current_status = (
+        session.status if isinstance(session.status, str) else session.status.value
+    )
     if current_status not in (VisitStatus.REGISTERED.value, "registered"):
         raise HTTPException(
             status_code=400,
-            detail=f"Can only update draft sessions (status: REGISTERED). Current status: {current_status}"
+            detail=f"Can only update draft sessions (status: REGISTERED). Current status: {current_status}",
         )
 
     # Update the session with provided fields

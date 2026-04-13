@@ -58,6 +58,7 @@ from schemas.summary_schema import (  # noqa: E402
 
 class AppointmentWithSummaryOut(AppointmentOut):
     """AppointmentOut enriched with snapshots of every entity it references."""
+
     tenant_summary: Optional[TenantBriefSummary] = None
     department_summary: Optional[DepartmentBriefSummary] = None
     host_summary: Optional[UserBriefSummary] = None

@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 7860
 
 # Default command for web (can be overridden by Render)
-CMD ["gunicorn", "-w", "20", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:7860", "--timeout", "120", "--graceful-timeout", "30", "main:app"]
+CMD ["gunicorn", "-w", "20", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:7861", "--timeout", "120", "--graceful-timeout", "30", "main:app"]

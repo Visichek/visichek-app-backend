@@ -62,7 +62,11 @@ class DocumentOut(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def convert_objectid(cls, values):
-        if isinstance(values, dict) and "_id" in values and isinstance(values["_id"], ObjectId):
+        if (
+            isinstance(values, dict)
+            and "_id" in values
+            and isinstance(values["_id"], ObjectId)
+        ):
             values["_id"] = str(values["_id"])
         return values
 
@@ -75,4 +79,5 @@ from schemas.summary_schema import UserBriefSummary  # noqa: E402
 
 class DocumentWithSummaryOut(DocumentOut):
     """DocumentOut enriched with the owning user's snapshot."""
+
     owner_summary: UserBriefSummary | None = None

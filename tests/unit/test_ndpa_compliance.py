@@ -7,6 +7,7 @@ Tests:
 - Consent rejection blocks registration
 - Incident auto-deadline
 """
+
 from __future__ import annotations
 
 import pytest
@@ -36,9 +37,7 @@ MOCK_DPO_PRINCIPAL = AuthPrincipal(
 
 
 def _make_visit_session_out(
-    id: str = "session-001",
-    department_id: str = "dept-001",
-    **kwargs
+    id: str = "session-001", department_id: str = "dept-001", **kwargs
 ) -> dict:
     """Factory function for visit session."""
     return {
@@ -78,7 +77,7 @@ def _make_visit_session_out(
         "check_out_time": None,
         "date_created": 1712532000,
         "visit_duration": None,
-        **kwargs
+        **kwargs,
     }
 
 
@@ -86,7 +85,7 @@ def _make_visitor_profile_out(
     id: str = "visitor-001",
     profiling_preference: ProfilingPreference = ProfilingPreference.ALLOWED,
     visit_count: int = 1,
-    **kwargs
+    **kwargs,
 ) -> dict:
     """Factory function for visitor profile."""
     return {
@@ -108,7 +107,7 @@ def _make_visitor_profile_out(
         "profiling_preference": profiling_preference,
         "date_created": 1712532000,
         "last_updated": 1712532000,
-        **kwargs
+        **kwargs,
     }
 
 
@@ -142,7 +141,9 @@ class TestNDPACompliance:
             tenant_id="tenant-001",
         )
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: sales_dept_admin
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            sales_dept_admin
+        )
 
         session_sales = _make_visit_session_out(
             id="session-001",
@@ -150,7 +151,10 @@ class TestNDPACompliance:
             visitor_name_snapshot="John Doe",
         )
 
-        with patch("services.visit_session_service.retrieve_visit_sessions", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.visit_session_service.retrieve_visit_sessions",
+            new_callable=AsyncMock,
+        ) as mock_list:
             # Returns only sessions from the admin's department
             mock_list.return_value = [session_sales]
 
@@ -168,7 +172,9 @@ class TestNDPACompliance:
             assert data["data"][0]["department_id"] == "dept-sales"
 
     @pytest.mark.asyncio
-    async def test_dept_admin_scoping_blocks_other_departments(self, cleanup_dependency_overrides):
+    async def test_dept_admin_scoping_blocks_other_departments(
+        self, cleanup_dependency_overrides
+    ):
         """
         8F: dept_admin requesting data from other departments gets 403.
 
@@ -185,10 +191,17 @@ class TestNDPACompliance:
             tenant_id="tenant-001",
         )
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: sales_dept_admin
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            sales_dept_admin
+        )
 
-        with patch("services.visit_session_service.retrieve_visit_sessions", new_callable=AsyncMock) as mock_list:
-            mock_list.side_effect = PermissionError("Access denied to different department")
+        with patch(
+            "services.visit_session_service.retrieve_visit_sessions",
+            new_callable=AsyncMock,
+        ) as mock_list:
+            mock_list.side_effect = PermissionError(
+                "Access denied to different department"
+            )
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -211,7 +224,9 @@ class TestNDPACompliance:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_DEPT_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_DEPT_ADMIN_PRINCIPAL
+        )
 
         _make_visitor_profile_out(
             id="visitor-opted-out",
@@ -219,7 +234,9 @@ class TestNDPACompliance:
             visit_count=5,
         )
 
-        with patch("services.visit_session_service.check_in_visitor", new_callable=AsyncMock) as mock_checkin:
+        with patch(
+            "services.visit_session_service.check_in_visitor", new_callable=AsyncMock
+        ) as mock_checkin:
             # Return new session without loading historical data
             session = _make_visit_session_out(status="registered")
             mock_checkin.return_value = session
@@ -247,7 +264,9 @@ class TestNDPACompliance:
             assert data["data"]["status"] == "registered"
 
     @pytest.mark.asyncio
-    async def test_consent_rejection_blocks_registration(self, cleanup_dependency_overrides):
+    async def test_consent_rejection_blocks_registration(
+        self, cleanup_dependency_overrides
+    ):
         """
         8A: consent_granted=false blocks registration when lawful_basis=consent.
 
@@ -255,7 +274,10 @@ class TestNDPACompliance:
         explicitly grant consent to register. If they reject consent,
         registration should fail.
         """
-        with patch("services.visit_session_service.resume_draft_registration", new_callable=AsyncMock) as mock_reg:
+        with patch(
+            "services.visit_session_service.resume_draft_registration",
+            new_callable=AsyncMock,
+        ) as mock_reg:
             mock_reg.side_effect = ValueError(
                 "Consent is required. Cannot proceed without consent."
             )
@@ -289,7 +311,9 @@ class TestNDPACompliance:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_DPO_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_DPO_PRINCIPAL
+        )
 
         now = 1712532000
         expected_deadline = now + (72 * 3600)  # 72 hours
@@ -306,7 +330,9 @@ class TestNDPACompliance:
             "reported_at": None,
         }
 
-        with patch("services.incident_service.create_incident", new_callable=AsyncMock) as mock_create:
+        with patch(
+            "services.incident_service.create_incident", new_callable=AsyncMock
+        ) as mock_create:
             mock_create.return_value = incident_out
 
             async with AsyncClient(
@@ -338,7 +364,9 @@ class TestNDPACompliance:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_DPO_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_DPO_PRINCIPAL
+        )
 
         now = 1712532000
         seventy_two_hours_seconds = 72 * 60 * 60  # 259200 seconds
@@ -356,7 +384,9 @@ class TestNDPACompliance:
             "reported_at": None,
         }
 
-        with patch("services.incident_service.create_incident", new_callable=AsyncMock) as mock_create:
+        with patch(
+            "services.incident_service.create_incident", new_callable=AsyncMock
+        ) as mock_create:
             mock_create.return_value = incident_out
 
             async with AsyncClient(
@@ -388,7 +418,9 @@ class TestNDPACompliance:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_DPO_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_DPO_PRINCIPAL
+        )
 
         incident_out = {
             "id": "incident-003",
@@ -402,7 +434,9 @@ class TestNDPACompliance:
             "reported_at": None,
         }
 
-        with patch("services.incident_service.create_incident", new_callable=AsyncMock) as mock_create:
+        with patch(
+            "services.incident_service.create_incident", new_callable=AsyncMock
+        ) as mock_create:
             mock_create.return_value = incident_out
 
             async with AsyncClient(

@@ -56,7 +56,9 @@ class DiscountCreate(DiscountBase):
 
     @model_validator(mode="after")
     def validate_on_create(self):
-        if self.discount_type == DiscountType.PERCENTAGE and (self.value < 0 or self.value > 100):
+        if self.discount_type == DiscountType.PERCENTAGE and (
+            self.value < 0 or self.value > 100
+        ):
             raise ValueError("Percentage discount must be between 0 and 100")
         if self.discount_type == DiscountType.FIXED and self.value < 0:
             raise ValueError("Fixed discount value must be non-negative")
@@ -64,7 +66,9 @@ class DiscountCreate(DiscountBase):
             raise ValueError("Tenant-scoped discount requires target_tenant_id")
         # Code must be uppercase alphanumeric + underscores
         if not self.code.replace("_", "").replace("-", "").isalnum():
-            raise ValueError("Discount code must be alphanumeric with underscores/hyphens")
+            raise ValueError(
+                "Discount code must be alphanumeric with underscores/hyphens"
+            )
         return self
 
 

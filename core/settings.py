@@ -95,10 +95,15 @@ def get_settings() -> Settings:
         email_from_email=os.getenv("EMAIL_FROM_EMAIL"),
         email_sender_name=os.getenv("EMAIL_SENDER_NAME", "FasterAPI"),
         email_retry_attempts=int(os.getenv("EMAIL_RETRY_ATTEMPTS", "3")),
-        email_retry_backoff_seconds=float(os.getenv("EMAIL_RETRY_BACKOFF_SECONDS", "1.0")),
-        email_queue_enabled=os.getenv("EMAIL_QUEUE_ENABLED", "true").lower() in {"1", "true", "yes"},
+        email_retry_backoff_seconds=float(
+            os.getenv("EMAIL_RETRY_BACKOFF_SECONDS", "1.0")
+        ),
+        email_queue_enabled=os.getenv("EMAIL_QUEUE_ENABLED", "true").lower()
+        in {"1", "true", "yes"},
         cors_origins=_split_csv(os.getenv("CORS_ORIGINS")),
-        debug_include_error_details=os.getenv("DEBUG_INCLUDE_ERROR_DETAILS", "false").lower()
+        debug_include_error_details=os.getenv(
+            "DEBUG_INCLUDE_ERROR_DETAILS", "false"
+        ).lower()
         in {"1", "true", "yes"},
         redis_url=default_redis,
         s3_bucket_name=os.getenv("S3_BUCKET_NAME"),
@@ -106,7 +111,9 @@ def get_settings() -> Settings:
         s3_endpoint_url=os.getenv("S3_ENDPOINT_URL"),
         storage_backend=os.getenv("STORAGE_BACKEND", "local").lower(),
         storage_local_root=os.getenv("STORAGE_LOCAL_ROOT", "uploads"),
-        payment_default_provider=os.getenv("PAYMENT_DEFAULT_PROVIDER", "flutterwave").lower(),
+        payment_default_provider=os.getenv(
+            "PAYMENT_DEFAULT_PROVIDER", "flutterwave"
+        ).lower(),
         stripe_secret_key=os.getenv("STRIPE_SECRET_KEY"),
         stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET"),
         flutterwave_secret_key=os.getenv("FLUTTERWAVE_SECRET_KEY"),
@@ -116,14 +123,21 @@ def get_settings() -> Settings:
         ocr_api_key=os.getenv("OCR_API_KEY"),
         ocr_api_url=os.getenv("OCR_API_URL"),
         qr_signing_secret=os.getenv("QR_SIGNING_SECRET", ""),
-        retention_check_interval_hours=int(os.getenv("RETENTION_CHECK_INTERVAL_HOURS", "24")),
+        retention_check_interval_hours=int(
+            os.getenv("RETENTION_CHECK_INTERVAL_HOURS", "24")
+        ),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         max_dunning_attempts=int(os.getenv("MAX_DUNNING_ATTEMPTS", "5")),
-        dunning_retry_days=_parse_int_list(os.getenv("DUNNING_RETRY_DAYS", "0,3,7,14,21")),
-        backup_enabled=os.getenv("BACKUP_ENABLED", "false").lower() in {"1", "true", "yes"},
+        dunning_retry_days=_parse_int_list(
+            os.getenv("DUNNING_RETRY_DAYS", "0,3,7,14,21")
+        ),
+        backup_enabled=os.getenv("BACKUP_ENABLED", "false").lower()
+        in {"1", "true", "yes"},
         backup_s3_bucket=os.getenv("BACKUP_S3_BUCKET"),
         backup_retention_days=int(os.getenv("BACKUP_RETENTION_DAYS", "30")),
-        session_inactivity_timeout_minutes=int(os.getenv("SESSION_INACTIVITY_TIMEOUT_MINUTES", "15")),
+        session_inactivity_timeout_minutes=int(
+            os.getenv("SESSION_INACTIVITY_TIMEOUT_MINUTES", "15")
+        ),
         otp_dev_code=os.getenv("OTP_DEV_CODE", "123456"),
         otp_ttl_seconds=int(os.getenv("OTP_TTL_SECONDS", "300")),
         otp_max_attempts=int(os.getenv("OTP_MAX_ATTEMPTS", "5")),

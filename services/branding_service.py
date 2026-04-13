@@ -10,7 +10,12 @@ from repositories.branding_repo import (
     update_branding,
     delete_branding,
 )
-from schemas.branding_schema import BrandingCreate, BrandingUpdate, BrandingOut, BrandingPublicOut
+from schemas.branding_schema import (
+    BrandingCreate,
+    BrandingUpdate,
+    BrandingOut,
+    BrandingPublicOut,
+)
 from services.audit_service import record_audit_event
 
 
@@ -23,9 +28,13 @@ async def _resolve_logo_urls(branding: BrandingOut) -> BrandingOut:
         provider = manager.provider
 
         if branding.logo_object_key:
-            branding.logo_url = provider.download_url(object_key=branding.logo_object_key)
+            branding.logo_url = provider.download_url(
+                object_key=branding.logo_object_key
+            )
         if branding.favicon_object_key:
-            branding.favicon_url = provider.download_url(object_key=branding.favicon_object_key)
+            branding.favicon_url = provider.download_url(
+                object_key=branding.favicon_object_key
+            )
     except Exception:
         # If storage is not configured, return branding without URLs
         pass
@@ -100,7 +109,9 @@ async def upsert_branding(tenant_id: str, branding_data: BrandingUpdate) -> Bran
         return await _resolve_logo_urls(new_branding)
 
 
-async def retrieve_public_branding_by_tenant(tenant_id: str) -> Optional[BrandingPublicOut]:
+async def retrieve_public_branding_by_tenant(
+    tenant_id: str,
+) -> Optional[BrandingPublicOut]:
     """Get public-facing branding for a tenant (login screen, unauthenticated).
 
     Returns only the fields needed for UI rendering — no internal object keys,
@@ -146,7 +157,9 @@ async def remove_branding(tenant_id: str) -> None:
 
     result = await delete_branding({"tenant_id": tenant_id})
     if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Branding not found for this tenant")
+        raise HTTPException(
+            status_code=404, detail="Branding not found for this tenant"
+        )
 
     # Record audit event (fire-and-forget)
     try:

@@ -33,6 +33,7 @@ async def get_sessions(filter_dict: dict) -> List[SessionOut]:
 
 async def update_session_activity(session_id: str) -> None:
     import time
+
     await db[COLLECTION].update_one(
         {"_id": ObjectId(session_id)},
         {"$set": {"last_active_at": int(time.time())}},

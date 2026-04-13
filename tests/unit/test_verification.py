@@ -7,6 +7,7 @@ Tests:
 - Host approval sets VERIFIED status
 - Host approval validates tenant
 """
+
 from __future__ import annotations
 
 import pytest
@@ -40,7 +41,7 @@ def _make_visit_session_out(
     verification_status: VerificationStatus = VerificationStatus.UNVERIFIED,
     verified_by: str | None = None,
     verification_method: VerificationMethod | None = None,
-    **kwargs
+    **kwargs,
 ) -> dict:
     """Factory function for visit session."""
     return {
@@ -80,14 +81,11 @@ def _make_visit_session_out(
         "check_out_time": None,
         "date_created": 1712532000,
         "visit_duration": None,
-        **kwargs
+        **kwargs,
     }
 
 
-def _make_visitor_profile_out(
-    id: str = "visitor-001",
-    **kwargs
-) -> dict:
+def _make_visitor_profile_out(id: str = "visitor-001", **kwargs) -> dict:
     """Factory function for visitor profile."""
     return {
         "id": id,
@@ -108,7 +106,7 @@ def _make_visitor_profile_out(
         "profiling_preference": "allowed",
         "date_created": 1712532000,
         "last_updated": 1712532000,
-        **kwargs
+        **kwargs,
     }
 
 
@@ -132,7 +130,9 @@ class TestVerification:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_RECEPTIONIST_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_RECEPTIONIST_PRINCIPAL
+        )
 
         ocr_result = {
             "id_type": "passport",
@@ -142,7 +142,9 @@ class TestVerification:
             "full_name": "John Doe",
         }
 
-        with patch("services.visit_session_service.verify_id_with_ocr", new_callable=AsyncMock) as mock_ocr:
+        with patch(
+            "services.visit_session_service.verify_id_with_ocr", new_callable=AsyncMock
+        ) as mock_ocr:
             mock_ocr.return_value = ocr_result
 
             async with AsyncClient(
@@ -164,7 +166,9 @@ class TestVerification:
             mock_ocr.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_apply_id_scan_updates_session_and_profile(self, cleanup_dependency_overrides):
+    async def test_apply_id_scan_updates_session_and_profile(
+        self, cleanup_dependency_overrides
+    ):
         """
         2B: Applying scan results updates session verification and profile ID fields.
 
@@ -174,7 +178,9 @@ class TestVerification:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_RECEPTIONIST_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_RECEPTIONIST_PRINCIPAL
+        )
 
         verified_session = _make_visit_session_out(
             verification_status=VerificationStatus.VERIFIED,
@@ -189,7 +195,10 @@ class TestVerification:
             id_country="GB",
         )
 
-        with patch("services.visit_session_service.apply_id_scan_verification", new_callable=AsyncMock) as mock_apply:
+        with patch(
+            "services.visit_session_service.apply_id_scan_verification",
+            new_callable=AsyncMock,
+        ) as mock_apply:
             mock_apply.return_value = verified_session
 
             async with AsyncClient(
@@ -223,7 +232,9 @@ class TestVerification:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_HOST_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_HOST_PRINCIPAL
+        )
 
         approved_session = _make_visit_session_out(
             verification_status=VerificationStatus.VERIFIED,
@@ -231,7 +242,10 @@ class TestVerification:
             verified_by="host-001",
         )
 
-        with patch("services.visit_session_service.approve_visitor_by_host", new_callable=AsyncMock) as mock_approve:
+        with patch(
+            "services.visit_session_service.approve_visitor_by_host",
+            new_callable=AsyncMock,
+        ) as mock_approve:
             mock_approve.return_value = approved_session
 
             async with AsyncClient(
@@ -271,10 +285,17 @@ class TestVerification:
             tenant_id="tenant-002",  # Different tenant
         )
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: different_tenant_host
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            different_tenant_host
+        )
 
-        with patch("services.visit_session_service.approve_visitor_by_host", new_callable=AsyncMock) as mock_approve:
-            mock_approve.side_effect = PermissionError("Host and visitor must be in same tenant")
+        with patch(
+            "services.visit_session_service.approve_visitor_by_host",
+            new_callable=AsyncMock,
+        ) as mock_approve:
+            mock_approve.side_effect = PermissionError(
+                "Host and visitor must be in same tenant"
+            )
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -297,9 +318,13 @@ class TestVerification:
         """
         from security.auth import verify_system_user_token
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: MOCK_RECEPTIONIST_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
+            MOCK_RECEPTIONIST_PRINCIPAL
+        )
 
-        with patch("services.visit_session_service.verify_id_with_ocr", new_callable=AsyncMock) as mock_ocr:
+        with patch(
+            "services.visit_session_service.verify_id_with_ocr", new_callable=AsyncMock
+        ) as mock_ocr:
             mock_ocr.side_effect = ValueError("Could not extract ID data from image")
 
             async with AsyncClient(

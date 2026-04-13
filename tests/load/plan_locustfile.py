@@ -5,6 +5,7 @@ Tests plan CRUD, subscription lifecycle, and discount operations under load.
 Run with:
     locust -f tests/load/plan_locustfile.py --host http://localhost:8000
 """
+
 from __future__ import annotations
 
 import time
@@ -24,10 +25,13 @@ class PlanAdminUser(HttpUser):
 
     def on_start(self):
         """Login as admin."""
-        resp = self.client.post("/v1/admins/login", json={
-            "email": "admin@test.com",
-            "password": "AdminPass123!",
-        })
+        resp = self.client.post(
+            "/v1/admins/login",
+            json={
+                "email": "admin@test.com",
+                "password": "AdminPass123!",
+            },
+        )
         if resp.status_code == 200:
             self.admin_token = resp.json()["data"]["access_token"]
         self.created_plan_ids = []
@@ -54,7 +58,11 @@ class PlanAdminUser(HttpUser):
                     {"endpoint_pattern": "/v1/visitors/*", "enabled": True},
                 ],
                 "crud_limits": [
-                    {"collection": "visitors", "max_create": 100, "reset_interval": "monthly"},
+                    {
+                        "collection": "visitors",
+                        "max_create": 100,
+                        "reset_interval": "monthly",
+                    },
                 ],
             },
             headers=self.auth_headers,
@@ -128,10 +136,13 @@ class SubscriptionUser(HttpUser):
     admin_token: str | None = None
 
     def on_start(self):
-        resp = self.client.post("/v1/admins/login", json={
-            "email": "admin@test.com",
-            "password": "AdminPass123!",
-        })
+        resp = self.client.post(
+            "/v1/admins/login",
+            json={
+                "email": "admin@test.com",
+                "password": "AdminPass123!",
+            },
+        )
         if resp.status_code == 200:
             self.admin_token = resp.json()["data"]["access_token"]
 

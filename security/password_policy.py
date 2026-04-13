@@ -19,6 +19,7 @@ Usage in services:
         record_password_in_history,
     )
 """
+
 from __future__ import annotations
 
 import re
@@ -54,49 +55,257 @@ PASSWORD_HISTORY_COUNT = 5  # Prevent reusing last N passwords
 # the haveibeenpwned k-anonymity API.  This embedded set covers the most
 # egregious offenders to block without needing external dependencies.
 _COMMON_PASSWORDS: set[str] = {
-    "123456", "password", "12345678", "qwerty", "123456789", "12345", "1234",
-    "111111", "1234567", "dragon", "123123", "baseball", "abc123", "football",
-    "monkey", "letmein", "shadow", "master", "666666", "qwertyuiop",
-    "123321", "mustang", "1234567890", "michael", "654321", "superman",
-    "1qaz2wsx", "7777777", "121212", "000000", "qazwsx",
-    "123qwe", "killer", "trustno1", "jordan", "jennifer", "zxcvbnm",
-    "asdfgh", "hunter", "buster", "soccer", "harley", "batman", "andrew",
-    "tigger", "sunshine", "iloveyou", "2000", "charlie", "robert",
-    "thomas", "hockey", "ranger", "daniel", "starwars", "klaster",
-    "112233", "george", "computer", "michelle", "jessica", "pepper",
-    "1111", "zxcvbn", "555555", "11111111", "131313", "freedom",
-    "777777", "pass", "maggie", "159753", "aaaaaa", "ginger", "princess",
-    "joshua", "cheese", "amanda", "summer", "love", "ashley", "nicole",
-    "chelsea", "biteme", "matthew", "access", "yankees", "987654321",
-    "dallas", "austin", "thunder", "taylor", "matrix", "minecraft",
-    "william", "corvette", "hello", "martin", "heather", "secret",
-    "merlin", "diamond", "1234qwer", "gfhjkm", "hammer", "silver",
-    "222222", "88888888", "anthony", "justin", "test", "bailey",
-    "q1w2e3r4t5", "patrick", "internet", "scooter", "orange", "golfer",
-    "cookie", "richard", "samantha", "bigdog", "guitar", "jackson",
-    "whatever", "mickey", "chicken", "sparky", "snoopy", "maverick",
-    "phoenix", "camaro", "peanut", "morgan", "welcome", "falcon",
-    "cowboy", "ferrari", "samsung", "andrea", "smokey", "steelers",
-    "joseph", "mercedes", "dakota", "arsenal", "eagles", "melissa",
-    "boomer", "booboo", "spider", "nascar", "monster", "tigers",
-    "yellow", "xxxxxx", "123123123", "gateway", "marina", "diablo",
-    "bulldog", "qwer1234", "compaq", "purple", "hardcore", "banana",
-    "junior", "hannah", "123654", "porsche", "lakers", "iceman",
-    "money", "cowboys", "987654", "london", "tennis", "999999",
-    "ncc1701", "coffee", "scooby", "0000", "miller", "boston",
-    "q1w2e3r4", "brandon", "yamaha", "chester", "mother", "forever",
-    "johnny", "edward", "333333", "oliver", "redsox", "player",
-    "nikita", "knight", "fender", "barney", "midnight", "please",
-    "brandy", "badboy", "slayer", "rangers", "charles",
-    "flower", "bigdaddy", "rabbit", "wizard", "jasper",
-    "enter", "rachel", "chris", "steven", "winner", "adidas",
-    "victoria", "natasha", "1q2w3e4r", "jasmine", "winter",
-    "prince", "marine", "ghbdtn", "fishing", "cocacola",
-    "casper", "oscar", "tucker", "patrick", "spirit",
-    "passw0rd", "admin123", "letmein1", "welcome1",
-    "password1", "password123", "admin", "root", "toor", "pass123",
-    "test123", "guest", "master123", "changeme", "1q2w3e", "qwerty123",
-    "admin1234", "p@ssw0rd",
+    "123456",
+    "password",
+    "12345678",
+    "qwerty",
+    "123456789",
+    "12345",
+    "1234",
+    "111111",
+    "1234567",
+    "dragon",
+    "123123",
+    "baseball",
+    "abc123",
+    "football",
+    "monkey",
+    "letmein",
+    "shadow",
+    "master",
+    "666666",
+    "qwertyuiop",
+    "123321",
+    "mustang",
+    "1234567890",
+    "michael",
+    "654321",
+    "superman",
+    "1qaz2wsx",
+    "7777777",
+    "121212",
+    "000000",
+    "qazwsx",
+    "123qwe",
+    "killer",
+    "trustno1",
+    "jordan",
+    "jennifer",
+    "zxcvbnm",
+    "asdfgh",
+    "hunter",
+    "buster",
+    "soccer",
+    "harley",
+    "batman",
+    "andrew",
+    "tigger",
+    "sunshine",
+    "iloveyou",
+    "2000",
+    "charlie",
+    "robert",
+    "thomas",
+    "hockey",
+    "ranger",
+    "daniel",
+    "starwars",
+    "klaster",
+    "112233",
+    "george",
+    "computer",
+    "michelle",
+    "jessica",
+    "pepper",
+    "1111",
+    "zxcvbn",
+    "555555",
+    "11111111",
+    "131313",
+    "freedom",
+    "777777",
+    "pass",
+    "maggie",
+    "159753",
+    "aaaaaa",
+    "ginger",
+    "princess",
+    "joshua",
+    "cheese",
+    "amanda",
+    "summer",
+    "love",
+    "ashley",
+    "nicole",
+    "chelsea",
+    "biteme",
+    "matthew",
+    "access",
+    "yankees",
+    "987654321",
+    "dallas",
+    "austin",
+    "thunder",
+    "taylor",
+    "matrix",
+    "minecraft",
+    "william",
+    "corvette",
+    "hello",
+    "martin",
+    "heather",
+    "secret",
+    "merlin",
+    "diamond",
+    "1234qwer",
+    "gfhjkm",
+    "hammer",
+    "silver",
+    "222222",
+    "88888888",
+    "anthony",
+    "justin",
+    "test",
+    "bailey",
+    "q1w2e3r4t5",
+    "patrick",
+    "internet",
+    "scooter",
+    "orange",
+    "golfer",
+    "cookie",
+    "richard",
+    "samantha",
+    "bigdog",
+    "guitar",
+    "jackson",
+    "whatever",
+    "mickey",
+    "chicken",
+    "sparky",
+    "snoopy",
+    "maverick",
+    "phoenix",
+    "camaro",
+    "peanut",
+    "morgan",
+    "welcome",
+    "falcon",
+    "cowboy",
+    "ferrari",
+    "samsung",
+    "andrea",
+    "smokey",
+    "steelers",
+    "joseph",
+    "mercedes",
+    "dakota",
+    "arsenal",
+    "eagles",
+    "melissa",
+    "boomer",
+    "booboo",
+    "spider",
+    "nascar",
+    "monster",
+    "tigers",
+    "yellow",
+    "xxxxxx",
+    "123123123",
+    "gateway",
+    "marina",
+    "diablo",
+    "bulldog",
+    "qwer1234",
+    "compaq",
+    "purple",
+    "hardcore",
+    "banana",
+    "junior",
+    "hannah",
+    "123654",
+    "porsche",
+    "lakers",
+    "iceman",
+    "money",
+    "cowboys",
+    "987654",
+    "london",
+    "tennis",
+    "999999",
+    "ncc1701",
+    "coffee",
+    "scooby",
+    "0000",
+    "miller",
+    "boston",
+    "q1w2e3r4",
+    "brandon",
+    "yamaha",
+    "chester",
+    "mother",
+    "forever",
+    "johnny",
+    "edward",
+    "333333",
+    "oliver",
+    "redsox",
+    "player",
+    "nikita",
+    "knight",
+    "fender",
+    "barney",
+    "midnight",
+    "please",
+    "brandy",
+    "badboy",
+    "slayer",
+    "rangers",
+    "charles",
+    "flower",
+    "bigdaddy",
+    "rabbit",
+    "wizard",
+    "jasper",
+    "enter",
+    "rachel",
+    "chris",
+    "steven",
+    "winner",
+    "adidas",
+    "victoria",
+    "natasha",
+    "1q2w3e4r",
+    "jasmine",
+    "winter",
+    "prince",
+    "marine",
+    "ghbdtn",
+    "fishing",
+    "cocacola",
+    "casper",
+    "oscar",
+    "tucker",
+    "patrick",
+    "spirit",
+    "passw0rd",
+    "admin123",
+    "letmein1",
+    "welcome1",
+    "password1",
+    "password123",
+    "admin",
+    "root",
+    "toor",
+    "pass123",
+    "test123",
+    "guest",
+    "master123",
+    "changeme",
+    "1q2w3e",
+    "qwerty123",
+    "admin1234",
+    "p@ssw0rd",
 }
 
 
@@ -112,6 +321,7 @@ def is_common_password(password: str) -> bool:
 
 class PasswordStrengthResult(BaseModel):
     """Result of password strength validation."""
+
     is_valid: bool
     errors: List[str]
     score: int  # 0-5 strength score
@@ -136,9 +346,7 @@ def validate_password_strength(password: str) -> PasswordStrengthResult:
         score += 1  # Bonus for longer passwords
 
     if len(password) > MAX_PASSWORD_LENGTH:
-        errors.append(
-            f"Password must not exceed {MAX_PASSWORD_LENGTH} characters"
-        )
+        errors.append(f"Password must not exceed {MAX_PASSWORD_LENGTH} characters")
 
     # Uppercase check
     if REQUIRE_UPPERCASE and not re.search(r"[A-Z]", password):
@@ -159,7 +367,9 @@ def validate_password_strength(password: str) -> PasswordStrengthResult:
         score += 1
 
     # Special character check
-    if REQUIRE_SPECIAL and not re.search(r"[!@#$%^&*()\-_+=\[\]{}|;':\",./<>?`~]", password):
+    if REQUIRE_SPECIAL and not re.search(
+        r"[!@#$%^&*()\-_+=\[\]{}|;':\",./<>?`~]", password
+    ):
         errors.append("Password must contain at least one special character")
     else:
         score += 1
@@ -173,10 +383,14 @@ def validate_password_strength(password: str) -> PasswordStrengthResult:
 
     # Sequential/repeated character check
     if _has_sequential_chars(password, 4):
-        errors.append("Password must not contain 4 or more sequential characters (e.g. 1234, abcd)")
+        errors.append(
+            "Password must not contain 4 or more sequential characters (e.g. 1234, abcd)"
+        )
 
     if _has_repeated_chars(password, 4):
-        errors.append("Password must not contain 4 or more repeated characters (e.g. aaaa, 1111)")
+        errors.append(
+            "Password must not contain 4 or more repeated characters (e.g. aaaa, 1111)"
+        )
 
     return PasswordStrengthResult(
         is_valid=len(errors) == 0,
@@ -328,9 +542,14 @@ async def check_password_history(
     from core.database import db
     from security.hash import check_password
 
-    cursor = db["password_history"].find(
-        {"user_id": user_id, "role": role},
-    ).sort("changed_at", -1).limit(PASSWORD_HISTORY_COUNT)
+    cursor = (
+        db["password_history"]
+        .find(
+            {"user_id": user_id, "role": role},
+        )
+        .sort("changed_at", -1)
+        .limit(PASSWORD_HISTORY_COUNT)
+    )
 
     records = await cursor.to_list(length=PASSWORD_HISTORY_COUNT)
 
@@ -360,21 +579,28 @@ async def record_password_in_history(
     if isinstance(password_hash, bytes):
         password_hash = password_hash.decode("utf-8")
 
-    await db["password_history"].insert_one({
-        "user_id": user_id,
-        "role": role,
-        "password_hash": password_hash,
-        "changed_at": now,
-    })
+    await db["password_history"].insert_one(
+        {
+            "user_id": user_id,
+            "role": role,
+            "password_hash": password_hash,
+            "changed_at": now,
+        }
+    )
 
     # Prune old entries beyond the history limit
     count = await db["password_history"].count_documents(
         {"user_id": user_id, "role": role}
     )
     if count > PASSWORD_HISTORY_COUNT:
-        oldest = db["password_history"].find(
-            {"user_id": user_id, "role": role},
-        ).sort("changed_at", 1).limit(count - PASSWORD_HISTORY_COUNT)
+        oldest = (
+            db["password_history"]
+            .find(
+                {"user_id": user_id, "role": role},
+            )
+            .sort("changed_at", 1)
+            .limit(count - PASSWORD_HISTORY_COUNT)
+        )
 
         old_ids = [doc["_id"] async for doc in oldest]
         if old_ids:

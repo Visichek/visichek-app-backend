@@ -1,6 +1,7 @@
 """
 Unit tests for renewal service with mocked repositories and providers.
 """
+
 from __future__ import annotations
 
 import time
@@ -85,7 +86,9 @@ class TestRenewalService:
         assert result["total_processed"] == 0
         mock_get_subs.assert_called_once()
 
-    @patch("services.renewal_service.invalidate_tenant_plan_cache", new_callable=AsyncMock)
+    @patch(
+        "services.renewal_service.invalidate_tenant_plan_cache", new_callable=AsyncMock
+    )
     @patch("services.renewal_service.generate_invoice", new_callable=AsyncMock)
     @patch("services.renewal_service.update_subscription", new_callable=AsyncMock)
     @patch("services.renewal_service.get_plan", new_callable=AsyncMock)
@@ -180,7 +183,9 @@ class TestRenewalService:
         # Should NOT call update_subscription on payment failure
         mock_update_sub.assert_not_called()
 
-    @patch("services.renewal_service.invalidate_tenant_plan_cache", new_callable=AsyncMock)
+    @patch(
+        "services.renewal_service.invalidate_tenant_plan_cache", new_callable=AsyncMock
+    )
     @patch("services.renewal_service.generate_invoice", new_callable=AsyncMock)
     @patch("services.renewal_service.update_subscription", new_callable=AsyncMock)
     @patch("services.renewal_service.get_plan", new_callable=AsyncMock)
@@ -217,7 +222,9 @@ class TestRenewalService:
         assert result["converted_past_due"] == 0
         assert result["failed_count"] == 0
 
-    @patch("services.renewal_service.invalidate_tenant_plan_cache", new_callable=AsyncMock)
+    @patch(
+        "services.renewal_service.invalidate_tenant_plan_cache", new_callable=AsyncMock
+    )
     @patch("services.renewal_service.generate_invoice", new_callable=AsyncMock)
     @patch("services.renewal_service.update_subscription", new_callable=AsyncMock)
     @patch("services.renewal_service.get_plan", new_callable=AsyncMock)
@@ -283,9 +290,15 @@ class TestRenewalService:
         mock_get_subs,
     ):
         """Test trial conversion when payment fails."""
-        with patch("services.renewal_service.update_subscription", new_callable=AsyncMock) as mock_update_sub:
-            with patch("services.renewal_service.get_plan", new_callable=AsyncMock) as mock_get_plan:
-                with patch("services.renewal_service.PaymentManager") as mock_payment_mgr:
+        with patch(
+            "services.renewal_service.update_subscription", new_callable=AsyncMock
+        ) as mock_update_sub:
+            with patch(
+                "services.renewal_service.get_plan", new_callable=AsyncMock
+            ) as mock_get_plan:
+                with patch(
+                    "services.renewal_service.PaymentManager"
+                ) as mock_payment_mgr:
                     now = int(time.time())
                     trial_sub = _make_subscription_out(
                         **{
@@ -301,10 +314,14 @@ class TestRenewalService:
 
                     # Payment fails
                     mock_provider = MagicMock()
-                    mock_provider.create_intent.side_effect = Exception("Payment failed")
+                    mock_provider.create_intent.side_effect = Exception(
+                        "Payment failed"
+                    )
                     mock_payment_mgr_instance = MagicMock()
                     mock_payment_mgr_instance.get_provider.return_value = mock_provider
-                    mock_payment_mgr.get_instance.return_value = mock_payment_mgr_instance
+                    mock_payment_mgr.get_instance.return_value = (
+                        mock_payment_mgr_instance
+                    )
 
                     updated_sub = _make_subscription_out(
                         **{
@@ -324,13 +341,19 @@ class TestRenewalService:
                     assert mock_update_sub.called
 
     @patch("services.renewal_service.PaymentManager")
-    async def test_attempt_renewal_payment_manager_not_available(self, mock_payment_mgr):
+    async def test_attempt_renewal_payment_manager_not_available(
+        self, mock_payment_mgr
+    ):
         """Test renewal when payment manager is not configured."""
         sub = _make_subscription_out()
 
-        mock_payment_mgr.get_instance.side_effect = RuntimeError("PaymentManager not configured")
+        mock_payment_mgr.get_instance.side_effect = RuntimeError(
+            "PaymentManager not configured"
+        )
 
-        with patch("services.renewal_service.get_plan", new_callable=AsyncMock) as mock_get_plan:
+        with patch(
+            "services.renewal_service.get_plan", new_callable=AsyncMock
+        ) as mock_get_plan:
             plan = _make_plan_out()
             mock_get_plan.return_value = plan
 

@@ -2,7 +2,11 @@ from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
 from typing import List, Optional
-from schemas.privacy_notice_schema import PrivacyNoticeCreate, PrivacyNoticeUpdate, PrivacyNoticeOut
+from schemas.privacy_notice_schema import (
+    PrivacyNoticeCreate,
+    PrivacyNoticeUpdate,
+    PrivacyNoticeOut,
+)
 
 
 async def create_privacy_notice(notice_data: PrivacyNoticeCreate) -> PrivacyNoticeOut:
@@ -29,7 +33,9 @@ async def get_active_notice_for_tenant(tenant_id: str) -> Optional[PrivacyNotice
     return await get_privacy_notice({"tenant_id": tenant_id, "is_active": True})
 
 
-async def get_privacy_notices(filter_dict: dict = {}, start=0, stop=100) -> List[PrivacyNoticeOut]:
+async def get_privacy_notices(
+    filter_dict: dict = {}, start=0, stop=100
+) -> List[PrivacyNoticeOut]:
     try:
         if filter_dict is None:
             filter_dict = {}
@@ -50,7 +56,9 @@ async def get_privacy_notices(filter_dict: dict = {}, start=0, stop=100) -> List
         )
 
 
-async def update_privacy_notice(filter_dict: dict, notice_data: PrivacyNoticeUpdate) -> PrivacyNoticeOut:
+async def update_privacy_notice(
+    filter_dict: dict, notice_data: PrivacyNoticeUpdate
+) -> PrivacyNoticeOut:
     update_dict = {k: v for k, v in notice_data.model_dump().items() if v is not None}
     result = await db.privacy_notice_versions.find_one_and_update(
         filter_dict,

@@ -54,7 +54,9 @@ async def invalidate_plan_cache(plan_id: str) -> None:
         # This is fine because plan changes are rare admin operations
         cursor = 0
         while True:
-            cursor, keys = cast(Any, cache_db.scan(cursor, match=f"{TENANT_PLAN_PREFIX}*", count=100))
+            cursor, keys = cast(
+                Any, cache_db.scan(cursor, match=f"{TENANT_PLAN_PREFIX}*", count=100)
+            )
             for key in keys:
                 try:
                     raw = cast(Any, cache_db.get(key))
@@ -86,13 +88,17 @@ async def resolve_tenant_plan(tenant_id: str) -> Optional[dict]:
     from bson import ObjectId
     from schemas.subscription_schema import SubscriptionStatus
 
-    sub = await get_subscription({
-        "tenant_id": tenant_id,
-        "status": {"$in": [
-            SubscriptionStatus.ACTIVE.value,
-            SubscriptionStatus.TRIALING.value,
-        ]},
-    })
+    sub = await get_subscription(
+        {
+            "tenant_id": tenant_id,
+            "status": {
+                "$in": [
+                    SubscriptionStatus.ACTIVE.value,
+                    SubscriptionStatus.TRIALING.value,
+                ]
+            },
+        }
+    )
     if not sub:
         return None
 
@@ -114,39 +120,32 @@ async def resolve_tenant_plan(tenant_id: str) -> Optional[dict]:
         "subscription_id": sub.id,
         "subscription_status": sub.status,
         "tenant_id": tenant_id,
-
         # Feature rules: subscription overrides merge with plan defaults
         "feature_rules": _merge_feature_rules(
             plan_dict.get("feature_rules", []),
             sub.feature_overrides,
         ),
-
         # CRUD limits: subscription overrides merge with plan defaults
         "crud_limits": _merge_crud_limits(
             plan_dict.get("crud_limits", []),
             sub.crud_limit_overrides,
         ),
-
         # Retrieval quotas: subscription overrides merge
         "retrieval_quotas": _merge_retrieval_quotas(
             plan_dict.get("retrieval_quotas", []),
             sub.retrieval_quota_overrides,
         ),
-
         # Storage limits from plan
         "storage_limits": plan_dict.get("storage_limits", {}),
-
         # Tenant caps: subscription overrides merge with plan defaults
         "tenant_caps": _merge_tenant_caps(
             plan_dict.get("tenant_caps", {}),
             sub.tenant_cap_overrides,
         ),
-
         # Feature flags
         "priority_support": plan.priority_support,
         "custom_branding": plan.custom_branding,
         "api_access": plan.api_access,
-
         # Billing info
         "effective_price": sub.effective_price,
         "billing_cycle": sub.billing_cycle,

@@ -135,10 +135,40 @@ class VisichekLoadUser(HttpUser):
         if not self.department_id:
             return
 
-        first_names = ["John", "Jane", "Michael", "Sarah", "David", "Emma", "Robert", "Lisa"]
-        last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis"]
-        companies = ["Acme Corp", "Tech Solutions", "Global Industries", "Innovation Labs", "Future Systems"]
-        purposes = ["Business meeting", "Client consultation", "Technical review", "Partnership discussion", "Training session"]
+        first_names = [
+            "John",
+            "Jane",
+            "Michael",
+            "Sarah",
+            "David",
+            "Emma",
+            "Robert",
+            "Lisa",
+        ]
+        last_names = [
+            "Smith",
+            "Johnson",
+            "Williams",
+            "Brown",
+            "Jones",
+            "Garcia",
+            "Miller",
+            "Davis",
+        ]
+        companies = [
+            "Acme Corp",
+            "Tech Solutions",
+            "Global Industries",
+            "Innovation Labs",
+            "Future Systems",
+        ]
+        purposes = [
+            "Business meeting",
+            "Client consultation",
+            "Technical review",
+            "Partnership discussion",
+            "Training session",
+        ]
 
         visitor_name = f"{random.choice(first_names)} {random.choice(last_names)}"
         phone = f"+234{random.randint(8000000000, 8099999999)}"
@@ -168,10 +198,12 @@ class VisichekLoadUser(HttpUser):
             session_id = session_data.get("id")
             badge_token = session_data.get("badge_qr_token")
             if session_id and badge_token:
-                self.active_sessions.append({
-                    "id": session_id,
-                    "badge_qr_token": badge_token,
-                })
+                self.active_sessions.append(
+                    {
+                        "id": session_id,
+                        "badge_qr_token": badge_token,
+                    }
+                )
             logger.debug(f"Visitor checked in: {visitor_name}")
         else:
             logger.warning(f"Check-in failed: {response.status_code}")
@@ -294,7 +326,9 @@ class VisichekLoadUser(HttpUser):
             "visitor_email": f"guest{random.randint(1000, 9999)}@example.com",
             "visitor_phone": f"+234{random.randint(8000000000, 8099999999)}",
             "appointment_date": future_time,
-            "purpose": random.choice(["Meeting", "Interview", "Consultation", "Review"]),
+            "purpose": random.choice(
+                ["Meeting", "Interview", "Consultation", "Review"]
+            ),
         }
 
         response = self.client.post(
@@ -383,16 +417,24 @@ class ComplianceLoadUser(HttpUser):
     @task(3)
     @tag("compliance", "dpr")
     def add_dpr_entry(self) -> None:
-        fields = ["visitor_name", "visitor_phone", "id_image", "email_address", "company"]
+        fields = [
+            "visitor_name",
+            "visitor_phone",
+            "id_image",
+            "email_address",
+            "company",
+        ]
         payload = {
             "tenant_id": self.tenant_id,
             "field_name": random.choice(fields),
-            "purpose": random.choice([
-                "Visitor identification",
-                "Emergency contact",
-                "Compliance audit trail",
-                "Access control",
-            ]),
+            "purpose": random.choice(
+                [
+                    "Visitor identification",
+                    "Emergency contact",
+                    "Compliance audit trail",
+                    "Access control",
+                ]
+            ),
             "lawful_basis": random.choice(["consent", "legitimate_interest"]),
             "retention_period": random.choice([90, 180, 365, 730]),
             "crosses_borders": random.choice([True, False]),
@@ -422,12 +464,14 @@ class ComplianceLoadUser(HttpUser):
         payload = {
             "tenant_id": self.tenant_id,
             "provider": random.choice(providers),
-            "purpose": random.choice([
-                "Document storage",
-                "Email delivery",
-                "SMS notifications",
-                "ID verification",
-            ]),
+            "purpose": random.choice(
+                [
+                    "Document storage",
+                    "Email delivery",
+                    "SMS notifications",
+                    "ID verification",
+                ]
+            ),
             "jurisdiction": random.choice(["EU", "US", "NG", "UK"]),
             "dpa_signed": random.choice([True, False]),
             "uses_data_for_training": False,
@@ -472,7 +516,9 @@ class ComplianceLoadUser(HttpUser):
     def create_retention_policy(self) -> None:
         payload = {
             "tenant_id": self.tenant_id,
-            "scope": random.choice(["visit_sessions", "id_images", "visitor_profiles", "audit_logs"]),
+            "scope": random.choice(
+                ["visit_sessions", "id_images", "visitor_profiles", "audit_logs"]
+            ),
             "retention_days": random.choice([30, 90, 180, 365, 730]),
             "action": random.choice(["anonymise", "delete"]),
         }
@@ -504,10 +550,15 @@ class ComplianceLoadUser(HttpUser):
         payload = {
             "tenant_id": self.tenant_id,
             "reported_by": self.user_id,
-            "incident_type": random.choice([
-                "data_breach", "unauthorized_access", "device_loss",
-                "misconfiguration", "third_party",
-            ]),
+            "incident_type": random.choice(
+                [
+                    "data_breach",
+                    "unauthorized_access",
+                    "device_loss",
+                    "misconfiguration",
+                    "third_party",
+                ]
+            ),
             "description": f"Load test incident #{random.randint(1, 9999)}",
             "risk_level": random.choice(["low", "medium", "high", "critical"]),
             "detection_time": int(time.time()) - random.randint(60, 7200),
@@ -776,7 +827,9 @@ class BootstrapLoadUser(HttpUser):
             name="/v1/admins/login (bootstrap)",
         )
         if resp.status_code != 200:
-            logger.warning(f"Admin login failed ({resp.status_code}), bootstrap tasks will be skipped")
+            logger.warning(
+                f"Admin login failed ({resp.status_code}), bootstrap tasks will be skipped"
+            )
             self.headers = {}
             return
 
@@ -798,7 +851,9 @@ class BootstrapLoadUser(HttpUser):
             "notice_display_mode": random.choice(["passive", "active_consent"]),
             "retention_days": random.choice([365, 730, 1095]),
             "dpo_contact_email": f"dpo_{rand}@loadtest.local",
-            "country_of_hosting": random.choice(["Nigeria", "United States", "United Kingdom"]),
+            "country_of_hosting": random.choice(
+                ["Nigeria", "United States", "United Kingdom"]
+            ),
             "admin_full_name": f"SA {rand}",
             "admin_email": f"sa_{ts}_{rand}@loadtest.local",
             "admin_password": f"LoadPass_{rand}!",
@@ -812,12 +867,14 @@ class BootstrapLoadUser(HttpUser):
         )
         if resp.status_code in (200, 201):
             data = resp.json().get("data", {})
-            self._bootstrapped_tenants.append({
-                "tenant_id": data.get("tenant", {}).get("id"),
-                "sa_token": data.get("super_admin", {}).get("access_token"),
-                "sa_email": payload["admin_email"],
-                "sa_password": payload["admin_password"],
-            })
+            self._bootstrapped_tenants.append(
+                {
+                    "tenant_id": data.get("tenant", {}).get("id"),
+                    "sa_token": data.get("super_admin", {}).get("access_token"),
+                    "sa_email": payload["admin_email"],
+                    "sa_password": payload["admin_password"],
+                }
+            )
             logger.debug(f"Bootstrapped tenant: {payload['company_name']}")
         else:
             logger.warning(f"Bootstrap failed: {resp.status_code}")
@@ -909,7 +966,9 @@ class BillingLoadUser(HttpUser):
 
         if admin_resp.status_code == 200:
             admin_data = admin_resp.json().get("data", {})
-            self.admin_headers = {"Authorization": f"Bearer {admin_data.get('access_token')}"}
+            self.admin_headers = {
+                "Authorization": f"Bearer {admin_data.get('access_token')}"
+            }
             logger.info("Authenticated as application admin for billing")
         else:
             logger.warning(f"Admin billing auth failed: {admin_resp.status_code}")
@@ -1156,7 +1215,9 @@ class BillingLoadUser(HttpUser):
             "code": f"LOAD-{ts}-{random.randint(100, 999)}",
             "name": f"Load Test Discount {ts}",
             "discount_type": random.choice(["percentage", "fixed"]),
-            "value": random.choice([5.0, 10.0, 25.0, 50.0]) if random.random() > 0.5 else random.choice([100, 500, 1000]),
+            "value": random.choice([5.0, 10.0, 25.0, 50.0])
+            if random.random() > 0.5
+            else random.choice([100, 500, 1000]),
             "scope": "global",
             "max_redemptions": random.choice([10, 50, 100, 500]),
         }
@@ -1215,7 +1276,9 @@ def on_test_start(environment, **kwargs):
     logger.info("Load test started")
     logger.info("Load test configuration:")
     logger.info("  - BillingLoadUser: SaaS billing operations")
-    logger.info("    P95 thresholds: Plans/Subs <500ms, Invoices <500ms, Reports <1000ms")
+    logger.info(
+        "    P95 thresholds: Plans/Subs <500ms, Invoices <500ms, Reports <1000ms"
+    )
     logger.info("    Error rate threshold: <1% (billing is critical)")
     logger.info("  - Health checks should complete in <100ms")
 
@@ -1226,7 +1289,9 @@ def on_test_stop(environment, **kwargs):
     logger.info("Load test stopped")
     logger.info(f"Total requests: {environment.stats.total.num_requests}")
     logger.info(f"Total failures: {environment.stats.total.num_failures}")
-    logger.info(f"Failure rate: {(environment.stats.total.num_failures / environment.stats.total.num_requests * 100):.2f}%")
+    logger.info(
+        f"Failure rate: {(environment.stats.total.num_failures / environment.stats.total.num_requests * 100):.2f}%"
+    )
     logger.info("Performance thresholds:")
     logger.info("  - Health checks (p95): <100ms")
     logger.info("  - Plan/Subscription operations (p95): <500ms")

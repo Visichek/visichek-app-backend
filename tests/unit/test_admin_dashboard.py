@@ -1,4 +1,5 @@
 """Unit tests for the application admin platform-wide dashboard."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -135,8 +136,13 @@ async def test_admin_dashboard_route_returns_200():
         from httpx import AsyncClient, ASGITransport
 
         # Override dependency
-        from security.account_status_check import check_admin_account_status_and_permissions
-        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MagicMock(id="admin1")
+        from security.account_status_check import (
+            check_admin_account_status_and_permissions,
+        )
+
+        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: (
+            MagicMock(id="admin1")
+        )
 
         try:
             async with AsyncClient(

@@ -2,6 +2,7 @@
 Unit tests for plan, subscription, discount, and usage services.
 Uses mocking to isolate service logic from database.
 """
+
 from __future__ import annotations
 
 import time
@@ -36,6 +37,7 @@ pytestmark = pytest.mark.asyncio
 # ============================================================================
 # Helper factories
 # ============================================================================
+
 
 def _make_plan_out(**overrides) -> PlanOut:
     defaults = {
@@ -106,8 +108,8 @@ def _make_discount_out(**overrides) -> DiscountOut:
 # Plan Service Tests
 # ============================================================================
 
-class TestPlanService:
 
+class TestPlanService:
     @patch("services.plan_service.create_plan", new_callable=AsyncMock)
     @patch("services.plan_service.get_plan", new_callable=AsyncMock)
     async def test_add_plan_success(self, mock_get, mock_create):
@@ -116,6 +118,7 @@ class TestPlanService:
         mock_create.return_value = expected
 
         from services.plan_service import add_plan
+
         result = await add_plan(PlanCreate(name="test-plan", display_name="Test Plan"))
         assert result.name == "test-plan"
         mock_create.assert_called_once()
@@ -126,6 +129,7 @@ class TestPlanService:
 
         from services.plan_service import add_plan
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             await add_plan(PlanCreate(name="test-plan", display_name="Test Plan"))
         assert exc_info.value.status_code == 409
@@ -136,6 +140,7 @@ class TestPlanService:
         mock_get.return_value = expected
 
         from services.plan_service import retrieve_plan_by_id
+
         result = await retrieve_plan_by_id("plan_123")
         # invalid ObjectId returns None
         assert result is None  # "plan_123" is not a valid ObjectId
@@ -143,6 +148,7 @@ class TestPlanService:
     @patch("services.plan_service.update_plan", new_callable=AsyncMock)
     async def test_update_plan_by_id_invalid_id(self, mock_update):
         from services.plan_service import update_plan_by_id
+
         result = await update_plan_by_id("not-valid", PlanUpdate(name="new"))
         assert result is None
         mock_update.assert_not_called()
@@ -154,6 +160,7 @@ class TestPlanService:
         mock_update.return_value = expected
 
         from services.plan_service import archive_plan
+
         await archive_plan("plan_123")
         mock_update.assert_called_once()
 
@@ -163,6 +170,7 @@ class TestPlanService:
 
         from services.plan_service import activate_plan
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             await activate_plan("507f1f77bcf86cd799439011")
         assert exc_info.value.status_code == 400
@@ -178,7 +186,10 @@ class TestPlanService:
         mock_create.return_value = cloned
 
         from services.plan_service import clone_plan
-        result = await clone_plan("507f1f77bcf86cd799439011", "cloned-plan", "Cloned Plan")
+
+        result = await clone_plan(
+            "507f1f77bcf86cd799439011", "cloned-plan", "Cloned Plan"
+        )
         assert result.name == "cloned-plan"
 
     @patch("services.plan_service.retrieve_plan_by_id", new_callable=AsyncMock)
@@ -187,6 +198,7 @@ class TestPlanService:
 
         from services.plan_service import remove_plan
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             await remove_plan("507f1f77bcf86cd799439011")
         assert exc_info.value.status_code == 400
@@ -196,19 +208,25 @@ class TestPlanService:
 # Subscription Service Tests
 # ============================================================================
 
-class TestSubscriptionService:
 
-    @patch("services.subscription_service.invalidate_tenant_plan_cache", new_callable=AsyncMock)
+class TestSubscriptionService:
+    @patch(
+        "services.subscription_service.invalidate_tenant_plan_cache",
+        new_callable=AsyncMock,
+    )
     @patch("services.subscription_service.create_subscription", new_callable=AsyncMock)
     @patch("services.subscription_service.get_subscription", new_callable=AsyncMock)
     @patch("services.subscription_service.get_plan", new_callable=AsyncMock)
-    async def test_subscribe_tenant_success(self, mock_plan, mock_sub, mock_create, mock_cache):
+    async def test_subscribe_tenant_success(
+        self, mock_plan, mock_sub, mock_create, mock_cache
+    ):
         mock_plan.return_value = _make_plan_out()
         mock_sub.return_value = None  # no existing subscription
         expected = _make_sub_out()
         mock_create.return_value = expected
 
         from services.subscription_service import subscribe_tenant
+
         result = await subscribe_tenant("tenant_abc", "507f1f77bcf86cd799439011")
         assert result.tenant_id == "tenant_abc"
         mock_cache.assert_called_once_with("tenant_abc")
@@ -221,6 +239,7 @@ class TestSubscriptionService:
 
         from services.subscription_service import subscribe_tenant
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             await subscribe_tenant("tenant_abc", "507f1f77bcf86cd799439011")
         assert exc_info.value.status_code == 409
@@ -231,31 +250,45 @@ class TestSubscriptionService:
 
         from services.subscription_service import subscribe_tenant
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             await subscribe_tenant("tenant_abc", "507f1f77bcf86cd799439011")
         assert exc_info.value.status_code == 400
 
-    @patch("services.subscription_service.invalidate_tenant_plan_cache", new_callable=AsyncMock)
+    @patch(
+        "services.subscription_service.invalidate_tenant_plan_cache",
+        new_callable=AsyncMock,
+    )
     @patch("services.subscription_service.update_subscription", new_callable=AsyncMock)
     @patch("services.subscription_service.get_discount", new_callable=AsyncMock)
     @patch("services.subscription_service.get_plan", new_callable=AsyncMock)
-    @patch("services.subscription_service.retrieve_tenant_active_subscription", new_callable=AsyncMock)
-    async def test_change_plan_success(self, mock_active, mock_plan, mock_disc, mock_update, mock_cache):
+    @patch(
+        "services.subscription_service.retrieve_tenant_active_subscription",
+        new_callable=AsyncMock,
+    )
+    async def test_change_plan_success(
+        self, mock_active, mock_plan, mock_disc, mock_update, mock_cache
+    ):
         mock_active.return_value = _make_sub_out()
         mock_plan.return_value = _make_plan_out(_id="plan_999", name="new-plan")
         mock_update.return_value = _make_sub_out(plan_id="plan_999")
 
         from services.subscription_service import change_plan
+
         await change_plan("tenant_abc", "507f1f77bcf86cd799439011")
         mock_update.assert_called_once()
         mock_cache.assert_called_once_with("tenant_abc")
 
-    @patch("services.subscription_service.retrieve_tenant_active_subscription", new_callable=AsyncMock)
+    @patch(
+        "services.subscription_service.retrieve_tenant_active_subscription",
+        new_callable=AsyncMock,
+    )
     async def test_cancel_subscription_no_active(self, mock_active):
         mock_active.return_value = None
 
         from services.subscription_service import cancel_subscription
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             await cancel_subscription("tenant_abc")
         assert exc_info.value.status_code == 404
@@ -265,8 +298,8 @@ class TestSubscriptionService:
 # Discount Service Tests
 # ============================================================================
 
-class TestDiscountService:
 
+class TestDiscountService:
     @patch("services.discount_service.create_discount", new_callable=AsyncMock)
     @patch("services.discount_service.get_discount", new_callable=AsyncMock)
     async def test_add_discount_success(self, mock_get, mock_create):
@@ -275,9 +308,14 @@ class TestDiscountService:
         mock_create.return_value = expected
 
         from services.discount_service import add_discount
-        result = await add_discount(DiscountCreate(
-            code="TEST50", name="Test", value=50.0,
-        ))
+
+        result = await add_discount(
+            DiscountCreate(
+                code="TEST50",
+                name="Test",
+                value=50.0,
+            )
+        )
         assert result.code == "TEST50"
 
     @patch("services.discount_service.get_discount", new_callable=AsyncMock)
@@ -286,30 +324,41 @@ class TestDiscountService:
 
         from services.discount_service import add_discount
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
-            await add_discount(DiscountCreate(
-                code="TEST50", name="Test", value=50.0,
-            ))
+            await add_discount(
+                DiscountCreate(
+                    code="TEST50",
+                    name="Test",
+                    value=50.0,
+                )
+            )
         assert exc_info.value.status_code == 409
 
-    @patch("services.discount_service.retrieve_discount_by_code", new_callable=AsyncMock)
+    @patch(
+        "services.discount_service.retrieve_discount_by_code", new_callable=AsyncMock
+    )
     async def test_validate_discount_expired(self, mock_get):
         expired = _make_discount_out(valid_until=int(time.time()) - 3600)
         mock_get.return_value = expired
 
         from services.discount_service import validate_discount_code
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             await validate_discount_code("TEST50", "t1", "p1", 100.0)
         assert exc_info.value.status_code == 400
 
-    @patch("services.discount_service.retrieve_discount_by_code", new_callable=AsyncMock)
+    @patch(
+        "services.discount_service.retrieve_discount_by_code", new_callable=AsyncMock
+    )
     async def test_validate_discount_max_redemptions(self, mock_get):
         maxed = _make_discount_out(max_redemptions=5, current_redemptions=5)
         mock_get.return_value = maxed
 
         from services.discount_service import validate_discount_code
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             await validate_discount_code("TEST50", "t1", "p1", 100.0)
         assert exc_info.value.status_code == 400
@@ -320,6 +369,7 @@ class TestDiscountService:
 
         from services.discount_service import remove_discount
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             await remove_discount("507f1f77bcf86cd799439011")
         assert exc_info.value.status_code == 400
@@ -329,34 +379,44 @@ class TestDiscountService:
 # Usage Service Tests
 # ============================================================================
 
-class TestUsageService:
 
+class TestUsageService:
     def test_get_period_key_monthly(self):
         from services.usage_service import get_period_key
+
         key = get_period_key(QuotaResetInterval.MONTHLY)
         assert len(key) == 7  # "YYYY-MM"
         assert "-" in key
 
     def test_get_period_key_daily(self):
         from services.usage_service import get_period_key
+
         key = get_period_key(QuotaResetInterval.DAILY)
         assert len(key) == 10  # "YYYY-MM-DD"
 
     def test_get_period_key_weekly(self):
         from services.usage_service import get_period_key
+
         key = get_period_key(QuotaResetInterval.WEEKLY)
         assert "-W" in key
 
     def test_get_period_key_never(self):
         from services.usage_service import get_period_key
+
         key = get_period_key(QuotaResetInterval.NEVER)
         assert key == "lifetime"
 
     @patch("services.usage_service.get_current_count", new_callable=AsyncMock)
     async def test_check_quota_unlimited(self, mock_count):
         from services.usage_service import check_quota
+
         allowed, current, limit = await check_quota(
-            "t1", "s1", "visitors", "create", None, QuotaResetInterval.MONTHLY,
+            "t1",
+            "s1",
+            "visitors",
+            "create",
+            None,
+            QuotaResetInterval.MONTHLY,
         )
         assert allowed is True
         assert limit is None
@@ -367,8 +427,14 @@ class TestUsageService:
         mock_count.return_value = 50
 
         from services.usage_service import check_quota
+
         allowed, current, limit = await check_quota(
-            "t1", "s1", "visitors", "create", 100, QuotaResetInterval.MONTHLY,
+            "t1",
+            "s1",
+            "visitors",
+            "create",
+            100,
+            QuotaResetInterval.MONTHLY,
         )
         assert allowed is True
         assert current == 50
@@ -379,8 +445,14 @@ class TestUsageService:
         mock_count.return_value = 100
 
         from services.usage_service import check_quota
+
         allowed, current, limit = await check_quota(
-            "t1", "s1", "visitors", "create", 100, QuotaResetInterval.MONTHLY,
+            "t1",
+            "s1",
+            "visitors",
+            "create",
+            100,
+            QuotaResetInterval.MONTHLY,
         )
         assert allowed is False
         assert current == 100
@@ -391,24 +463,31 @@ class TestUsageService:
 # Price Calculation Tests
 # ============================================================================
 
-class TestPriceCalculation:
 
+class TestPriceCalculation:
     def test_percentage_discount(self):
         from services.subscription_service import _calculate_effective_price
+
         plan = _make_plan_out(base_price_monthly=200.0)
-        discounts = [_make_discount_out(discount_type=DiscountType.PERCENTAGE.value, value=25.0)]
+        discounts = [
+            _make_discount_out(discount_type=DiscountType.PERCENTAGE.value, value=25.0)
+        ]
         price = _calculate_effective_price(plan, BillingCycle.MONTHLY, discounts)
         assert price == 150.0
 
     def test_fixed_discount(self):
         from services.subscription_service import _calculate_effective_price
+
         plan = _make_plan_out(base_price_monthly=200.0)
-        discounts = [_make_discount_out(discount_type=DiscountType.FIXED.value, value=50.0)]
+        discounts = [
+            _make_discount_out(discount_type=DiscountType.FIXED.value, value=50.0)
+        ]
         price = _calculate_effective_price(plan, BillingCycle.MONTHLY, discounts)
         assert price == 150.0
 
     def test_stacked_discounts(self):
         from services.subscription_service import _calculate_effective_price
+
         plan = _make_plan_out(base_price_monthly=1000.0)
         discounts = [
             _make_discount_out(discount_type=DiscountType.PERCENTAGE.value, value=20.0),
@@ -420,20 +499,27 @@ class TestPriceCalculation:
 
     def test_discount_cannot_go_below_zero(self):
         from services.subscription_service import _calculate_effective_price
+
         plan = _make_plan_out(base_price_monthly=50.0)
-        discounts = [_make_discount_out(discount_type=DiscountType.FIXED.value, value=100.0)]
+        discounts = [
+            _make_discount_out(discount_type=DiscountType.FIXED.value, value=100.0)
+        ]
         price = _calculate_effective_price(plan, BillingCycle.MONTHLY, discounts)
         assert price == 0.0
 
     def test_yearly_billing_cycle(self):
         from services.subscription_service import _calculate_effective_price
+
         plan = _make_plan_out(base_price_yearly=1200.0)
         price = _calculate_effective_price(plan, BillingCycle.YEARLY, [])
         assert price == 1200.0
 
     def test_100_percent_discount(self):
         from services.subscription_service import _calculate_effective_price
+
         plan = _make_plan_out(base_price_monthly=500.0)
-        discounts = [_make_discount_out(discount_type=DiscountType.PERCENTAGE.value, value=100.0)]
+        discounts = [
+            _make_discount_out(discount_type=DiscountType.PERCENTAGE.value, value=100.0)
+        ]
         price = _calculate_effective_price(plan, BillingCycle.MONTHLY, discounts)
         assert price == 0.0

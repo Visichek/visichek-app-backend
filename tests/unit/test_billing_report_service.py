@@ -1,6 +1,7 @@
 """
 Unit tests for billing report service with mocked database aggregations.
 """
+
 from __future__ import annotations
 
 import time
@@ -29,10 +30,12 @@ class TestBillingReportService:
         mock_invoices.aggregate = mock_aggregate_empty
         mock_subscriptions.aggregate = mock_aggregate_empty
 
-        mock_db.__getitem__ = MagicMock(side_effect=lambda x: {
-            "invoices": mock_invoices,
-            "subscriptions": mock_subscriptions,
-        }[x])
+        mock_db.__getitem__ = MagicMock(
+            side_effect=lambda x: {
+                "invoices": mock_invoices,
+                "subscriptions": mock_subscriptions,
+            }[x]
+        )
 
         from services.billing_report_service import get_billing_summary
 
@@ -93,10 +96,12 @@ class TestBillingReportService:
         mock_invoices.aggregate = mock_invoice_aggregate
         mock_subscriptions.aggregate = mock_sub_aggregate
 
-        mock_db.__getitem__ = MagicMock(side_effect=lambda x: {
-            "invoices": mock_invoices,
-            "subscriptions": mock_subscriptions,
-        }[x])
+        mock_db.__getitem__ = MagicMock(
+            side_effect=lambda x: {
+                "invoices": mock_invoices,
+                "subscriptions": mock_subscriptions,
+            }[x]
+        )
 
         from services.billing_report_service import get_billing_summary
 
@@ -154,10 +159,12 @@ class TestBillingReportService:
         mock_invoices.aggregate = mock_invoice_aggregate
         mock_subscriptions.aggregate = mock_sub_aggregate
 
-        mock_db.__getitem__ = MagicMock(side_effect=lambda x: {
-            "invoices": mock_invoices,
-            "subscriptions": mock_subscriptions,
-        }[x])
+        mock_db.__getitem__ = MagicMock(
+            side_effect=lambda x: {
+                "invoices": mock_invoices,
+                "subscriptions": mock_subscriptions,
+            }[x]
+        )
 
         from services.billing_report_service import get_billing_summary
 
@@ -188,10 +195,12 @@ class TestBillingReportService:
 
         mock_invoices.aggregate = mock_invoice_aggregate
 
-        mock_db.__getitem__ = MagicMock(side_effect=lambda x: {
-            "subscriptions": mock_subscriptions,
-            "invoices": mock_invoices,
-        }[x])
+        mock_db.__getitem__ = MagicMock(
+            side_effect=lambda x: {
+                "subscriptions": mock_subscriptions,
+                "invoices": mock_invoices,
+            }[x]
+        )
 
         from services.billing_report_service import get_subscription_by_period
 
@@ -248,10 +257,12 @@ class TestBillingReportService:
         mock_subscriptions.aggregate = mock_aggregate_empty
         mock_payments.aggregate = mock_aggregate_empty
 
-        mock_db.__getitem__ = MagicMock(side_effect=lambda x: {
-            "subscriptions": mock_subscriptions,
-            "payment_transactions": mock_payments,
-        }[x])
+        mock_db.__getitem__ = MagicMock(
+            side_effect=lambda x: {
+                "subscriptions": mock_subscriptions,
+                "payment_transactions": mock_payments,
+            }[x]
+        )
 
         from services.billing_report_service import get_payment_discrepancies
 

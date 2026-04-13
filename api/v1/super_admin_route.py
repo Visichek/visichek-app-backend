@@ -8,7 +8,11 @@ from security.auth import verify_super_admin_token
 from security.principal import AuthPrincipal
 from services.dashboard_service import get_dashboard_stats
 from services.department_service import retrieve_departments, add_department
-from services.system_user_service import admin_set_user_mfa, retrieve_system_users, add_system_user
+from services.system_user_service import (
+    admin_set_user_mfa,
+    retrieve_system_users,
+    add_system_user,
+)
 from schemas.department_schema import DepartmentCreate
 from schemas.system_user_schema import SystemUserCreate
 
@@ -30,13 +34,21 @@ router = APIRouter(prefix="/super-admin", tags=["Tenant Super Admin"])
         "system_uptime_percent": 99.8,
         "average_response_time_ms": 145,
         "gdpr_requests_this_month": 5,
-        "data_retention_compliance_percent": 100.0
+        "data_retention_compliance_percent": 100.0,
     },
     response_codes={401: "Unauthorized", 403: "Insufficient permissions"},
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"}
-    }
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+    },
 )
 async def company_analytics(
     principal: AuthPrincipal = Depends(verify_super_admin_token),
@@ -50,22 +62,32 @@ async def company_analytics(
     message="All departments fetched successfully",
     description="Retrieve a paginated list of all departments across all tenants. Only super-admin users can access this endpoint.",
     summary="List all departments",
-    success_example=[{
-        "id": "64f1a2b3c4d5e6f7a8b9c0d2",
-        "tenant_id": "64f1a2b3c4d5e6f7a8b9c0d1",
-        "code": "HR-001",
-        "name": "Human Resources",
-        "is_active": True,
-        "created_by": "64f1a2b3c4d5e6f7a8b9c0d3",
-        "date_created": 1712500000,
-        "last_updated": 1712500000
-    }],
+    success_example=[
+        {
+            "id": "64f1a2b3c4d5e6f7a8b9c0d2",
+            "tenant_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+            "code": "HR-001",
+            "name": "Human Resources",
+            "is_active": True,
+            "created_by": "64f1a2b3c4d5e6f7a8b9c0d3",
+            "date_created": 1712500000,
+            "last_updated": 1712500000,
+        }
+    ],
     include_meta=True,
     response_codes={401: "Unauthorized", 403: "Insufficient permissions"},
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"}
-    }
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+    },
 )
 async def list_all_departments(
     start: Annotated[int, Query(ge=0)] = 0,
@@ -90,14 +112,30 @@ async def list_all_departments(
         "is_active": True,
         "created_by": "64f1a2b3c4d5e6f7a8b9c0d3",
         "date_created": 1712500000,
-        "last_updated": 1712500000
+        "last_updated": 1712500000,
     },
-    response_codes={401: "Unauthorized", 403: "Insufficient permissions", 422: "Validation error"},
+    response_codes={
+        401: "Unauthorized",
+        403: "Insufficient permissions",
+        422: "Validation error",
+    },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
-        422: {"success": False, "message": "Validation error", "code": "VALIDATION_FAILED"}
-    }
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+        422: {
+            "success": False,
+            "message": "Validation error",
+            "code": "VALIDATION_FAILED",
+        },
+    },
 )
 async def create_department(
     dept_data: DepartmentCreate,
@@ -113,25 +151,35 @@ async def create_department(
     message="All system users fetched successfully",
     description="Retrieve a paginated list of all system users (admins) across all tenants. Only super-admin users can access this endpoint.",
     summary="List all system users",
-    success_example=[{
-        "id": "64f1a2b3c4d5e6f7a8b9c0d3",
-        "tenant_id": "64f1a2b3c4d5e6f7a8b9c0d1",
-        "department_id": "64f1a2b3c4d5e6f7a8b9c0d2",
-        "full_name": "John Doe",
-        "email": "john.doe@acmecorp.com",
-        "role": "dept_admin",
-        "account_status": "active",
-        "is_active": True,
-        "last_login_at": 1712500000,
-        "date_created": 1712400000,
-        "last_updated": 1712500000
-    }],
+    success_example=[
+        {
+            "id": "64f1a2b3c4d5e6f7a8b9c0d3",
+            "tenant_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+            "department_id": "64f1a2b3c4d5e6f7a8b9c0d2",
+            "full_name": "John Doe",
+            "email": "john.doe@acmecorp.com",
+            "role": "dept_admin",
+            "account_status": "active",
+            "is_active": True,
+            "last_login_at": 1712500000,
+            "date_created": 1712400000,
+            "last_updated": 1712500000,
+        }
+    ],
     include_meta=True,
     response_codes={401: "Unauthorized", 403: "Insufficient permissions"},
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"}
-    }
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+    },
 )
 async def list_all_admins(
     start: Annotated[int, Query(ge=0)] = 0,
@@ -161,15 +209,36 @@ async def list_all_admins(
         "date_created": 1712500000,
         "last_updated": 1712500000,
         "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDQiLCJyb2xlIjoicmVjZXB0aW9uaXN0In0.X2Y3Z4A5B6C7D8E9F0G1H2I3J4K5L6M7",
-        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDQiLCJ0eXBlIjoicmVmcmVzaCJ9.N2O3P4Q5R6S7T8U9V0W1X2Y3Z4A5B6C7"
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGYxYTJiM2M0ZDVlNmY3YThiOWMwZDQiLCJ0eXBlIjoicmVmcmVzaCJ9.N2O3P4Q5R6S7T8U9V0W1X2Y3Z4A5B6C7",
     },
-    response_codes={401: "Unauthorized", 403: "Insufficient permissions", 409: "Already exists", 422: "Validation error"},
+    response_codes={
+        401: "Unauthorized",
+        403: "Insufficient permissions",
+        409: "Already exists",
+        422: "Validation error",
+    },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
-        409: {"success": False, "message": "User already exists", "code": "ALREADY_EXISTS"},
-        422: {"success": False, "message": "Validation error", "code": "VALIDATION_FAILED"}
-    }
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+        409: {
+            "success": False,
+            "message": "User already exists",
+            "code": "ALREADY_EXISTS",
+        },
+        422: {
+            "success": False,
+            "message": "Validation error",
+            "code": "VALIDATION_FAILED",
+        },
+    },
 )
 async def invite_admin(
     user_data: SystemUserCreate,
@@ -198,8 +267,11 @@ async def generate_registration_qr(
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
     from services.visit_session_service import generate_tenant_registration_qr
+
     tenant_id = principal.tenant_id
-    return await generate_tenant_registration_qr(tenant_id or "", department_id, branch_id)
+    return await generate_tenant_registration_qr(
+        tenant_id or "", department_id, branch_id
+    )
 
 
 @router.get("/visitor-log")
@@ -210,17 +282,25 @@ async def generate_registration_qr(
     include_meta=True,
 )
 async def get_company_visitor_log(
-    start_date: Annotated[int | None, Query(description="Unix timestamp for start date filter")] = None,
-    end_date: Annotated[int | None, Query(description="Unix timestamp for end date filter")] = None,
-    status_filter: Annotated[str | None, Query(description="Filter by visit status")] = None,
+    start_date: Annotated[
+        int | None, Query(description="Unix timestamp for start date filter")
+    ] = None,
+    end_date: Annotated[
+        int | None, Query(description="Unix timestamp for end date filter")
+    ] = None,
+    status_filter: Annotated[
+        str | None, Query(description="Filter by visit status")
+    ] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
     tenant_id = principal.tenant_id
     from repositories.visit_session_repo import get_visit_sessions, count_visit_sessions
+
     # Build filter
     from typing import Any as _Any, Dict as _Dict
+
     filter_dict: _Dict[str, _Any] = {"tenant_id": tenant_id}
     if start_date:
         filter_dict.setdefault("check_in_time", {})
@@ -230,7 +310,9 @@ async def get_company_visitor_log(
         filter_dict["check_in_time"]["$lte"] = end_date
     if status_filter:
         filter_dict["status"] = status_filter
-    sessions = await get_visit_sessions(filter_dict=filter_dict, start=skip, stop=skip + limit)
+    sessions = await get_visit_sessions(
+        filter_dict=filter_dict, start=skip, stop=skip + limit
+    )
     total = await count_visit_sessions(filter_dict)
     return {"items": sessions, "total": total, "skip": skip, "limit": limit}
 
@@ -251,12 +333,20 @@ async def assign_admin_department(
     from repositories.system_user_repo import update_system_user
     from repositories.department_repo import get_department
     from schemas.system_user_schema import SystemUserUpdate
+
     tenant_id = principal.tenant_id
     # Validate department belongs to tenant
-    dept = await get_department({"_id": ObjectId(department_id), "tenant_id": tenant_id})
+    dept = await get_department(
+        {"_id": ObjectId(department_id), "tenant_id": tenant_id}
+    )
     if not dept:
-        raise HTTPException(status_code=404, detail="Department not found in this tenant")
-    result = await update_system_user({"_id": ObjectId(user_id), "tenant_id": tenant_id}, SystemUserUpdate(department_id=department_id))
+        raise HTTPException(
+            status_code=404, detail="Department not found in this tenant"
+        )
+    result = await update_system_user(
+        {"_id": ObjectId(user_id), "tenant_id": tenant_id},
+        SystemUserUpdate(department_id=department_id),
+    )
     if not result:
         raise HTTPException(status_code=404, detail="System user not found")
     return result

@@ -6,7 +6,13 @@ from pydantic import BaseModel
 import io
 
 from core.response_envelope import document_response
-from schemas.visit_session_schema import CheckInRequest, CheckOutRequest, ConfirmCheckInRequest, DenyVisitorRequest, VisitSessionUpdate
+from schemas.visit_session_schema import (
+    CheckInRequest,
+    CheckOutRequest,
+    ConfirmCheckInRequest,
+    DenyVisitorRequest,
+    VisitSessionUpdate,
+)
 from security.auth import verify_system_user_token, verify_any_system_user_token
 from security.principal import AuthPrincipal
 from services.visit_session_service import (
@@ -126,8 +132,16 @@ async def generate_registration_qr_endpoint(
         422: "Validation error - invalid request payload",
     },
     error_examples={
-        400: {"success": False, "message": "Missing required field: purpose", "code": "VALIDATION_FAILED"},
-        404: {"success": False, "message": "Department not found", "code": "RESOURCE_NOT_FOUND"},
+        400: {
+            "success": False,
+            "message": "Missing required field: purpose",
+            "code": "VALIDATION_FAILED",
+        },
+        404: {
+            "success": False,
+            "message": "Department not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def check_in(
@@ -192,7 +206,11 @@ async def check_in(
         404: "Visit session not found",
     },
     error_examples={
-        404: {"success": False, "message": "Visit session not found", "code": "RESOURCE_NOT_FOUND"},
+        404: {
+            "success": False,
+            "message": "Visit session not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def check_out(
@@ -258,7 +276,9 @@ async def list_active_visitors(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     tenant_id = principal.tenant_id or ""
-    return await retrieve_active_visitors(tenant_id=tenant_id, department_id=department_id)
+    return await retrieve_active_visitors(
+        tenant_id=tenant_id, department_id=department_id
+    )
 
 
 @router.get("/sessions")
@@ -316,7 +336,9 @@ async def list_visit_sessions(
     department_id: Optional[str] = None,
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
-    principal: AuthPrincipal = Depends(verify_system_user_token("dept_admin", "super_admin", "auditor")),
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("dept_admin", "super_admin", "auditor")
+    ),
 ) -> list[VisitSessionWithSummaryOut]:
     tenant_id = principal.tenant_id or ""
     return await retrieve_visit_sessions_with_summary(
@@ -338,7 +360,9 @@ async def list_pending_sessions(
     department_id: Optional[str] = None,
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
-    principal: AuthPrincipal = Depends(verify_system_user_token("dept_admin", "super_admin", "receptionist")),
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("dept_admin", "super_admin", "receptionist")
+    ),
 ):
     tenant_id = principal.tenant_id or ""
     return await retrieve_pending_sessions(
@@ -395,7 +419,11 @@ async def list_pending_sessions(
         404: "Visit session not found",
     },
     error_examples={
-        404: {"success": False, "message": "Visit session not found", "code": "RESOURCE_NOT_FOUND"},
+        404: {
+            "success": False,
+            "message": "Visit session not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def get_visit_session_endpoint(
@@ -463,8 +491,16 @@ async def get_visit_session_endpoint(
         404: "Visit session not found",
     },
     error_examples={
-        400: {"success": False, "message": "Cannot confirm check-in with status: checked_out", "code": "VALIDATION_FAILED"},
-        404: {"success": False, "message": "Visit session not found", "code": "RESOURCE_NOT_FOUND"},
+        400: {
+            "success": False,
+            "message": "Cannot confirm check-in with status: checked_out",
+            "code": "VALIDATION_FAILED",
+        },
+        404: {
+            "success": False,
+            "message": "Visit session not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def confirm_check_in_endpoint(
@@ -536,8 +572,16 @@ async def confirm_check_in_endpoint(
         404: "Visit session not found",
     },
     error_examples={
-        400: {"success": False, "message": "Cannot deny visitor with status: checked_out", "code": "VALIDATION_FAILED"},
-        404: {"success": False, "message": "Visit session not found", "code": "RESOURCE_NOT_FOUND"},
+        400: {
+            "success": False,
+            "message": "Cannot deny visitor with status: checked_out",
+            "code": "VALIDATION_FAILED",
+        },
+        404: {
+            "success": False,
+            "message": "Visit session not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def deny_visitor_endpoint(
@@ -573,7 +617,9 @@ async def deny_visitor_endpoint(
     },
 )
 async def verify_id_scan(
-    id_image_object_key: str = Query(..., description="Storage object key of the uploaded ID image"),
+    id_image_object_key: str = Query(
+        ..., description="Storage object key of the uploaded ID image"
+    ),
     principal: AuthPrincipal = Depends(_checkin_roles),
 ):
     """Extract identity information from uploaded ID via OCR."""
@@ -631,8 +677,16 @@ async def verify_id_scan(
         404: "Visit session not found",
     },
     error_examples={
-        400: {"success": False, "message": "Invalid session ID format", "code": "VALIDATION_FAILED"},
-        404: {"success": False, "message": "Visit session not found", "code": "RESOURCE_NOT_FOUND"},
+        400: {
+            "success": False,
+            "message": "Invalid session ID format",
+            "code": "VALIDATION_FAILED",
+        },
+        404: {
+            "success": False,
+            "message": "Visit session not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def apply_id_scan_endpoint(
@@ -700,8 +754,16 @@ async def apply_id_scan_endpoint(
         404: "Session not found",
     },
     error_examples={
-        400: {"success": False, "message": "Can only update draft sessions (status: REGISTERED). Current status: checked_in", "code": "VALIDATION_FAILED"},
-        404: {"success": False, "message": "Visit session not found", "code": "RESOURCE_NOT_FOUND"},
+        400: {
+            "success": False,
+            "message": "Can only update draft sessions (status: REGISTERED). Current status: checked_in",
+            "code": "VALIDATION_FAILED",
+        },
+        404: {
+            "success": False,
+            "message": "Visit session not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def update_draft_session(
@@ -765,8 +827,16 @@ async def update_draft_session(
         404: "Visit session or host not found",
     },
     error_examples={
-        400: {"success": False, "message": "Invalid session ID format", "code": "VALIDATION_FAILED"},
-        404: {"success": False, "message": "Visit session not found", "code": "RESOURCE_NOT_FOUND"},
+        400: {
+            "success": False,
+            "message": "Invalid session ID format",
+            "code": "VALIDATION_FAILED",
+        },
+        404: {
+            "success": False,
+            "message": "Visit session not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def host_approve_endpoint(
@@ -786,7 +856,10 @@ async def host_approve_endpoint(
     message="Badge PDF retrieved",
     description="Download the visitor badge PDF for a specific session.",
     summary="Download visitor badge PDF",
-    response_codes={404: "Session or badge not found", 503: "Storage service unavailable"},
+    response_codes={
+        404: "Session or badge not found",
+        503: "Storage service unavailable",
+    },
 )
 async def download_badge(
     session_id: str,

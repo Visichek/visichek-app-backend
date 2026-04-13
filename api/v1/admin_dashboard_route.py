@@ -8,7 +8,10 @@ from core.response_envelope import document_response
 from schemas.admin_schema import AdminOut
 from security.account_status_check import check_admin_account_status_and_permissions
 from services.admin_dashboard_service import get_admin_dashboard_stats
-from services.billing_report_service import get_billing_summary, get_payment_discrepancies
+from services.billing_report_service import (
+    get_billing_summary,
+    get_payment_discrepancies,
+)
 
 router = APIRouter(prefix="/admins/dashboard", tags=["Application Admin Dashboard"])
 
@@ -76,8 +79,16 @@ router = APIRouter(prefix="/admins/dashboard", tags=["Application Admin Dashboar
         403: "Forbidden - insufficient permissions",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def admin_dashboard_stats(
@@ -107,8 +118,16 @@ async def admin_dashboard_stats(
         403: "Forbidden - insufficient permissions",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def billing_summary(
@@ -151,8 +170,16 @@ async def billing_summary(
         403: "Forbidden - insufficient permissions",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def billing_discrepancies(

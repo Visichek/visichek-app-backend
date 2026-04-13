@@ -57,6 +57,7 @@ def _convert_keys(obj: Any, converter: Any) -> Any:
 
 # ── middleware ────────────────────────────────────────────────────────
 
+
 class CaseConversionMiddleware(BaseHTTPMiddleware):
     """
     Middleware that:
@@ -69,7 +70,11 @@ class CaseConversionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[override]
         # ── Normalise inbound body ───────────────────────────────────
         content_type = request.headers.get("content-type", "")
-        if "application/json" in content_type and request.method in ("POST", "PUT", "PATCH"):
+        if "application/json" in content_type and request.method in (
+            "POST",
+            "PUT",
+            "PATCH",
+        ):
             body = await request.body()
             if body:
                 try:
@@ -122,7 +127,8 @@ class CaseConversionMiddleware(BaseHTTPMiddleware):
         # Collect headers, but skip content-length (we recalculate) and
         # set-cookie (added back separately to preserve multi-value).
         resp_headers = {
-            k: v for k, v in response.headers.items()
+            k: v
+            for k, v in response.headers.items()
             if k.lower() not in ("content-length", "set-cookie")
         }
         resp_headers["content-length"] = str(len(new_body))

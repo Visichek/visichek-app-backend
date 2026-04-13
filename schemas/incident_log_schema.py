@@ -22,7 +22,7 @@ class IncidentLogBase(BaseModel):
 class IncidentLogCreate(IncidentLogBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def set_notification_deadline(self):
         if self.notification_deadline is None:
             self.notification_deadline = self.date_created + (72 * 3600)

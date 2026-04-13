@@ -10,6 +10,7 @@ Integration tests for the full plan/subscription/discount lifecycle:
 
 Requires: MongoDB on localhost:27017, Redis on localhost:6379
 """
+
 from __future__ import annotations
 
 import time
@@ -54,7 +55,9 @@ class TestPlanCRUD:
     """Test plan creation, listing, updating, archiving, cloning."""
 
     async def test_create_plan(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         resp = await integration_client.post(
@@ -67,13 +70,26 @@ class TestPlanCRUD:
                 "base_price_yearly": 999.99,
                 "feature_rules": [
                     {"endpoint_pattern": "/v1/visitors/*", "enabled": True},
-                    {"endpoint_pattern": "/v1/audit/*", "enabled": False, "description": "Not on this plan"},
+                    {
+                        "endpoint_pattern": "/v1/audit/*",
+                        "enabled": False,
+                        "description": "Not on this plan",
+                    },
                 ],
                 "crud_limits": [
-                    {"collection": "visitors", "max_create": 50, "max_update": 100, "reset_interval": "monthly"},
+                    {
+                        "collection": "visitors",
+                        "max_create": 50,
+                        "max_update": 100,
+                        "reset_interval": "monthly",
+                    },
                 ],
                 "retrieval_quotas": [
-                    {"collection": "dashboard", "max_reads": 200, "reset_interval": "daily"},
+                    {
+                        "collection": "dashboard",
+                        "max_reads": 200,
+                        "reset_interval": "daily",
+                    },
                 ],
                 "tenant_caps": {"max_system_users": 10, "max_departments": 5},
             },
@@ -87,7 +103,9 @@ class TestPlanCRUD:
         assert data["crud_limits"][0]["max_create"] == 50
 
     async def test_list_plans(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         # Create two plans
@@ -106,7 +124,9 @@ class TestPlanCRUD:
         assert len(resp.json()["data"]) >= 2
 
     async def test_update_plan(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         create_resp = await integration_client.post(
@@ -126,7 +146,9 @@ class TestPlanCRUD:
         assert update_resp.json()["data"]["base_price_monthly"] == 49.99
 
     async def test_archive_plan(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         create_resp = await integration_client.post(
@@ -148,7 +170,9 @@ class TestPlanCRUD:
         assert archive_resp.json()["data"]["status"] == "archived"
 
     async def test_duplicate_plan_name_rejected(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         name = f"dup-plan-{ts}"
@@ -205,11 +229,15 @@ class TestSubscriptionLifecycle:
         return plan_id, tenant_id
 
     async def test_subscribe_tenant(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         plan_id, tenant_id = await self._create_plan_and_tenant(
-            integration_client, admin_auth_headers, ts,
+            integration_client,
+            admin_auth_headers,
+            ts,
         )
 
         resp = await integration_client.post(
@@ -229,11 +257,15 @@ class TestSubscriptionLifecycle:
         assert data["effective_price"] == 100.0
 
     async def test_duplicate_subscription_rejected(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         plan_id, tenant_id = await self._create_plan_and_tenant(
-            integration_client, admin_auth_headers, ts,
+            integration_client,
+            admin_auth_headers,
+            ts,
         )
 
         # First subscription
@@ -253,11 +285,15 @@ class TestSubscriptionLifecycle:
         assert resp2.status_code == 409
 
     async def test_cancel_subscription(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         plan_id, tenant_id = await self._create_plan_and_tenant(
-            integration_client, admin_auth_headers, ts,
+            integration_client,
+            admin_auth_headers,
+            ts,
         )
 
         await integration_client.post(
@@ -275,11 +311,15 @@ class TestSubscriptionLifecycle:
         assert cancel_resp.json()["data"]["status"] == "cancelled"
 
     async def test_get_tenant_active_subscription(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         plan_id, tenant_id = await self._create_plan_and_tenant(
-            integration_client, admin_auth_headers, ts,
+            integration_client,
+            admin_auth_headers,
+            ts,
         )
 
         await integration_client.post(
@@ -301,7 +341,9 @@ class TestDiscountLifecycle:
     """Test discount creation, validation, and application."""
 
     async def test_create_discount(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         resp = await integration_client.post(
@@ -323,7 +365,9 @@ class TestDiscountLifecycle:
         assert data["value"] == 25.0
 
     async def test_duplicate_discount_code_rejected(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         code = f"DUP{ts}"
@@ -343,7 +387,9 @@ class TestDiscountLifecycle:
         assert resp2.status_code == 409
 
     async def test_subscription_with_discount(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
 
@@ -406,7 +452,9 @@ class TestDiscountLifecycle:
         assert disc_id in sub_data["applied_discount_ids"]
 
     async def test_disable_discount(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
         create_resp = await integration_client.post(
@@ -428,7 +476,9 @@ class TestSubscriptionOverrides:
     """Test per-tenant feature/limit overrides on subscriptions."""
 
     async def test_update_overrides(
-        self, integration_client: AsyncClient, admin_auth_headers: dict,
+        self,
+        integration_client: AsyncClient,
+        admin_auth_headers: dict,
     ):
         ts = int(time.time())
 
@@ -490,7 +540,8 @@ class TestPlanWithoutAuth:
     """Verify plan management endpoints require admin auth."""
 
     async def test_create_plan_without_auth_rejected(
-        self, integration_client: AsyncClient,
+        self,
+        integration_client: AsyncClient,
     ):
         resp = await integration_client.post(
             "/v1/plans",
@@ -499,7 +550,8 @@ class TestPlanWithoutAuth:
         assert resp.status_code in (401, 403)
 
     async def test_create_subscription_without_auth_rejected(
-        self, integration_client: AsyncClient,
+        self,
+        integration_client: AsyncClient,
     ):
         resp = await integration_client.post(
             "/v1/subscriptions",
@@ -508,7 +560,8 @@ class TestPlanWithoutAuth:
         assert resp.status_code in (401, 403)
 
     async def test_create_discount_without_auth_rejected(
-        self, integration_client: AsyncClient,
+        self,
+        integration_client: AsyncClient,
     ):
         resp = await integration_client.post(
             "/v1/discounts",

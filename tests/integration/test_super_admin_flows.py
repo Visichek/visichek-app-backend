@@ -6,6 +6,7 @@ Integration tests for super-admin endpoints:
 
 Requires: MongoDB on localhost:27017, Redis on localhost:6379
 """
+
 from __future__ import annotations
 
 import time
@@ -13,7 +14,6 @@ import time
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
-
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]

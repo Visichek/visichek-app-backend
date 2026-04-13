@@ -34,14 +34,30 @@ _admin_roles = verify_system_user_token("super_admin", "dpo")
         "effective_from": 1712448000,
         "effective_to": None,
         "is_active": True,
-        "date_created": 1712448000
+        "date_created": 1712448000,
     },
-    response_codes={401: "Unauthorized token", 403: "Insufficient permissions", 422: "Invalid payload"},
+    response_codes={
+        401: "Unauthorized token",
+        403: "Insufficient permissions",
+        422: "Invalid payload",
+    },
     error_examples={
-        401: {"success": False, "message": "Token validation failed", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
-        422: {"success": False, "message": "Validation error", "code": "VALIDATION_FAILED"}
-    }
+        401: {
+            "success": False,
+            "message": "Token validation failed",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+        422: {
+            "success": False,
+            "message": "Validation error",
+            "code": "VALIDATION_FAILED",
+        },
+    },
 )
 async def create_privacy_notice_endpoint(
     notice_data: PrivacyNoticeCreate,
@@ -67,19 +83,35 @@ async def create_privacy_notice_endpoint(
         "effective_from": 1712448000,
         "effective_to": None,
         "is_active": True,
-        "date_created": 1712448000
+        "date_created": 1712448000,
     },
-    response_codes={401: "Unauthorized token", 403: "Insufficient permissions", 404: "Notice not found"},
+    response_codes={
+        401: "Unauthorized token",
+        403: "Insufficient permissions",
+        404: "Notice not found",
+    },
     error_examples={
-        401: {"success": False, "message": "Token validation failed", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
-        404: {"success": False, "message": "Privacy notice not found", "code": "RESOURCE_NOT_FOUND"}
-    }
+        401: {
+            "success": False,
+            "message": "Token validation failed",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+        404: {
+            "success": False,
+            "message": "Privacy notice not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
+    },
 )
 async def get_active_notice(
-    principal: AuthPrincipal = Depends(verify_system_user_token(
-        "super_admin", "dpo", "receptionist", "dept_admin"
-    )),
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("super_admin", "dpo", "receptionist", "dept_admin")
+    ),
 ):
     tenant_id = principal.tenant_id or ""
     return await retrieve_active_notice(tenant_id=tenant_id)
@@ -90,25 +122,43 @@ async def get_active_notice(
     message="Privacy notices fetched successfully",
     summary="List privacy notices",
     description="Retrieve all privacy notices for the tenant with pagination support.",
-    success_example=[{
-        "id": "507f1f77bcf86cd799439011",
-        "tenant_id": "tenant_001",
-        "version_code": "v2.1",
-        "title": "Data Processing Notice",
-        "summary": "Information about how we process your personal data",
-        "full_policy_url": "https://example.com/privacy-policy",
-        "effective_from": 1712448000,
-        "effective_to": None,
-        "is_active": True,
-        "date_created": 1712448000
-    }],
+    success_example=[
+        {
+            "id": "507f1f77bcf86cd799439011",
+            "tenant_id": "tenant_001",
+            "version_code": "v2.1",
+            "title": "Data Processing Notice",
+            "summary": "Information about how we process your personal data",
+            "full_policy_url": "https://example.com/privacy-policy",
+            "effective_from": 1712448000,
+            "effective_to": None,
+            "is_active": True,
+            "date_created": 1712448000,
+        }
+    ],
     include_meta=True,
-    response_codes={401: "Unauthorized token", 403: "Insufficient permissions", 422: "Invalid query"},
+    response_codes={
+        401: "Unauthorized token",
+        403: "Insufficient permissions",
+        422: "Invalid query",
+    },
     error_examples={
-        401: {"success": False, "message": "Token validation failed", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
-        422: {"success": False, "message": "Invalid pagination parameters", "code": "VALIDATION_FAILED"}
-    }
+        401: {
+            "success": False,
+            "message": "Token validation failed",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+        422: {
+            "success": False,
+            "message": "Invalid pagination parameters",
+            "code": "VALIDATION_FAILED",
+        },
+    },
 )
 async def list_privacy_notices(
     start: Annotated[int, Query(ge=0)] = 0,
@@ -134,15 +184,36 @@ async def list_privacy_notices(
         "effective_from": 1712448000,
         "effective_to": None,
         "is_active": True,
-        "date_created": 1712448000
+        "date_created": 1712448000,
     },
-    response_codes={401: "Unauthorized token", 403: "Insufficient permissions", 404: "Notice not found", 422: "Invalid payload"},
+    response_codes={
+        401: "Unauthorized token",
+        403: "Insufficient permissions",
+        404: "Notice not found",
+        422: "Invalid payload",
+    },
     error_examples={
-        401: {"success": False, "message": "Token validation failed", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
-        404: {"success": False, "message": "Privacy notice not found", "code": "RESOURCE_NOT_FOUND"},
-        422: {"success": False, "message": "Validation error", "code": "VALIDATION_FAILED"}
-    }
+        401: {
+            "success": False,
+            "message": "Token validation failed",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+        404: {
+            "success": False,
+            "message": "Privacy notice not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
+        422: {
+            "success": False,
+            "message": "Validation error",
+            "code": "VALIDATION_FAILED",
+        },
+    },
 )
 async def update_privacy_notice_endpoint(
     notice_id: str,
@@ -150,4 +221,6 @@ async def update_privacy_notice_endpoint(
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
     tenant_id = principal.tenant_id or ""
-    return await update_notice_by_id(notice_id=notice_id, tenant_id=tenant_id, notice_data=notice_data)
+    return await update_notice_by_id(
+        notice_id=notice_id, tenant_id=tenant_id, notice_data=notice_data
+    )

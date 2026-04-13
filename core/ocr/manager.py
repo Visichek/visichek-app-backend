@@ -43,14 +43,18 @@ class OCRManager:
     @classmethod
     def get_instance(cls) -> OCRManager:
         if cls._instance is None or cls._instance._provider is None:
-            raise RuntimeError("OCRManager is not configured. Call configure() or configure_from_settings() first.")
+            raise RuntimeError(
+                "OCRManager is not configured. Call configure() or configure_from_settings() first."
+            )
         return cls._instance
 
     @classmethod
     def is_configured(cls) -> bool:
         return cls._instance is not None and cls._instance._provider is not None
 
-    async def extract_id(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> OCRResult:
+    async def extract_id(
+        self, image_bytes: bytes, mime_type: str = "image/jpeg"
+    ) -> OCRResult:
         if self._provider is None:
             raise RuntimeError("OCR provider not configured")
         return await self._provider.extract_id(image_bytes, mime_type)

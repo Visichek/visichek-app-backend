@@ -60,6 +60,7 @@ from schemas.visitor_profile_schema import VisitorProfileCreate
 # TestAuthFlow
 # ============================================================================
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestAuthFlow:
@@ -88,7 +89,9 @@ class TestAuthFlow:
                 "role": "receptionist",
                 "password_hash": password,
             },
-            headers={"Authorization": f"Bearer {await self._get_admin_token(integration_client, seeded_tenant)}"}
+            headers={
+                "Authorization": f"Bearer {await self._get_admin_token(integration_client, seeded_tenant)}"
+            },
         )
 
         assert signup_response.status_code == 201
@@ -110,7 +113,7 @@ class TestAuthFlow:
             json={
                 "email": email,
                 "password": password,
-            }
+            },
         )
 
         assert login_response.status_code == 200
@@ -128,8 +131,7 @@ class TestAuthFlow:
 
         # Step 2: Get profile using access token
         profile_response = await integration_client.get(
-            "/v1/system-users/me",
-            headers={"Authorization": f"Bearer {access_token}"}
+            "/v1/system-users/me", headers={"Authorization": f"Bearer {access_token}"}
         )
 
         assert profile_response.status_code == 200
@@ -144,7 +146,7 @@ class TestAuthFlow:
             json={
                 "refresh_token": refresh_token,
             },
-            headers={"Authorization": f"Bearer {access_token}"}
+            headers={"Authorization": f"Bearer {access_token}"},
         )
 
         assert refresh_response.status_code == 200
@@ -163,7 +165,7 @@ class TestAuthFlow:
         # Step 4: Verify new access token works
         verify_response = await integration_client.get(
             "/v1/system-users/me",
-            headers={"Authorization": f"Bearer {new_access_token}"}
+            headers={"Authorization": f"Bearer {new_access_token}"},
         )
 
         assert verify_response.status_code == 200
@@ -184,7 +186,7 @@ class TestAuthFlow:
             json={
                 "email": user.email,
                 "password": "WrongPassword123!",
-            }
+            },
         )
 
         assert login_response.status_code == 401
@@ -200,8 +202,7 @@ class TestAuthFlow:
         invalid_token = "invalid.malformed.token"
 
         response = await integration_client.get(
-            "/v1/system-users/me",
-            headers={"Authorization": f"Bearer {invalid_token}"}
+            "/v1/system-users/me", headers={"Authorization": f"Bearer {invalid_token}"}
         )
 
         # Should return 401 or 422 for invalid token
@@ -217,12 +218,15 @@ class TestAuthFlow:
         """Helper to get a super_admin token for the given tenant."""
 
         # This is a helper to create admin token; in real tests, use seeded_system_user
-        raise NotImplementedError("Use auth_headers fixture or create dedicated admin user")
+        raise NotImplementedError(
+            "Use auth_headers fixture or create dedicated admin user"
+        )
 
 
 # ============================================================================
 # TestVisitorCheckInCheckOutFlow
 # ============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -377,6 +381,7 @@ class TestVisitorCheckInCheckOutFlow:
 # TestTenantDepartmentFlow
 # ============================================================================
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestTenantDepartmentFlow:
@@ -414,9 +419,7 @@ class TestTenantDepartmentFlow:
             dept_ids.append(dept.id)
 
         # Retrieve all departments for tenant from DB
-        all_depts = await get_departments(
-            filter_dict={"tenant_id": tenant_id}
-        )
+        all_depts = await get_departments(filter_dict={"tenant_id": tenant_id})
         assert len(all_depts) == 3
 
         # Update first department
@@ -430,15 +433,11 @@ class TestTenantDepartmentFlow:
         assert updated_dept.name == "Updated Department 0"
 
         # Delete one department
-        delete_result = await delete_department(
-            {"_id": ObjectId(dept_ids[2])}
-        )
+        delete_result = await delete_department({"_id": ObjectId(dept_ids[2])})
         assert delete_result.deleted_count == 1
 
         # Verify count decreased
-        remaining_depts = await get_departments(
-            filter_dict={"tenant_id": tenant_id}
-        )
+        remaining_depts = await get_departments(filter_dict={"tenant_id": tenant_id})
         assert len(remaining_depts) == 2
 
     async def test_duplicate_tenant_name_rejected(
@@ -468,6 +467,7 @@ class TestTenantDepartmentFlow:
 # ============================================================================
 # TestComplianceFlow
 # ============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -571,9 +571,7 @@ class TestComplianceFlow:
         assert dsr.status.value == "pending"
 
         # Retrieve DSR
-        dsr_retrieved = await get_dsr(
-            {"_id": ObjectId(dsr.id)}
-        )
+        dsr_retrieved = await get_dsr({"_id": ObjectId(dsr.id)})
         assert dsr_retrieved is not None
 
         # Update status to in_progress
@@ -603,6 +601,7 @@ class TestComplianceFlow:
 # ============================================================================
 # TestAppointmentFlow
 # ============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio

@@ -11,7 +11,14 @@ from repositories.tenant_repo import (
     update_tenant,
     delete_tenant,
 )
-from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut, TenantBootstrapRequest, TenantWithSummaryOut, TenantPlanSummary
+from schemas.tenant_schema import (
+    TenantCreate,
+    TenantUpdate,
+    TenantOut,
+    TenantBootstrapRequest,
+    TenantWithSummaryOut,
+    TenantPlanSummary,
+)
 
 
 async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
@@ -38,8 +45,10 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
         )
 
     # 1B. Cross-border transfer validation
-    if hasattr(payload, 'country_of_hosting') and payload.country_of_hosting:
-        if payload.country_of_hosting.lower() != "nigeria" and not getattr(payload, 'cross_border_approved', False):
+    if hasattr(payload, "country_of_hosting") and payload.country_of_hosting:
+        if payload.country_of_hosting.lower() != "nigeria" and not getattr(
+            payload, "cross_border_approved", False
+        ):
             raise HTTPException(
                 status_code=400,
                 detail="Cross-border data transfer requires approval. Set cross_border_approved=true or use hosting within Nigeria.",
@@ -60,10 +69,12 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
     tenant = await create_tenant(tenant_data)
 
     # 3. Guard: no super_admin should exist for this tenant yet
-    existing_super = await get_system_user({
-        "tenant_id": tenant.id,
-        "role": SystemUserRole.SUPER_ADMIN.value,
-    })
+    existing_super = await get_system_user(
+        {
+            "tenant_id": tenant.id,
+            "role": SystemUserRole.SUPER_ADMIN.value,
+        }
+    )
     if existing_super:
         raise HTTPException(
             status_code=409,
@@ -95,11 +106,15 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
 async def add_tenant(tenant_data: TenantCreate) -> TenantOut:
     existing = await get_tenant(filter_dict={"company_name": tenant_data.company_name})
     if existing:
-        raise HTTPException(status_code=409, detail="Tenant with this company name already exists")
+        raise HTTPException(
+            status_code=409, detail="Tenant with this company name already exists"
+        )
 
     # Cross-border transfer validation
-    if hasattr(tenant_data, 'country_of_hosting') and tenant_data.country_of_hosting:
-        if tenant_data.country_of_hosting.lower() != "nigeria" and not getattr(tenant_data, 'cross_border_approved', False):
+    if hasattr(tenant_data, "country_of_hosting") and tenant_data.country_of_hosting:
+        if tenant_data.country_of_hosting.lower() != "nigeria" and not getattr(
+            tenant_data, "cross_border_approved", False
+        ):
             raise HTTPException(
                 status_code=400,
                 detail="Cross-border data transfer requires approval. Set cross_border_approved=true or use hosting within Nigeria.",
@@ -142,14 +157,18 @@ def _build_plan_summary(plan_data: dict | None) -> TenantPlanSummary | None:
 
 async def _enrich_tenant(tenant: TenantOut) -> TenantWithSummaryOut:
     from services.plan_cache_service import resolve_tenant_plan
+
     plan_data = await resolve_tenant_plan(tenant.id or "")
     data = tenant.model_dump(by_alias=False)
     data["plan_summary"] = _build_plan_summary(plan_data)
     return TenantWithSummaryOut(**data)
 
 
-async def retrieve_tenants_with_summary(start=0, stop=100) -> List[TenantWithSummaryOut]:
+async def retrieve_tenants_with_summary(
+    start=0, stop=100
+) -> List[TenantWithSummaryOut]:
     import asyncio
+
     tenants = await get_tenants(start=start, stop=stop)
     return list(await asyncio.gather(*[_enrich_tenant(t) for t in tenants]))
 

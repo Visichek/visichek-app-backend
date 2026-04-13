@@ -1,16 +1,21 @@
-from pydantic import BaseModel
-from typing import Optional, List
+import time  # noqa: F401  re-exported for `from schemas.imports import *`
+from datetime import datetime, timezone  # noqa: F401
+from pydantic import BaseModel, Field, EmailStr, model_validator  # noqa: F401
+from typing import Any, Optional, List  # noqa: F401
 from enum import Enum
+from bson import ObjectId  # noqa: F401
 
 
 class LoginType(str, Enum):
     google = "GOOGLE"
     email = "EMAIL"
 
+
 class AccountStatus(str, Enum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
     SUSPENDED = "SUSPENDED"
+
 
 class Permission(BaseModel):
     name: str
@@ -19,11 +24,13 @@ class Permission(BaseModel):
     key: Optional[str] = None
     description: Optional[str] = None
 
+
 class PermissionList(BaseModel):
     permissions: List[Permission]
 
 
 # --- VisiChek Domain Enums ---
+
 
 class SystemUserRole(str, Enum):
     RECEPTIONIST = "receptionist"
@@ -33,6 +40,7 @@ class SystemUserRole(str, Enum):
     SECURITY_OFFICER = "security_officer"
     DPO = "dpo"
 
+
 class VisitStatus(str, Enum):
     REGISTERED = "registered"
     PENDING_VERIFICATION = "pending_verification"
@@ -41,24 +49,29 @@ class VisitStatus(str, Enum):
     DENIED = "denied"
     CANCELLED = "cancelled"
 
+
 class CheckInMethod(str, Enum):
     QR = "qr_registration"
     ID_SCAN = "id_scan"
     MANUAL = "manual_entry"
 
+
 class CheckOutMethod(str, Enum):
     QR_SCAN = "qr_scan"
     MANUAL = "manual"
+
 
 class VerificationMethod(str, Enum):
     ID_SCAN = "id_scan"
     QR_UPLOAD = "qr_upload"
     HOST_APPROVAL = "host_approval"
 
+
 class VerificationStatus(str, Enum):
     VERIFIED = "verified"
     UNVERIFIED = "unverified"
     DENIED = "denied"
+
 
 class AppointmentStatus(str, Enum):
     SCHEDULED = "scheduled"
@@ -66,13 +79,16 @@ class AppointmentStatus(str, Enum):
     CANCELLED = "cancelled"
     MISSED = "missed"
 
+
 class LawfulBasis(str, Enum):
     CONSENT = "consent"
     LEGITIMATE_INTEREST = "legitimate_interest"
 
+
 class DeletionAction(str, Enum):
     DELETE = "delete"
     ANONYMISE = "anonymise"
+
 
 class DSRType(str, Enum):
     ACCESS = "access"
@@ -80,11 +96,13 @@ class DSRType(str, Enum):
     DELETION = "deletion"
     CONSENT_WITHDRAWAL = "consent_withdrawal"
 
+
 class DSRStatus(str, Enum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     REJECTED = "rejected"
+
 
 class IncidentType(str, Enum):
     DATA_BREACH = "data_breach"
@@ -94,6 +112,7 @@ class IncidentType(str, Enum):
     MISCONFIGURATION = "misconfiguration"
     THIRD_PARTY = "third_party"
 
+
 class IncidentStatus(str, Enum):
     OPEN = "open"
     INVESTIGATING = "investigating"
@@ -101,17 +120,21 @@ class IncidentStatus(str, Enum):
     REPORTED_TO_NDPC = "reported_to_ndpc"
     CLOSED = "closed"
 
+
 class BadgeFormat(str, Enum):
     A6 = "A6"
     A7 = "A7"
+
 
 class NoticeDisplayMode(str, Enum):
     PASSIVE = "passive"
     ACTIVE_CONSENT = "active_consent"
 
+
 class ProfilingPreference(str, Enum):
     ALLOWED = "allowed"
     OPTED_OUT = "opted_out"
+
 
 class LogoPosition(str, Enum):
     TOP_LEFT = "top_left"

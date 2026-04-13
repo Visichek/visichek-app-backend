@@ -5,6 +5,7 @@ from schemas.imports import *
 
 # --- Enums ---
 
+
 class VisitorBadgeExpiry(str, Enum):
     END_OF_DAY = "end_of_day"
     MANUAL = "manual"
@@ -19,6 +20,7 @@ class SsoProvider(str, Enum):
 
 
 # --- Tenant Settings ---
+
 
 class TenantSettingsBase(BaseModel):
     """Organization-level configuration managed by super_admin."""
@@ -86,13 +88,19 @@ class TenantSettingsBase(BaseModel):
             raise ValueError("password_min_length must be at least 8")
         if self.password_min_length > 128:
             raise ValueError("password_min_length must be at most 128")
-        if self.visitor_badge_expiry == VisitorBadgeExpiry.HOURS and not self.visitor_badge_expiry_hours:
-            raise ValueError("visitor_badge_expiry_hours is required when badge expiry is set to 'hours'")
+        if (
+            self.visitor_badge_expiry == VisitorBadgeExpiry.HOURS
+            and not self.visitor_badge_expiry_hours
+        ):
+            raise ValueError(
+                "visitor_badge_expiry_hours is required when badge expiry is set to 'hours'"
+            )
         return self
 
 
 class TenantSettingsCreate(TenantSettingsBase):
     """Internal creation schema."""
+
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
@@ -163,6 +171,7 @@ class TenantSettingsUpdate(BaseModel):
 
 class TenantSettingsOut(TenantSettingsBase):
     """Response schema for tenant settings."""
+
     id: Optional[str] = Field(default=None, alias="_id")
     date_created: Optional[int] = None
     last_updated: Optional[int] = None

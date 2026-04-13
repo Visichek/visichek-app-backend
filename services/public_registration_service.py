@@ -37,7 +37,12 @@ from schemas.public_registration_schema import (
     PublicReturningVisitorLookupRequest,
     PublicTenantInfoOut,
 )
-from schemas.imports import VisitStatus, CheckInMethod, CheckOutMethod, AppointmentStatus
+from schemas.imports import (
+    VisitStatus,
+    CheckInMethod,
+    CheckOutMethod,
+    AppointmentStatus,
+)
 from schemas.visit_session_schema import VisitSessionCreate, VisitSessionUpdate
 from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import verify_badge_token, verify_registration_token
@@ -62,7 +67,9 @@ async def register_visitor_public(
     if request.registration_token:
         token_scope = verify_registration_token(request.registration_token)
         if not token_scope or token_scope.get("tenant_id") != tenant_id:
-            raise HTTPException(status_code=400, detail="Invalid or expired registration token")
+            raise HTTPException(
+                status_code=400, detail="Invalid or expired registration token"
+            )
         if token_scope.get("department_id"):
             request.department_id = token_scope["department_id"]
 
@@ -76,7 +83,9 @@ async def register_visitor_public(
             {"_id": ObjectId(request.profile_id), "tenant_id": tenant_id},
         )
         if not existing_profile or existing_profile.phone != request.phone:
-            raise HTTPException(status_code=400, detail="Returning-visitor match failed")
+            raise HTTPException(
+                status_code=400, detail="Returning-visitor match failed"
+            )
         if not request.full_name:
             request.full_name = existing_profile.full_name
         if not request.company:
@@ -87,10 +96,12 @@ async def register_visitor_public(
 
     # Enforce plan cap on visit sessions created this calendar month
     month_start, month_end = get_month_bounds()
-    month_count = await count_visit_sessions({
-        "tenant_id": tenant_id,
-        "check_in_time": {"$gte": month_start, "$lt": month_end},
-    })
+    month_count = await count_visit_sessions(
+        {
+            "tenant_id": tenant_id,
+            "check_in_time": {"$gte": month_start, "$lt": month_end},
+        }
+    )
     await enforce_entity_cap(
         tenant_id=tenant_id,
         cap_key="max_visitors_per_month",
@@ -100,25 +111,28 @@ async def register_visitor_public(
 
     # Consent enforcement based on tenant's lawful basis
     from schemas.imports import LawfulBasis
+
     lawful_basis = None
     consent_granted = None
     consent_method = None
     consent_timestamp_val = None
 
-    if hasattr(tenant, 'lawful_basis') and tenant.lawful_basis:
+    if hasattr(tenant, "lawful_basis") and tenant.lawful_basis:
         try:
             lawful_basis = LawfulBasis(tenant.lawful_basis)
         except (ValueError, KeyError):
             lawful_basis = None
 
     if lawful_basis == LawfulBasis.CONSENT:
-        if not getattr(request, 'consent_granted', None):
+        if not getattr(request, "consent_granted", None):
             raise HTTPException(
                 status_code=400,
                 detail="Consent is required for registration. Please accept the privacy notice.",
             )
         consent_granted = True
-        consent_method = getattr(request, 'consent_method', None) or "digital_acceptance"
+        consent_method = (
+            getattr(request, "consent_method", None) or "digital_acceptance"
+        )
         consent_timestamp_val = int(time.time())
 
     # Get or create visitor profile
@@ -136,7 +150,9 @@ async def register_visitor_public(
     department_name = None
     department_id = request.department_id
     if department_id and ObjectId.is_valid(department_id):
-        dept = await get_department({"_id": ObjectId(department_id), "tenant_id": tenant_id})
+        dept = await get_department(
+            {"_id": ObjectId(department_id), "tenant_id": tenant_id}
+        )
         if dept:
             department_name = dept.name
 
@@ -144,10 +160,12 @@ async def register_visitor_public(
     host_id = None
     appointment_id = request.appointment_id
     if appointment_id and ObjectId.is_valid(appointment_id):
-        appointment = await get_appointment({"_id": ObjectId(appointment_id), "tenant_id": tenant_id})
+        appointment = await get_appointment(
+            {"_id": ObjectId(appointment_id), "tenant_id": tenant_id}
+        )
         if appointment and appointment.status == AppointmentStatus.SCHEDULED.value:
-            host_id = appointment.host_id if hasattr(appointment, 'host_id') else None
-            if not department_id and hasattr(appointment, 'department_id'):
+            host_id = appointment.host_id if hasattr(appointment, "host_id") else None
+            if not department_id and hasattr(appointment, "department_id"):
                 department_id = appointment.department_id
             await update_appointment(
                 {"_id": ObjectId(appointment_id)},
@@ -167,11 +185,13 @@ async def register_visitor_public(
         visitor_name_snapshot=profile.full_name,
         company_snapshot=profile.company,
         department_name_snapshot=department_name,
-        consent_notice_displayed=True if getattr(request, 'privacy_notice_version_id', None) else False,
+        consent_notice_displayed=True
+        if getattr(request, "privacy_notice_version_id", None)
+        else False,
         consent_granted=consent_granted,
         consent_method=consent_method,
         consent_timestamp=consent_timestamp_val,
-        privacy_notice_version_id=getattr(request, 'privacy_notice_version_id', None),
+        privacy_notice_version_id=getattr(request, "privacy_notice_version_id", None),
         lawful_basis_at_time=lawful_basis,
     )
     session = await create_visit_session(session_data)
@@ -195,7 +215,10 @@ async def checkout_visitor_public(badge_qr_token: str) -> PublicCheckoutResponse
         raise HTTPException(status_code=404, detail="Visit session not found")
 
     if session.status not in (VisitStatus.CHECKED_IN.value, "checked_in"):
-        raise HTTPException(status_code=400, detail=f"Visitor is not currently checked in (status: {session.status})")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Visitor is not currently checked in (status: {session.status})",
+        )
 
     checkout_time = int(time.time())
     updated = await update_visit_session(
@@ -266,10 +289,16 @@ async def lookup_public_appointment(
         raise HTTPException(status_code=400, detail="Invalid appointment ID")
 
     appointment = await get_appointment(
-        {"_id": ObjectId(appointment_id), "tenant_id": tenant_id, "status": "scheduled"},
+        {
+            "_id": ObjectId(appointment_id),
+            "tenant_id": tenant_id,
+            "status": "scheduled",
+        },
     )
     if not appointment:
-        raise HTTPException(status_code=404, detail="Appointment not found or not in scheduled status")
+        raise HTTPException(
+            status_code=404, detail="Appointment not found or not in scheduled status"
+        )
 
     return PublicAppointmentLookupOut(
         appointment_id=appointment.id or "",
@@ -286,12 +315,16 @@ def _mask_name(full_name: str) -> str:
     parts = [p for p in (full_name or "").split() if p]
     if not parts:
         return ""
+
     def _m(s: str) -> str:
         return s[0] + ("*" * max(len(s) - 1, 2)) if s else ""
+
     return " ".join(_m(p) for p in parts)
 
 
-async def verify_public_registration_token(token: str) -> PublicRegistrationTokenVerifyOut:
+async def verify_public_registration_token(
+    token: str,
+) -> PublicRegistrationTokenVerifyOut:
     """Public pre-flight check for a QR registration token. Used by the form
     to reject expired/tampered tokens before collecting visitor PII."""
     scope = verify_registration_token(token)
@@ -316,7 +349,9 @@ async def verify_public_registration_token(token: str) -> PublicRegistrationToke
     )
 
 
-async def public_ocr_id_scan(tenant_id: str, image_bytes: bytes, mime_type: str) -> PublicIdScanOut:
+async def public_ocr_id_scan(
+    tenant_id: str, image_bytes: bytes, mime_type: str
+) -> PublicIdScanOut:
     """Run OCR on an uploaded ID image and return extracted fields. The image
     is processed in-memory and never persisted — the visitor submits the
     confirmed fields through /public/register/{tenant_id} normally."""
@@ -330,6 +365,7 @@ async def public_ocr_id_scan(tenant_id: str, image_bytes: bytes, mime_type: str)
 
     try:
         from core.ocr.manager import OCRManager
+
         ocr = OCRManager.get_instance()
     except RuntimeError:
         raise HTTPException(status_code=503, detail="OCR service is not configured")
@@ -361,9 +397,13 @@ async def lookup_returning_visitor(
 
     profile = None
     if request.phone:
-        profile = await get_visitor_profile_by_phone(tenant_id=tenant_id, phone=request.phone)
+        profile = await get_visitor_profile_by_phone(
+            tenant_id=tenant_id, phone=request.phone
+        )
     if not profile and request.email:
-        profile = await get_visitor_profile_by_email(tenant_id=tenant_id, email=request.email)
+        profile = await get_visitor_profile_by_email(
+            tenant_id=tenant_id, email=request.email
+        )
 
     if not profile:
         return PublicReturningVisitorLookupOut(found=False)
@@ -379,7 +419,9 @@ async def lookup_returning_visitor(
 
     last_visit_ago_days = None
     if profile.last_visit_date:
-        last_visit_ago_days = max((int(time.time()) - profile.last_visit_date) // 86400, 0)
+        last_visit_ago_days = max(
+            (int(time.time()) - profile.last_visit_date) // 86400, 0
+        )
 
     return PublicReturningVisitorLookupOut(
         found=True,
@@ -406,14 +448,17 @@ async def finalize_public_registration(
     if not ObjectId.is_valid(request.receptionist_code):
         raise HTTPException(status_code=400, detail="Invalid receptionist code")
 
-    receptionist = await get_system_user({
-        "_id": ObjectId(request.receptionist_code),
-        "tenant_id": tenant_id,
-    })
+    receptionist = await get_system_user(
+        {
+            "_id": ObjectId(request.receptionist_code),
+            "tenant_id": tenant_id,
+        }
+    )
     if not receptionist or receptionist.role not in ("receptionist", "super_admin"):
         raise HTTPException(status_code=404, detail="Receptionist not found")
 
     from services.visit_session_service import confirm_check_in
+
     return await confirm_check_in(
         session_id=request.session_id,
         receptionist_id=receptionist.id or request.receptionist_code,

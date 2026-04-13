@@ -33,7 +33,11 @@ from core.response_envelope import (
     http_exception_response,
 )
 from core.scheduler import scheduler
-from core.role_config import build_role_rate_limits, build_role_rate_limits_csv, normalize_role
+from core.role_config import (
+    build_role_rate_limits,
+    build_role_rate_limits_csv,
+    normalize_role,
+)
 from core.settings import get_settings
 from core.storage.manager import DocumentStorageManager
 from repositories.tokens_repo import get_access_token_allow_expired
@@ -45,8 +49,12 @@ configure_logging(log_level=settings.log_level, is_production=settings.is_produc
 logger = get_logger(__name__)
 
 MONGO_URI = os.getenv("MONGO_URL")
-mongo_client: "MongoClient | None" = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000) if MONGO_URI else None
-redis_client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, decode_responses=True)
+mongo_client: "MongoClient | None" = (
+    MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000) if MONGO_URI else None
+)
+redis_client = redis.Redis.from_url(
+    settings.redis_url, socket_connect_timeout=2, decode_responses=True
+)
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
@@ -139,7 +147,7 @@ limiter = FixedWindowRateLimiter(storage)
 
 async def get_user_type(request: Request) -> tuple[str, str]:
     auth_header = request.headers.get("Authorization")
-    fallback_id = request.headers.get("X-Forwarded-For") or request.client.host # type: ignore
+    fallback_id = request.headers.get("X-Forwarded-For") or request.client.host  # type: ignore
 
     token: str | None = None
     if auth_header and auth_header.startswith("Bearer "):
@@ -170,9 +178,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=()"
+        )
         if settings.is_production:
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
         return response
 
 
@@ -215,7 +227,6 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
         return response
 
 
-
 def apscheduler_heartbeat() -> None:
     redis_client.set("apscheduler:heartbeat", str(time.time()), ex=60)
 
@@ -224,7 +235,9 @@ def apscheduler_heartbeat() -> None:
 async def lifespan(app: FastAPI):
     # --- Startup validation ---
     if settings.is_production and not settings.session_secret_key:
-        raise RuntimeError("SESSION_SECRET_KEY must be set in production. Refusing to start.")
+        raise RuntimeError(
+            "SESSION_SECRET_KEY must be set in production. Refusing to start."
+        )
     if settings.is_production and not settings.secret_key:
         raise RuntimeError("SECRET_KEY must be set in production. Refusing to start.")
 
@@ -251,6 +264,7 @@ async def lifespan(app: FastAPI):
     # Configure OCR manager (optional - only if credentials are provided)
     try:
         from core.ocr.manager import OCRManager
+
         OCRManager.configure_from_settings()
     except RuntimeError:
         pass
@@ -258,12 +272,14 @@ async def lifespan(app: FastAPI):
     # Create TTL index for OTP challenges (auto-expire)
     try:
         from core.database import db as _db
+
         await _db["pending_otp"].create_index("expires_at", expireAfterSeconds=0)
     except Exception:
         logger.warning("Could not create pending_otp TTL index")
 
     # Schedule retention cleanup job
     from services.retention_service import run_retention_cleanup
+
     scheduler.add_job(
         run_retention_cleanup,
         trigger=IntervalTrigger(hours=settings.retention_check_interval_hours),
@@ -333,7 +349,8 @@ app.add_middleware(RequestIdMiddleware)
 app.add_middleware(RequestTimingMiddleware)
 app.add_middleware(
     SessionMiddleware,
-    secret_key=settings.session_secret_key or "dev-only-session-secret-NOT-FOR-PRODUCTION",
+    secret_key=settings.session_secret_key
+    or "dev-only-session-secret-NOT-FOR-PRODUCTION",
 )
 app.add_middleware(PlanEnforcementMiddleware)
 app.add_middleware(RateLimitingMiddleware)
@@ -357,7 +374,9 @@ async def custom_http_exception_handler(request: Request, exc: HTTPException):
 
 
 @app.exception_handler(RequestValidationError)
-async def custom_validation_exception_handler(request: Request, exc: RequestValidationError):
+async def custom_validation_exception_handler(
+    request: Request, exc: RequestValidationError
+):
     return error_response(
         status_code=422,
         message="Validation error",
@@ -380,7 +399,11 @@ async def custom_exception_handler(request: Request, exc: Exception):
             "method": request.method,
         },
     )
-    details = str(exc) if (settings.debug_include_error_details and not settings.is_production) else None
+    details = (
+        str(exc)
+        if (settings.debug_include_error_details and not settings.is_production)
+        else None
+    )
     return error_response(
         status_code=500,
         message="Internal Server Error",
@@ -399,7 +422,10 @@ async def custom_exception_handler(request: Request, exc: Exception):
     success_example={"message": "Hello from FasterAPI!"},
 )
 def read_root(request: Request):
-    return {"message": "Hello from FasterAPI!", "request_id": getattr(request.state, "request_id", None)}
+    return {
+        "message": "Hello from FasterAPI!",
+        "request_id": getattr(request.state, "request_id", None),
+    }
 
 
 @app.get("/health/live", tags=["Health"], include_in_schema=False)
@@ -411,7 +437,10 @@ async def liveness_check():
 @app.get("/health/ready", tags=["Health"])
 @document_response(
     message="Readiness check completed",
-    success_example={"status": "ready", "services": {"mongo": "healthy", "redis": "healthy"}},
+    success_example={
+        "status": "ready",
+        "services": {"mongo": "healthy", "redis": "healthy"},
+    },
 )
 async def readiness_check():
     """Readiness probe: confirms MongoDB and Redis are reachable.
@@ -460,7 +489,10 @@ async def readiness_check():
 @app.get("/health", tags=["Health"])
 @document_response(
     message="Health check completed",
-    success_example={"status": "healthy", "services": {"mongo": "healthy", "redis": "healthy"}},
+    success_example={
+        "status": "healthy",
+        "services": {"mongo": "healthy", "redis": "healthy"},
+    },
 )
 async def health_check():
     services: dict[str, dict[str, str | float]] = {}
@@ -501,7 +533,7 @@ async def health_check():
 
     aps_heartbeat = redis_client.get("apscheduler:heartbeat")
     if aps_heartbeat:
-        age = time.time() - float(aps_heartbeat.decode('utf-8')) # type: ignore
+        age = time.time() - float(aps_heartbeat.decode("utf-8"))  # type: ignore
         services["apscheduler"] = {
             "status": "healthy" if age <= 30 else "degraded",
             "latency_ms": 0,
@@ -556,60 +588,68 @@ from api.v1.admin_dashboard_route import router as v1_admin_dashboard_route_rout
 from api.v1.branch_route import router as v1_branch_route_router
 from api.v1.branding_route import router as v1_branding_route_router
 from api.v1.invoice_route import router as v1_invoice_route_router
-from api.v1.public_registration_route import router as v1_public_registration_route_router
+from api.v1.public_registration_route import (
+    router as v1_public_registration_route_router,
+)
 from api.v1.public_rights_route import router as v1_public_rights_route_router
 from api.v1.notification_route import router as v1_notification_route_router
 from api.v1.admin_settings_route import router as v1_admin_settings_route_router
-from api.v1.system_user_settings_route import router as v1_system_user_settings_route_router
+from api.v1.system_user_settings_route import (
+    router as v1_system_user_settings_route_router,
+)
 from api.v1.tenant_settings_route import router as v1_tenant_settings_route_router
 from api.v1.user_settings_route import router as v1_user_settings_route_router
 from api.v1.session_management_route import router as v1_session_management_route_router
 from api.v1.auth_management_route import router as v1_auth_management_route_router
 from api.v1.account_route import router as v1_account_route_router
-from api.v1.unified_tenant_settings_route import router as v1_unified_tenant_settings_route_router
-from api.v1.unified_platform_settings_route import router as v1_unified_platform_settings_route_router
+from api.v1.unified_tenant_settings_route import (
+    router as v1_unified_tenant_settings_route_router,
+)
+from api.v1.unified_platform_settings_route import (
+    router as v1_unified_platform_settings_route_router,
+)
 from api.v1.settings_manifest_route import router as v1_settings_manifest_route_router
 
-app.include_router(v1_admin_route_router, prefix='/v1')
-app.include_router(v1_documents_route_router, prefix='/v1')
-app.include_router(v1_payments_route_router, prefix='/v1')
-app.include_router(v1_user_route_router, prefix='/v1')
-app.include_router(v1_tenant_route_router, prefix='/v1')
-app.include_router(v1_department_route_router, prefix='/v1')
-app.include_router(v1_system_user_route_router, prefix='/v1')
-app.include_router(v1_visitor_route_router, prefix='/v1')
-app.include_router(v1_visitor_profile_route_router, prefix='/v1')
-app.include_router(v1_appointment_route_router, prefix='/v1')
-app.include_router(v1_privacy_notice_route_router, prefix='/v1')
-app.include_router(v1_dashboard_route_router, prefix='/v1')
-app.include_router(v1_super_admin_route_router, prefix='/v1')
-app.include_router(v1_dsr_route_router, prefix='/v1')
-app.include_router(v1_retention_route_router, prefix='/v1')
-app.include_router(v1_sub_processor_route_router, prefix='/v1')
-app.include_router(v1_compliance_route_router, prefix='/v1')
-app.include_router(v1_audit_route_router, prefix='/v1')
-app.include_router(v1_incident_route_router, prefix='/v1')
-app.include_router(v1_plan_route_router, prefix='/v1')
-app.include_router(v1_subscription_route_router, prefix='/v1')
-app.include_router(v1_discount_route_router, prefix='/v1')
-app.include_router(v1_usage_route_router, prefix='/v1')
-app.include_router(v1_admin_dashboard_route_router, prefix='/v1')
-app.include_router(v1_branch_route_router, prefix='/v1')
-app.include_router(v1_branding_route_router, prefix='/v1')
-app.include_router(v1_invoice_route_router, prefix='/v1')
-app.include_router(v1_public_registration_route_router, prefix='/v1')
-app.include_router(v1_public_rights_route_router, prefix='/v1')
-app.include_router(v1_notification_route_router, prefix='/v1')
-app.include_router(v1_admin_settings_route_router, prefix='/v1')
-app.include_router(v1_system_user_settings_route_router, prefix='/v1')
-app.include_router(v1_tenant_settings_route_router, prefix='/v1')
-app.include_router(v1_user_settings_route_router, prefix='/v1')
-app.include_router(v1_session_management_route_router, prefix='/v1')
-app.include_router(v1_auth_management_route_router, prefix='/v1')
-app.include_router(v1_account_route_router, prefix='/v1')
-app.include_router(v1_unified_tenant_settings_route_router, prefix='/v1')
-app.include_router(v1_unified_platform_settings_route_router, prefix='/v1')
-app.include_router(v1_settings_manifest_route_router, prefix='/v1')
+app.include_router(v1_admin_route_router, prefix="/v1")
+app.include_router(v1_documents_route_router, prefix="/v1")
+app.include_router(v1_payments_route_router, prefix="/v1")
+app.include_router(v1_user_route_router, prefix="/v1")
+app.include_router(v1_tenant_route_router, prefix="/v1")
+app.include_router(v1_department_route_router, prefix="/v1")
+app.include_router(v1_system_user_route_router, prefix="/v1")
+app.include_router(v1_visitor_route_router, prefix="/v1")
+app.include_router(v1_visitor_profile_route_router, prefix="/v1")
+app.include_router(v1_appointment_route_router, prefix="/v1")
+app.include_router(v1_privacy_notice_route_router, prefix="/v1")
+app.include_router(v1_dashboard_route_router, prefix="/v1")
+app.include_router(v1_super_admin_route_router, prefix="/v1")
+app.include_router(v1_dsr_route_router, prefix="/v1")
+app.include_router(v1_retention_route_router, prefix="/v1")
+app.include_router(v1_sub_processor_route_router, prefix="/v1")
+app.include_router(v1_compliance_route_router, prefix="/v1")
+app.include_router(v1_audit_route_router, prefix="/v1")
+app.include_router(v1_incident_route_router, prefix="/v1")
+app.include_router(v1_plan_route_router, prefix="/v1")
+app.include_router(v1_subscription_route_router, prefix="/v1")
+app.include_router(v1_discount_route_router, prefix="/v1")
+app.include_router(v1_usage_route_router, prefix="/v1")
+app.include_router(v1_admin_dashboard_route_router, prefix="/v1")
+app.include_router(v1_branch_route_router, prefix="/v1")
+app.include_router(v1_branding_route_router, prefix="/v1")
+app.include_router(v1_invoice_route_router, prefix="/v1")
+app.include_router(v1_public_registration_route_router, prefix="/v1")
+app.include_router(v1_public_rights_route_router, prefix="/v1")
+app.include_router(v1_notification_route_router, prefix="/v1")
+app.include_router(v1_admin_settings_route_router, prefix="/v1")
+app.include_router(v1_system_user_settings_route_router, prefix="/v1")
+app.include_router(v1_tenant_settings_route_router, prefix="/v1")
+app.include_router(v1_user_settings_route_router, prefix="/v1")
+app.include_router(v1_session_management_route_router, prefix="/v1")
+app.include_router(v1_auth_management_route_router, prefix="/v1")
+app.include_router(v1_account_route_router, prefix="/v1")
+app.include_router(v1_unified_tenant_settings_route_router, prefix="/v1")
+app.include_router(v1_unified_platform_settings_route_router, prefix="/v1")
+app.include_router(v1_settings_manifest_route_router, prefix="/v1")
 # --- auto-routes-end ---
 
 apply_response_documentation(app)

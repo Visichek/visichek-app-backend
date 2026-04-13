@@ -23,9 +23,7 @@ from schemas.subscription_schema import SubscriptionStatus, SubscriptionUpdate
 logger = logging.getLogger(__name__)
 
 
-async def process_flutterwave_webhook(
-    body: bytes, headers: dict[str, str]
-) -> dict:
+async def process_flutterwave_webhook(body: bytes, headers: dict[str, str]) -> dict:
     """
     Process a Flutterwave webhook event.
 
@@ -60,8 +58,7 @@ async def process_flutterwave_webhook(
         event_id = event.event_id
         event_type = event.event_type
         logger.info(
-            f"Processing Flutterwave webhook: event_id={event_id}, "
-            f"type={event_type}"
+            f"Processing Flutterwave webhook: event_id={event_id}, type={event_type}"
         )
 
         # Check for duplicate processing
@@ -154,7 +151,9 @@ async def process_flutterwave_webhook(
     except AppException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error processing Flutterwave webhook: {str(e)}", exc_info=True)
+        logger.error(
+            f"Unexpected error processing Flutterwave webhook: {str(e)}", exc_info=True
+        )
         raise AppException(
             status_code=502,
             code=ErrorCode.PAYMENT_WEBHOOK_INVALID,
@@ -181,7 +180,9 @@ async def _handle_charge_completed(payload: dict) -> dict:
             response_payload=payload,
         )
         if updated_tx:
-            logger.info(f"Updated payment transaction: reference={tx_ref}, status=succeeded")
+            logger.info(
+                f"Updated payment transaction: reference={tx_ref}, status=succeeded"
+            )
             return {
                 "handled": True,
                 "action": "payment_updated",
@@ -214,7 +215,9 @@ async def _handle_charge_failed(payload: dict) -> dict:
             response_payload=payload,
         )
         if updated_tx:
-            logger.info(f"Updated payment transaction: reference={tx_ref}, status=failed")
+            logger.info(
+                f"Updated payment transaction: reference={tx_ref}, status=failed"
+            )
             return {
                 "handled": True,
                 "action": "payment_updated",

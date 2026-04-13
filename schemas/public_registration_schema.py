@@ -68,6 +68,7 @@ class PublicAppointmentLookupOut(BaseModel):
 class PublicRegistrationTokenVerifyOut(BaseModel):
     """Response from GET /public/register/verify. scope fields mirror the signed
     registration token; the client uses them to prefill + lock form inputs."""
+
     valid: bool
     tenant_id: Optional[str] = None
     department_id: Optional[str] = None
@@ -77,6 +78,7 @@ class PublicRegistrationTokenVerifyOut(BaseModel):
 
 class PublicIdScanOut(BaseModel):
     """OCR extraction result. No session is created and no image is persisted."""
+
     full_name: Optional[str] = None
     id_number: Optional[str] = None
     id_type: Optional[str] = None
@@ -91,6 +93,7 @@ class PublicReturningVisitorLookupRequest(BaseModel):
 class PublicReturningVisitorLookupOut(BaseModel):
     """Masked projection of a matched returning visitor. Raw PII is never
     returned — the caller must re-supply `phone` on register to confirm."""
+
     found: bool
     profile_id: Optional[str] = None
     full_name_masked: Optional[str] = None

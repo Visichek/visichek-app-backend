@@ -1,4 +1,3 @@
-
 from bson import ObjectId
 from fastapi import HTTPException
 from typing import List
@@ -10,9 +9,21 @@ from repositories.admin_repo import (
     update_admin,
     delete_admin,
 )
-from schemas.admin_schema import AdminCreate, AdminUpdate, AdminOut, AdminLogin, AdminRefresh, AdminSignupRequest
+from schemas.admin_schema import (
+    AdminCreate,
+    AdminUpdate,
+    AdminOut,
+    AdminLogin,
+    AdminRefresh,
+    AdminSignupRequest,
+)
 from security.hash import check_password
-from repositories.tokens_repo import get_refresh_tokens, delete_access_token, delete_refresh_token, delete_all_tokens_with_admin_id
+from repositories.tokens_repo import (
+    get_refresh_tokens,
+    delete_access_token,
+    delete_refresh_token,
+    delete_all_tokens_with_admin_id,
+)
 from services.auth_helpers import issue_tokens_for_user
 from core.email_utils import normalize_email
 from config.role_permissions import get_default_permissions_for_role
@@ -37,7 +48,9 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
     all_admins = await get_admins(start=0, stop=10000)
     for admin in all_admins:
         if normalize_email(admin.email) == normalized:
-            raise HTTPException(status_code=409, detail="An admin with this email already exists")
+            raise HTTPException(
+                status_code=409, detail="An admin with this email already exists"
+            )
 
     # Build internal schema with system-assigned fields
     permission_list = get_default_permissions_for_role("admin")
@@ -51,7 +64,9 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
     )
 
     new_admin = await create_admin(admin_data)
-    access_token, refresh_token = await issue_tokens_for_user(user_id=new_admin.id, role="admin")  # type: ignore
+    access_token, refresh_token = await issue_tokens_for_user(
+        user_id=new_admin.id or "", role="admin"
+    )  # type: ignore
     new_admin.password = ""
     new_admin.access_token = access_token
     new_admin.refresh_token = refresh_token
@@ -83,13 +98,18 @@ async def authenticate_admin(admin_data: AdminLogin) -> AdminOut:
 
             # 2FA check — admins always require OTP
             from services.otp_service import is_mfa_required, create_otp_challenge
+
             if await is_mfa_required("admin", admin.id):  # type: ignore
                 challenge_id, _code = await create_otp_challenge(
-                    user_id=admin.id, user_type="admin", role="admin",  # type: ignore
+                    user_id=admin.id or "",
+                    user_type="admin",
+                    role="admin",  # type: ignore
                 )
                 return {"otp_required": True, "otp_challenge_id": challenge_id}  # type: ignore[return-value]
 
-            access_token, refresh_token = await issue_tokens_for_user(user_id=admin.id, role="admin")  # type: ignore
+            access_token, refresh_token = await issue_tokens_for_user(
+                user_id=admin.id or "", role="admin"
+            )  # type: ignore
             admin.access_token = access_token
             admin.refresh_token = refresh_token
             return admin
@@ -119,24 +139,32 @@ async def verify_admin_otp(challenge_id: str, otp_code: str) -> AdminOut:
         raise HTTPException(status_code=401, detail="Admin not found")
 
     admin.password = ""
-    access_token, refresh_token = await issue_tokens_for_user(user_id=admin.id, role="admin")  # type: ignore
+    access_token, refresh_token = await issue_tokens_for_user(
+        user_id=admin.id or "", role="admin"
+    )  # type: ignore
     admin.access_token = access_token
     admin.refresh_token = refresh_token
     return admin
 
 
-async def refresh_admin_tokens_reduce_number_of_logins(admin_refresh_data: AdminRefresh, expired_access_token):
+async def refresh_admin_tokens_reduce_number_of_logins(
+    admin_refresh_data: AdminRefresh, expired_access_token
+):
     refreshObj = await get_refresh_tokens(admin_refresh_data.refresh_token)
     if refreshObj:
         if refreshObj.previousAccessToken == expired_access_token:
             admin = await get_admin(filter_dict={"_id": ObjectId(refreshObj.userId)})
 
             if admin is not None:
-                access_token, refresh_token = await issue_tokens_for_user(user_id=admin.id, role="admin")  # type: ignore
+                access_token, refresh_token = await issue_tokens_for_user(
+                    user_id=admin.id or "", role="admin"
+                )  # type: ignore
                 admin.access_token = access_token
                 admin.refresh_token = refresh_token
                 await delete_access_token(accessToken=expired_access_token)
-                await delete_refresh_token(refreshToken=admin_refresh_data.refresh_token)
+                await delete_refresh_token(
+                    refreshToken=admin_refresh_data.refresh_token
+                )
                 return admin
 
     raise HTTPException(status_code=404, detail="Invalid refresh token")
@@ -190,6 +218,7 @@ async def update_admin_by_id(
     if is_password_getting_changed:
         if admin_data.password:
             from security.password_policy import record_password_in_history
+
             pwd_hash = admin_data.password
             if isinstance(pwd_hash, bytes):
                 pwd_hash = pwd_hash.decode("utf-8")

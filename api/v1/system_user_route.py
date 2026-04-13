@@ -21,7 +21,11 @@ from security.auth import (
     verify_system_user_refresh_token,
 )
 from schemas.otp_schema import MfaSettingsUpdate, OtpVerifyRequest
-from security.cookie_utils import set_auth_cookies, clear_auth_cookies, REFRESH_TOKEN_COOKIE
+from security.cookie_utils import (
+    set_auth_cookies,
+    clear_auth_cookies,
+    REFRESH_TOKEN_COOKIE,
+)
 from security.principal import AuthPrincipal
 from services.system_user_service import (
     add_system_user_from_invite,
@@ -68,8 +72,16 @@ router = APIRouter(prefix="/system-users", tags=["Tenant Users"])
         422: "Validation error - missing or invalid email/password",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid login credentials", "code": "AUTH_INVALID_TOKEN"},
-        429: {"success": False, "message": "Account temporarily locked", "code": "TOO_MANY_REQUESTS"},
+        401: {
+            "success": False,
+            "message": "Invalid login credentials",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        429: {
+            "success": False,
+            "message": "Account temporarily locked",
+            "code": "TOO_MANY_REQUESTS",
+        },
     },
 )
 async def login_system_user(request: Request, login_data: SystemUserLogin):
@@ -78,15 +90,26 @@ async def login_system_user(request: Request, login_data: SystemUserLogin):
 
     if isinstance(result, dict) and result.get("otp_required"):
         return JSONResponse(
-            content=jsonable_encoder(success_payload(result, message="OTP verification required", request_id=request_id)),
+            content=jsonable_encoder(
+                success_payload(
+                    result, message="OTP verification required", request_id=request_id
+                )
+            ),
         )
 
     user = result
     is_prod = get_settings().env == "production"
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(user, message="Login successful", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(user, message="Login successful", request_id=request_id)
+        ),
     )
-    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod) # type: ignore
+    set_auth_cookies(
+        response,
+        user.access_token or "",
+        user.refresh_token or "",
+        is_production=is_prod,
+    )  # type: ignore
     return response
 
 
@@ -129,8 +152,16 @@ async def login_system_user(request: Request, login_data: SystemUserLogin):
         429: "Too many failed attempts - account temporarily locked",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid login credentials", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "This login endpoint is reserved for tenant super admins", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid login credentials",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "This login endpoint is reserved for tenant super admins",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def login_super_admin_global(request: Request, login_data: SystemUserLogin):
@@ -141,15 +172,28 @@ async def login_super_admin_global(request: Request, login_data: SystemUserLogin
     # which may return an otp_required dict
     if isinstance(result, dict) and result.get("otp_required"):
         return JSONResponse(
-            content=jsonable_encoder(success_payload(result, message="OTP verification required", request_id=request_id)),
+            content=jsonable_encoder(
+                success_payload(
+                    result, message="OTP verification required", request_id=request_id
+                )
+            ),
         )
 
     user = result["user"]
     is_prod = get_settings().env == "production"
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(result, message="Super admin login successful", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(
+                result, message="Super admin login successful", request_id=request_id
+            )
+        ),
     )
-    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod)
+    set_auth_cookies(
+        response,
+        user.access_token or "",
+        user.refresh_token or "",
+        is_production=is_prod,
+    )
     return response
 
 
@@ -186,26 +230,53 @@ async def login_super_admin_global(request: Request, login_data: SystemUserLogin
         422: "Validation error - missing or invalid email/password",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid login credentials", "code": "AUTH_INVALID_TOKEN"},
-        404: {"success": False, "message": "Tenant not found", "code": "RESOURCE_NOT_FOUND"},
-        429: {"success": False, "message": "Account temporarily locked", "code": "TOO_MANY_REQUESTS"},
+        401: {
+            "success": False,
+            "message": "Invalid login credentials",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        404: {
+            "success": False,
+            "message": "Tenant not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
+        429: {
+            "success": False,
+            "message": "Account temporarily locked",
+            "code": "TOO_MANY_REQUESTS",
+        },
     },
 )
-async def login_system_user_by_tenant(request: Request, tenant_id: str, login_data: SystemUserTenantLogin):
-    result = await authenticate_system_user_by_tenant(login_data=login_data, tenant_id=tenant_id)
+async def login_system_user_by_tenant(
+    request: Request, tenant_id: str, login_data: SystemUserTenantLogin
+):
+    result = await authenticate_system_user_by_tenant(
+        login_data=login_data, tenant_id=tenant_id
+    )
     request_id = getattr(request.state, "request_id", None)
 
     if isinstance(result, dict) and result.get("otp_required"):
         return JSONResponse(
-            content=jsonable_encoder(success_payload(result, message="OTP verification required", request_id=request_id)),
+            content=jsonable_encoder(
+                success_payload(
+                    result, message="OTP verification required", request_id=request_id
+                )
+            ),
         )
 
     user = result
     is_prod = get_settings().env == "production"
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(user, message="Login successful", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(user, message="Login successful", request_id=request_id)
+        ),
     )
-    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod) # type: ignore
+    set_auth_cookies(
+        response,
+        user.access_token or "",
+        user.refresh_token or "",
+        is_production=is_prod,
+    )  # type: ignore
     return response
 
 
@@ -239,10 +310,26 @@ async def login_system_user_by_tenant(request: Request, tenant_id: str, login_da
         422: "Validation error - invalid input data or weak password",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
-        409: {"success": False, "message": "A user with this email already exists in this tenant", "code": "VALIDATION_FAILED"},
-        422: {"success": False, "message": "Password does not meet strength requirements", "code": "VALIDATION_FAILED"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "You do not have permission to perform this action",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+        409: {
+            "success": False,
+            "message": "A user with this email already exists in this tenant",
+            "code": "VALIDATION_FAILED",
+        },
+        422: {
+            "success": False,
+            "message": "Password does not meet strength requirements",
+            "code": "VALIDATION_FAILED",
+        },
     },
 )
 async def signup_system_user(
@@ -250,7 +337,9 @@ async def signup_system_user(
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
     tenant_id = principal.tenant_id or ""
-    return await add_system_user_from_invite(signup_data=signup_data, tenant_id=tenant_id)
+    return await add_system_user_from_invite(
+        signup_data=signup_data, tenant_id=tenant_id
+    )
 
 
 @router.post("/refresh")
@@ -278,7 +367,11 @@ async def signup_system_user(
         422: "Validation error - missing refresh token",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired refresh token", "code": "AUTH_INVALID_TOKEN"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired refresh token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
     },
 )
 async def refresh_tokens(
@@ -297,9 +390,18 @@ async def refresh_tokens(
     is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(user, message="Tokens refreshed successfully", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(
+                user, message="Tokens refreshed successfully", request_id=request_id
+            )
+        ),
     )
-    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod) # type: ignore
+    set_auth_cookies(
+        response,
+        user.access_token or "",
+        user.refresh_token or "",
+        is_production=is_prod,
+    )  # type: ignore
     return response
 
 
@@ -319,9 +421,18 @@ async def verify_system_user_otp_endpoint(request: Request, otp_data: OtpVerifyR
     is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(user, message="OTP verified, login successful", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(
+                user, message="OTP verified, login successful", request_id=request_id
+            )
+        ),
     )
-    set_auth_cookies(response, user.access_token, user.refresh_token, is_production=is_prod) # type: ignore
+    set_auth_cookies(
+        response,
+        user.access_token or "",
+        user.refresh_token or "",
+        is_production=is_prod,
+    )  # type: ignore
     return response
 
 
@@ -353,7 +464,11 @@ async def logout_system_user(request: Request):
     is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(None, message="Logged out successfully", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(
+                None, message="Logged out successfully", request_id=request_id
+            )
+        ),
     )
     clear_auth_cookies(response, is_production=is_prod)
     return response
@@ -381,7 +496,11 @@ async def logout_system_user(request: Request):
         401: "Unauthorized - invalid or missing token",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
     },
 )
 async def get_my_profile(
@@ -437,8 +556,16 @@ async def get_my_profile(
         403: "Forbidden - insufficient permissions (must be super admin)",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "You do not have permission to perform this action",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def list_system_users(
@@ -475,9 +602,21 @@ async def list_system_users(
         422: "Validation error - invalid input data",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
-        404: {"success": False, "message": "System user not found", "code": "RESOURCE_NOT_FOUND"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "You do not have permission to perform this action",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+        404: {
+            "success": False,
+            "message": "System user not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def update_system_user_endpoint(
@@ -503,9 +642,21 @@ async def update_system_user_endpoint(
         404: "Not found - system user does not exist",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
-        404: {"success": False, "message": "System user not found", "code": "RESOURCE_NOT_FOUND"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "You do not have permission to perform this action",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+        404: {
+            "success": False,
+            "message": "System user not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def delete_system_user_endpoint(

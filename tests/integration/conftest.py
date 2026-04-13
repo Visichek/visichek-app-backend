@@ -32,7 +32,12 @@ from schemas.tenant_schema import TenantCreate, TenantOut
 from schemas.system_user_schema import SystemUserCreate, SystemUserOut
 from repositories.tenant_repo import create_tenant
 from repositories.system_user_repo import create_system_user
-from schemas.imports import SystemUserRole, AccountStatus, LawfulBasis, NoticeDisplayMode
+from schemas.imports import (
+    SystemUserRole,
+    AccountStatus,
+    LawfulBasis,
+    NoticeDisplayMode,
+)
 import core.database
 
 
@@ -139,16 +144,23 @@ async def integration_app(mongo_db: AsyncIOMotorDatabase) -> FastAPI:
 
 
 @pytest_asyncio.fixture
-async def integration_client(integration_app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+async def integration_client(
+    integration_app: FastAPI,
+) -> AsyncGenerator[AsyncClient, None]:
     """
     Fixture that provides an httpx AsyncClient for making requests to the FastAPI app.
     """
-    async with AsyncClient(transport=ASGITransport(app=cast(object, integration_app)), base_url="http://test") as client:  # type: ignore[arg-type]
+    async with AsyncClient(
+        transport=ASGITransport(app=cast(object, integration_app)),  # type: ignore[arg-type]
+        base_url="http://test",
+    ) as client:
         yield client
 
 
 @pytest_asyncio.fixture
-async def seeded_tenant(mongo_db: AsyncIOMotorDatabase) -> AsyncGenerator[TenantOut, None]:
+async def seeded_tenant(
+    mongo_db: AsyncIOMotorDatabase,
+) -> AsyncGenerator[TenantOut, None]:
     """
     Fixture that creates a real tenant document in MongoDB and returns TenantOut.
     """
@@ -209,7 +221,7 @@ async def auth_headers(
         json={
             "email": user.email,
             "password": raw_password,
-        }
+        },
     )
 
     assert response.status_code == 200, f"Login failed: {response.text}"
@@ -219,8 +231,6 @@ async def auth_headers(
 
     access_token = response_data["data"]["access_token"]
 
-    headers = {
-        "Authorization": f"Bearer {access_token}"
-    }
+    headers = {"Authorization": f"Bearer {access_token}"}
 
     yield headers

@@ -7,6 +7,7 @@ Integration tests for the tenant bootstrap flow:
 
 Requires: MongoDB on localhost:27017, Redis on localhost:6379
 """
+
 from __future__ import annotations
 
 import time

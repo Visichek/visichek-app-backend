@@ -10,6 +10,13 @@ async def create_deletion_log(log_data: DeletionLogCreate) -> DeletionLogOut:
     return DeletionLogOut(**result)
 
 
-async def get_deletion_logs(filter_dict: dict = {}, start=0, stop=100) -> List[DeletionLogOut]:
-    cursor = db.deletion_logs.find(filter_dict).sort("timestamp", -1).skip(start).limit(stop - start)
+async def get_deletion_logs(
+    filter_dict: dict = {}, start=0, stop=100
+) -> List[DeletionLogOut]:
+    cursor = (
+        db.deletion_logs.find(filter_dict)
+        .sort("timestamp", -1)
+        .skip(start)
+        .limit(stop - start)
+    )
     return [DeletionLogOut(**doc) async for doc in cursor]

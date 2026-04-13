@@ -5,9 +5,17 @@ from fastapi import HTTPException
 from typing import List
 
 from repositories.incident_log_repo import (
-    create_incident_log, get_incident_log, get_incident_logs, update_incident_log, get_incidents_approaching_deadline,
+    create_incident_log,
+    get_incident_log,
+    get_incident_logs,
+    update_incident_log,
+    get_incidents_approaching_deadline,
 )
-from schemas.incident_log_schema import IncidentLogCreate, IncidentLogUpdate, IncidentLogOut
+from schemas.incident_log_schema import (
+    IncidentLogCreate,
+    IncidentLogUpdate,
+    IncidentLogOut,
+)
 
 
 async def add_incident(log_data: IncidentLogCreate) -> IncidentLogOut:
@@ -17,7 +25,9 @@ async def add_incident(log_data: IncidentLogCreate) -> IncidentLogOut:
 async def retrieve_incident_by_id(incident_id: str, tenant_id: str) -> IncidentLogOut:
     if not ObjectId.is_valid(incident_id):
         raise HTTPException(status_code=400, detail="Invalid incident ID format")
-    result = await get_incident_log({"_id": ObjectId(incident_id), "tenant_id": tenant_id})
+    result = await get_incident_log(
+        {"_id": ObjectId(incident_id), "tenant_id": tenant_id}
+    )
     if not result:
         raise HTTPException(status_code=404, detail="Incident not found")
     return result
@@ -36,10 +46,16 @@ async def update_incident_by_id(
         {"_id": ObjectId(incident_id), "tenant_id": tenant_id}, log_data
     )
     if not result:
-        raise HTTPException(status_code=404, detail="Incident not found or update failed")
+        raise HTTPException(
+            status_code=404, detail="Incident not found or update failed"
+        )
     return result
 
 
-async def retrieve_incidents_approaching_deadline(tenant_id: str, start=0, stop=100) -> List[IncidentLogOut]:
+async def retrieve_incidents_approaching_deadline(
+    tenant_id: str, start=0, stop=100
+) -> List[IncidentLogOut]:
     """Get incidents where notification deadline is within 24 hours and notification has not been sent."""
-    return await get_incidents_approaching_deadline(tenant_id=tenant_id, start=start, stop=stop)
+    return await get_incidents_approaching_deadline(
+        tenant_id=tenant_id, start=start, stop=stop
+    )

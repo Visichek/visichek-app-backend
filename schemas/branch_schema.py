@@ -12,6 +12,7 @@ class BranchStatus(str, Enum):
 
 class BranchBase(BaseModel):
     """A physical or logical location within a tenant's organisation."""
+
     tenant_id: str
     name: str
     address: Optional[str] = None

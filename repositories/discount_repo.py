@@ -30,7 +30,9 @@ async def get_discount(filter_dict: dict) -> Optional[DiscountOut]:
         )
 
 
-async def get_discounts(filter_dict: dict = {}, start: int = 0, stop: int = 100) -> List[DiscountOut]:
+async def get_discounts(
+    filter_dict: dict = {}, start: int = 0, stop: int = 100
+) -> List[DiscountOut]:
     try:
         if filter_dict is None:
             filter_dict = {}
@@ -46,8 +48,12 @@ async def get_discounts(filter_dict: dict = {}, start: int = 0, stop: int = 100)
         )
 
 
-async def update_discount(filter_dict: dict, discount_data: DiscountUpdate) -> Optional[DiscountOut]:
-    update_dict = {k: v for k, v in discount_data.model_dump(mode="json").items() if v is not None}
+async def update_discount(
+    filter_dict: dict, discount_data: DiscountUpdate
+) -> Optional[DiscountOut]:
+    update_dict = {
+        k: v for k, v in discount_data.model_dump(mode="json").items() if v is not None
+    }
     if not update_dict:
         return await get_discount(filter_dict)
     result = await db[COLLECTION].find_one_and_update(

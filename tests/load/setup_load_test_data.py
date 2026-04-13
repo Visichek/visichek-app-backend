@@ -37,7 +37,9 @@ async def create_tenant(client: httpx.AsyncClient, super_admin_headers: dict) ->
         print(f"✓ Created tenant: {tenant_id}")
         return tenant_id
     else:
-        raise Exception(f"Failed to create tenant: {response.status_code} - {response.text}")
+        raise Exception(
+            f"Failed to create tenant: {response.status_code} - {response.text}"
+        )
 
 
 async def create_system_user(
@@ -106,15 +108,23 @@ async def create_departments(
 ) -> list[str]:
     """Create test departments."""
     dept_names = [
-        "Reception", "Sales", "Engineering", "Marketing", "Human Resources",
-        "Finance", "Operations", "Customer Support", "Legal", "IT"
+        "Reception",
+        "Sales",
+        "Engineering",
+        "Marketing",
+        "Human Resources",
+        "Finance",
+        "Operations",
+        "Customer Support",
+        "Legal",
+        "IT",
     ]
 
     department_ids = []
     for i in range(min(count, len(dept_names))):
         dept_data = {
             "tenant_id": tenant_id,
-            "code": f"DEPT-{i+1:03d}",
+            "code": f"DEPT-{i + 1:03d}",
             "name": dept_names[i],
             "is_active": True,
         }
@@ -130,7 +140,9 @@ async def create_departments(
             department_ids.append(dept_id)
             print(f"✓ Created department: {dept_names[i]} ({dept_id})")
         else:
-            print(f"  Failed to create department {dept_names[i]}: {response.status_code}")
+            print(
+                f"  Failed to create department {dept_names[i]}: {response.status_code}"
+            )
 
     return department_ids
 
@@ -141,10 +153,42 @@ async def create_visitor_profile(
     tenant_id: str,
 ) -> Optional[str]:
     """Create a visitor profile."""
-    first_names = ["John", "Jane", "Michael", "Sarah", "David", "Emma", "Robert", "Lisa", "James", "Mary"]
-    last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez"]
-    companies = ["Acme Corp", "Tech Solutions", "Global Industries", "Innovation Labs", "Future Systems",
-                 "Digital Dynamics", "Cloud Nexus", "Data Insights", "Smart Systems", "NextGen Corp"]
+    first_names = [
+        "John",
+        "Jane",
+        "Michael",
+        "Sarah",
+        "David",
+        "Emma",
+        "Robert",
+        "Lisa",
+        "James",
+        "Mary",
+    ]
+    last_names = [
+        "Smith",
+        "Johnson",
+        "Williams",
+        "Brown",
+        "Jones",
+        "Garcia",
+        "Miller",
+        "Davis",
+        "Rodriguez",
+        "Martinez",
+    ]
+    companies = [
+        "Acme Corp",
+        "Tech Solutions",
+        "Global Industries",
+        "Innovation Labs",
+        "Future Systems",
+        "Digital Dynamics",
+        "Cloud Nexus",
+        "Data Insights",
+        "Smart Systems",
+        "NextGen Corp",
+    ]
 
     visitor_data = {
         "tenant_id": tenant_id,
@@ -174,10 +218,7 @@ async def create_visitor_profiles(
     count: int = 50,
 ) -> list[str]:
     """Create multiple visitor profiles in parallel."""
-    tasks = [
-        create_visitor_profile(client, headers, tenant_id)
-        for _ in range(count)
-    ]
+    tasks = [create_visitor_profile(client, headers, tenant_id) for _ in range(count)]
 
     visitor_ids = []
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -257,12 +298,16 @@ async def main():
 
         print("Step 1: Setting up super admin authentication...")
         try:
-            auth_result = await login_user(client, super_admin_email, super_admin_password)
+            auth_result = await login_user(
+                client, super_admin_email, super_admin_password
+            )
             super_admin_headers = auth_result["headers"]
             super_admin_id = auth_result["user_id"]
             print("✓ Logged in as existing super admin")
         except Exception as e:
-            print("✗ Super admin login failed, will attempt to create via default admin")
+            print(
+                "✗ Super admin login failed, will attempt to create via default admin"
+            )
             print("  Note: This requires an existing super admin in the system")
             print(f"  Error: {e}")
             sys.exit(1)

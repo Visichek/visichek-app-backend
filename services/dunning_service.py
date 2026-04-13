@@ -46,7 +46,9 @@ async def process_dunning() -> dict:
             "next_retry_at": {"$lte": now},
         }
 
-        subscriptions = await get_subscriptions(filter_dict=filter_dict, start=0, stop=1000)
+        subscriptions = await get_subscriptions(
+            filter_dict=filter_dict, start=0, stop=1000
+        )
 
         for subscription in subscriptions:
             try:
@@ -142,7 +144,9 @@ async def _retry_payment(subscription: SubscriptionOut, now: int) -> bool:
                 )
             )
         except Exception as e:
-            logger.warning(f"Payment intent creation failed for {subscription.id}: {str(e)}")
+            logger.warning(
+                f"Payment intent creation failed for {subscription.id}: {str(e)}"
+            )
             # Mark failure and schedule next retry
             await _increment_dunning_attempt(subscription, now)
             return False
@@ -163,7 +167,9 @@ async def _retry_payment(subscription: SubscriptionOut, now: int) -> bool:
         )
 
         if not updated_sub:
-            logger.error(f"Failed to update subscription {subscription.id} after dunning success")
+            logger.error(
+                f"Failed to update subscription {subscription.id} after dunning success"
+            )
             return False
 
         # Generate invoice for the recovered payment
@@ -178,7 +184,9 @@ async def _retry_payment(subscription: SubscriptionOut, now: int) -> bool:
                 discount_minor=0,
                 period_start=subscription.current_period_start,
                 period_end=subscription.current_period_end or 0,
-                payment_transaction_id=intent.provider_payload.get("id") if intent.provider_payload else None,
+                payment_transaction_id=intent.provider_payload.get("id")
+                if intent.provider_payload
+                else None,
             )
         except Exception as e:
             logger.warning(f"Invoice generation failed after dunning success: {str(e)}")
@@ -193,7 +201,9 @@ async def _retry_payment(subscription: SubscriptionOut, now: int) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Dunning retry error for {subscription.id}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Dunning retry error for {subscription.id}: {str(e)}", exc_info=True
+        )
         await _increment_dunning_attempt(subscription, now)
         return False
 
@@ -203,7 +213,9 @@ async def _increment_dunning_attempt(subscription: SubscriptionOut, now: int) ->
     Helper to increment dunning attempt and schedule next retry.
     """
     settings = get_settings()
-    next_attempt_index = min(subscription.renewal_attempts + 1, len(settings.dunning_retry_days) - 1)
+    next_attempt_index = min(
+        subscription.renewal_attempts + 1, len(settings.dunning_retry_days) - 1
+    )
     next_retry_days = settings.dunning_retry_days[next_attempt_index]
     next_retry_at = now + (next_retry_days * 86400)
 
@@ -242,7 +254,9 @@ async def _suspend_subscription(subscription: SubscriptionOut, now: int) -> None
     )
 
 
-async def _queue_dunning_email(subscription: SubscriptionOut, attempt_number: int | None = None) -> None:
+async def _queue_dunning_email(
+    subscription: SubscriptionOut, attempt_number: int | None = None
+) -> None:
     """
     Queue appropriate dunning email based on attempt number.
 

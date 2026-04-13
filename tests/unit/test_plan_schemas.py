@@ -1,6 +1,7 @@
 """
 Unit tests for plan, subscription, discount, and usage schemas.
 """
+
 from __future__ import annotations
 
 import time
@@ -45,8 +46,8 @@ from schemas.usage_schema import (
 # Plan Schema Tests
 # ============================================================================
 
-class TestPlanSchema:
 
+class TestPlanSchema:
     def test_plan_create_minimal(self):
         plan = PlanCreate(name="free-tier", display_name="Free Tier")
         assert plan.name == "free-tier"
@@ -73,7 +74,11 @@ class TestPlanSchema:
                 CrudLimit(collection="visitors", max_create=1000, max_update=500),
             ],
             retrieval_quotas=[
-                RetrievalQuota(collection="dashboard", max_reads=100, reset_interval=QuotaResetInterval.DAILY),
+                RetrievalQuota(
+                    collection="dashboard",
+                    max_reads=100,
+                    reset_interval=QuotaResetInterval.DAILY,
+                ),
             ],
             storage_limits=StorageLimit(max_documents=5000, max_storage_mb=10240),
             tenant_caps=TenantCapLimit(max_system_users=50, max_departments=20),
@@ -114,6 +119,7 @@ class TestPlanSchema:
 
     def test_plan_out_converts_objectid(self):
         from bson import ObjectId
+
         oid = ObjectId()
         plan = PlanOut(
             _id=oid,
@@ -125,6 +131,7 @@ class TestPlanSchema:
 
     def test_plan_out_from_dict(self):
         from bson import ObjectId
+
         oid = ObjectId()
         data = {
             "_id": oid,
@@ -154,7 +161,6 @@ class TestPlanSchema:
 
 
 class TestFeatureRule:
-
     def test_feature_rule_defaults(self):
         rule = FeatureRule(endpoint_pattern="/v1/visitors/*")
         assert rule.enabled is True
@@ -173,7 +179,6 @@ class TestFeatureRule:
 
 
 class TestCrudLimit:
-
     def test_crud_limit_defaults(self):
         limit = CrudLimit(collection="visitors")
         assert limit.max_create is None
@@ -195,8 +200,8 @@ class TestCrudLimit:
 # Subscription Schema Tests
 # ============================================================================
 
-class TestSubscriptionSchema:
 
+class TestSubscriptionSchema:
     def test_subscription_create_minimal(self):
         sub = SubscriptionCreate(
             tenant_id="tenant123",
@@ -239,6 +244,7 @@ class TestSubscriptionSchema:
 
     def test_subscription_out_converts_objectid(self):
         from bson import ObjectId
+
         oid = ObjectId()
         sub = SubscriptionOut(
             _id=oid,
@@ -252,8 +258,8 @@ class TestSubscriptionSchema:
 # Discount Schema Tests
 # ============================================================================
 
-class TestDiscountSchema:
 
+class TestDiscountSchema:
     def test_discount_create_percentage(self):
         discount = DiscountCreate(
             code="LAUNCH50",
@@ -323,6 +329,7 @@ class TestDiscountSchema:
 
     def test_discount_out_converts_objectid(self):
         from bson import ObjectId
+
         oid = ObjectId()
         discount = DiscountOut(
             _id=oid,
@@ -337,8 +344,8 @@ class TestDiscountSchema:
 # Usage Schema Tests
 # ============================================================================
 
-class TestUsageSchema:
 
+class TestUsageSchema:
     def test_usage_record_create(self):
         record = UsageRecordCreate(
             tenant_id="t1",

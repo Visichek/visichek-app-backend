@@ -54,6 +54,7 @@ async def _resolve_principal(
 
     from typing import cast as _cast
     from security.principal import AllRolesLiteral as _AllRolesLiteral
+
     return AuthPrincipal(
         user_id=token_record.userId,
         role=_cast(_AllRolesLiteral, role),
@@ -145,11 +146,15 @@ async def verify_admin_token_otp(
 
 # --- VisiChek System User Role Verifiers ---
 
+
 def verify_system_user_token(*allowed_roles: str):
     """Factory that returns a dependency verifying the token has one of the allowed roles."""
+
     async def _verifier(
         request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Depends(token_auth_scheme),
+        credentials: Optional[HTTPAuthorizationCredentials] = Depends(
+            token_auth_scheme
+        ),
     ) -> AuthPrincipal:
         principal = await _resolve_principal(request, credentials, allow_expired=False)
         if principal.role not in allowed_roles:
@@ -158,6 +163,7 @@ def verify_system_user_token(*allowed_roles: str):
                 actual_role=principal.role,
             )
         return principal
+
     return _verifier
 
 
@@ -167,6 +173,7 @@ async def verify_any_system_user_token(
 ) -> AuthPrincipal:
     """Verify token belongs to any VisiChek system user role."""
     from security.principal import TENANT_USER_ROLES
+
     principal = await _resolve_principal(request, credentials, allow_expired=False)
     if principal.role not in TENANT_USER_ROLES:
         raise auth_role_mismatch(
@@ -182,7 +189,9 @@ async def verify_super_admin_token(
 ) -> AuthPrincipal:
     principal = await _resolve_principal(request, credentials, allow_expired=False)
     if principal.role != "super_admin":
-        raise auth_role_mismatch(required_role="super_admin", actual_role=principal.role)
+        raise auth_role_mismatch(
+            required_role="super_admin", actual_role=principal.role
+        )
     return principal
 
 
@@ -192,7 +201,9 @@ async def verify_receptionist_token(
 ) -> AuthPrincipal:
     principal = await _resolve_principal(request, credentials, allow_expired=False)
     if principal.role != "receptionist":
-        raise auth_role_mismatch(required_role="receptionist", actual_role=principal.role)
+        raise auth_role_mismatch(
+            required_role="receptionist", actual_role=principal.role
+        )
     return principal
 
 
@@ -200,8 +211,11 @@ async def verify_system_user_refresh_token(
     principal: AuthPrincipal = Depends(verify_token_to_refresh),
 ) -> AuthPrincipal:
     from security.principal import TENANT_USER_ROLES
+
     if principal.role not in TENANT_USER_ROLES:
-        raise auth_role_mismatch(required_role="system_user", actual_role=principal.role)
+        raise auth_role_mismatch(
+            required_role="system_user", actual_role=principal.role
+        )
     return principal
 
 

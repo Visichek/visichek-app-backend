@@ -43,28 +43,40 @@ async def _cleanup_visit_sessions(tenant_id: str, cutoff: int, action: DeletionA
         cursor = db.visit_sessions.find(filter_dict, {"_id": 1})
         async for doc in cursor:
             await db.visit_sessions.delete_one({"_id": doc["_id"]})
-            await create_deletion_log(DeletionLogCreate(
-                tenant_id=tenant_id, entity_type="visit_session",
-                entity_id=str(doc["_id"]), reason="retention_policy_expired",
-                action=DeletionAction.DELETE, performed_by="system",
-            ))
+            await create_deletion_log(
+                DeletionLogCreate(
+                    tenant_id=tenant_id,
+                    entity_type="visit_session",
+                    entity_id=str(doc["_id"]),
+                    reason="retention_policy_expired",
+                    action=DeletionAction.DELETE,
+                    performed_by="system",
+                )
+            )
     else:
         cursor = db.visit_sessions.find(filter_dict, {"_id": 1})
         async for doc in cursor:
             await db.visit_sessions.update_one(
                 {"_id": doc["_id"]},
-                {"$set": {
-                    "visitor_name_snapshot": "ANONYMISED",
-                    "company_snapshot": "ANONYMISED",
-                    "host_name_snapshot": "ANONYMISED",
-                    "purpose": "ANONYMISED",
-                }},
+                {
+                    "$set": {
+                        "visitor_name_snapshot": "ANONYMISED",
+                        "company_snapshot": "ANONYMISED",
+                        "host_name_snapshot": "ANONYMISED",
+                        "purpose": "ANONYMISED",
+                    }
+                },
             )
-            await create_deletion_log(DeletionLogCreate(
-                tenant_id=tenant_id, entity_type="visit_session",
-                entity_id=str(doc["_id"]), reason="retention_policy_expired",
-                action=DeletionAction.ANONYMISE, performed_by="system",
-            ))
+            await create_deletion_log(
+                DeletionLogCreate(
+                    tenant_id=tenant_id,
+                    entity_type="visit_session",
+                    entity_id=str(doc["_id"]),
+                    reason="retention_policy_expired",
+                    action=DeletionAction.ANONYMISE,
+                    performed_by="system",
+                )
+            )
 
 
 async def _cleanup_id_images(tenant_id: str, cutoff: int, action: DeletionAction):
@@ -80,14 +92,21 @@ async def _cleanup_id_images(tenant_id: str, cutoff: int, action: DeletionAction
             {"_id": doc["_id"]},
             {"$set": {"id_image_object_key": None, "id_number": None}},
         )
-        await create_deletion_log(DeletionLogCreate(
-            tenant_id=tenant_id, entity_type="visitor_profile_id_image",
-            entity_id=str(doc["_id"]), reason="retention_policy_expired",
-            action=DeletionAction.DELETE, performed_by="system",
-        ))
+        await create_deletion_log(
+            DeletionLogCreate(
+                tenant_id=tenant_id,
+                entity_type="visitor_profile_id_image",
+                entity_id=str(doc["_id"]),
+                reason="retention_policy_expired",
+                action=DeletionAction.DELETE,
+                performed_by="system",
+            )
+        )
 
 
-async def _cleanup_visitor_profiles(tenant_id: str, cutoff: int, action: DeletionAction):
+async def _cleanup_visitor_profiles(
+    tenant_id: str, cutoff: int, action: DeletionAction
+):
     import hashlib
 
     filter_dict = {
@@ -100,11 +119,16 @@ async def _cleanup_visitor_profiles(tenant_id: str, cutoff: int, action: Deletio
         cursor = db.visitor_profiles.find(filter_dict, {"_id": 1})
         async for doc in cursor:
             await db.visitor_profiles.delete_one({"_id": doc["_id"]})
-            await create_deletion_log(DeletionLogCreate(
-                tenant_id=tenant_id, entity_type="visitor_profile",
-                entity_id=str(doc["_id"]), reason="retention_policy_expired",
-                action=DeletionAction.DELETE, performed_by="system",
-            ))
+            await create_deletion_log(
+                DeletionLogCreate(
+                    tenant_id=tenant_id,
+                    entity_type="visitor_profile",
+                    entity_id=str(doc["_id"]),
+                    reason="retention_policy_expired",
+                    action=DeletionAction.DELETE,
+                    performed_by="system",
+                )
+            )
     else:
         cursor = db.visitor_profiles.find(filter_dict, {"_id": 1, "phone": 1})
         async for doc in cursor:
@@ -113,19 +137,26 @@ async def _cleanup_visitor_profiles(tenant_id: str, cutoff: int, action: Deletio
             ).hexdigest()[:16]
             await db.visitor_profiles.update_one(
                 {"_id": doc["_id"]},
-                {"$set": {
-                    "full_name": "ANONYMISED",
-                    "phone": hashed_phone,
-                    "email_address": None,
-                    "company": None,
-                    "photo_object_key": None,
-                    "id_number": None,
-                    "id_image_object_key": None,
-                    "deleted_at": int(time.time()),
-                }},
+                {
+                    "$set": {
+                        "full_name": "ANONYMISED",
+                        "phone": hashed_phone,
+                        "email_address": None,
+                        "company": None,
+                        "photo_object_key": None,
+                        "id_number": None,
+                        "id_image_object_key": None,
+                        "deleted_at": int(time.time()),
+                    }
+                },
             )
-            await create_deletion_log(DeletionLogCreate(
-                tenant_id=tenant_id, entity_type="visitor_profile",
-                entity_id=str(doc["_id"]), reason="retention_policy_expired",
-                action=DeletionAction.ANONYMISE, performed_by="system",
-            ))
+            await create_deletion_log(
+                DeletionLogCreate(
+                    tenant_id=tenant_id,
+                    entity_type="visitor_profile",
+                    entity_id=str(doc["_id"]),
+                    reason="retention_policy_expired",
+                    action=DeletionAction.ANONYMISE,
+                    performed_by="system",
+                )
+            )

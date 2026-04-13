@@ -15,6 +15,7 @@ PREFERENCES_COLLECTION = "user_preferences"
 
 # --- User Settings ---
 
+
 async def create_user_settings(data: UserSettingsCreate) -> UserSettingsOut:
     doc = data.model_dump()
     result = await db[COLLECTION].insert_one(doc)
@@ -29,7 +30,9 @@ async def get_user_settings(filter_dict: dict) -> Optional[UserSettingsOut]:
     return None
 
 
-async def update_user_settings(filter_dict: dict, data: UserSettingsUpdate) -> Optional[UserSettingsOut]:
+async def update_user_settings(
+    filter_dict: dict, data: UserSettingsUpdate
+) -> Optional[UserSettingsOut]:
     update_fields = data.model_dump(exclude_none=True)
     if not update_fields:
         return await get_user_settings(filter_dict)
@@ -42,6 +45,7 @@ async def update_user_settings(filter_dict: dict, data: UserSettingsUpdate) -> O
 
 # --- User Preferences (key-value store) ---
 
+
 async def get_user_preferences(user_id: str, user_type: str) -> dict[str, Any]:
     doc = await db[PREFERENCES_COLLECTION].find_one(
         {"user_id": user_id, "user_type": user_type}
@@ -51,7 +55,9 @@ async def get_user_preferences(user_id: str, user_type: str) -> dict[str, Any]:
     return {}
 
 
-async def set_user_preference(user_id: str, user_type: str, key: str, value: Any) -> dict[str, Any]:
+async def set_user_preference(
+    user_id: str, user_type: str, key: str, value: Any
+) -> dict[str, Any]:
     """Upsert a single preference key-value pair."""
     await db[PREFERENCES_COLLECTION].update_one(
         {"user_id": user_id, "user_type": user_type},

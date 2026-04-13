@@ -36,7 +36,10 @@ async def app_instance() -> FastAPI:
 
 @pytest.fixture
 async def client(app_instance: FastAPI) -> AsyncGenerator[AsyncClient, None]:
-    async with AsyncClient(transport=ASGITransport(app=cast(object, app_instance)), base_url="http://test") as ac:  # type: ignore[arg-type]
+    async with AsyncClient(
+        transport=ASGITransport(app=cast(object, app_instance)),  # type: ignore[arg-type]
+        base_url="http://test",
+    ) as ac:
         yield ac
 
 

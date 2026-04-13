@@ -31,6 +31,7 @@ class SystemUserSignupRequest(BaseModel):
 
 class SystemUserTenantLogin(BaseModel):
     """Login request scoped to a specific tenant (via URL path param)."""
+
     email: EmailStr
     password: str
 
@@ -46,6 +47,7 @@ class SystemUserCreate(SystemUserBase):
     def validate_and_hash_password(self):
         if isinstance(self.password_hash, str):
             from security.password_policy import validate_password_strength
+
             result = validate_password_strength(self.password_hash)
             if not result.is_valid:
                 raise ValueError("; ".join(result.errors))
@@ -97,6 +99,7 @@ class SystemUserRefresh(BaseModel):
 
 class TenantProfileSummary(BaseModel):
     """Lightweight tenant snapshot embedded in the system user profile response."""
+
     id: Optional[str] = None
     company_name: Optional[str] = None
     lawful_basis: Optional[str] = None
@@ -113,4 +116,5 @@ class TenantProfileSummary(BaseModel):
 
 class SystemUserProfileOut(SystemUserOut):
     """SystemUserOut enriched with tenant context for frontend rendering."""
+
     tenant: Optional[TenantProfileSummary] = None

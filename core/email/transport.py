@@ -20,12 +20,16 @@ class SmtpConfig:
 
 
 class SMTPTransport:
-    def __init__(self, config: SmtpConfig, logger: logging.Logger | None = None) -> None:
+    def __init__(
+        self, config: SmtpConfig, logger: logging.Logger | None = None
+    ) -> None:
         self._config = config
         self._logger = logger or logging.getLogger(__name__)
 
     def send_message(self, message: EmailMessage) -> None:
-        formatted_from = formataddr((message.sender_display_name, self._config.from_email))
+        formatted_from = formataddr(
+            (message.sender_display_name, self._config.from_email)
+        )
 
         payload = MIMEMultipart("alternative")
         payload["From"] = formatted_from
@@ -47,7 +51,9 @@ class SMTPTransport:
                 raise ValueError("Unsupported SMTP port. Use 465, 587, or 25.")
 
             server.login(self._config.username, self._config.password)
-            server.sendmail(self._config.from_email, message.to_email, payload.as_string())
+            server.sendmail(
+                self._config.from_email, message.to_email, payload.as_string()
+            )
             self._logger.info("Email sent to %s", message.to_email)
         finally:
             if server is not None:

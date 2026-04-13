@@ -132,7 +132,9 @@ async def generate_invoice(
     return invoice
 
 
-async def retrieve_invoice_by_id(invoice_id: str, resolve_pdf_url: bool = True) -> InvoiceOut | None:
+async def retrieve_invoice_by_id(
+    invoice_id: str, resolve_pdf_url: bool = True
+) -> InvoiceOut | None:
     if not ObjectId.is_valid(invoice_id):
         return None
     invoice = await get_invoice({"_id": ObjectId(invoice_id)})
@@ -272,6 +274,7 @@ async def retrieve_invoices_for_tenant_with_summary(
     resolve_pdf_urls: bool = False,
 ) -> tuple[list[InvoiceWithSummaryOut], int]:
     import asyncio
+
     invoices, total = await retrieve_invoices_for_tenant(
         tenant_id=tenant_id, skip=skip, limit=limit, resolve_pdf_urls=resolve_pdf_urls
     )
@@ -287,6 +290,7 @@ async def retrieve_all_invoices_with_summary(
     resolve_pdf_urls: bool = False,
 ) -> tuple[list[InvoiceWithSummaryOut], int]:
     import asyncio
+
     invoices, total = await retrieve_all_invoices(
         skip=skip,
         limit=limit,

@@ -29,30 +29,44 @@ async def export_visitor_log_csv(
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow([
-        "Visitor Name", "Company", "Department", "Host",
-        "Check-In Time", "Check-Out Time", "Duration (min)",
-        "Status", "Verification Status", "Check-In Method",
-        "Receptionist", "Purpose",
-    ])
+    writer.writerow(
+        [
+            "Visitor Name",
+            "Company",
+            "Department",
+            "Host",
+            "Check-In Time",
+            "Check-Out Time",
+            "Duration (min)",
+            "Status",
+            "Verification Status",
+            "Check-In Method",
+            "Receptionist",
+            "Purpose",
+        ]
+    )
 
     for s in sessions:
         check_in = _format_timestamp(s.check_in_time) if s.check_in_time else ""
         check_out = _format_timestamp(s.check_out_time) if s.check_out_time else ""
         duration = round(s.visit_duration / 60, 1) if s.visit_duration else ""
 
-        writer.writerow([
-            s.visitor_name_snapshot or "",
-            s.company_snapshot or "",
-            s.department_name_snapshot or "",
-            s.host_name_snapshot or "",
-            check_in, check_out, duration,
-            s.status or "",
-            s.verification_status or "",
-            s.check_in_method or "",
-            s.receptionist_name_snapshot or "",
-            s.purpose or "",
-        ])
+        writer.writerow(
+            [
+                s.visitor_name_snapshot or "",
+                s.company_snapshot or "",
+                s.department_name_snapshot or "",
+                s.host_name_snapshot or "",
+                check_in,
+                check_out,
+                duration,
+                s.status or "",
+                s.verification_status or "",
+                s.check_in_method or "",
+                s.receptionist_name_snapshot or "",
+                s.purpose or "",
+            ]
+        )
 
     return output.getvalue().encode("utf-8")
 
@@ -85,10 +99,18 @@ async def export_visitor_log_xlsx(
     ws = wb.active
     ws.title = "Visitor Log"
     headers = [
-        "Visitor Name", "Company", "Department", "Host",
-        "Check-In Time", "Check-Out Time", "Duration (min)",
-        "Status", "Verification Status", "Check-In Method",
-        "Receptionist", "Purpose",
+        "Visitor Name",
+        "Company",
+        "Department",
+        "Host",
+        "Check-In Time",
+        "Check-Out Time",
+        "Duration (min)",
+        "Status",
+        "Verification Status",
+        "Check-In Method",
+        "Receptionist",
+        "Purpose",
     ]
     ws.append(headers)
 
@@ -97,18 +119,22 @@ async def export_visitor_log_xlsx(
         check_out = _format_timestamp(s.check_out_time) if s.check_out_time else ""
         duration = round(s.visit_duration / 60, 1) if s.visit_duration else ""
 
-        ws.append([
-            s.visitor_name_snapshot or "",
-            s.company_snapshot or "",
-            s.department_name_snapshot or "",
-            s.host_name_snapshot or "",
-            check_in, check_out, duration,
-            s.status or "",
-            s.verification_status or "",
-            s.check_in_method or "",
-            s.receptionist_name_snapshot or "",
-            s.purpose or "",
-        ])
+        ws.append(
+            [
+                s.visitor_name_snapshot or "",
+                s.company_snapshot or "",
+                s.department_name_snapshot or "",
+                s.host_name_snapshot or "",
+                check_in,
+                check_out,
+                duration,
+                s.status or "",
+                s.verification_status or "",
+                s.check_in_method or "",
+                s.receptionist_name_snapshot or "",
+                s.purpose or "",
+            ]
+        )
 
     buffer = io.BytesIO()
     wb.save(buffer)

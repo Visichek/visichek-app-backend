@@ -27,7 +27,9 @@ async def get_platform_settings() -> Optional[PlatformSettingsOut]:
     return None
 
 
-async def update_platform_settings(data: PlatformSettingsUpdate) -> Optional[PlatformSettingsOut]:
+async def update_platform_settings(
+    data: PlatformSettingsUpdate,
+) -> Optional[PlatformSettingsOut]:
     """Update the singleton platform settings document."""
     update_fields = data.model_dump(exclude_none=True)
     if not update_fields:

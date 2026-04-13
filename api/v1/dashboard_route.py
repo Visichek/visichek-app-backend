@@ -43,8 +43,16 @@ _all_tenant_roles = verify_system_user_token(
         403: "Forbidden - insufficient permissions",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or missing token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid or missing token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def dashboard_stats(
@@ -53,7 +61,9 @@ async def dashboard_stats(
 ):
     tenant_id = principal.tenant_id or ""
     return await get_dashboard_stats(
-        tenant_id=tenant_id, department_id=department_id, role=principal.role,
+        tenant_id=tenant_id,
+        department_id=department_id,
+        role=principal.role,
     )
 
 
@@ -87,8 +97,16 @@ async def dashboard_stats(
         403: "Forbidden - insufficient permissions",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or missing token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid or missing token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def dashboard_visitor_log(
@@ -147,19 +165,30 @@ async def dashboard_visitor_log(
         403: "Forbidden - insufficient permissions",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or missing token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid or missing token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def dashboard_active_visitors(
     department_id: Optional[str] = None,
-    principal: AuthPrincipal = Depends(verify_system_user_token(
-        "receptionist", "dept_admin", "super_admin"
-    )),
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("receptionist", "dept_admin", "super_admin")
+    ),
 ):
     from services.visit_session_service import retrieve_active_visitors
+
     tenant_id = principal.tenant_id or ""
-    return await retrieve_active_visitors(tenant_id=tenant_id, department_id=department_id)
+    return await retrieve_active_visitors(
+        tenant_id=tenant_id, department_id=department_id
+    )
 
 
 @router.get("/export")
@@ -174,8 +203,10 @@ async def dashboard_export(
 
     if format == "xlsx":
         data = await export_visitor_log_xlsx(
-            tenant_id=tenant_id, department_id=department_id,
-            date_from=date_from, date_to=date_to,
+            tenant_id=tenant_id,
+            department_id=department_id,
+            date_from=date_from,
+            date_to=date_to,
         )
         return StreamingResponse(
             io.BytesIO(data),
@@ -184,8 +215,10 @@ async def dashboard_export(
         )
     else:
         data = await export_visitor_log_csv(
-            tenant_id=tenant_id, department_id=department_id,
-            date_from=date_from, date_to=date_to,
+            tenant_id=tenant_id,
+            department_id=department_id,
+            date_from=date_from,
+            date_to=date_to,
         )
         return StreamingResponse(
             io.BytesIO(data),

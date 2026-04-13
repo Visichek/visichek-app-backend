@@ -1,4 +1,5 @@
 """Append-only audit log repository. NO update or delete functions."""
+
 from core.database import db
 from typing import List
 from schemas.audit_log_schema import AuditLogCreate, AuditLogOut
@@ -11,7 +12,9 @@ async def create_audit_log(log_data: AuditLogCreate) -> AuditLogOut:
     return AuditLogOut(**result)
 
 
-async def get_audit_logs(filter_dict: dict = {}, start=0, stop=100) -> List[AuditLogOut]:
+async def get_audit_logs(
+    filter_dict: dict = {}, start=0, stop=100
+) -> List[AuditLogOut]:
     cursor = (
         db.system_audit_logs.find(filter_dict)
         .sort("occurred_at", -1)

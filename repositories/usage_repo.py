@@ -17,6 +17,7 @@ AGGREGATES_COLLECTION = "usage_aggregates"
 
 # --- Usage Records (raw event log) ---
 
+
 async def create_usage_record(record_data: UsageRecordCreate) -> UsageRecordOut:
     record_dict = record_data.model_dump(mode="json")
     result = await db[RECORDS_COLLECTION].insert_one(record_dict)
@@ -24,11 +25,15 @@ async def create_usage_record(record_data: UsageRecordCreate) -> UsageRecordOut:
     return UsageRecordOut(**result)
 
 
-async def get_usage_records(filter_dict: dict = {}, start: int = 0, stop: int = 100) -> List[UsageRecordOut]:
+async def get_usage_records(
+    filter_dict: dict = {}, start: int = 0, stop: int = 100
+) -> List[UsageRecordOut]:
     try:
         if filter_dict is None:
             filter_dict = {}
-        cursor = db[RECORDS_COLLECTION].find(filter_dict).skip(start).limit(stop - start)
+        cursor = (
+            db[RECORDS_COLLECTION].find(filter_dict).skip(start).limit(stop - start)
+        )
         records = []
         async for doc in cursor:
             records.append(UsageRecordOut(**doc))
@@ -52,6 +57,7 @@ async def delete_usage_records(filter_dict: dict):
 
 # --- Usage Aggregates (pre-computed counters for fast quota checks) ---
 
+
 async def get_usage_aggregate(filter_dict: dict) -> Optional[UsageAggregateOut]:
     try:
         result = await db[AGGREGATES_COLLECTION].find_one(filter_dict)
@@ -65,11 +71,15 @@ async def get_usage_aggregate(filter_dict: dict) -> Optional[UsageAggregateOut]:
         )
 
 
-async def get_usage_aggregates(filter_dict: dict = {}, start: int = 0, stop: int = 100) -> List[UsageAggregateOut]:
+async def get_usage_aggregates(
+    filter_dict: dict = {}, start: int = 0, stop: int = 100
+) -> List[UsageAggregateOut]:
     try:
         if filter_dict is None:
             filter_dict = {}
-        cursor = db[AGGREGATES_COLLECTION].find(filter_dict).skip(start).limit(stop - start)
+        cursor = (
+            db[AGGREGATES_COLLECTION].find(filter_dict).skip(start).limit(stop - start)
+        )
         aggregates = []
         async for doc in cursor:
             aggregates.append(UsageAggregateOut(**doc))
@@ -122,13 +132,15 @@ async def get_current_count(
     period_key: str,
 ) -> int:
     """Get current usage count for quota checking."""
-    agg = await get_usage_aggregate({
-        "tenant_id": tenant_id,
-        "subscription_id": subscription_id,
-        "collection": collection,
-        "operation": operation,
-        "period_key": period_key,
-    })
+    agg = await get_usage_aggregate(
+        {
+            "tenant_id": tenant_id,
+            "subscription_id": subscription_id,
+            "collection": collection,
+            "operation": operation,
+            "period_key": period_key,
+        }
+    )
     return agg.count if agg else 0
 
 

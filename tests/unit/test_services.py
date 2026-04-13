@@ -5,14 +5,23 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from bson import ObjectId
 from fastapi import HTTPException
 
-from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut, TenantBootstrapRequest
+from schemas.tenant_schema import (
+    TenantCreate,
+    TenantUpdate,
+    TenantOut,
+    TenantBootstrapRequest,
+)
 from schemas.system_user_schema import (
     SystemUserCreate,
     SystemUserUpdate,
     SystemUserOut,
     SystemUserLogin,
 )
-from schemas.appointment_schema import AppointmentCreate, AppointmentUpdate, AppointmentOut
+from schemas.appointment_schema import (
+    AppointmentCreate,
+    AppointmentUpdate,
+    AppointmentOut,
+)
 from schemas.visit_session_schema import (
     VisitSessionOut,
     CheckInRequest,
@@ -672,7 +681,9 @@ class TestVisitSessionService:
         mock_get.return_value = session
         mock_update.return_value = checked_out
 
-        request = CheckOutRequest(session_id=session_id, check_out_method=CheckOutMethod.MANUAL)
+        request = CheckOutRequest(
+            session_id=session_id, check_out_method=CheckOutMethod.MANUAL
+        )
 
         result = await check_out_visitor(request, tenant_id)
 
@@ -708,7 +719,9 @@ class TestVisitSessionService:
         session_id = str(ObjectId())
         mock_get.return_value = None
 
-        request = CheckOutRequest(session_id=session_id, check_out_method=CheckOutMethod.MANUAL)
+        request = CheckOutRequest(
+            session_id=session_id, check_out_method=CheckOutMethod.MANUAL
+        )
 
         with pytest.raises(HTTPException) as exc_info:
             await check_out_visitor(request, tenant_id)
@@ -734,7 +747,9 @@ class TestVisitSessionService:
 
         mock_get.return_value = session
 
-        request = CheckOutRequest(session_id=session_id, check_out_method=CheckOutMethod.MANUAL)
+        request = CheckOutRequest(
+            session_id=session_id, check_out_method=CheckOutMethod.MANUAL
+        )
 
         with pytest.raises(HTTPException) as exc_info:
             await check_out_visitor(request, tenant_id)
@@ -790,7 +805,9 @@ class TestBootstrapTenantService:
     @patch("services.tenant_service.get_system_user", new_callable=AsyncMock)
     @patch("services.tenant_service.create_tenant", new_callable=AsyncMock)
     @patch("services.tenant_service.get_tenant", new_callable=AsyncMock)
-    async def test_bootstrap_success(self, mock_get_tenant, mock_create_tenant, mock_get_su, mock_add_su):
+    async def test_bootstrap_success(
+        self, mock_get_tenant, mock_create_tenant, mock_get_su, mock_add_su
+    ):
         """Test successful bootstrap creates tenant + super_admin."""
         from services.tenant_service import bootstrap_tenant
 
@@ -868,7 +885,9 @@ class TestBootstrapTenantService:
         tenant_id = str(ObjectId())
         mock_get_tenant.return_value = None
         mock_create_tenant.return_value = TenantOut(
-            id=tenant_id, company_name="Acme Corp", date_created=1712500000,
+            id=tenant_id,
+            company_name="Acme Corp",
+            date_created=1712500000,
         )
         mock_get_su.return_value = SystemUserOut(
             id=str(ObjectId()),
@@ -899,7 +918,12 @@ class TestBootstrapTenantService:
     @patch("services.tenant_service.create_tenant", new_callable=AsyncMock)
     @patch("services.tenant_service.get_tenant", new_callable=AsyncMock)
     async def test_bootstrap_rolls_back_tenant_on_user_failure(
-        self, mock_get_tenant, mock_create_tenant, mock_get_su, mock_add_su, mock_delete_tenant
+        self,
+        mock_get_tenant,
+        mock_create_tenant,
+        mock_get_su,
+        mock_add_su,
+        mock_delete_tenant,
     ):
         """Test tenant is deleted if super_admin creation fails."""
         from services.tenant_service import bootstrap_tenant
@@ -907,10 +931,14 @@ class TestBootstrapTenantService:
         tenant_id = str(ObjectId())
         mock_get_tenant.return_value = None
         mock_create_tenant.return_value = TenantOut(
-            id=tenant_id, company_name="Acme Corp", date_created=1712500000,
+            id=tenant_id,
+            company_name="Acme Corp",
+            date_created=1712500000,
         )
         mock_get_su.return_value = None
-        mock_add_su.side_effect = HTTPException(status_code=409, detail="Duplicate email")
+        mock_add_su.side_effect = HTTPException(
+            status_code=409, detail="Duplicate email"
+        )
         mock_delete_tenant.return_value = MagicMock(deleted_count=1)
 
         payload = TenantBootstrapRequest(

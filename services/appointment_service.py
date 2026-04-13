@@ -22,10 +22,12 @@ from services.plan_limits import enforce_entity_cap, get_month_bounds
 async def add_appointment(appt_data: AppointmentCreate) -> AppointmentOut:
     # Enforce plan cap on appointments created this calendar month
     month_start, month_end = get_month_bounds()
-    month_count = await count_appointments({
-        "tenant_id": appt_data.tenant_id,
-        "date_created": {"$gte": month_start, "$lt": month_end},
-    })
+    month_count = await count_appointments(
+        {
+            "tenant_id": appt_data.tenant_id,
+            "date_created": {"$gte": month_start, "$lt": month_end},
+        }
+    )
     await enforce_entity_cap(
         tenant_id=appt_data.tenant_id,
         cap_key="max_appointments_per_month",
@@ -36,17 +38,25 @@ async def add_appointment(appt_data: AppointmentCreate) -> AppointmentOut:
     return await create_appointment(appt_data)
 
 
-async def retrieve_appointment_by_id(appointment_id: str, tenant_id: str) -> AppointmentOut:
+async def retrieve_appointment_by_id(
+    appointment_id: str, tenant_id: str
+) -> AppointmentOut:
     if not ObjectId.is_valid(appointment_id):
         raise HTTPException(status_code=400, detail="Invalid appointment ID format")
-    result = await get_appointment({"_id": ObjectId(appointment_id), "tenant_id": tenant_id})
+    result = await get_appointment(
+        {"_id": ObjectId(appointment_id), "tenant_id": tenant_id}
+    )
     if not result:
         raise HTTPException(status_code=404, detail="Appointment not found")
     return result
 
 
-async def retrieve_appointments(tenant_id: str, start=0, stop=100) -> List[AppointmentOut]:
-    return await get_appointments(filter_dict={"tenant_id": tenant_id}, start=start, stop=stop)
+async def retrieve_appointments(
+    tenant_id: str, start=0, stop=100
+) -> List[AppointmentOut]:
+    return await get_appointments(
+        filter_dict={"tenant_id": tenant_id}, start=start, stop=stop
+    )
 
 
 async def _enrich_appointment(appt: AppointmentOut) -> AppointmentWithSummaryOut:
@@ -79,6 +89,7 @@ async def retrieve_appointments_with_summary(
     tenant_id: str, start: int = 0, stop: int = 100
 ) -> List[AppointmentWithSummaryOut]:
     import asyncio
+
     appts = await retrieve_appointments(tenant_id=tenant_id, start=start, stop=stop)
     return list(await asyncio.gather(*[_enrich_appointment(a) for a in appts]))
 
@@ -101,13 +112,17 @@ async def update_appointment_by_id(
         {"_id": ObjectId(appointment_id), "tenant_id": tenant_id}, appt_data
     )
     if not result:
-        raise HTTPException(status_code=404, detail="Appointment not found or update failed")
+        raise HTTPException(
+            status_code=404, detail="Appointment not found or update failed"
+        )
     return result
 
 
 async def remove_appointment(appointment_id: str, tenant_id: str):
     if not ObjectId.is_valid(appointment_id):
         raise HTTPException(status_code=400, detail="Invalid appointment ID format")
-    result = await delete_appointment({"_id": ObjectId(appointment_id), "tenant_id": tenant_id})
+    result = await delete_appointment(
+        {"_id": ObjectId(appointment_id), "tenant_id": tenant_id}
+    )
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Appointment not found")

@@ -19,7 +19,9 @@ from core.payments.types import (
 class FlutterwavePaymentProvider(PaymentProvider):
     provider_name = PaymentProviderName.FLUTTERWAVE.value
 
-    def __init__(self, *, secret_key: str, webhook_secret_hash: str | None = None) -> None:
+    def __init__(
+        self, *, secret_key: str, webhook_secret_hash: str | None = None
+    ) -> None:
         self._secret_key = secret_key
         self._webhook_secret_hash = webhook_secret_hash
         self._base_url = "https://api.flutterwave.com/v3"
@@ -37,8 +39,12 @@ class FlutterwavePaymentProvider(PaymentProvider):
                 "tx_ref": payload.reference,
                 "amount": payload.amount_minor / 100,
                 "currency": payload.currency,
-                "redirect_url": payload.metadata.get("redirect_url") if payload.metadata else None,
-                "customer": {"email": payload.customer_email} if payload.customer_email else None,
+                "redirect_url": payload.metadata.get("redirect_url")
+                if payload.metadata
+                else None,
+                "customer": {"email": payload.customer_email}
+                if payload.customer_email
+                else None,
                 "meta": payload.metadata or {},
             },
             headers=self._headers(),
@@ -99,7 +105,9 @@ class FlutterwavePaymentProvider(PaymentProvider):
             )
 
         status = str(data.get("data", {}).get("status", "")).lower()
-        mapped = PaymentStatus.SUCCEEDED if status == "successful" else PaymentStatus.PENDING
+        mapped = (
+            PaymentStatus.SUCCEEDED if status == "successful" else PaymentStatus.PENDING
+        )
         return PaymentTransaction(
             provider=PaymentProviderName.FLUTTERWAVE,
             reference=reference,
@@ -107,7 +115,9 @@ class FlutterwavePaymentProvider(PaymentProvider):
             raw=data,
         )
 
-    def refund(self, *, reference: str, amount_minor: int | None = None) -> PaymentTransaction:
+    def refund(
+        self, *, reference: str, amount_minor: int | None = None
+    ) -> PaymentTransaction:
         tx = self.fetch_transaction(reference=reference)
         transaction_id = tx.raw.get("data", {}).get("id")
         if not transaction_id:

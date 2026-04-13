@@ -71,7 +71,9 @@ async def verify_otp_challenge(challenge_id: str, otp_code: str) -> dict:
         raise HTTPException(status_code=401, detail="OTP challenge has expired")
 
     if challenge["attempts"] >= challenge["max_attempts"]:
-        raise HTTPException(status_code=429, detail="Too many OTP attempts. Please log in again.")
+        raise HTTPException(
+            status_code=429, detail="Too many OTP attempts. Please log in again."
+        )
 
     await increment_otp_attempts(challenge_id)
 

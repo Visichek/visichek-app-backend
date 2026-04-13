@@ -63,13 +63,15 @@ router = APIRouter(prefix="/payments", tags=["Payments"])
         "idempotency_key": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
         "response_payload": {
             "authorization_url": "https://checkout.stripe.com/pay/cs_live_abc123...",
-            "client_secret": "pi_1234567890_secret_1234567890"
+            "client_secret": "pi_1234567890_secret_1234567890",
         },
         "created_at": 1712520000,
-        "updated_at": 1712520000
+        "updated_at": 1712520000,
     },
 )
-async def create_intent(payload: PaymentIntentIn, principal: AuthPrincipal = Depends(verify_any_token)):
+async def create_intent(
+    payload: PaymentIntentIn, principal: AuthPrincipal = Depends(verify_any_token)
+):
     return await create_payment_intent(owner_id=principal.user_id, payload=payload)
 
 
@@ -89,9 +91,7 @@ async def create_intent(payload: PaymentIntentIn, principal: AuthPrincipal = Dep
             "code": "VALIDATION_FAILED",
         },
     },
-    success_example={
-        "received": True
-    },
+    success_example={"received": True},
 )
 async def payment_webhook(provider: str, request: Request):
     """
@@ -146,13 +146,15 @@ async def payment_webhook(provider: str, request: Request):
         "response_payload": {
             "charge_id": "ch_1234567890",
             "status": "succeeded",
-            "receipt_url": "https://receipts.stripe.com/..."
+            "receipt_url": "https://receipts.stripe.com/...",
         },
         "created_at": 1712520000,
-        "updated_at": 1712521000
+        "updated_at": 1712521000,
     },
 )
-async def fetch_transaction(payment_id: str, principal: AuthPrincipal = Depends(verify_any_token)):
+async def fetch_transaction(
+    payment_id: str, principal: AuthPrincipal = Depends(verify_any_token)
+):
     tx = await get_payment_transaction(payment_id=payment_id)
     if tx.owner_id != principal.user_id and not principal.is_admin:
         raise auth_permission_denied("GET:/v1/payments/{payment_id}")
@@ -205,10 +207,10 @@ async def fetch_transaction(payment_id: str, principal: AuthPrincipal = Depends(
         "response_payload": {
             "refund_id": "re_1234567890",
             "status": "succeeded",
-            "amount_refunded": 50000
+            "amount_refunded": 50000,
         },
         "created_at": 1712520000,
-        "updated_at": 1712522000
+        "updated_at": 1712522000,
     },
 )
 async def refund_transaction(
@@ -219,7 +221,9 @@ async def refund_transaction(
     tx = await get_payment_transaction(payment_id=payment_id)
     if tx.owner_id != principal.user_id and not principal.is_admin:
         raise auth_permission_denied("POST:/v1/payments/{payment_id}/refund")
-    return await refund_payment(payment_id=payment_id, amount_minor=payload.amount_minor)
+    return await refund_payment(
+        payment_id=payment_id, amount_minor=payload.amount_minor
+    )
 
 
 @router.get("/webhooks/events")
@@ -234,7 +238,9 @@ async def refund_transaction(
     },
 )
 async def list_webhook_events(
-    provider: str | None = Query(default=None, description="Filter by provider (stripe, flutterwave)"),
+    provider: str | None = Query(
+        default=None, description="Filter by provider (stripe, flutterwave)"
+    ),
     status_filter: str | None = Query(default=None, alias="processing_status"),
     start: int = Query(default=0, ge=0),
     stop: int = Query(default=50, ge=1, le=200),

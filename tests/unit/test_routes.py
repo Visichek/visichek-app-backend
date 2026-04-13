@@ -65,7 +65,12 @@ MOCK_ADMIN_OUT = {
     "accountStatus": "ACTIVE",
     "permissionList": {
         "permissions": [
-            {"name": "all", "methods": ["GET", "POST", "PATCH", "DELETE"], "path": "/v1/*", "key": "all_access"}
+            {
+                "name": "all",
+                "methods": ["GET", "POST", "PATCH", "DELETE"],
+                "path": "/v1/*",
+                "key": "all_access",
+            }
         ]
     },
     "date_created": 1712500000,
@@ -87,9 +92,13 @@ class TestTenantRoutes:
     @pytest.mark.unit
     async def test_create_tenant_success(self, cleanup_dependency_overrides):
         """Test successful tenant creation by application admin."""
-        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MOCK_ADMIN_OUT
+        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: (
+            MOCK_ADMIN_OUT
+        )
 
-        with patch("services.tenant_service.add_tenant", new_callable=AsyncMock) as mock_add:
+        with patch(
+            "services.tenant_service.add_tenant", new_callable=AsyncMock
+        ) as mock_add:
             mock_add.return_value = {
                 "id": "tenant-001",
                 "company_name": "Acme Corp",
@@ -136,9 +145,13 @@ class TestTenantRoutes:
     @pytest.mark.unit
     async def test_list_tenants_success(self, cleanup_dependency_overrides):
         """Test successful tenant listing."""
-        app.dependency_overrides[verify_super_admin_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_super_admin_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.tenant_service.retrieve_tenants", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.tenant_service.retrieve_tenants", new_callable=AsyncMock
+        ) as mock_list:
             mock_list.return_value = [
                 {
                     "id": "tenant-001",
@@ -173,9 +186,13 @@ class TestTenantRoutes:
     @pytest.mark.unit
     async def test_get_tenant_success(self, cleanup_dependency_overrides):
         """Test retrieving a specific tenant by ID."""
-        app.dependency_overrides[verify_super_admin_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_super_admin_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.tenant_service.retrieve_tenant_by_id", new_callable=AsyncMock) as mock_get:
+        with patch(
+            "services.tenant_service.retrieve_tenant_by_id", new_callable=AsyncMock
+        ) as mock_get:
             mock_get.return_value = {
                 "id": "tenant-001",
                 "company_name": "Acme Corp",
@@ -200,11 +217,16 @@ class TestTenantRoutes:
     @pytest.mark.unit
     async def test_get_tenant_not_found(self, cleanup_dependency_overrides):
         """Test retrieving a non-existent tenant."""
-        app.dependency_overrides[verify_super_admin_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_super_admin_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.tenant_service.retrieve_tenant_by_id", new_callable=AsyncMock) as mock_get:
+        with patch(
+            "services.tenant_service.retrieve_tenant_by_id", new_callable=AsyncMock
+        ) as mock_get:
             from core.errors import AppException
             from fastapi import status
+
             mock_get.side_effect = AppException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 code="RESOURCE_NOT_FOUND",
@@ -227,9 +249,13 @@ class TestTenantRoutes:
     @pytest.mark.unit
     async def test_update_tenant_success(self, cleanup_dependency_overrides):
         """Test successful tenant update."""
-        app.dependency_overrides[verify_super_admin_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_super_admin_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.tenant_service.update_tenant_by_id", new_callable=AsyncMock) as mock_update:
+        with patch(
+            "services.tenant_service.update_tenant_by_id", new_callable=AsyncMock
+        ) as mock_update:
             mock_update.return_value = {
                 "id": "tenant-001",
                 "company_name": "Acme Corp Updated",
@@ -262,7 +288,9 @@ class TestDepartmentRoutes:
         mock_auth = AsyncMock(return_value=MOCK_SUPER_ADMIN_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.department_service.add_department", new_callable=AsyncMock) as mock_add:
+        with patch(
+            "services.department_service.add_department", new_callable=AsyncMock
+        ) as mock_add:
             mock_add.return_value = {
                 "id": "dept-001",
                 "tenant_id": "tenant-001",
@@ -298,7 +326,9 @@ class TestDepartmentRoutes:
         mock_auth = AsyncMock(return_value=MOCK_SUPER_ADMIN_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.department_service.retrieve_departments", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.department_service.retrieve_departments", new_callable=AsyncMock
+        ) as mock_list:
             mock_list.return_value = [
                 {
                     "id": "dept-001",
@@ -329,7 +359,10 @@ class TestDepartmentRoutes:
         mock_auth = AsyncMock(return_value=MOCK_SUPER_ADMIN_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.department_service.retrieve_department_by_id", new_callable=AsyncMock) as mock_get:
+        with patch(
+            "services.department_service.retrieve_department_by_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
             mock_get.return_value = {
                 "id": "dept-001",
                 "tenant_id": "tenant-001",
@@ -357,7 +390,10 @@ class TestDepartmentRoutes:
         mock_auth = AsyncMock(return_value=MOCK_SUPER_ADMIN_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.department_service.update_department_by_id", new_callable=AsyncMock) as mock_update:
+        with patch(
+            "services.department_service.update_department_by_id",
+            new_callable=AsyncMock,
+        ) as mock_update:
             mock_update.return_value = {
                 "id": "dept-001",
                 "tenant_id": "tenant-001",
@@ -384,9 +420,13 @@ class TestDepartmentRoutes:
     @pytest.mark.unit
     async def test_delete_department_success(self, cleanup_dependency_overrides):
         """Test successful department deletion."""
-        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.department_service.remove_department", new_callable=AsyncMock) as mock_delete:
+        with patch(
+            "services.department_service.remove_department", new_callable=AsyncMock
+        ) as mock_delete:
             mock_delete.return_value = {"deleted": True}
 
             async with AsyncClient(
@@ -409,7 +449,10 @@ class TestSystemUserRoutes:
     @pytest.mark.unit
     async def test_login_success(self, cleanup_dependency_overrides):
         """Test successful system user login."""
-        with patch("services.system_user_service.authenticate_system_user", new_callable=AsyncMock) as mock_auth:
+        with patch(
+            "services.system_user_service.authenticate_system_user",
+            new_callable=AsyncMock,
+        ) as mock_auth:
             mock_auth.return_value = {
                 "id": "user-123",
                 "tenant_id": "tenant-001",
@@ -445,9 +488,13 @@ class TestSystemUserRoutes:
     @pytest.mark.unit
     async def test_login_invalid_credentials(self, cleanup_dependency_overrides):
         """Test login with invalid credentials."""
-        with patch("services.system_user_service.authenticate_system_user", new_callable=AsyncMock) as mock_auth:
+        with patch(
+            "services.system_user_service.authenticate_system_user",
+            new_callable=AsyncMock,
+        ) as mock_auth:
             from core.errors import AppException
             from fastapi import status
+
             mock_auth.side_effect = AppException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 code="AUTH_INVALID_TOKEN",
@@ -473,9 +520,13 @@ class TestSystemUserRoutes:
     @pytest.mark.unit
     async def test_signup_success(self, cleanup_dependency_overrides):
         """Test successful system user signup."""
-        app.dependency_overrides[verify_super_admin_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_super_admin_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.system_user_service.add_system_user", new_callable=AsyncMock) as mock_add:
+        with patch(
+            "services.system_user_service.add_system_user", new_callable=AsyncMock
+        ) as mock_add:
             mock_add.return_value = {
                 "id": "user-124",
                 "tenant_id": "tenant-001",
@@ -511,9 +562,13 @@ class TestSystemUserRoutes:
     @pytest.mark.unit
     async def test_list_system_users_success(self, cleanup_dependency_overrides):
         """Test listing system users."""
-        app.dependency_overrides[verify_super_admin_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_super_admin_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.system_user_service.retrieve_system_users", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.system_user_service.retrieve_system_users", new_callable=AsyncMock
+        ) as mock_list:
             mock_list.return_value = [
                 {
                     "id": "user-123",
@@ -545,7 +600,10 @@ class TestSystemUserRoutes:
         mock_auth = AsyncMock(return_value=MOCK_RECEPTIONIST_PRINCIPAL)
         app.dependency_overrides[verify_any_system_user_token] = mock_auth
 
-        with patch("services.system_user_service.retrieve_system_user_by_id", new_callable=AsyncMock) as mock_get:
+        with patch(
+            "services.system_user_service.retrieve_system_user_by_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
             mock_get.return_value = {
                 "id": "receptionist-789",
                 "tenant_id": "tenant-001",
@@ -578,7 +636,9 @@ class TestVisitorRoutes:
         mock_auth = AsyncMock(return_value=MOCK_RECEPTIONIST_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.visit_session_service.check_in_visitor", new_callable=AsyncMock) as mock_checkin:
+        with patch(
+            "services.visit_session_service.check_in_visitor", new_callable=AsyncMock
+        ) as mock_checkin:
             mock_checkin.return_value = {
                 "id": "visit-001",
                 "tenant_id": "tenant-001",
@@ -618,7 +678,9 @@ class TestVisitorRoutes:
         mock_auth = AsyncMock(return_value=MOCK_RECEPTIONIST_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.visit_session_service.check_out_visitor", new_callable=AsyncMock) as mock_checkout:
+        with patch(
+            "services.visit_session_service.check_out_visitor", new_callable=AsyncMock
+        ) as mock_checkout:
             mock_checkout.return_value = {
                 "id": "visit-001",
                 "tenant_id": "tenant-001",
@@ -652,7 +714,10 @@ class TestVisitorRoutes:
         mock_auth = AsyncMock(return_value=MOCK_RECEPTIONIST_PRINCIPAL)
         app.dependency_overrides[verify_any_system_user_token] = mock_auth
 
-        with patch("services.visit_session_service.retrieve_active_visitors", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.visit_session_service.retrieve_active_visitors",
+            new_callable=AsyncMock,
+        ) as mock_list:
             mock_list.return_value = [
                 {
                     "id": "visit-001",
@@ -683,7 +748,10 @@ class TestVisitorRoutes:
         mock_auth = AsyncMock(return_value=MOCK_RECEPTIONIST_PRINCIPAL)
         app.dependency_overrides[verify_any_system_user_token] = mock_auth
 
-        with patch("services.visit_session_service.retrieve_visit_session_by_id", new_callable=AsyncMock) as mock_get:
+        with patch(
+            "services.visit_session_service.retrieve_visit_session_by_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
             mock_get.return_value = {
                 "id": "visit-001",
                 "tenant_id": "tenant-001",
@@ -714,7 +782,10 @@ class TestVisitorRoutes:
         mock_auth = AsyncMock(return_value=MOCK_DEPT_ADMIN_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.visit_session_service.retrieve_visit_sessions", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.visit_session_service.retrieve_visit_sessions",
+            new_callable=AsyncMock,
+        ) as mock_list:
             mock_list.return_value = [
                 {
                     "id": "visit-001",
@@ -749,7 +820,9 @@ class TestAppointmentRoutes:
         mock_auth = AsyncMock(return_value=MOCK_RECEPTIONIST_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.appointment_service.add_appointment", new_callable=AsyncMock) as mock_add:
+        with patch(
+            "services.appointment_service.add_appointment", new_callable=AsyncMock
+        ) as mock_add:
             mock_add.return_value = {
                 "id": "appt-001",
                 "tenant_id": "tenant-001",
@@ -793,7 +866,9 @@ class TestAppointmentRoutes:
         mock_auth = AsyncMock(return_value=MOCK_RECEPTIONIST_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.appointment_service.retrieve_appointments", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.appointment_service.retrieve_appointments", new_callable=AsyncMock
+        ) as mock_list:
             mock_list.return_value = [
                 {
                     "id": "appt-001",
@@ -826,7 +901,10 @@ class TestAppointmentRoutes:
         mock_auth = AsyncMock(return_value=MOCK_RECEPTIONIST_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.appointment_service.retrieve_appointment_by_id", new_callable=AsyncMock) as mock_get:
+        with patch(
+            "services.appointment_service.retrieve_appointment_by_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
             mock_get.return_value = {
                 "id": "appt-001",
                 "tenant_id": "tenant-001",
@@ -855,7 +933,10 @@ class TestAppointmentRoutes:
         mock_auth = AsyncMock(return_value=MOCK_RECEPTIONIST_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.appointment_service.update_appointment_by_id", new_callable=AsyncMock) as mock_update:
+        with patch(
+            "services.appointment_service.update_appointment_by_id",
+            new_callable=AsyncMock,
+        ) as mock_update:
             mock_update.return_value = {
                 "id": "appt-001",
                 "tenant_id": "tenant-001",
@@ -883,9 +964,13 @@ class TestAppointmentRoutes:
     @pytest.mark.unit
     async def test_delete_appointment_success(self, cleanup_dependency_overrides):
         """Test successful appointment deletion."""
-        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_DEPT_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_DEPT_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.appointment_service.remove_appointment", new_callable=AsyncMock) as mock_delete:
+        with patch(
+            "services.appointment_service.remove_appointment", new_callable=AsyncMock
+        ) as mock_delete:
             mock_delete.return_value = {
                 "id": "appt-001",
                 "tenant_id": "tenant-001",
@@ -914,9 +999,13 @@ class TestPrivacyNoticeRoutes:
     @pytest.mark.unit
     async def test_create_privacy_notice_success(self, cleanup_dependency_overrides):
         """Test successful privacy notice creation."""
-        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.privacy_notice_service.add_privacy_notice", new_callable=AsyncMock) as mock_add:
+        with patch(
+            "services.privacy_notice_service.add_privacy_notice", new_callable=AsyncMock
+        ) as mock_add:
             mock_add.return_value = {
                 "id": "notice-001",
                 "tenant_id": "tenant-001",
@@ -957,7 +1046,10 @@ class TestPrivacyNoticeRoutes:
         mock_auth = AsyncMock(return_value=MOCK_SUPER_ADMIN_PRINCIPAL)
         app.dependency_overrides[verify_system_user_token] = mock_auth
 
-        with patch("services.privacy_notice_service.retrieve_active_notice", new_callable=AsyncMock) as mock_get:
+        with patch(
+            "services.privacy_notice_service.retrieve_active_notice",
+            new_callable=AsyncMock,
+        ) as mock_get:
             mock_get.return_value = {
                 "id": "notice-001",
                 "tenant_id": "tenant-001",
@@ -983,9 +1075,14 @@ class TestPrivacyNoticeRoutes:
     @pytest.mark.unit
     async def test_list_privacy_notices(self, cleanup_dependency_overrides):
         """Test listing privacy notices."""
-        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.privacy_notice_service.retrieve_privacy_notices", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.privacy_notice_service.retrieve_privacy_notices",
+            new_callable=AsyncMock,
+        ) as mock_list:
             mock_list.return_value = [
                 {
                     "id": "notice-001",
@@ -1015,7 +1112,10 @@ class TestPrivacyNoticeRoutes:
         """Test successful privacy notice update."""
         app.dependency_overrides[verify_system_user_token] = lambda: MOCK_DPO_PRINCIPAL
 
-        with patch("services.privacy_notice_service.update_notice_by_id", new_callable=AsyncMock) as mock_update:
+        with patch(
+            "services.privacy_notice_service.update_notice_by_id",
+            new_callable=AsyncMock,
+        ) as mock_update:
             mock_update.return_value = {
                 "id": "notice-001",
                 "tenant_id": "tenant-001",
@@ -1045,9 +1145,13 @@ class TestIncidentRoutes:
     @pytest.mark.unit
     async def test_create_incident_success(self, cleanup_dependency_overrides):
         """Test successful incident creation."""
-        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_SECURITY_OFFICER_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_SECURITY_OFFICER_PRINCIPAL
+        )
 
-        with patch("services.incident_service.add_incident", new_callable=AsyncMock) as mock_add:
+        with patch(
+            "services.incident_service.add_incident", new_callable=AsyncMock
+        ) as mock_add:
             mock_add.return_value = {
                 "id": "incident-001",
                 "tenant_id": "tenant-001",
@@ -1085,9 +1189,13 @@ class TestIncidentRoutes:
     @pytest.mark.unit
     async def test_list_incidents_success(self, cleanup_dependency_overrides):
         """Test listing incidents."""
-        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_SECURITY_OFFICER_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_SECURITY_OFFICER_PRINCIPAL
+        )
 
-        with patch("services.incident_service.retrieve_incidents", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.incident_service.retrieve_incidents", new_callable=AsyncMock
+        ) as mock_list:
             mock_list.return_value = [
                 {
                     "id": "incident-001",
@@ -1116,9 +1224,13 @@ class TestIncidentRoutes:
     @pytest.mark.unit
     async def test_get_incident_success(self, cleanup_dependency_overrides):
         """Test retrieving a specific incident."""
-        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.incident_service.retrieve_incident_by_id", new_callable=AsyncMock) as mock_get:
+        with patch(
+            "services.incident_service.retrieve_incident_by_id", new_callable=AsyncMock
+        ) as mock_get:
             mock_get.return_value = {
                 "id": "incident-001",
                 "tenant_id": "tenant-001",
@@ -1144,9 +1256,13 @@ class TestIncidentRoutes:
     @pytest.mark.unit
     async def test_update_incident_success(self, cleanup_dependency_overrides):
         """Test successful incident update."""
-        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_SECURITY_OFFICER_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_SECURITY_OFFICER_PRINCIPAL
+        )
 
-        with patch("services.incident_service.update_incident_by_id", new_callable=AsyncMock) as mock_update:
+        with patch(
+            "services.incident_service.update_incident_by_id", new_callable=AsyncMock
+        ) as mock_update:
             mock_update.return_value = {
                 "id": "incident-001",
                 "tenant_id": "tenant-001",
@@ -1215,9 +1331,13 @@ class TestResponseEnvelopeFormat:
     @pytest.mark.unit
     async def test_success_response_envelope(self, cleanup_dependency_overrides):
         """Test that successful responses have proper envelope format."""
-        app.dependency_overrides[verify_super_admin_token] = lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+        app.dependency_overrides[verify_super_admin_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
 
-        with patch("services.tenant_service.retrieve_tenants", new_callable=AsyncMock) as mock_list:
+        with patch(
+            "services.tenant_service.retrieve_tenants", new_callable=AsyncMock
+        ) as mock_list:
             mock_list.return_value = []
 
             async with AsyncClient(
@@ -1248,7 +1368,9 @@ class TestBootstrapRoute:
     @pytest.mark.unit
     async def test_bootstrap_success(self, cleanup_dependency_overrides):
         """Test successful tenant bootstrap by application admin."""
-        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MOCK_ADMIN_OUT
+        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: (
+            MOCK_ADMIN_OUT
+        )
 
         mock_result = {
             "tenant": {
@@ -1276,7 +1398,9 @@ class TestBootstrapRoute:
             },
         }
 
-        with patch("api.v1.admin_route.bootstrap_tenant", new_callable=AsyncMock) as mock_bootstrap:
+        with patch(
+            "api.v1.admin_route.bootstrap_tenant", new_callable=AsyncMock
+        ) as mock_bootstrap:
             mock_bootstrap.return_value = mock_result
 
             async with AsyncClient(
@@ -1305,11 +1429,15 @@ class TestBootstrapRoute:
     @pytest.mark.unit
     async def test_bootstrap_duplicate_company(self, cleanup_dependency_overrides):
         """Test bootstrap returns 409 on duplicate company name."""
-        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MOCK_ADMIN_OUT
+        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: (
+            MOCK_ADMIN_OUT
+        )
 
         from fastapi import HTTPException as FastAPIHTTPException
 
-        with patch("api.v1.admin_route.bootstrap_tenant", new_callable=AsyncMock) as mock_bootstrap:
+        with patch(
+            "api.v1.admin_route.bootstrap_tenant", new_callable=AsyncMock
+        ) as mock_bootstrap:
             mock_bootstrap.side_effect = FastAPIHTTPException(
                 status_code=409,
                 detail="Tenant with this company name already exists",
@@ -1335,7 +1463,9 @@ class TestBootstrapRoute:
     @pytest.mark.unit
     async def test_bootstrap_validation_error(self, cleanup_dependency_overrides):
         """Test bootstrap returns 422 on missing required fields."""
-        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: MOCK_ADMIN_OUT
+        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: (
+            MOCK_ADMIN_OUT
+        )
 
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"

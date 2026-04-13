@@ -1,4 +1,5 @@
 """Tests for branding schema validation and structure."""
+
 from __future__ import annotations
 
 import pytest

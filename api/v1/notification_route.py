@@ -174,7 +174,9 @@ async def get_preferences(
 ):
     """Get notification preferences for the authenticated user."""
     user_type = "admin" if principal.role == "admin" else "system_user"
-    return await retrieve_or_create_notification_preferences(principal.user_id, user_type)
+    return await retrieve_or_create_notification_preferences(
+        principal.user_id, user_type
+    )
 
 
 @router.put("/preferences")
@@ -193,4 +195,6 @@ async def update_preferences(
 ):
     """Update notification preferences."""
     user_type = "admin" if principal.role == "admin" else "system_user"
-    return await update_user_notification_preferences(principal.user_id, user_type, data)
+    return await update_user_notification_preferences(
+        principal.user_id, user_type, data
+    )

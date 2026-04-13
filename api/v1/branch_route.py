@@ -49,10 +49,26 @@ _super_admin_dep = verify_system_user_token("super_admin")
         429: "Too Many Requests - branch limit reached for plan",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Token role mismatch", "code": "AUTH_ROLE_MISMATCH"},
-        409: {"success": False, "message": "Branch 'Lagos Office' already exists for this tenant", "code": "VALIDATION_FAILED"},
-        429: {"success": False, "message": "Branch limit reached (3). Upgrade your plan for more branches.", "code": "QUOTA_EXCEEDED"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Token role mismatch",
+            "code": "AUTH_ROLE_MISMATCH",
+        },
+        409: {
+            "success": False,
+            "message": "Branch 'Lagos Office' already exists for this tenant",
+            "code": "VALIDATION_FAILED",
+        },
+        429: {
+            "success": False,
+            "message": "Branch limit reached (3). Upgrade your plan for more branches.",
+            "code": "QUOTA_EXCEEDED",
+        },
     },
 )
 async def create_branch_endpoint(
@@ -184,6 +200,7 @@ async def delete_branch_endpoint(
     existing = await retrieve_branch_by_id(branch_id)
     if not existing or existing.tenant_id != principal.tenant_id:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="Branch not found")
     await remove_branch(branch_id)
     return {"deleted": True}

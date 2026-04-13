@@ -1,4 +1,5 @@
 """Unit tests for the branches feature."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -49,21 +50,25 @@ class TestBranchSchemas:
         from bson import ObjectId
 
         oid = ObjectId()
-        b = BranchOut(**{
-            "_id": oid,
-            "tenant_id": "t1",
-            "name": "HQ",
-            "status": "active",
-        })
+        b = BranchOut(
+            **{
+                "_id": oid,
+                "tenant_id": "t1",
+                "name": "HQ",
+                "status": "active",
+            }
+        )
         assert b.id == str(oid)
 
     def test_branch_out_string_id(self):
-        b = BranchOut(**{
-            "_id": "abc123",
-            "tenant_id": "t1",
-            "name": "HQ",
-            "status": "active",
-        })
+        b = BranchOut(
+            **{
+                "_id": "abc123",
+                "tenant_id": "t1",
+                "name": "HQ",
+                "status": "active",
+            }
+        )
         assert b.id == "abc123"
 
     def test_branch_status_enum(self):
@@ -80,12 +85,22 @@ class TestBranchSchemas:
 def mock_branch_repo():
     """Patch all branch repository functions."""
     with (
-        patch("services.branch_service.create_branch", new_callable=AsyncMock) as mock_create,
+        patch(
+            "services.branch_service.create_branch", new_callable=AsyncMock
+        ) as mock_create,
         patch("services.branch_service.get_branch", new_callable=AsyncMock) as mock_get,
-        patch("services.branch_service.get_branches", new_callable=AsyncMock) as mock_get_many,
-        patch("services.branch_service.count_branches", new_callable=AsyncMock) as mock_count,
-        patch("services.branch_service.update_branch", new_callable=AsyncMock) as mock_update,
-        patch("services.branch_service.delete_branch", new_callable=AsyncMock) as mock_delete,
+        patch(
+            "services.branch_service.get_branches", new_callable=AsyncMock
+        ) as mock_get_many,
+        patch(
+            "services.branch_service.count_branches", new_callable=AsyncMock
+        ) as mock_count,
+        patch(
+            "services.branch_service.update_branch", new_callable=AsyncMock
+        ) as mock_update,
+        patch(
+            "services.branch_service.delete_branch", new_callable=AsyncMock
+        ) as mock_delete,
     ):
         yield {
             "create": mock_create,
@@ -119,7 +134,11 @@ async def test_add_branch_success(mock_branch_repo):
     from services.branch_service import add_branch
 
     # Patch plan cache to avoid real DB
-    with patch("services.branch_service.resolve_tenant_plan", new_callable=AsyncMock, return_value=None):
+    with patch(
+        "services.branch_service.resolve_tenant_plan",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
         result = await add_branch(BranchCreate(tenant_id="t1", name="HQ"))
         assert result.name == "HQ"
         mock_branch_repo["create"].assert_called_once()
@@ -132,7 +151,11 @@ async def test_add_branch_duplicate_name(mock_branch_repo):
     from services.branch_service import add_branch
     from fastapi import HTTPException
 
-    with patch("services.branch_service.resolve_tenant_plan", new_callable=AsyncMock, return_value=None):
+    with patch(
+        "services.branch_service.resolve_tenant_plan",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
         with pytest.raises(HTTPException) as exc_info:
             await add_branch(BranchCreate(tenant_id="t1", name="HQ"))
         assert exc_info.value.status_code == 409
@@ -148,7 +171,11 @@ async def test_add_branch_cap_exceeded(mock_branch_repo):
 
     plan_data = {"tenant_caps": {"max_branches": 3}}
 
-    with patch("services.branch_service.resolve_tenant_plan", new_callable=AsyncMock, return_value=plan_data):
+    with patch(
+        "services.branch_service.resolve_tenant_plan",
+        new_callable=AsyncMock,
+        return_value=plan_data,
+    ):
         with pytest.raises(HTTPException) as exc_info:
             await add_branch(BranchCreate(tenant_id="t1", name="New Branch"))
         assert exc_info.value.status_code == 429
@@ -164,7 +191,11 @@ async def test_add_branch_no_cap_limit(mock_branch_repo):
     from services.branch_service import add_branch
 
     plan_data = {"tenant_caps": {"max_branches": None}}
-    with patch("services.branch_service.resolve_tenant_plan", new_callable=AsyncMock, return_value=plan_data):
+    with patch(
+        "services.branch_service.resolve_tenant_plan",
+        new_callable=AsyncMock,
+        return_value=plan_data,
+    ):
         result = await add_branch(BranchCreate(tenant_id="t1", name="Branch 101"))
         assert result.name == "Branch 101"
 
@@ -178,7 +209,11 @@ async def test_deactivate_last_branch_fails(mock_branch_repo):
     from fastapi import HTTPException
 
     # Mock retrieve_branch_by_id to use get
-    with patch("services.branch_service.get_branch", new_callable=AsyncMock, return_value=_make_branch_out()):
+    with patch(
+        "services.branch_service.get_branch",
+        new_callable=AsyncMock,
+        return_value=_make_branch_out(),
+    ):
         with pytest.raises(HTTPException) as exc_info:
             await deactivate_branch("branch1")
         assert exc_info.value.status_code == 400
@@ -192,7 +227,11 @@ async def test_remove_last_branch_fails(mock_branch_repo):
     from services.branch_service import remove_branch
     from fastapi import HTTPException
 
-    with patch("services.branch_service.get_branch", new_callable=AsyncMock, return_value=_make_branch_out()):
+    with patch(
+        "services.branch_service.get_branch",
+        new_callable=AsyncMock,
+        return_value=_make_branch_out(),
+    ):
         with pytest.raises(HTTPException) as exc_info:
             await remove_branch("branch1")
         assert exc_info.value.status_code == 400
@@ -206,7 +245,11 @@ async def test_remove_branch_success(mock_branch_repo):
 
     from services.branch_service import remove_branch
 
-    with patch("services.branch_service.get_branch", new_callable=AsyncMock, return_value=_make_branch_out()):
+    with patch(
+        "services.branch_service.get_branch",
+        new_callable=AsyncMock,
+        return_value=_make_branch_out(),
+    ):
         result = await remove_branch("branch1")
         assert result is True
 
@@ -252,7 +295,11 @@ async def test_branch_create_route():
 
     branch_out = _make_branch_out(name="Lagos Office")
 
-    with patch("services.branch_service.add_branch", new_callable=AsyncMock, return_value=branch_out):
+    with patch(
+        "services.branch_service.add_branch",
+        new_callable=AsyncMock,
+        return_value=branch_out,
+    ):
         from main import app
         from security.auth import verify_system_user_token
         from httpx import AsyncClient, ASGITransport

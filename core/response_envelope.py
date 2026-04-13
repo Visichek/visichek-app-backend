@@ -72,7 +72,9 @@ def error_response(
     return JSONResponse(
         status_code=status_code,
         headers=headers,
-        content=jsonable_encoder(error_payload(message=message, data=data, request_id=request_id)),
+        content=jsonable_encoder(
+            error_payload(message=message, data=data, request_id=request_id)
+        ),
     )
 
 
@@ -85,7 +87,11 @@ def _parse_http_exception_detail(detail: Any) -> tuple[str, Any]:
         if isinstance(message, str) and message.strip():
             code = detail.get("code", "HTTP_EXCEPTION")
             details = detail.get("details")
-            remaining = {k: v for k, v in detail.items() if k not in {"message", "code", "details"}}
+            remaining = {
+                k: v
+                for k, v in detail.items()
+                if k not in {"message", "code", "details"}
+            }
             if remaining:
                 details = {"extra": remaining, "details": details}
             return message, {"code": code, "details": details}
@@ -118,7 +124,9 @@ def _request_id_from_request(request: Request | None) -> str | None:
     return getattr(request.state, "request_id", None)
 
 
-def http_exception_response(exc: HTTPException, request: Request | None = None) -> JSONResponse:
+def http_exception_response(
+    exc: HTTPException, request: Request | None = None
+) -> JSONResponse:
     message, data = _parse_http_exception_detail(exc.detail)
     return error_response(
         status_code=exc.status_code,
@@ -167,7 +175,9 @@ def document_response(
             if config.include_meta:
                 if isinstance(result, tuple) and len(result) == 2:
                     data, meta = result
-                elif isinstance(result, dict) and "items" in result and "meta" in result:
+                elif (
+                    isinstance(result, dict) and "items" in result and "meta" in result
+                ):
                     data = result.get("items")
                     meta = result.get("meta")
 
@@ -192,7 +202,9 @@ def document_response(
     return decorator
 
 
-def document_created(*, message: str = "Created", success_example: Any | None = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def document_created(
+    *, message: str = "Created", success_example: Any | None = None
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     return document_response(
         message=message,
         status_code=status.HTTP_201_CREATED,
@@ -201,7 +213,9 @@ def document_created(*, message: str = "Created", success_example: Any | None = 
     )
 
 
-def document_deleted(*, message: str = "Deleted") -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def document_deleted(
+    *, message: str = "Deleted"
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     return document_response(
         message=message,
         status_code=status.HTTP_200_OK,

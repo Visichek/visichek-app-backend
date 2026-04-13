@@ -40,11 +40,11 @@ EXEMPT_PATH_PREFIXES = (
     "/docs",
     "/openapi.json",
     "/redoc",
-    "/v1/admins/",       # Application admin endpoints
-    "/v1/plans/",        # Plan management (admin-only anyway)
-    "/v1/subscriptions/", # Subscription management
-    "/v1/discounts/",    # Discount management
-    "/v1/usage/",        # Usage reporting
+    "/v1/admins/",  # Application admin endpoints
+    "/v1/plans/",  # Plan management (admin-only anyway)
+    "/v1/subscriptions/",  # Subscription management
+    "/v1/discounts/",  # Discount management
+    "/v1/usage/",  # Usage reporting
 )
 
 # Map HTTP methods to operation types for quota checking
@@ -164,6 +164,7 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
 
         # Resolve the tenant's plan (cached)
         from services.plan_cache_service import resolve_tenant_plan
+
         plan_data = await resolve_tenant_plan(tenant_id)
         if not plan_data:
             # No subscription — deny access to tenant-scoped endpoints
@@ -205,7 +206,9 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
 
         # 1. Feature gating
         allowed, reason = _check_feature_access(
-            path, method, plan_data.get("feature_rules", []),
+            path,
+            method,
+            plan_data.get("feature_rules", []),
         )
         if not allowed:
             return error_response(
@@ -239,10 +242,16 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
                     if cl.get("collection") == collection:
                         limit_key = f"max_{operation}"
                         limit_value = cl.get(limit_key)
-                        reset_interval = QuotaResetInterval(cl.get("reset_interval", "monthly"))
+                        reset_interval = QuotaResetInterval(
+                            cl.get("reset_interval", "monthly")
+                        )
                         allowed, current, cap = await check_quota(
-                            tenant_id, subscription_id, collection, operation,
-                            limit_value, reset_interval,
+                            tenant_id,
+                            subscription_id,
+                            collection,
+                            operation,
+                            limit_value,
+                            reset_interval,
                         )
                         if not allowed:
                             quota_exceeded = True
@@ -260,10 +269,16 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
                 for rq in plan_data.get("retrieval_quotas", []):
                     if rq.get("collection") == collection:
                         limit_value = rq.get("max_reads")
-                        reset_interval = QuotaResetInterval(rq.get("reset_interval", "daily"))
+                        reset_interval = QuotaResetInterval(
+                            rq.get("reset_interval", "daily")
+                        )
                         allowed, current, cap = await check_quota(
-                            tenant_id, subscription_id, collection, "read",
-                            limit_value, reset_interval,
+                            tenant_id,
+                            subscription_id,
+                            collection,
+                            "read",
+                            limit_value,
+                            reset_interval,
                         )
                         if not allowed:
                             quota_exceeded = True
@@ -324,6 +339,8 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
 
         # Add plan info headers
         response.headers["X-Plan-Tier"] = plan_data.get("tier", "unknown")
-        response.headers["X-Subscription-Status"] = plan_data.get("subscription_status", "unknown")
+        response.headers["X-Subscription-Status"] = plan_data.get(
+            "subscription_status", "unknown"
+        )
 
         return response

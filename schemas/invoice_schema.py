@@ -89,5 +89,6 @@ from schemas.summary_schema import (  # noqa: E402
 
 class InvoiceWithSummaryOut(InvoiceOut):
     """InvoiceOut enriched with the tenant and subscription it belongs to."""
+
     tenant_summary: Optional[TenantBriefSummary] = None
     subscription_summary: Optional[SubscriptionBriefSummary] = None

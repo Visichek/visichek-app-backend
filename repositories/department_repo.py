@@ -25,7 +25,9 @@ async def get_department(filter_dict: dict) -> Optional[DepartmentOut]:
         )
 
 
-async def get_departments(filter_dict: dict = {}, start=0, stop=100) -> List[DepartmentOut]:
+async def get_departments(
+    filter_dict: dict = {}, start=0, stop=100
+) -> List[DepartmentOut]:
     try:
         if filter_dict is None:
             filter_dict = {}
@@ -41,7 +43,9 @@ async def get_departments(filter_dict: dict = {}, start=0, stop=100) -> List[Dep
         )
 
 
-async def update_department(filter_dict: dict, dept_data: DepartmentUpdate) -> DepartmentOut:
+async def update_department(
+    filter_dict: dict, dept_data: DepartmentUpdate
+) -> DepartmentOut:
     update_dict = {k: v for k, v in dept_data.model_dump().items() if v is not None}
     result = await db.departments.find_one_and_update(
         filter_dict,

@@ -52,8 +52,16 @@ _admin_roles = verify_system_user_token("dept_admin", "super_admin", "receptioni
         422: "Validation error - invalid appointment data",
     },
     error_examples={
-        409: {"success": False, "message": "Scheduling conflict at requested time", "code": "CONFLICT"},
-        422: {"success": False, "message": "Invalid appointment data", "code": "VALIDATION_FAILED"},
+        409: {
+            "success": False,
+            "message": "Scheduling conflict at requested time",
+            "code": "CONFLICT",
+        },
+        422: {
+            "success": False,
+            "message": "Invalid appointment data",
+            "code": "VALIDATION_FAILED",
+        },
     },
 )
 async def create_appointment_endpoint(
@@ -131,7 +139,11 @@ async def list_appointments(
         404: "Appointment not found",
     },
     error_examples={
-        404: {"success": False, "message": "Appointment not found", "code": "RESOURCE_NOT_FOUND"},
+        404: {
+            "success": False,
+            "message": "Appointment not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def get_appointment_endpoint(
@@ -171,8 +183,16 @@ async def get_appointment_endpoint(
         409: "Scheduling conflict - new time slot unavailable",
     },
     error_examples={
-        404: {"success": False, "message": "Appointment not found", "code": "RESOURCE_NOT_FOUND"},
-        409: {"success": False, "message": "Scheduling conflict at requested time", "code": "CONFLICT"},
+        404: {
+            "success": False,
+            "message": "Appointment not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
+        409: {
+            "success": False,
+            "message": "Scheduling conflict at requested time",
+            "code": "CONFLICT",
+        },
     },
 )
 async def update_appointment_endpoint(
@@ -212,12 +232,18 @@ async def update_appointment_endpoint(
         404: "Appointment not found",
     },
     error_examples={
-        404: {"success": False, "message": "Appointment not found", "code": "RESOURCE_NOT_FOUND"},
+        404: {
+            "success": False,
+            "message": "Appointment not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def delete_appointment_endpoint(
     appointment_id: str,
-    principal: AuthPrincipal = Depends(verify_system_user_token("dept_admin", "super_admin")),
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("dept_admin", "super_admin")
+    ),
 ):
     tenant_id = principal.tenant_id or ""
     return await remove_appointment(appointment_id=appointment_id, tenant_id=tenant_id)

@@ -24,7 +24,9 @@ async def execute_registered_task(task_key: str, payload: dict[str, Any]) -> Any
     target = _TASK_REGISTRY.get(task_key)
     if target is None:
         valid_keys = ", ".join(sorted(_TASK_REGISTRY)) or "<none>"
-        raise ValueError(f"Task key '{task_key}' is not registered. Available keys: {valid_keys}")
+        raise ValueError(
+            f"Task key '{task_key}' is not registered. Available keys: {valid_keys}"
+        )
     return await target(**payload)
 
 

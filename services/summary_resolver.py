@@ -53,12 +53,15 @@ def _to_object_id(value: Optional[str]) -> Optional[ObjectId]:
 # ---------------------------------------------------------------------------
 
 
-async def resolve_tenant_summary(tenant_id: Optional[str]) -> Optional[TenantBriefSummary]:
+async def resolve_tenant_summary(
+    tenant_id: Optional[str],
+) -> Optional[TenantBriefSummary]:
     oid = _to_object_id(tenant_id)
     if oid is None:
         return None
     try:
         from repositories.tenant_repo import get_tenant
+
         tenant = await get_tenant({"_id": oid})
         if not tenant:
             return None
@@ -78,6 +81,7 @@ async def resolve_plan_summary(plan_id: Optional[str]) -> Optional[PlanBriefSumm
         return None
     try:
         from repositories.plan_repo import get_plan
+
         plan = await get_plan({"_id": oid})
         if not plan:
             return None
@@ -99,6 +103,7 @@ async def resolve_subscription_summary(
         return None
     try:
         from repositories.subscription_repo import get_subscription
+
         sub = await get_subscription({"_id": oid})
         if not sub:
             return None
@@ -121,6 +126,7 @@ async def resolve_department_summary(
         return None
     try:
         from repositories.department_repo import get_department
+
         dept = await get_department({"_id": oid})
         if not dept:
             return None
@@ -134,12 +140,15 @@ async def resolve_department_summary(
         return None
 
 
-async def resolve_system_user_summary(user_id: Optional[str]) -> Optional[UserBriefSummary]:
+async def resolve_system_user_summary(
+    user_id: Optional[str],
+) -> Optional[UserBriefSummary]:
     oid = _to_object_id(user_id)
     if oid is None:
         return None
     try:
         from repositories.system_user_repo import get_system_user
+
         user = await get_system_user({"_id": oid})
         if not user:
             return None
@@ -159,6 +168,7 @@ async def resolve_admin_summary(admin_id: Optional[str]) -> Optional[UserBriefSu
         return None
     try:
         from repositories.admin_repo import get_admin
+
         # admin_repo accepts either ObjectId or the static super-admin string id
         oid = _to_object_id(admin_id)
         admin = await get_admin({"_id": oid} if oid else {"_id": admin_id})
@@ -202,6 +212,7 @@ async def resolve_visitor_profile_summary(
         return None
     try:
         from repositories.visitor_profile_repo import get_visitor_profile
+
         # Pass an explicit deleted_at filter that allows soft-deleted records
         # so we can still resolve names for historical references.
         profile = await get_visitor_profile({"_id": oid, "deleted_at": {"$in": [None]}})
@@ -229,6 +240,7 @@ async def resolve_appointment_summary(
         return None
     try:
         from repositories.appointment_repo import get_appointment
+
         appt = await get_appointment({"_id": oid})
         if not appt:
             return None
@@ -242,12 +254,15 @@ async def resolve_appointment_summary(
         return None
 
 
-async def resolve_branch_summary(branch_id: Optional[str]) -> Optional[BranchBriefSummary]:
+async def resolve_branch_summary(
+    branch_id: Optional[str],
+) -> Optional[BranchBriefSummary]:
     oid = _to_object_id(branch_id)
     if oid is None:
         return None
     try:
         from repositories.branch_repo import get_branch
+
         branch = await get_branch({"_id": oid})
         if not branch:
             return None
@@ -268,6 +283,7 @@ async def resolve_visit_session_summary(
         return None
     try:
         from repositories.visit_session_repo import get_visit_session
+
         session = await get_visit_session({"_id": oid})
         if not session:
             return None
@@ -281,12 +297,15 @@ async def resolve_visit_session_summary(
         return None
 
 
-async def resolve_invoice_summary(invoice_id: Optional[str]) -> Optional[InvoiceBriefSummary]:
+async def resolve_invoice_summary(
+    invoice_id: Optional[str],
+) -> Optional[InvoiceBriefSummary]:
     oid = _to_object_id(invoice_id)
     if oid is None:
         return None
     try:
         from repositories.invoice_repo import get_invoice
+
         invoice = await get_invoice({"_id": oid})
         if not invoice:
             return None

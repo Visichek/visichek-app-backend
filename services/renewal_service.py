@@ -113,7 +113,9 @@ async def renew_due_subscriptions() -> dict:
             "cancelled_at": None,
         }
 
-        subscriptions = await get_subscriptions(filter_dict=filter_dict, start=0, stop=1000)
+        subscriptions = await get_subscriptions(
+            filter_dict=filter_dict, start=0, stop=1000
+        )
 
         for subscription in subscriptions:
             try:
@@ -129,7 +131,9 @@ async def renew_due_subscriptions() -> dict:
                 )
                 failed_count += 1
 
-        logger.info(f"Renewal check complete: {renewed_count} renewed, {failed_count} failed")
+        logger.info(
+            f"Renewal check complete: {renewed_count} renewed, {failed_count} failed"
+        )
         return {
             "renewed_count": renewed_count,
             "failed_count": failed_count,
@@ -158,7 +162,9 @@ async def _attempt_renewal(subscription: SubscriptionOut) -> bool:
     try:
         # Fetch the plan
         if not ObjectId.is_valid(subscription.plan_id):
-            logger.error(f"Invalid plan_id {subscription.plan_id} for subscription {subscription.id}")
+            logger.error(
+                f"Invalid plan_id {subscription.plan_id} for subscription {subscription.id}"
+            )
             return False
 
         plan = await get_plan({"_id": ObjectId(subscription.plan_id)})
@@ -183,7 +189,8 @@ async def _attempt_renewal(subscription: SubscriptionOut) -> bool:
             )
         except Exception as e:
             logger.error(
-                f"Failed to determine payment provider for tenant: {str(e)}", exc_info=True
+                f"Failed to determine payment provider for tenant: {str(e)}",
+                exc_info=True,
             )
             return False
 
@@ -212,7 +219,9 @@ async def _attempt_renewal(subscription: SubscriptionOut) -> bool:
                 )
             )
         except Exception as e:
-            logger.warning(f"Payment intent creation failed for {subscription.id}: {str(e)}")
+            logger.warning(
+                f"Payment intent creation failed for {subscription.id}: {str(e)}"
+            )
             return False
 
         # Update subscription with new period and reset renewal state
@@ -247,7 +256,9 @@ async def _attempt_renewal(subscription: SubscriptionOut) -> bool:
                 discount_minor=0,  # Discounts already applied in effective_price
                 period_start=new_period_start,
                 period_end=new_period_end,
-                payment_transaction_id=intent.provider_payload.get("id") if intent.provider_payload else None,
+                payment_transaction_id=intent.provider_payload.get("id")
+                if intent.provider_payload
+                else None,
             )
         except Exception as e:
             logger.warning(f"Invoice generation failed for {subscription.id}: {str(e)}")
@@ -257,13 +268,17 @@ async def _attempt_renewal(subscription: SubscriptionOut) -> bool:
         try:
             await invalidate_tenant_plan_cache(subscription.tenant_id)
         except Exception as e:
-            logger.warning(f"Plan cache invalidation failed for tenant {subscription.tenant_id}: {str(e)}")
+            logger.warning(
+                f"Plan cache invalidation failed for tenant {subscription.tenant_id}: {str(e)}"
+            )
 
         logger.info(f"Renewal successful for subscription {subscription.id}")
         return True
 
     except Exception as e:
-        logger.error(f"Renewal attempt error for {subscription.id}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Renewal attempt error for {subscription.id}: {str(e)}", exc_info=True
+        )
         return False
 
 
@@ -288,7 +303,9 @@ async def convert_expiring_trials() -> dict:
             "trial_ends_at": {"$lte": now},
         }
 
-        subscriptions = await get_subscriptions(filter_dict=filter_dict, start=0, stop=1000)
+        subscriptions = await get_subscriptions(
+            filter_dict=filter_dict, start=0, stop=1000
+        )
 
         for subscription in subscriptions:
             try:
@@ -366,7 +383,8 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
             )
         except Exception as e:
             logger.error(
-                f"Failed to determine payment provider for tenant: {str(e)}", exc_info=True
+                f"Failed to determine payment provider for tenant: {str(e)}",
+                exc_info=True,
             )
             await _set_past_due_with_retry(subscription, now)
             return False
@@ -394,7 +412,9 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
                 )
             )
         except Exception as e:
-            logger.warning(f"Payment intent creation failed for trial {subscription.id}: {str(e)}")
+            logger.warning(
+                f"Payment intent creation failed for trial {subscription.id}: {str(e)}"
+            )
             await _set_past_due_with_retry(subscription, now)
             return False
 
@@ -433,7 +453,9 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
                 period_end=new_period_end,
             )
         except Exception as e:
-            logger.warning(f"Invoice generation failed for trial {subscription.id}: {str(e)}")
+            logger.warning(
+                f"Invoice generation failed for trial {subscription.id}: {str(e)}"
+            )
 
         # Invalidate plan cache
         try:
@@ -445,7 +467,9 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Trial conversion error for {subscription.id}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Trial conversion error for {subscription.id}: {str(e)}", exc_info=True
+        )
         await _set_past_due_with_retry(subscription, now)
         return False
 
@@ -456,7 +480,11 @@ async def _set_past_due_with_retry(subscription: SubscriptionOut, now: int) -> N
     Used when trial conversion payment fails.
     """
     settings = get_settings()
-    next_retry = now + (settings.dunning_retry_days[0] * 86400) if settings.dunning_retry_days else now + 86400
+    next_retry = (
+        now + (settings.dunning_retry_days[0] * 86400)
+        if settings.dunning_retry_days
+        else now + 86400
+    )
 
     update = SubscriptionUpdate(
         status=SubscriptionStatus.PAST_DUE,

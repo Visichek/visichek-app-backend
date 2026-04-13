@@ -18,11 +18,12 @@ PREFS_COLLECTION = "notification_preferences"
 
 # --- Notifications ---
 
+
 async def create_notification(data: NotificationCreate) -> NotificationOut:
     doc = data.model_dump()
     result = await db[COLLECTION].insert_one(doc)
     new_doc = await db[COLLECTION].find_one({"_id": result.inserted_id})
-    return NotificationOut(**new_doc ) # type: ignore
+    return NotificationOut(**new_doc)  # type: ignore
 
 
 async def get_notification(filter_dict: dict) -> Optional[NotificationOut]:
@@ -54,7 +55,9 @@ async def count_notifications(filter_dict: dict) -> int:
     return await db[COLLECTION].count_documents(filter_dict)
 
 
-async def update_notification(filter_dict: dict, data: NotificationUpdate) -> Optional[NotificationOut]:
+async def update_notification(
+    filter_dict: dict, data: NotificationUpdate
+) -> Optional[NotificationOut]:
     update_fields = data.model_dump(exclude_none=True)
     if not update_fields:
         return await get_notification(filter_dict)
@@ -77,14 +80,19 @@ async def delete_notification(filter_dict: dict):
 
 # --- Notification Preferences ---
 
-async def create_notification_preferences(data: NotificationPreferencesCreate) -> NotificationPreferencesOut:
+
+async def create_notification_preferences(
+    data: NotificationPreferencesCreate,
+) -> NotificationPreferencesOut:
     doc = data.model_dump()
     result = await db[PREFS_COLLECTION].insert_one(doc)
     new_doc = await db[PREFS_COLLECTION].find_one({"_id": result.inserted_id})
-    return NotificationPreferencesOut(**new_doc) # type: ignore
+    return NotificationPreferencesOut(**new_doc)  # type: ignore
 
 
-async def get_notification_preferences(filter_dict: dict) -> Optional[NotificationPreferencesOut]:
+async def get_notification_preferences(
+    filter_dict: dict,
+) -> Optional[NotificationPreferencesOut]:
     doc = await db[PREFS_COLLECTION].find_one(filter_dict)
     if doc:
         return NotificationPreferencesOut(**doc)

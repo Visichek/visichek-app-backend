@@ -2,7 +2,11 @@ from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
 from typing import List, Optional
-from schemas.appointment_schema import AppointmentCreate, AppointmentUpdate, AppointmentOut
+from schemas.appointment_schema import (
+    AppointmentCreate,
+    AppointmentUpdate,
+    AppointmentOut,
+)
 
 
 async def create_appointment(appt_data: AppointmentCreate) -> AppointmentOut:
@@ -25,7 +29,9 @@ async def get_appointment(filter_dict: dict) -> Optional[AppointmentOut]:
         )
 
 
-async def get_appointments(filter_dict: dict = {}, start=0, stop=100) -> List[AppointmentOut]:
+async def get_appointments(
+    filter_dict: dict = {}, start=0, stop=100
+) -> List[AppointmentOut]:
     try:
         if filter_dict is None:
             filter_dict = {}
@@ -46,7 +52,9 @@ async def get_appointments(filter_dict: dict = {}, start=0, stop=100) -> List[Ap
         )
 
 
-async def update_appointment(filter_dict: dict, appt_data: AppointmentUpdate) -> AppointmentOut:
+async def update_appointment(
+    filter_dict: dict, appt_data: AppointmentUpdate
+) -> AppointmentOut:
     update_dict = {k: v for k, v in appt_data.model_dump().items() if v is not None}
     result = await db.expected_appointments.find_one_and_update(
         filter_dict,

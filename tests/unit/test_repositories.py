@@ -6,7 +6,11 @@ from bson import ObjectId
 
 from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut
 from schemas.system_user_schema import SystemUserCreate, SystemUserUpdate, SystemUserOut
-from schemas.visit_session_schema import VisitSessionCreate, VisitSessionUpdate, VisitSessionOut
+from schemas.visit_session_schema import (
+    VisitSessionCreate,
+    VisitSessionUpdate,
+    VisitSessionOut,
+)
 from schemas.imports import LawfulBasis, SystemUserRole, VisitStatus
 
 
@@ -158,9 +162,7 @@ class TestTenantRepository:
                 yield item
 
         mock_cursor.__aiter__ = lambda self: async_iter(mock_docs)
-        mock_db.tenant_companies.find.return_value.skip.return_value.limit.return_value = (
-            mock_cursor
-        )
+        mock_db.tenant_companies.find.return_value.skip.return_value.limit.return_value = mock_cursor
 
         result = await get_tenants(start=0, stop=10)
 
@@ -326,7 +328,9 @@ class TestSystemUserRepository:
             mock_cursor
         )
 
-        result = await get_system_users(filter_dict={"tenant_id": "tenant123"}, start=0, stop=10)
+        result = await get_system_users(
+            filter_dict={"tenant_id": "tenant123"}, start=0, stop=10
+        )
 
         assert len(result) == 2
         assert result[0].email == "john@acme.com"
@@ -485,11 +489,11 @@ class TestVisitSessionRepository:
                 yield item
 
         mock_cursor.__aiter__ = lambda self: async_iter(mock_docs)
-        mock_db.visit_sessions.find.return_value.sort.return_value.skip.return_value.limit.return_value = (
-            mock_cursor
-        )
+        mock_db.visit_sessions.find.return_value.sort.return_value.skip.return_value.limit.return_value = mock_cursor
 
-        result = await get_visit_sessions(filter_dict={"tenant_id": "tenant123"}, start=0, stop=10)
+        result = await get_visit_sessions(
+            filter_dict={"tenant_id": "tenant123"}, start=0, stop=10
+        )
 
         assert len(result) == 2
         assert result[0].status == "checked_in"
@@ -519,9 +523,7 @@ class TestVisitSessionRepository:
                 yield item
 
         mock_cursor.__aiter__ = lambda self: async_iter(mock_docs)
-        mock_db.visit_sessions.find.return_value.sort.return_value.skip.return_value.limit.return_value = (
-            mock_cursor
-        )
+        mock_db.visit_sessions.find.return_value.sort.return_value.skip.return_value.limit.return_value = mock_cursor
 
         result = await get_active_visitors(tenant_id="tenant123")
 
@@ -564,7 +566,9 @@ class TestVisitSessionRepository:
 
         mock_db.visit_sessions.count_documents = AsyncMock(return_value=42)
 
-        result = await count_visit_sessions({"tenant_id": "tenant123", "status": "checked_in"})
+        result = await count_visit_sessions(
+            {"tenant_id": "tenant123", "status": "checked_in"}
+        )
 
         assert result == 42
         mock_db.visit_sessions.count_documents.assert_called_once()

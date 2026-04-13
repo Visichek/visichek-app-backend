@@ -7,6 +7,7 @@ Integration tests for compliance endpoints:
 
 Requires: MongoDB on localhost:27017, Redis on localhost:6379
 """
+
 from __future__ import annotations
 
 
@@ -21,6 +22,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 # ---------------------------------------------------------------------------
 # Data Processing Register (DPR)
 # ---------------------------------------------------------------------------
+
 
 class TestDPRFlow:
     """DPR register CRUD lifecycle."""
@@ -95,6 +97,7 @@ class TestDPRFlow:
 # Sub-Processors
 # ---------------------------------------------------------------------------
 
+
 class TestSubProcessorFlow:
     """Full CRUD lifecycle for sub-processor records."""
 
@@ -133,9 +136,7 @@ class TestSubProcessorFlow:
         await integration_client.post(
             "/v1/sub-processors/", json=_sp_payload, headers=auth_headers
         )
-        resp = await integration_client.get(
-            "/v1/sub-processors/", headers=auth_headers
-        )
+        resp = await integration_client.get("/v1/sub-processors/", headers=auth_headers)
         assert resp.status_code == 200
         assert len(resp.json()["data"]) >= 1
 
@@ -187,6 +188,7 @@ class TestSubProcessorFlow:
 # ---------------------------------------------------------------------------
 # Retention Policies
 # ---------------------------------------------------------------------------
+
 
 class TestRetentionPolicyFlow:
     """CRUD lifecycle for data retention policies."""
@@ -279,6 +281,7 @@ class TestRetentionPolicyFlow:
 # ---------------------------------------------------------------------------
 # Deletion Logs
 # ---------------------------------------------------------------------------
+
 
 class TestDeletionLogFlow:
     """Verify deletion log listing endpoint."""

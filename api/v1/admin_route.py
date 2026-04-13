@@ -11,7 +11,11 @@ from schemas.admin_schema import AdminLogin, AdminOut, AdminRefresh, AdminSignup
 from schemas.tenant_schema import TenantBootstrapRequest
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_admin_refresh_token
-from security.cookie_utils import set_auth_cookies, clear_auth_cookies, REFRESH_TOKEN_COOKIE
+from security.cookie_utils import (
+    set_auth_cookies,
+    clear_auth_cookies,
+    REFRESH_TOKEN_COOKIE,
+)
 from security.principal import AuthPrincipal
 from schemas.otp_schema import OtpVerifyRequest
 from services.admin_service import (
@@ -28,15 +32,18 @@ from services.tenant_offboarding_service import offboard_tenant, get_offboarding
 
 class OffboardingRequest(BaseModel):
     """Request to offboard (deactivate) a tenant."""
+
     reason: str
 
 
 class OffboardingSummary(BaseModel):
     """Summary of actions taken during offboarding."""
+
     tenant_id: str
     offboarded_at: int
     reason: str
     actions: dict
+
 
 router = APIRouter(prefix="/admins", tags=["Application Admins"])
 
@@ -62,12 +69,12 @@ router = APIRouter(prefix="/admins", tags=["Application Admins"])
                         "methods": ["GET"],
                         "path": "/v1/users",
                         "key": "users_read",
-                        "description": "Retrieve user list"
+                        "description": "Retrieve user list",
                     }
                 ]
             },
             "date_created": 1712500000,
-            "last_updated": 1712500600
+            "last_updated": 1712500600,
         }
     ],
     description="Retrieve a paginated list of all admins in the system.",
@@ -78,8 +85,16 @@ router = APIRouter(prefix="/admins", tags=["Application Admins"])
         403: "Forbidden - insufficient permissions",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "You do not have permission to perform this action",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def list_admins(
@@ -102,9 +117,17 @@ async def list_admins(
     description="Retrieve the authenticated admin's profile information.",
     summary="Get admin profile",
     response_codes={401: "Unauthorized - invalid or missing token"},
-    error_examples={401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"}},
+    error_examples={
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        }
+    },
 )
-async def get_my_admin(admin: AdminOut = Depends(check_admin_account_status_and_permissions)):
+async def get_my_admin(
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
     return admin
 
 
@@ -121,8 +144,16 @@ async def get_my_admin(admin: AdminOut = Depends(check_admin_account_status_and_
         422: "Validation error - invalid input data or weak password",
     },
     error_examples={
-        409: {"success": False, "message": "Admin already exists", "code": "VALIDATION_FAILED"},
-        422: {"success": False, "message": "Password does not meet strength requirements", "code": "VALIDATION_FAILED"},
+        409: {
+            "success": False,
+            "message": "Admin already exists",
+            "code": "VALIDATION_FAILED",
+        },
+        422: {
+            "success": False,
+            "message": "Password does not meet strength requirements",
+            "code": "VALIDATION_FAILED",
+        },
     },
 )
 async def signup_new_admin(
@@ -163,7 +194,11 @@ async def signup_new_admin(
         422: "Validation error - invalid input data",
     },
     error_examples={
-        409: {"success": False, "message": "Tenant with this company name already exists", "code": "VALIDATION_FAILED"},
+        409: {
+            "success": False,
+            "message": "Tenant with this company name already exists",
+            "code": "VALIDATION_FAILED",
+        },
     },
 )
 async def bootstrap_tenant_endpoint(
@@ -184,8 +219,16 @@ async def bootstrap_tenant_endpoint(
         429: "Too many failed attempts - account temporarily locked",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid login credentials", "code": "AUTH_INVALID_TOKEN"},
-        429: {"success": False, "message": "Account temporarily locked", "code": "TOO_MANY_REQUESTS"},
+        401: {
+            "success": False,
+            "message": "Invalid login credentials",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        429: {
+            "success": False,
+            "message": "Account temporarily locked",
+            "code": "TOO_MANY_REQUESTS",
+        },
     },
 )
 async def login_admin(request: Request, admin_data: AdminLogin):
@@ -195,16 +238,29 @@ async def login_admin(request: Request, admin_data: AdminLogin):
     # 2FA required — return challenge, no tokens
     if isinstance(result, dict) and result.get("otp_required"):
         return JSONResponse(
-            content=jsonable_encoder(success_payload(result, message="OTP verification required", request_id=request_id)),
+            content=jsonable_encoder(
+                success_payload(
+                    result, message="OTP verification required", request_id=request_id
+                )
+            ),
         )
 
     # No 2FA — return tokens + cookies
     admin = result
     is_prod = get_settings().env == "production"
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(admin, message="Admin login successful", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(
+                admin, message="Admin login successful", request_id=request_id
+            )
+        ),
     )
-    set_auth_cookies(response, admin.access_token or "", admin.refresh_token or "", is_production=is_prod)
+    set_auth_cookies(
+        response,
+        admin.access_token or "",
+        admin.refresh_token or "",
+        is_production=is_prod,
+    )
     return response
 
 
@@ -217,7 +273,11 @@ async def login_admin(request: Request, admin_data: AdminLogin):
         401: "Unauthorized - invalid or mismatched tokens",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired refresh token", "code": "AUTH_INVALID_TOKEN"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired refresh token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
     },
 )
 async def refresh_admin_tokens(
@@ -248,9 +308,20 @@ async def refresh_admin_tokens(
     is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(admin, message="Admin tokens refreshed successfully", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(
+                admin,
+                message="Admin tokens refreshed successfully",
+                request_id=request_id,
+            )
+        ),
     )
-    set_auth_cookies(response, admin.access_token or "", admin.refresh_token or "", is_production=is_prod)
+    set_auth_cookies(
+        response,
+        admin.access_token or "",
+        admin.refresh_token or "",
+        is_production=is_prod,
+    )
     return response
 
 
@@ -270,9 +341,18 @@ async def verify_admin_otp_endpoint(request: Request, otp_data: OtpVerifyRequest
     is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(admin, message="OTP verified, login successful", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(
+                admin, message="OTP verified, login successful", request_id=request_id
+            )
+        ),
     )
-    set_auth_cookies(response, admin.access_token or "", admin.refresh_token or "", is_production=is_prod)
+    set_auth_cookies(
+        response,
+        admin.access_token or "",
+        admin.refresh_token or "",
+        is_production=is_prod,
+    )
     return response
 
 
@@ -286,7 +366,11 @@ async def logout_admin(request: Request):
     is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
-        content=jsonable_encoder(success_payload(None, message="Logged out successfully", request_id=request_id)),
+        content=jsonable_encoder(
+            success_payload(
+                None, message="Logged out successfully", request_id=request_id
+            )
+        ),
     )
     clear_auth_cookies(response, is_production=is_prod)
     return response
@@ -299,9 +383,17 @@ async def logout_admin(request: Request):
     description="Delete the authenticated admin's account. This action is irreversible.",
     summary="Delete admin account",
     response_codes={401: "Unauthorized - invalid or missing token"},
-    error_examples={401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"}},
+    error_examples={
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        }
+    },
 )
-async def delete_admin_account(admin: AdminOut = Depends(check_admin_account_status_and_permissions)):
+async def delete_admin_account(
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
     result = await remove_admin(admin_id=admin.id)  # type: ignore
     return result
 
@@ -333,9 +425,21 @@ async def delete_admin_account(admin: AdminOut = Depends(check_admin_account_sta
         500: "Internal server error",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "You do not have permission to perform this action", "code": "AUTH_PERMISSION_DENIED"},
-        404: {"success": False, "message": "Tenant not found", "code": "RESOURCE_NOT_FOUND"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "You do not have permission to perform this action",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+        404: {
+            "success": False,
+            "message": "Tenant not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def offboard_tenant_endpoint(
@@ -363,8 +467,16 @@ async def offboard_tenant_endpoint(
         404: "Tenant not found",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or expired token", "code": "AUTH_INVALID_TOKEN"},
-        404: {"success": False, "message": "Tenant not found", "code": "RESOURCE_NOT_FOUND"},
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        404: {
+            "success": False,
+            "message": "Tenant not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
     },
 )
 async def get_tenant_offboarding_summary_endpoint(

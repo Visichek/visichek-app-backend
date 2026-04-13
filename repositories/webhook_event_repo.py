@@ -6,7 +6,7 @@ import time
 from typing import Optional
 
 from bson import ObjectId
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from core.database import db
 from schemas.imports import *
@@ -113,7 +113,13 @@ async def get_webhook_events(
         List of WebhookEventOut
     """
     try:
-        cursor = db[COLLECTION].find(filter_dict).sort("created_at", -1).skip(skip).limit(limit)
+        cursor = (
+            db[COLLECTION]
+            .find(filter_dict)
+            .sort("created_at", -1)
+            .skip(skip)
+            .limit(limit)
+        )
         events = []
         async for doc in cursor:
             events.append(WebhookEventOut(**doc))
@@ -195,11 +201,13 @@ async def is_webhook_processed(event_id: str, provider: str) -> bool:
     Returns:
         True if already processed, False otherwise
     """
-    doc = await db[COLLECTION].find_one({
-        "event_id": event_id,
-        "provider": provider,
-        "processing_status": {"$in": ["processed", "skipped"]},
-    })
+    doc = await db[COLLECTION].find_one(
+        {
+            "event_id": event_id,
+            "provider": provider,
+            "processing_status": {"$in": ["processed", "skipped"]},
+        }
+    )
     return doc is not None
 
 
@@ -214,7 +222,9 @@ def compute_payload_hash(payload: dict | bytes) -> str:
         Hex digest of SHA256 hash
     """
     if isinstance(payload, dict):
-        payload_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        payload_bytes = json.dumps(
+            payload, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     else:
         payload_bytes = payload
 

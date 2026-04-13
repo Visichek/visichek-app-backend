@@ -54,5 +54,6 @@ class AuditLogWithSummaryOut(AuditLogOut):
     any kind of entity (visitor, department, plan, etc.) and the type lookup
     is best handled by the frontend with the existing ``target_entity`` hint.
     """
+
     tenant_summary: Optional[TenantBriefSummary] = None
     actor_summary: Optional[UserBriefSummary] = None

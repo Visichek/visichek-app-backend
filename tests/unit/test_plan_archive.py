@@ -1,4 +1,5 @@
 """Unit tests for plan archive behavior refinement."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -100,7 +101,11 @@ async def test_subscribe_to_archived_plan_fails():
     archived_plan = _make_plan_out(status=PlanStatus.ARCHIVED.value)
 
     with (
-        patch("services.subscription_service.get_plan", new_callable=AsyncMock, return_value=archived_plan),
+        patch(
+            "services.subscription_service.get_plan",
+            new_callable=AsyncMock,
+            return_value=archived_plan,
+        ),
     ):
         from services.subscription_service import subscribe_tenant
         from fastapi import HTTPException
@@ -117,7 +122,11 @@ async def test_subscribe_to_draft_plan_fails():
     draft_plan = _make_plan_out(status=PlanStatus.DRAFT.value)
 
     with (
-        patch("services.subscription_service.get_plan", new_callable=AsyncMock, return_value=draft_plan),
+        patch(
+            "services.subscription_service.get_plan",
+            new_callable=AsyncMock,
+            return_value=draft_plan,
+        ),
     ):
         from services.subscription_service import subscribe_tenant
         from fastapi import HTTPException
@@ -163,7 +172,11 @@ async def test_remove_active_plan_fails():
     """remove_plan() should reject deletion of non-DRAFT plans."""
     active_plan = _make_plan_out(status=PlanStatus.ACTIVE.value)
 
-    with patch("services.plan_service.get_plan", new_callable=AsyncMock, return_value=active_plan):
+    with patch(
+        "services.plan_service.get_plan",
+        new_callable=AsyncMock,
+        return_value=active_plan,
+    ):
         from services.plan_service import remove_plan
         from fastapi import HTTPException
 
@@ -178,7 +191,11 @@ async def test_remove_archived_plan_fails():
     """remove_plan() should reject deletion of archived plans."""
     archived_plan = _make_plan_out(status=PlanStatus.ARCHIVED.value)
 
-    with patch("services.plan_service.get_plan", new_callable=AsyncMock, return_value=archived_plan):
+    with patch(
+        "services.plan_service.get_plan",
+        new_callable=AsyncMock,
+        return_value=archived_plan,
+    ):
         from services.plan_service import remove_plan
         from fastapi import HTTPException
 

@@ -4,7 +4,11 @@ from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
 from typing import List, Optional
-from schemas.subscription_schema import SubscriptionCreate, SubscriptionUpdate, SubscriptionOut
+from schemas.subscription_schema import (
+    SubscriptionCreate,
+    SubscriptionUpdate,
+    SubscriptionOut,
+)
 
 
 COLLECTION = "subscriptions"
@@ -30,7 +34,9 @@ async def get_subscription(filter_dict: dict) -> Optional[SubscriptionOut]:
         )
 
 
-async def get_subscriptions(filter_dict: dict = {}, start: int = 0, stop: int = 100) -> List[SubscriptionOut]:
+async def get_subscriptions(
+    filter_dict: dict = {}, start: int = 0, stop: int = 100
+) -> List[SubscriptionOut]:
     try:
         if filter_dict is None:
             filter_dict = {}
@@ -46,8 +52,12 @@ async def get_subscriptions(filter_dict: dict = {}, start: int = 0, stop: int = 
         )
 
 
-async def update_subscription(filter_dict: dict, sub_data: SubscriptionUpdate) -> Optional[SubscriptionOut]:
-    update_dict = {k: v for k, v in sub_data.model_dump(mode="json").items() if v is not None}
+async def update_subscription(
+    filter_dict: dict, sub_data: SubscriptionUpdate
+) -> Optional[SubscriptionOut]:
+    update_dict = {
+        k: v for k, v in sub_data.model_dump(mode="json").items() if v is not None
+    }
     if not update_dict:
         return await get_subscription(filter_dict)
     result = await db[COLLECTION].find_one_and_update(

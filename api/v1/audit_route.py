@@ -38,8 +38,16 @@ _audit_roles = verify_system_user_token("super_admin", "auditor", "dpo")
         403: "Forbidden - insufficient permissions",
     },
     error_examples={
-        401: {"success": False, "message": "Invalid or missing token", "code": "AUTH_INVALID_TOKEN"},
-        403: {"success": False, "message": "Insufficient permissions", "code": "AUTH_PERMISSION_DENIED"},
+        401: {
+            "success": False,
+            "message": "Invalid or missing token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Insufficient permissions",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
     },
 )
 async def list_audit_logs(

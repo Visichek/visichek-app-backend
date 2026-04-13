@@ -68,13 +68,17 @@ async def offboard_tenant(
 
     try:
         # Step 1: Cancel active subscription
-        active_sub = await get_subscription({
-            "tenant_id": tenant_id,
-            "status": {"$in": [
-                SubscriptionStatus.ACTIVE.value,
-                SubscriptionStatus.TRIALING.value,
-            ]},
-        })
+        active_sub = await get_subscription(
+            {
+                "tenant_id": tenant_id,
+                "status": {
+                    "$in": [
+                        SubscriptionStatus.ACTIVE.value,
+                        SubscriptionStatus.TRIALING.value,
+                    ]
+                },
+            }
+        )
         if active_sub:
             sub_update = SubscriptionUpdate(
                 status=SubscriptionStatus.CANCELLED,
@@ -200,15 +204,16 @@ async def get_offboarding_summary(tenant_id: str) -> Dict[str, Any]:
         stop=50000,
     )
     active_users = sum(
-        1 for user in system_users
-        if user.account_status == AccountStatus.ACTIVE.value
+        1 for user in system_users if user.account_status == AccountStatus.ACTIVE.value
     )
     inactive_users = sum(
-        1 for user in system_users
+        1
+        for user in system_users
         if user.account_status == AccountStatus.INACTIVE.value
     )
     suspended_users = sum(
-        1 for user in system_users
+        1
+        for user in system_users
         if user.account_status == AccountStatus.SUSPENDED.value
     )
 

@@ -114,40 +114,110 @@ async def generate_compliance_export(tenant_id: str) -> bytes:
     import zipfile
 
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         # Consent log
         consent_records = await get_consent_log(tenant_id=tenant_id, limit=10000)
-        csv_str = _records_to_csv(consent_records, ["_id", "visitor_name_snapshot", "consent_granted", "consent_method", "consent_timestamp", "privacy_notice_version_id", "lawful_basis_at_time"])
+        csv_str = _records_to_csv(
+            consent_records,
+            [
+                "_id",
+                "visitor_name_snapshot",
+                "consent_granted",
+                "consent_method",
+                "consent_timestamp",
+                "privacy_notice_version_id",
+                "lawful_basis_at_time",
+            ],
+        )
         zf.writestr("consent_log.csv", csv_str)
 
         # Audit trail
-        audit_records = await db.audit_trail.find({"tenant_id": tenant_id}).sort("timestamp", -1).to_list(10000)
-        csv_str = _records_to_csv(audit_records, ["_id", "actor_id", "actor_role", "action", "resource_type", "resource_id", "timestamp"])
+        audit_records = (
+            await db.audit_trail.find({"tenant_id": tenant_id})
+            .sort("timestamp", -1)
+            .to_list(10000)
+        )
+        csv_str = _records_to_csv(
+            audit_records,
+            [
+                "_id",
+                "actor_id",
+                "actor_role",
+                "action",
+                "resource_type",
+                "resource_id",
+                "timestamp",
+            ],
+        )
         zf.writestr("audit_trail.csv", csv_str)
 
         # DSR records
-        dsr_records = await db.data_subject_requests.find({"tenant_id": tenant_id}).to_list(10000)
-        csv_str = _records_to_csv(dsr_records, ["_id", "request_type", "status", "received_at", "sla_deadline", "resolved_at"])
+        dsr_records = await db.data_subject_requests.find(
+            {"tenant_id": tenant_id}
+        ).to_list(10000)
+        csv_str = _records_to_csv(
+            dsr_records,
+            [
+                "_id",
+                "request_type",
+                "status",
+                "received_at",
+                "sla_deadline",
+                "resolved_at",
+            ],
+        )
         zf.writestr("dsr_records.csv", csv_str)
 
         # Deletion logs
-        deletion_records = await db.deletion_logs.find({"tenant_id": tenant_id}).to_list(10000)
-        csv_str = _records_to_csv(deletion_records, ["_id", "deleted_entity", "deleted_at", "deleted_by", "reason"])
+        deletion_records = await db.deletion_logs.find(
+            {"tenant_id": tenant_id}
+        ).to_list(10000)
+        csv_str = _records_to_csv(
+            deletion_records,
+            ["_id", "deleted_entity", "deleted_at", "deleted_by", "reason"],
+        )
         zf.writestr("deletion_log.csv", csv_str)
 
         # Retention policies
-        retention_records = await db.retention_policies.find({"tenant_id": tenant_id}).to_list(10000)
-        csv_str = _records_to_csv(retention_records, ["_id", "entity_type", "retention_days", "action"])
+        retention_records = await db.retention_policies.find(
+            {"tenant_id": tenant_id}
+        ).to_list(10000)
+        csv_str = _records_to_csv(
+            retention_records, ["_id", "entity_type", "retention_days", "action"]
+        )
         zf.writestr("retention_policies.csv", csv_str)
 
         # Sub-processors
-        sub_records = await db.sub_processors.find({"tenant_id": tenant_id}).to_list(10000)
-        csv_str = _records_to_csv(sub_records, ["_id", "provider", "purpose", "jurisdiction", "dpa_signed", "uses_data_for_training"])
+        sub_records = await db.sub_processors.find({"tenant_id": tenant_id}).to_list(
+            10000
+        )
+        csv_str = _records_to_csv(
+            sub_records,
+            [
+                "_id",
+                "provider",
+                "purpose",
+                "jurisdiction",
+                "dpa_signed",
+                "uses_data_for_training",
+            ],
+        )
         zf.writestr("sub_processor_register.csv", csv_str)
 
         # Data processing register
-        dpr_records = await db.data_processing_register.find({"tenant_id": tenant_id}).to_list(10000)
-        csv_str = _records_to_csv(dpr_records, ["_id", "processing_purpose", "data_categories", "lawful_basis", "retention_period"])
+        dpr_records = await db.data_processing_register.find(
+            {"tenant_id": tenant_id}
+        ).to_list(10000)
+        csv_str = _records_to_csv(
+            dpr_records,
+            [
+                "_id",
+                "processing_purpose",
+                "data_categories",
+                "lawful_basis",
+                "retention_period",
+            ],
+        )
         zf.writestr("data_processing_register.csv", csv_str)
 
     zip_buffer.seek(0)
@@ -157,14 +227,20 @@ async def generate_compliance_export(tenant_id: str) -> bytes:
 def _records_to_csv(records: list, fields: list) -> str:
     """Convert a list of records to CSV format."""
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
+    writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()
     for record in records:
         row: Dict[str, Any] = {}
         for f in fields:
-            val = record.get(f, "") if isinstance(record, dict) else getattr(record, f, "")
-            if hasattr(val, '__str__') and not isinstance(val, str):
+            val = (
+                record.get(f, "")
+                if isinstance(record, dict)
+                else getattr(record, f, "")
+            )
+            if hasattr(val, "__str__") and not isinstance(val, str):
                 val = str(val)
-            row[f] = val if isinstance(val, str) else str(val) if val is not None else ""
+            row[f] = (
+                val if isinstance(val, str) else str(val) if val is not None else ""
+            )
         writer.writerow(row)
     return output.getvalue()

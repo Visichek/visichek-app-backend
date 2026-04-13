@@ -116,6 +116,7 @@ from schemas.summary_schema import (  # noqa: E402
 
 class VisitSessionWithSummaryOut(VisitSessionOut):
     """VisitSessionOut enriched with snapshots of every entity it references."""
+
     tenant_summary: Optional[TenantBriefSummary] = None
     department_summary: Optional[DepartmentBriefSummary] = None
     visitor_profile_summary: Optional[VisitorProfileBriefSummary] = None

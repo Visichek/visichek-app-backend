@@ -31,10 +31,12 @@ async def add_branch(branch_data: BranchCreate) -> BranchOut:
     await _enforce_branch_cap(branch_data.tenant_id)
 
     # Check for duplicate branch name within the same tenant
-    existing = await get_branch({
-        "tenant_id": branch_data.tenant_id,
-        "name": branch_data.name,
-    })
+    existing = await get_branch(
+        {
+            "tenant_id": branch_data.tenant_id,
+            "name": branch_data.name,
+        }
+    )
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -80,10 +82,12 @@ async def deactivate_branch(branch_id: str) -> Optional[BranchOut]:
         return None
 
     # Prevent deactivating the last active branch
-    active_count = await count_branches({
-        "tenant_id": branch.tenant_id,
-        "status": "active",
-    })
+    active_count = await count_branches(
+        {
+            "tenant_id": branch.tenant_id,
+            "status": "active",
+        }
+    )
     if active_count <= 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -134,6 +138,7 @@ async def _enforce_branch_cap(tenant_id: str) -> None:
     """Check if tenant has reached their plan's max_branches limit."""
     try:
         from services.plan_cache_service import resolve_tenant_plan
+
         plan_data = await resolve_tenant_plan(tenant_id)
     except Exception:
         # If plan resolution fails (no subscription, etc.), allow branch creation

@@ -59,5 +59,6 @@ from schemas.summary_schema import TenantBriefSummary, UserBriefSummary  # noqa:
 
 class DepartmentWithSummaryOut(DepartmentOut):
     """DepartmentOut enriched with snapshots of the entities its IDs reference."""
+
     tenant_summary: Optional[TenantBriefSummary] = None
     created_by_summary: Optional[UserBriefSummary] = None

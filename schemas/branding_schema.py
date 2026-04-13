@@ -15,7 +15,9 @@ def _validate_hex_color(v: str | None, field_name: str) -> str | None:
     if v is None:
         return v
     if not _HEX_COLOR_RE.match(v):
-        raise ValueError(f"{field_name} must be a valid hex color (e.g. #FF5500 or #F50)")
+        raise ValueError(
+            f"{field_name} must be a valid hex color (e.g. #FF5500 or #F50)"
+        )
     return v.upper()
 
 
@@ -73,7 +75,14 @@ class BrandingBase(BaseModel):
 
     # --- Validators ---
 
-    @field_validator("primary_color", "secondary_color", "accent_color", "badge_header_color", "badge_text_color", mode="before")
+    @field_validator(
+        "primary_color",
+        "secondary_color",
+        "accent_color",
+        "badge_header_color",
+        "badge_text_color",
+        mode="before",
+    )
     @classmethod
     def validate_colors(cls, v, info):
         return _validate_hex_color(v, info.field_name)
@@ -100,7 +109,14 @@ class BrandingUpdate(BaseModel):
     badge_logo_position: Optional[LogoPosition] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
-    @field_validator("primary_color", "secondary_color", "accent_color", "badge_header_color", "badge_text_color", mode="before")
+    @field_validator(
+        "primary_color",
+        "secondary_color",
+        "accent_color",
+        "badge_header_color",
+        "badge_text_color",
+        mode="before",
+    )
     @classmethod
     def validate_colors(cls, v, info):
         return _validate_hex_color(v, info.field_name)

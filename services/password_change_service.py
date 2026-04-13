@@ -21,7 +21,11 @@ async def change_admin_password(
         raise HTTPException(status_code=401, detail="Current password is incorrect")
 
     # Validate new password strength
-    from security.password_policy import validate_password_strength, check_password_history
+    from security.password_policy import (
+        validate_password_strength,
+        check_password_history,
+    )
+
     validate_password_strength(new_password)
 
     # Check password history
@@ -40,6 +44,7 @@ async def change_admin_password(
 
     # Record in password history
     from security.password_policy import record_password_in_history
+
     await record_password_in_history(admin_id, hashed, role="admin")
 
 
@@ -57,7 +62,11 @@ async def change_system_user_password(
         raise HTTPException(status_code=401, detail="Current password is incorrect")
 
     # Validate new password strength
-    from security.password_policy import validate_password_strength, check_password_history
+    from security.password_policy import (
+        validate_password_strength,
+        check_password_history,
+    )
+
     validate_password_strength(new_password)
 
     # Check password history
@@ -76,4 +85,5 @@ async def change_system_user_password(
 
     # Record in password history
     from security.password_policy import record_password_in_history
+
     await record_password_in_history(user_id, hashed, role="system_user")

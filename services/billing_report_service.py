@@ -52,8 +52,14 @@ async def get_billing_summary(start_date: int, end_date: int) -> dict:
             },
         ]
 
-        revenue_result = await db[INVOICES_COLLECTION].aggregate(revenue_pipeline).to_list(None)
-        revenue_stats = revenue_result[0] if revenue_result else {"total_revenue_minor": 0, "invoice_count": 0}
+        revenue_result = (
+            await db[INVOICES_COLLECTION].aggregate(revenue_pipeline).to_list(None)
+        )
+        revenue_stats = (
+            revenue_result[0]
+            if revenue_result
+            else {"total_revenue_minor": 0, "invoice_count": 0}
+        )
 
         # Count new subscriptions in period
         new_subs_pipeline = [
@@ -67,7 +73,11 @@ async def get_billing_summary(start_date: int, end_date: int) -> dict:
             },
         ]
 
-        new_subs_result = await db[SUBSCRIPTIONS_COLLECTION].aggregate(new_subs_pipeline).to_list(None)
+        new_subs_result = (
+            await db[SUBSCRIPTIONS_COLLECTION]
+            .aggregate(new_subs_pipeline)
+            .to_list(None)
+        )
         new_subscriptions = new_subs_result[0]["count"] if new_subs_result else 0
 
         # Count cancelled subscriptions in period
@@ -83,8 +93,14 @@ async def get_billing_summary(start_date: int, end_date: int) -> dict:
             },
         ]
 
-        cancelled_subs_result = await db[SUBSCRIPTIONS_COLLECTION].aggregate(cancelled_subs_pipeline).to_list(None)
-        cancelled_subscriptions = cancelled_subs_result[0]["count"] if cancelled_subs_result else 0
+        cancelled_subs_result = (
+            await db[SUBSCRIPTIONS_COLLECTION]
+            .aggregate(cancelled_subs_pipeline)
+            .to_list(None)
+        )
+        cancelled_subscriptions = (
+            cancelled_subs_result[0]["count"] if cancelled_subs_result else 0
+        )
 
         # Count active subscriptions (point-in-time at end_date)
         active_subs_pipeline = [
@@ -103,8 +119,14 @@ async def get_billing_summary(start_date: int, end_date: int) -> dict:
             },
         ]
 
-        active_subs_result = await db[SUBSCRIPTIONS_COLLECTION].aggregate(active_subs_pipeline).to_list(None)
-        active_subscriptions = active_subs_result[0]["count"] if active_subs_result else 0
+        active_subs_result = (
+            await db[SUBSCRIPTIONS_COLLECTION]
+            .aggregate(active_subs_pipeline)
+            .to_list(None)
+        )
+        active_subscriptions = (
+            active_subs_result[0]["count"] if active_subs_result else 0
+        )
 
         # Estimate MRR from active monthly subscriptions
         mrr_pipeline = [
@@ -127,7 +149,9 @@ async def get_billing_summary(start_date: int, end_date: int) -> dict:
             },
         ]
 
-        mrr_result = await db[SUBSCRIPTIONS_COLLECTION].aggregate(mrr_pipeline).to_list(None)
+        mrr_result = (
+            await db[SUBSCRIPTIONS_COLLECTION].aggregate(mrr_pipeline).to_list(None)
+        )
         mrr_minor = int(mrr_result[0]["mrr_minor"]) if mrr_result else 0
 
         # Add 1/12 of annual subscriptions to MRR estimate
@@ -151,8 +175,14 @@ async def get_billing_summary(start_date: int, end_date: int) -> dict:
             },
         ]
 
-        mrr_annual_result = await db[SUBSCRIPTIONS_COLLECTION].aggregate(mrr_annual_pipeline).to_list(None)
-        annual_minor = int(mrr_annual_result[0]["annual_minor"]) if mrr_annual_result else 0
+        mrr_annual_result = (
+            await db[SUBSCRIPTIONS_COLLECTION]
+            .aggregate(mrr_annual_pipeline)
+            .to_list(None)
+        )
+        annual_minor = (
+            int(mrr_annual_result[0]["annual_minor"]) if mrr_annual_result else 0
+        )
         mrr_minor += int(annual_minor / 12)
 
         result = {
@@ -260,7 +290,11 @@ async def get_payment_discrepancies() -> list[dict]:
             },
         ]
 
-        missing_invoices = await db[SUBSCRIPTIONS_COLLECTION].aggregate(missing_invoice_pipeline).to_list(None)
+        missing_invoices = (
+            await db[SUBSCRIPTIONS_COLLECTION]
+            .aggregate(missing_invoice_pipeline)
+            .to_list(None)
+        )
 
         for sub in missing_invoices:
             discrepancies.append(
@@ -316,7 +350,11 @@ async def get_payment_discrepancies() -> list[dict]:
             },
         ]
 
-        orphaned_payments = await db[PAYMENTS_COLLECTION].aggregate(orphaned_payment_pipeline).to_list(None)
+        orphaned_payments = (
+            await db[PAYMENTS_COLLECTION]
+            .aggregate(orphaned_payment_pipeline)
+            .to_list(None)
+        )
 
         for payment in orphaned_payments:
             discrepancies.append(
@@ -362,24 +400,30 @@ async def get_subscription_by_period(
         now = int(time.time())
 
         # Count subscriptions created
-        new_count = await db[SUBSCRIPTIONS_COLLECTION].count_documents({
-            "tenant_id": tenant_id,
-            "date_created": {"$gte": period_start, "$lte": period_end},
-        })
+        new_count = await db[SUBSCRIPTIONS_COLLECTION].count_documents(
+            {
+                "tenant_id": tenant_id,
+                "date_created": {"$gte": period_start, "$lte": period_end},
+            }
+        )
 
         # Count subscriptions cancelled
-        cancelled_count = await db[SUBSCRIPTIONS_COLLECTION].count_documents({
-            "tenant_id": tenant_id,
-            "cancelled_at": {"$gte": period_start, "$lte": period_end},
-        })
+        cancelled_count = await db[SUBSCRIPTIONS_COLLECTION].count_documents(
+            {
+                "tenant_id": tenant_id,
+                "cancelled_at": {"$gte": period_start, "$lte": period_end},
+            }
+        )
 
         # Count active subscriptions
-        active_count = await db[SUBSCRIPTIONS_COLLECTION].count_documents({
-            "tenant_id": tenant_id,
-            "status": "active",
-            "date_created": {"$lte": now},
-            "cancelled_at": None,
-        })
+        active_count = await db[SUBSCRIPTIONS_COLLECTION].count_documents(
+            {
+                "tenant_id": tenant_id,
+                "status": "active",
+                "date_created": {"$lte": now},
+                "cancelled_at": None,
+            }
+        )
 
         # Sum revenue for period
         revenue_pipeline = [
@@ -398,7 +442,9 @@ async def get_subscription_by_period(
             },
         ]
 
-        revenue_result = await db[INVOICES_COLLECTION].aggregate(revenue_pipeline).to_list(None)
+        revenue_result = (
+            await db[INVOICES_COLLECTION].aggregate(revenue_pipeline).to_list(None)
+        )
         total_revenue = int(revenue_result[0]["total"]) if revenue_result else 0
 
         return {
@@ -415,5 +461,7 @@ async def get_subscription_by_period(
         }
 
     except Exception as e:
-        logger.error(f"Error getting subscription period stats: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error getting subscription period stats: {str(e)}", exc_info=True
+        )
         raise

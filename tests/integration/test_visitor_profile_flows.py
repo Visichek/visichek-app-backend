@@ -7,6 +7,7 @@ Integration tests for visitor profile endpoints:
 
 Requires: MongoDB on localhost:27017, Redis on localhost:6379
 """
+
 from __future__ import annotations
 
 import time
@@ -160,8 +161,6 @@ class TestVisitorProfileFlow:
         # May return 404 or 200 with null data depending on implementation
         assert resp.status_code in (200, 404)
 
-    async def test_list_profiles_unauthorized(
-        self, integration_client: AsyncClient
-    ):
+    async def test_list_profiles_unauthorized(self, integration_client: AsyncClient):
         resp = await integration_client.get("/v1/visitor-profiles/")
         assert resp.status_code in (401, 403)

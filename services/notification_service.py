@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 # --- Notification CRUD ---
 
+
 async def send_notification(
     user_id: str,
     user_type: str,
@@ -94,6 +95,7 @@ async def retrieve_notifications_with_summary(
     limit: int = 20,
 ) -> tuple[List[NotificationWithSummaryOut], int]:
     import asyncio
+
     items, total = await retrieve_notifications(
         user_id=user_id, user_type=user_type, read=read, skip=skip, limit=limit
     )
@@ -101,7 +103,9 @@ async def retrieve_notifications_with_summary(
     return enriched, total
 
 
-async def mark_notification_read(notification_id: str, user_id: str, user_type: str) -> NotificationOut:
+async def mark_notification_read(
+    notification_id: str, user_id: str, user_type: str
+) -> NotificationOut:
     """Mark a single notification as read."""
     if not ObjectId.is_valid(notification_id):
         raise HTTPException(status_code=400, detail="Invalid notification ID format")
@@ -127,7 +131,9 @@ async def get_unread_count(user_id: str, user_type: str) -> int:
     )
 
 
-async def remove_notification(notification_id: str, user_id: str, user_type: str) -> None:
+async def remove_notification(
+    notification_id: str, user_id: str, user_type: str
+) -> None:
     """Delete a single notification."""
     if not ObjectId.is_valid(notification_id):
         raise HTTPException(status_code=400, detail="Invalid notification ID format")
@@ -140,6 +146,7 @@ async def remove_notification(notification_id: str, user_id: str, user_type: str
 
 
 # --- Notification Preferences ---
+
 
 async def retrieve_or_create_notification_preferences(
     user_id: str,
@@ -169,11 +176,14 @@ async def update_user_notification_preferences(
         data,
     )
     if not result:
-        raise HTTPException(status_code=500, detail="Failed to update notification preferences")
+        raise HTTPException(
+            status_code=500, detail="Failed to update notification preferences"
+        )
     return result
 
 
 # --- Notification Trigger Helpers ---
+
 
 async def notify_incident_deadline(
     user_id: str,
@@ -235,7 +245,9 @@ async def notify_appointment_reminder(
             tenant_id=tenant_id,
         )
     except Exception:
-        logger.warning("Failed to send appointment reminder notification", exc_info=True)
+        logger.warning(
+            "Failed to send appointment reminder notification", exc_info=True
+        )
 
 
 async def notify_dsr_submitted(

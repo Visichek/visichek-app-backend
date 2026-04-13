@@ -43,9 +43,10 @@ class UserCreate(UserBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def validate_and_hash_password(self):
         from security.password_policy import validate_password_strength
+
         if isinstance(self.password, str):
             result = validate_password_strength(self.password)
             if not result.is_valid:
