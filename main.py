@@ -190,6 +190,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 class RateLimitingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        if get_settings().env == "testing":
+            return await call_next(request)
         user_id, user_type = await get_user_type(request)
         rate_limit_rule = RATE_LIMITS[user_type]
 
