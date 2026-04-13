@@ -34,7 +34,7 @@ class TestDPRFlow:
             "field_name": "visitor_phone",
             "purpose": "Emergency contact during visit",
             "lawful_basis": "legitimate_interest",
-            "retention_period": 365,
+            "retention_period": "365 days",
             "crosses_borders": False,
         }
 
@@ -75,7 +75,7 @@ class TestDPRFlow:
                 "field_name": f"field_{i}",
                 "purpose": f"Purpose {i}",
                 "lawful_basis": "consent",
-                "retention_period": 180 * (i + 1),
+                "retention_period": f"{180 * (i + 1)} days",
                 "crosses_borders": i % 2 == 0,
             }
             for i in range(3)

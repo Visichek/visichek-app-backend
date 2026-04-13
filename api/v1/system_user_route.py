@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from fastapi.encoders import jsonable_encoder
+from fastapi.encoders import jsonable_encoder as _fastapi_jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from core.response_envelope import document_response, success_payload
@@ -41,6 +41,21 @@ from services.system_user_service import (
     verify_system_user_otp,
 )
 from services.tenant_service import retrieve_tenant_by_id
+
+
+def jsonable_encoder(obj, **kwargs):
+    """Local wrapper that defaults by_alias=False so response bodies use
+    field names (e.g. ``id``) instead of MongoDB aliases (e.g. ``_id``)."""
+    kwargs.setdefault("by_alias", False)
+    return _fastapi_jsonable_encoder(obj, **kwargs)
+
+
+def _attr_or_key(obj, key):
+    """Return obj[key] for dicts or obj.key for objects. Returns None if missing."""
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
 
 router = APIRouter(prefix="/system-users", tags=["Tenant Users"])
 
@@ -106,8 +121,8 @@ async def login_system_user(request: Request, login_data: SystemUserLogin):
     )
     set_auth_cookies(
         response,
-        user.access_token or "",
-        user.refresh_token or "",
+        _attr_or_key(user, "access_token") or "",
+        _attr_or_key(user, "refresh_token") or "",
         is_production=is_prod,
     )  # type: ignore
     return response
@@ -190,8 +205,8 @@ async def login_super_admin_global(request: Request, login_data: SystemUserLogin
     )
     set_auth_cookies(
         response,
-        user.access_token or "",
-        user.refresh_token or "",
+        _attr_or_key(user, "access_token") or "",
+        _attr_or_key(user, "refresh_token") or "",
         is_production=is_prod,
     )
     return response
@@ -273,8 +288,8 @@ async def login_system_user_by_tenant(
     )
     set_auth_cookies(
         response,
-        user.access_token or "",
-        user.refresh_token or "",
+        _attr_or_key(user, "access_token") or "",
+        _attr_or_key(user, "refresh_token") or "",
         is_production=is_prod,
     )  # type: ignore
     return response
@@ -398,8 +413,8 @@ async def refresh_tokens(
     )
     set_auth_cookies(
         response,
-        user.access_token or "",
-        user.refresh_token or "",
+        _attr_or_key(user, "access_token") or "",
+        _attr_or_key(user, "refresh_token") or "",
         is_production=is_prod,
     )  # type: ignore
     return response
@@ -429,8 +444,8 @@ async def verify_system_user_otp_endpoint(request: Request, otp_data: OtpVerifyR
     )
     set_auth_cookies(
         response,
-        user.access_token or "",
-        user.refresh_token or "",
+        _attr_or_key(user, "access_token") or "",
+        _attr_or_key(user, "refresh_token") or "",
         is_production=is_prod,
     )  # type: ignore
     return response

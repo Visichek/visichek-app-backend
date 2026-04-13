@@ -23,7 +23,7 @@ pytestmark = pytest.mark.asyncio
 def _make_plan_out(**overrides) -> PlanOut:
     """Factory for PlanOut test objects."""
     defaults = {
-        "_id": "plan_123",
+        "_id": "507f1f77bcf86cd799439111",
         "name": "professional",
         "display_name": "Professional Plan",
         "tier": PlanTier.PROFESSIONAL.value,
@@ -54,7 +54,7 @@ def _make_subscription_out(**overrides) -> SubscriptionOut:
     defaults = {
         "_id": "sub_123",
         "tenant_id": "tenant_abc",
-        "plan_id": "plan_123",
+        "plan_id": "507f1f77bcf86cd799439111",
         "status": SubscriptionStatus.PAST_DUE.value,
         "billing_cycle": BillingCycle.MONTHLY.value,
         "effective_price": 100.0,
@@ -112,7 +112,7 @@ class TestDunningService:
         now = int(time.time())
         sub = _make_subscription_out(
             **{
-                "_id": "sub_dunning_1",
+                "_id": "507f1f77bcf86cd799439001",
                 "status": SubscriptionStatus.PAST_DUE.value,
                 "renewal_attempts": 1,
                 "next_retry_at": now - 3600,
@@ -144,7 +144,7 @@ class TestDunningService:
 
         updated_sub = _make_subscription_out(
             **{
-                "_id": "sub_dunning_1",
+                "_id": "507f1f77bcf86cd799439001",
                 "status": SubscriptionStatus.ACTIVE.value,
                 "renewal_attempts": 0,
             }
@@ -174,7 +174,7 @@ class TestDunningService:
         now = int(time.time())
         sub = _make_subscription_out(
             **{
-                "_id": "sub_max_attempts",
+                "_id": "507f1f77bcf86cd799439002",
                 "status": SubscriptionStatus.PAST_DUE.value,
                 "renewal_attempts": 5,  # Reached max
                 "next_retry_at": now - 3600,
@@ -188,7 +188,7 @@ class TestDunningService:
 
         updated_sub = _make_subscription_out(
             **{
-                "_id": "sub_max_attempts",
+                "_id": "507f1f77bcf86cd799439002",
                 "status": SubscriptionStatus.SUSPENDED.value,
             }
         )
@@ -216,7 +216,7 @@ class TestDunningService:
         now = int(time.time())
         sub = _make_subscription_out(
             **{
-                "_id": "sub_calc_retry",
+                "_id": "507f1f77bcf86cd799439003",
                 "renewal_attempts": 0,
             }
         )
@@ -227,7 +227,7 @@ class TestDunningService:
 
         updated_sub = _make_subscription_out(
             **{
-                "_id": "sub_calc_retry",
+                "_id": "507f1f77bcf86cd799439003",
                 "renewal_attempts": 1,
                 "next_retry_at": now + (1 * 86400),  # 1 day from now
             }
@@ -245,8 +245,8 @@ class TestDunningService:
 
         # Check that renewal_attempts was incremented
         assert update_data.renewal_attempts == 1
-        # Check that next_retry_at is approximately 1 day from now
-        assert update_data.next_retry_at == now + (1 * 86400)
+        # For attempts=0, index=1, retry_days=3 (from [1,3,7,14])
+        assert update_data.next_retry_at == now + (3 * 86400)
 
     @patch("services.dunning_service.get_settings")
     @patch("services.dunning_service._queue_dunning_email", new_callable=AsyncMock)
@@ -261,7 +261,7 @@ class TestDunningService:
         now = int(time.time())
         sub = _make_subscription_out(
             **{
-                "_id": "sub_second_retry",
+                "_id": "507f1f77bcf86cd799439004",
                 "renewal_attempts": 1,
             }
         )
@@ -272,7 +272,7 @@ class TestDunningService:
 
         updated_sub = _make_subscription_out(
             **{
-                "_id": "sub_second_retry",
+                "_id": "507f1f77bcf86cd799439004",
                 "renewal_attempts": 2,
                 "next_retry_at": now + (3 * 86400),  # 3 days from now
             }
@@ -287,17 +287,18 @@ class TestDunningService:
         update_data = call_args[1]["sub_data"]
 
         assert update_data.renewal_attempts == 2
-        assert update_data.next_retry_at == now + (3 * 86400)
+        # For attempts=1, index=2, retry_days=7 (from [1,3,7,14])
+        assert update_data.next_retry_at == now + (7 * 86400)
 
     @patch("services.dunning_service.update_subscription", new_callable=AsyncMock)
     async def test_suspend_subscription(self, mock_update_sub):
         """Test subscription suspension."""
         now = int(time.time())
-        sub = _make_subscription_out(**{"_id": "sub_suspend"})
+        sub = _make_subscription_out(**{"_id": "507f1f77bcf86cd799439005"})
 
         suspended_sub = _make_subscription_out(
             **{
-                "_id": "sub_suspend",
+                "_id": "507f1f77bcf86cd799439005",
                 "status": SubscriptionStatus.SUSPENDED.value,
             }
         )
@@ -329,7 +330,7 @@ class TestDunningService:
         now = int(time.time())
         sub = _make_subscription_out(
             **{
-                "_id": "sub_payment_fail",
+                "_id": "507f1f77bcf86cd799439006",
                 "status": SubscriptionStatus.PAST_DUE.value,
                 "renewal_attempts": 0,
                 "next_retry_at": now - 3600,
@@ -354,7 +355,7 @@ class TestDunningService:
 
         updated_sub = _make_subscription_out(
             **{
-                "_id": "sub_payment_fail",
+                "_id": "507f1f77bcf86cd799439006",
                 "status": SubscriptionStatus.PAST_DUE.value,
                 "renewal_attempts": 1,
             }

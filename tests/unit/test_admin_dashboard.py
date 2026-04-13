@@ -24,7 +24,7 @@ class TestAdminDashboardSchema:
         stats = AdminDashboardStats()
         assert stats.total_tenants == 0
         assert stats.active_tenants == 0
-        assert stats.total_system_users == 0
+        assert stats.total_tenant_users == 0
         assert stats.total_subscriptions == 0
         assert stats.subscription_breakdown.active == 0
         assert stats.plan_distribution == []
@@ -152,6 +152,6 @@ async def test_admin_dashboard_route_returns_200():
                 assert resp.status_code == 200
                 data = resp.json()
                 assert data["success"] is True
-                assert data["data"]["total_tenants"] == 10
+                assert data["data"]["totalTenants"] == 10
         finally:
             app.dependency_overrides.clear()

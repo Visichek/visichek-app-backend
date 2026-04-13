@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from fastapi import APIRouter, File, UploadFile, status
 
 from core.response_envelope import document_response

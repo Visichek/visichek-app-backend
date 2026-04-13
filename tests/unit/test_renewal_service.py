@@ -23,7 +23,7 @@ pytestmark = pytest.mark.asyncio
 def _make_plan_out(**overrides) -> PlanOut:
     """Factory for PlanOut test objects."""
     defaults = {
-        "_id": "plan_123",
+        "_id": "507f1f77bcf86cd799439111",
         "name": "professional",
         "display_name": "Professional Plan",
         "tier": PlanTier.PROFESSIONAL.value,
@@ -52,9 +52,9 @@ def _make_subscription_out(**overrides) -> SubscriptionOut:
     """Factory for SubscriptionOut test objects."""
     now = int(time.time())
     defaults = {
-        "_id": "sub_123",
-        "tenant_id": "tenant_abc",
-        "plan_id": "plan_123",
+        "_id": "507f1f77bcf86cd799439112",
+        "tenant_id": "507f1f77bcf86cd799439200",
+        "plan_id": "507f1f77bcf86cd799439111",
         "status": SubscriptionStatus.ACTIVE.value,
         "billing_cycle": BillingCycle.MONTHLY.value,
         "effective_price": 100.0,
@@ -87,6 +87,11 @@ class TestRenewalService:
         mock_get_subs.assert_called_once()
 
     @patch(
+        "services.renewal_service._get_provider_for_tenant",
+        new_callable=AsyncMock,
+        return_value="stripe",
+    )
+    @patch(
         "services.renewal_service.invalidate_tenant_plan_cache", new_callable=AsyncMock
     )
     @patch("services.renewal_service.generate_invoice", new_callable=AsyncMock)
@@ -102,12 +107,13 @@ class TestRenewalService:
         mock_update_sub,
         mock_generate_invoice,
         mock_invalidate_cache,
+        mock_get_provider_for_tenant,
     ):
         """Test successful renewal of a subscription."""
         now = int(time.time())
         sub = _make_subscription_out(
             **{
-                "_id": "sub_renewal_1",
+                "_id": "507f1f77bcf86cd799439113",
                 "current_period_end": now - 3600,  # Expired
             }
         )
@@ -130,7 +136,7 @@ class TestRenewalService:
         mock_payment_mgr_instance.get_provider.return_value = mock_provider
         mock_payment_mgr.get_instance.return_value = mock_payment_mgr_instance
 
-        updated_sub = _make_subscription_out(**{"_id": "sub_renewal_1"})
+        updated_sub = _make_subscription_out(**{"_id": "507f1f77bcf86cd799439113"})
         mock_update_sub.return_value = updated_sub
 
         from services.renewal_service import renew_due_subscriptions
@@ -141,7 +147,7 @@ class TestRenewalService:
         assert result["failed_count"] == 0
         mock_update_sub.assert_called_once()
         mock_generate_invoice.assert_called_once()
-        mock_invalidate_cache.assert_called_once_with("tenant_abc")
+        mock_invalidate_cache.assert_called_once_with("507f1f77bcf86cd799439200")
 
     @patch("services.renewal_service.update_subscription", new_callable=AsyncMock)
     @patch("services.renewal_service.get_plan", new_callable=AsyncMock)
@@ -158,7 +164,7 @@ class TestRenewalService:
         now = int(time.time())
         sub = _make_subscription_out(
             **{
-                "_id": "sub_payment_fail",
+                "_id": "507f1f77bcf86cd799439114",
                 "current_period_end": now - 3600,
             }
         )
@@ -230,8 +236,14 @@ class TestRenewalService:
     @patch("services.renewal_service.get_plan", new_callable=AsyncMock)
     @patch("services.renewal_service.PaymentManager")
     @patch("services.renewal_service.get_subscriptions", new_callable=AsyncMock)
+    @patch(
+        "services.renewal_service._get_provider_for_tenant",
+        new_callable=AsyncMock,
+        return_value="stripe",
+    )
     async def test_convert_expiring_trials_success(
         self,
+        mock_get_provider_for_tenant,
         mock_get_subs,
         mock_payment_mgr,
         mock_get_plan,
@@ -243,7 +255,7 @@ class TestRenewalService:
         now = int(time.time())
         trial_sub = _make_subscription_out(
             **{
-                "_id": "trial_123",
+                "_id": "507f1f77bcf86cd799439115",
                 "status": SubscriptionStatus.TRIALING.value,
                 "trial_ends_at": now - 3600,
             }
@@ -257,10 +269,10 @@ class TestRenewalService:
         mock_provider = MagicMock()
         mock_intent = PaymentIntentResponse(
             provider=PaymentProviderName.STRIPE,
-            reference="intent_trial_123",
+            reference="intent_507f1f77bcf86cd799439115",
             status=PaymentStatus.SUCCEEDED,
             checkout_url=None,
-            provider_payload={"id": "txn_trial_123"},
+            provider_payload={"id": "txn_507f1f77bcf86cd799439115"},
         )
         mock_provider.create_intent.return_value = mock_intent
         mock_payment_mgr_instance = MagicMock()
@@ -269,7 +281,7 @@ class TestRenewalService:
 
         updated_sub = _make_subscription_out(
             **{
-                "_id": "trial_123",
+                "_id": "507f1f77bcf86cd799439115",
                 "status": SubscriptionStatus.ACTIVE.value,
             }
         )
@@ -302,7 +314,7 @@ class TestRenewalService:
                     now = int(time.time())
                     trial_sub = _make_subscription_out(
                         **{
-                            "_id": "trial_fail",
+                            "_id": "507f1f77bcf86cd799439116",
                             "status": SubscriptionStatus.TRIALING.value,
                             "trial_ends_at": now - 3600,
                         }
@@ -325,7 +337,7 @@ class TestRenewalService:
 
                     updated_sub = _make_subscription_out(
                         **{
-                            "_id": "trial_fail",
+                            "_id": "507f1f77bcf86cd799439116",
                             "status": SubscriptionStatus.PAST_DUE.value,
                         }
                     )

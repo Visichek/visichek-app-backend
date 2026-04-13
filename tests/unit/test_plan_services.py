@@ -211,7 +211,7 @@ class TestPlanService:
 
 class TestSubscriptionService:
     @patch(
-        "services.subscription_service.invalidate_tenant_plan_cache",
+        "services.plan_cache_service.invalidate_tenant_plan_cache",
         new_callable=AsyncMock,
     )
     @patch("services.subscription_service.create_subscription", new_callable=AsyncMock)
@@ -256,7 +256,7 @@ class TestSubscriptionService:
         assert exc_info.value.status_code == 400
 
     @patch(
-        "services.subscription_service.invalidate_tenant_plan_cache",
+        "services.plan_cache_service.invalidate_tenant_plan_cache",
         new_callable=AsyncMock,
     )
     @patch("services.subscription_service.update_subscription", new_callable=AsyncMock)
@@ -269,9 +269,13 @@ class TestSubscriptionService:
     async def test_change_plan_success(
         self, mock_active, mock_plan, mock_disc, mock_update, mock_cache
     ):
-        mock_active.return_value = _make_sub_out()
-        mock_plan.return_value = _make_plan_out(_id="plan_999", name="new-plan")
-        mock_update.return_value = _make_sub_out(plan_id="plan_999")
+        mock_active.return_value = _make_sub_out(_id="507f1f77bcf86cd799439500")
+        mock_plan.return_value = _make_plan_out(
+            _id="507f1f77bcf86cd799439501", name="new-plan"
+        )
+        mock_update.return_value = _make_sub_out(
+            _id="507f1f77bcf86cd799439500", plan_id="507f1f77bcf86cd799439501"
+        )
 
         from services.subscription_service import change_plan
 

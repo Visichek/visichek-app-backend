@@ -41,7 +41,7 @@ async def admin_auth_headers(
     )
     await create_admin(admin_data)
 
-    # Login via API
+    # Step 1: login (admin 2FA is mandatory — returns OTP challenge)
     response = await integration_client.post(
         "/v1/admins/login",
         json={
@@ -50,8 +50,18 @@ async def admin_auth_headers(
         },
     )
     assert response.status_code == 200, f"Admin login failed: {response.text}"
+    challenge_data = response.json()["data"]
+    challenge_id = challenge_data["otp_challenge_id"]
 
-    data = response.json()
+    # Step 2: verify the dev OTP code to receive tokens
+    verify_response = await integration_client.post(
+        "/v1/admins/verify-otp",
+        json={"otp_challenge_id": challenge_id, "otp_code": "123456"},
+    )
+    assert verify_response.status_code == 200, (
+        f"OTP verify failed: {verify_response.text}"
+    )
+    data = verify_response.json()
     assert data["success"] is True
     access_token = data["data"]["access_token"]
     return {"Authorization": f"Bearer {access_token}"}
@@ -72,10 +82,10 @@ class TestBootstrapFlow:
             "lawful_basis": "legitimate_interest",
             "notice_display_mode": "passive",
             "retention_days": 365,
-            "dpo_contact_email": "dpo@bootstrap.test",
+            "dpo_contact_email": "dpo@bootstrap.example.com",
             "country_of_hosting": "Nigeria",
             "admin_full_name": "First Super Admin",
-            "admin_email": f"super_{ts}@bootstrap.test",
+            "admin_email": f"super_{ts}@bootstrap.example.com",
             "admin_password": "SuperSecure123!",
         }
 
@@ -106,7 +116,7 @@ class TestBootstrapFlow:
     ):
         """The super_admin created by bootstrap should be able to login."""
         ts = int(time.time())
-        email = f"login_test_{ts}@bootstrap.test"
+        email = f"login_test_{ts}@bootstrap.example.com"
         password = "LoginTest123!"
 
         # Bootstrap
@@ -139,7 +149,7 @@ class TestBootstrapFlow:
     ):
         """The bootstrapped super_admin should be able to create system users."""
         ts = int(time.time())
-        sa_email = f"invite_sa_{ts}@bootstrap.test"
+        sa_email = f"invite_sa_{ts}@bootstrap.example.com"
         sa_password = "InviteSA123!"
 
         # Bootstrap
@@ -165,10 +175,9 @@ class TestBootstrapFlow:
             json={
                 "tenant_id": tenant_id,
                 "full_name": "Front Desk",
-                "email": f"receptionist_{ts}@bootstrap.test",
+                "email": f"receptionist_{ts}@bootstrap.example.com",
                 "role": "receptionist",
-                "account_status": "ACTIVE",
-                "password_hash": "Receptionist123!",
+                "password": "Receptionist123!",
             },
             headers=sa_headers,
         )
@@ -190,8 +199,8 @@ class TestBootstrapFlow:
             json={
                 "company_name": company,
                 "admin_full_name": "SA One",
-                "admin_email": f"sa1_{ts}@dup.test",
-                "admin_password": "Pass123!",
+                "admin_email": f"sa1_{ts}@dup.example.com",
+                "admin_password": "DupPass123!",
             },
             headers=admin_auth_headers,
         )
@@ -203,8 +212,8 @@ class TestBootstrapFlow:
             json={
                 "company_name": company,
                 "admin_full_name": "SA Two",
-                "admin_email": f"sa2_{ts}@dup.test",
-                "admin_password": "Pass456!",
+                "admin_email": f"sa2_{ts}@dup.example.com",
+                "admin_password": "DupPass456!",
             },
             headers=admin_auth_headers,
         )

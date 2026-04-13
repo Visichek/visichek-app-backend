@@ -92,7 +92,7 @@ class TestPasswordStrength:
         assert any("sequential" in e for e in result.errors)
 
     def test_repeated_chars_blocked(self):
-        result = validate_password_strength("Aaaa1234!@#$")
+        result = validate_password_strength("Xaaaa792!")
         assert result.is_valid is False
         assert any("repeated" in e for e in result.errors)
 
@@ -157,7 +157,7 @@ async def test_check_login_lockout_not_locked():
     fake_db = MagicMock()
     fake_db.__getitem__ = MagicMock(return_value=_FakeCollection(find_one_val=None))
 
-    with patch("security.password_policy.db", fake_db):
+    with patch("core.database.db", fake_db):
         # Re-import to get patched version
         from security.password_policy import check_login_lockout
 
@@ -179,7 +179,7 @@ async def test_check_login_lockout_locked():
         return_value=_FakeCollection(find_one_val=locked_record)
     )
 
-    with patch("security.password_policy.db", fake_db):
+    with patch("core.database.db", fake_db):
         from security.password_policy import check_login_lockout
 
         result = await check_login_lockout("test@example.com")
@@ -196,7 +196,7 @@ async def test_record_failed_login_increments():
         return_value=_FakeCollection(find_and_update_val=fake_result)
     )
 
-    with patch("security.password_policy.db", fake_db):
+    with patch("core.database.db", fake_db):
         from security.password_policy import record_failed_login
 
         result = await record_failed_login("test@example.com")
@@ -214,7 +214,7 @@ async def test_record_failed_login_triggers_lockout():
     fake_db = MagicMock()
     fake_db.__getitem__ = MagicMock(return_value=fake_col)
 
-    with patch("security.password_policy.db", fake_db):
+    with patch("core.database.db", fake_db):
         from security.password_policy import record_failed_login
 
         result = await record_failed_login("test@example.com")
@@ -245,7 +245,7 @@ async def test_check_password_history_no_reuse():
     fake_db = MagicMock()
     fake_db.__getitem__ = MagicMock(return_value=fake_col)
 
-    with patch("security.password_policy.db", fake_db):
+    with patch("core.database.db", fake_db):
         from security.password_policy import check_password_history
 
         result = await check_password_history("user1", "NewStrongP@ss1", role="admin")

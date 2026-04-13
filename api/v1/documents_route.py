@@ -1,4 +1,4 @@
-from __future__ import annotations
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, UploadFile, File
 from fastapi.responses import Response
@@ -25,7 +25,7 @@ from services.document_service import (
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
 
-@router.post("")
+@router.post("", response_model=None)
 @document_response(
     message="Document uploaded successfully",
     status_code=201,
@@ -39,7 +39,7 @@ router = APIRouter(prefix="/documents", tags=["Documents"])
 )
 async def upload_document(
     file: UploadFile = File(...),
-    mime_type: str | None = Form(default=None),
+    mime_type: Optional[str] = Form(default=None),
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
     payload = await file.read()

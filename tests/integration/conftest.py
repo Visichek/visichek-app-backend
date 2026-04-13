@@ -74,8 +74,11 @@ def _patch_db_everywhere(new_db: AsyncIOMotorDatabase) -> dict:
             or mod_name == "seed"
         ):
             continue
-        if hasattr(mod, "db") and mod.__dict__.get("db") is originals["core.database"]:
-            originals[mod_name] = mod.db  # type: ignore[attr-defined]
+        existing_db = mod.__dict__.get("db")
+        # Replace any db reference in project namespaces — loose match so we
+        # also catch modules that captured a previous test's (now-closed) client.
+        if existing_db is not None and hasattr(existing_db, "get_collection"):
+            originals[mod_name] = existing_db  # type: ignore[attr-defined]
             mod.db = new_db  # type: ignore[attr-defined]
 
     return originals
@@ -153,6 +156,7 @@ async def integration_client(
     async with AsyncClient(
         transport=ASGITransport(app=cast(object, integration_app)),  # type: ignore[arg-type]
         base_url="http://test",
+        headers={"X-Response-Case": "snake"},
     ) as client:
         yield client
 

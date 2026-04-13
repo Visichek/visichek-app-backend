@@ -22,7 +22,7 @@ class TestBillingReportService:
         mock_subscriptions = AsyncMock()
 
         # Mock aggregation returns for empty collections
-        async def mock_aggregate_empty(*args, **kwargs):
+        def mock_aggregate_empty(*args, **kwargs):
             mock_cursor = AsyncMock()
             mock_cursor.to_list.return_value = []
             return mock_cursor
@@ -66,7 +66,7 @@ class TestBillingReportService:
         mock_subscriptions = AsyncMock()
 
         # Mock revenue aggregation
-        async def mock_invoice_aggregate(*args, **kwargs):
+        def mock_invoice_aggregate(*args, **kwargs):
             mock_cursor = AsyncMock()
             mock_cursor.to_list.return_value = [
                 {
@@ -78,7 +78,7 @@ class TestBillingReportService:
             return mock_cursor
 
         # Mock subscription aggregations
-        async def mock_sub_aggregate(*args, **kwargs):
+        def mock_sub_aggregate(*args, **kwargs):
             pipeline = args[0] if args else kwargs.get("pipeline", [])
             mock_cursor = AsyncMock()
 
@@ -86,8 +86,10 @@ class TestBillingReportService:
             if pipeline and "$count" in str(pipeline):
                 mock_cursor.to_list.return_value = [{"count": 5}]
             elif pipeline and "$group" in str(pipeline):
-                # MRR query
-                mock_cursor.to_list.return_value = [{"mrr_minor": 50000}]
+                # MRR query (covers both mrr_minor and annual_minor group results)
+                mock_cursor.to_list.return_value = [
+                    {"mrr_minor": 50000, "annual_minor": 0}
+                ]
             else:
                 mock_cursor.to_list.return_value = [{"count": 20}]
 
@@ -123,7 +125,7 @@ class TestBillingReportService:
         mock_invoices = AsyncMock()
         mock_subscriptions = AsyncMock()
 
-        async def mock_invoice_aggregate(*args, **kwargs):
+        def mock_invoice_aggregate(*args, **kwargs):
             mock_cursor = AsyncMock()
             mock_cursor.to_list.return_value = [
                 {
@@ -136,7 +138,7 @@ class TestBillingReportService:
 
         call_count = 0
 
-        async def mock_sub_aggregate(*args, **kwargs):
+        def mock_sub_aggregate(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             mock_cursor = AsyncMock()
@@ -188,7 +190,7 @@ class TestBillingReportService:
         mock_subscriptions.count_documents = AsyncMock(side_effect=[2, 1, 5])
 
         # Mock invoice aggregation
-        async def mock_invoice_aggregate(*args, **kwargs):
+        def mock_invoice_aggregate(*args, **kwargs):
             mock_cursor = AsyncMock()
             mock_cursor.to_list.return_value = [{"total": 100000}]
             return mock_cursor
@@ -217,7 +219,7 @@ class TestBillingReportService:
         """Test detection of active subscriptions with missing invoices."""
         mock_subscriptions = AsyncMock()
 
-        async def mock_aggregate(*args, **kwargs):
+        def mock_aggregate(*args, **kwargs):
             mock_cursor = AsyncMock()
             # Return one subscription with missing invoice
             mock_cursor.to_list.return_value = [
@@ -249,7 +251,7 @@ class TestBillingReportService:
         mock_subscriptions = AsyncMock()
         mock_payments = AsyncMock()
 
-        async def mock_aggregate_empty(*args, **kwargs):
+        def mock_aggregate_empty(*args, **kwargs):
             mock_cursor = AsyncMock()
             mock_cursor.to_list.return_value = []
             return mock_cursor

@@ -18,6 +18,7 @@ from httpx import AsyncClient
 
 from schemas.visitor_profile_schema import VisitorProfileCreate
 from schemas.visit_session_schema import VisitSessionCreate
+from schemas.imports import VisitStatus
 from schemas.department_schema import DepartmentCreate
 from repositories.visitor_profile_repo import create_visitor_profile
 from repositories.visit_session_repo import create_visit_session
@@ -77,6 +78,7 @@ class TestDashboardVisitorLog:
                     check_in_method="manual_entry",
                     checked_in_at=ts,
                     checked_in_by=user.id,
+                    status=VisitStatus.CHECKED_IN,
                 )
             )
             sessions.append(session)

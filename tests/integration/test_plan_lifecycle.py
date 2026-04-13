@@ -46,7 +46,14 @@ async def admin_auth_headers(
         json={"email": admin_data.email, "password": raw_password},
     )
     assert response.status_code == 200
-    data = response.json()
+    challenge_id = response.json()["data"]["otp_challenge_id"]
+
+    verify_response = await integration_client.post(
+        "/v1/admins/verify-otp",
+        json={"otp_challenge_id": challenge_id, "otp_code": "123456"},
+    )
+    assert verify_response.status_code == 200, verify_response.text
+    data = verify_response.json()
     assert data["success"] is True
     return {"Authorization": f"Bearer {data['data']['access_token']}"}
 
@@ -218,12 +225,12 @@ class TestSubscriptionLifecycle:
             json={
                 "company_name": f"Sub Test Corp {ts}",
                 "admin_full_name": "SA",
-                "admin_email": f"sa_{ts}@sub.test",
+                "admin_email": f"sa_{ts}@sub.example.com",
                 "admin_password": "SubTest123!",
             },
             headers=headers,
         )
-        assert tenant_resp.status_code == 201
+        assert tenant_resp.status_code == 201, tenant_resp.text
         tenant_id = tenant_resp.json()["data"]["tenant"]["id"]
 
         return plan_id, tenant_id
@@ -428,7 +435,7 @@ class TestDiscountLifecycle:
             json={
                 "company_name": f"Disc Test Corp {ts}",
                 "admin_full_name": "SA",
-                "admin_email": f"disc_sa_{ts}@test.test",
+                "admin_email": f"disc_sa_{ts}@test.example.com",
                 "admin_password": "DiscTest123!",
             },
             headers=admin_auth_headers,
@@ -505,7 +512,7 @@ class TestSubscriptionOverrides:
             json={
                 "company_name": f"Override Corp {ts}",
                 "admin_full_name": "SA",
-                "admin_email": f"override_sa_{ts}@test.test",
+                "admin_email": f"override_sa_{ts}@test.example.com",
                 "admin_password": "Override123!",
             },
             headers=admin_auth_headers,

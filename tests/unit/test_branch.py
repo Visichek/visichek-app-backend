@@ -114,7 +114,7 @@ def mock_branch_repo():
 
 def _make_branch_out(**kwargs):
     defaults = {
-        "_id": "branch1",
+        "_id": "507f1f77bcf86cd799439011",
         "tenant_id": "t1",
         "name": "HQ",
         "status": "active",
@@ -135,7 +135,7 @@ async def test_add_branch_success(mock_branch_repo):
 
     # Patch plan cache to avoid real DB
     with patch(
-        "services.branch_service.resolve_tenant_plan",
+        "services.plan_cache_service.resolve_tenant_plan",
         new_callable=AsyncMock,
         return_value=None,
     ):
@@ -152,7 +152,7 @@ async def test_add_branch_duplicate_name(mock_branch_repo):
     from fastapi import HTTPException
 
     with patch(
-        "services.branch_service.resolve_tenant_plan",
+        "services.plan_cache_service.resolve_tenant_plan",
         new_callable=AsyncMock,
         return_value=None,
     ):
@@ -172,7 +172,7 @@ async def test_add_branch_cap_exceeded(mock_branch_repo):
     plan_data = {"tenant_caps": {"max_branches": 3}}
 
     with patch(
-        "services.branch_service.resolve_tenant_plan",
+        "services.plan_cache_service.resolve_tenant_plan",
         new_callable=AsyncMock,
         return_value=plan_data,
     ):
@@ -192,7 +192,7 @@ async def test_add_branch_no_cap_limit(mock_branch_repo):
 
     plan_data = {"tenant_caps": {"max_branches": None}}
     with patch(
-        "services.branch_service.resolve_tenant_plan",
+        "services.plan_cache_service.resolve_tenant_plan",
         new_callable=AsyncMock,
         return_value=plan_data,
     ):
@@ -215,7 +215,7 @@ async def test_deactivate_last_branch_fails(mock_branch_repo):
         return_value=_make_branch_out(),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await deactivate_branch("branch1")
+            await deactivate_branch("507f1f77bcf86cd799439011")
         assert exc_info.value.status_code == 400
         assert "last active branch" in exc_info.value.detail
 
@@ -233,7 +233,7 @@ async def test_remove_last_branch_fails(mock_branch_repo):
         return_value=_make_branch_out(),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await remove_branch("branch1")
+            await remove_branch("507f1f77bcf86cd799439011")
         assert exc_info.value.status_code == 400
         assert "last branch" in exc_info.value.detail
 
@@ -250,7 +250,7 @@ async def test_remove_branch_success(mock_branch_repo):
         new_callable=AsyncMock,
         return_value=_make_branch_out(),
     ):
-        result = await remove_branch("branch1")
+        result = await remove_branch("507f1f77bcf86cd799439011")
         assert result is True
 
 
@@ -296,7 +296,7 @@ async def test_branch_create_route():
     branch_out = _make_branch_out(name="Lagos Office")
 
     with patch(
-        "services.branch_service.add_branch",
+        "api.v1.branch_route.add_branch",
         new_callable=AsyncMock,
         return_value=branch_out,
     ):
@@ -331,7 +331,7 @@ async def test_branch_list_route():
     mock_principal.tenant_id = "t1"
 
     with patch(
-        "services.branch_service.retrieve_branches_for_tenant",
+        "api.v1.branch_route.retrieve_branches_for_tenant",
         new_callable=AsyncMock,
         return_value=[_make_branch_out()],
     ):

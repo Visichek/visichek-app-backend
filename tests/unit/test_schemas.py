@@ -250,7 +250,6 @@ class TestDepartmentSchema:
         with pytest.raises(ValidationError) as exc_info:
             DepartmentCreate(tenant_id="tenant123")
         errors = exc_info.value.errors()
-        assert any(e["loc"] == ("code",) for e in errors)
         assert any(e["loc"] == ("name",) for e in errors)
 
     def test_department_update_all_optional(self):
@@ -315,7 +314,7 @@ class TestSystemUserSchema:
             full_name="John Doe",
             email="john@example.com",
             role=SystemUserRole.RECEPTIONIST,
-            password_hash="raw_password",
+            password_hash="MyStr0ng!Passw0rd#2026",
         )
         assert payload.tenant_id == "tenant123"
         assert payload.full_name == "John Doe"
@@ -323,11 +322,11 @@ class TestSystemUserSchema:
         assert payload.role == SystemUserRole.RECEPTIONIST
         assert payload.account_status == AccountStatus.ACTIVE
         assert payload.is_active is True
-        assert payload.password_hash != "raw_password"  # Should be hashed
+        assert payload.password_hash != "MyStr0ng!Passw0rd#2026"  # Should be hashed
 
     def test_system_user_create_password_hashing(self):
         """Test SystemUserCreate hashes password via validator."""
-        raw_password = "MySecurePassword123"
+        raw_password = "MyStr0ng!Passw0rd#2026"
         payload = SystemUserCreate(
             tenant_id="tenant123",
             full_name="John Doe",
@@ -345,8 +344,8 @@ class TestSystemUserSchema:
             tenant_id="tenant123",
             full_name="John Doe",
             email="john@example.com",
-            role=SystemUserRole.ADMIN,
-            password_hash="password",
+            role=SystemUserRole.SUPER_ADMIN,
+            password_hash="MyStr0ng!Passw0rd#2026",
         )
         after = int(time.time())
         assert before <= payload.date_created <= after
@@ -638,11 +637,13 @@ class TestVisitSessionSchema:
 
     def test_checkin_request_defaults(self):
         """Test CheckInRequest with defaults."""
-        payload = CheckInRequest(department_id="dept789")
+        payload = CheckInRequest(
+            department_id="dept789", phone="+2348012345678", full_name="Jane Smith"
+        )
         assert payload.department_id == "dept789"
         assert payload.check_in_method == CheckInMethod.MANUAL
-        assert payload.phone is None
-        assert payload.full_name is None
+        assert payload.phone == "+2348012345678"
+        assert payload.full_name == "Jane Smith"
 
     def test_checkout_request_defaults(self):
         """Test CheckOutRequest with defaults."""

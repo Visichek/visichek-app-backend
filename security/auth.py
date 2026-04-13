@@ -147,8 +147,21 @@ async def verify_admin_token_otp(
 # --- VisiChek System User Role Verifiers ---
 
 
+_VERIFY_SYSTEM_USER_TOKEN_CACHE: dict = {}
+
+
 def verify_system_user_token(*allowed_roles: str):
-    """Factory that returns a dependency verifying the token has one of the allowed roles."""
+    """Factory that returns a dependency verifying the token has one of the allowed roles.
+
+    Closures are cached by the (sorted) set of allowed roles so that repeated calls with
+    the same roles return the SAME dependency function. This is important for FastAPI's
+    ``app.dependency_overrides`` to work reliably (e.g. in tests), since override lookup
+    is keyed on object identity.
+    """
+    key = tuple(sorted(set(allowed_roles)))
+    cached = _VERIFY_SYSTEM_USER_TOKEN_CACHE.get(key)
+    if cached is not None:
+        return cached
 
     async def _verifier(
         request: Request,
@@ -156,6 +169,39 @@ def verify_system_user_token(*allowed_roles: str):
             token_auth_scheme
         ),
     ) -> AuthPrincipal:
+        # Allow tests to override the factory itself: if the app has registered
+        # an override for verify_system_user_token, call it instead. This lets
+        # tests do app.dependency_overrides[verify_system_user_token] = lambda: principal
+        try:
+            app = request.app
+            override = app.dependency_overrides.get(verify_system_user_token)
+        except Exception:
+            override = None
+        if override is not None:
+            import inspect
+
+            try:
+                # Support lambda/fn with no args, *roles, or (request, credentials)
+                sig = inspect.signature(override)
+                params = sig.parameters
+                if len(params) == 0:
+                    result = override()
+                elif any(
+                    p.kind == inspect.Parameter.VAR_POSITIONAL for p in params.values()
+                ):
+                    result = override(*allowed_roles)
+                else:
+                    # Best-effort: try no args, fallback to roles
+                    try:
+                        result = override()
+                    except TypeError:
+                        result = override(*allowed_roles)
+            except (TypeError, ValueError):
+                result = override() if callable(override) else override
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+
         principal = await _resolve_principal(request, credentials, allow_expired=False)
         if principal.role not in allowed_roles:
             raise auth_role_mismatch(
@@ -164,6 +210,7 @@ def verify_system_user_token(*allowed_roles: str):
             )
         return principal
 
+    _VERIFY_SYSTEM_USER_TOKEN_CACHE[key] = _verifier
     return _verifier
 
 

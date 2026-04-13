@@ -16,7 +16,7 @@ from schemas.plan_schema import PlanOut, PlanStatus, PlanTier, TenantCapLimit
 
 def _make_plan_out(**overrides) -> PlanOut:
     defaults = {
-        "_id": "plan1",
+        "_id": "507f1f77bcf86cd799439121",
         "name": "test-plan",
         "display_name": "Test Plan",
         "tier": PlanTier.PROFESSIONAL.value,
@@ -80,7 +80,7 @@ async def test_archive_plan_sets_is_public_false():
     ) as mock_update:
         from services.plan_service import archive_plan
 
-        result = await archive_plan("plan1")
+        result = await archive_plan("507f1f77bcf86cd799439121")
         assert result.status == PlanStatus.ARCHIVED
 
         # Verify the update data included is_public=False
@@ -111,7 +111,7 @@ async def test_subscribe_to_archived_plan_fails():
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
-            await subscribe_tenant(tenant_id="t1", plan_id="plan1")
+            await subscribe_tenant(tenant_id="t1", plan_id="507f1f77bcf86cd799439121")
         assert exc_info.value.status_code == 400
         assert "not active" in exc_info.value.detail
 
@@ -132,7 +132,7 @@ async def test_subscribe_to_draft_plan_fails():
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
-            await subscribe_tenant(tenant_id="t1", plan_id="plan1")
+            await subscribe_tenant(tenant_id="t1", plan_id="507f1f77bcf86cd799439121")
         assert exc_info.value.status_code == 400
 
 
@@ -181,7 +181,7 @@ async def test_remove_active_plan_fails():
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
-            await remove_plan("plan1")
+            await remove_plan("507f1f77bcf86cd799439121")
         assert exc_info.value.status_code == 400
         assert "draft" in exc_info.value.detail.lower()
 
@@ -200,5 +200,5 @@ async def test_remove_archived_plan_fails():
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
-            await remove_plan("plan1")
+            await remove_plan("507f1f77bcf86cd799439121")
         assert exc_info.value.status_code == 400

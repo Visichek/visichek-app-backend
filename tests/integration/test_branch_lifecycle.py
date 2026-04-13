@@ -45,6 +45,7 @@ async def client(mongo_db: AsyncIOMotorDatabase):
     async with AsyncClient(
         transport=ASGITransport(app=app),  # type: ignore[arg-type]
         base_url="http://test",
+        headers={"X-Response-Case": "snake"},
     ) as c:
         yield c
 

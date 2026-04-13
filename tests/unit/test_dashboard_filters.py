@@ -102,11 +102,9 @@ class TestDashboardFilters:
         and return only sessions for that host. This allows filtering visitor logs
         by which host they were meeting with.
         """
-        from security.auth import verify_system_user_token
+        from api.v1.dashboard_route import _admin_roles
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
-            MOCK_DEPT_ADMIN_PRINCIPAL
-        )
+        app.dependency_overrides[_admin_roles] = lambda: MOCK_DEPT_ADMIN_PRINCIPAL
 
         session_host1_a = _make_visit_session_out(
             id="session-001",
@@ -125,7 +123,7 @@ class TestDashboardFilters:
         )
 
         with patch(
-            "services.visit_session_service.retrieve_visit_sessions",
+            "api.v1.dashboard_route.get_visitor_log",
             new_callable=AsyncMock,
         ) as mock_list:
             # Return all sessions first
@@ -136,7 +134,7 @@ class TestDashboardFilters:
             ) as client:
                 # Filter by host-001
                 response = await client.get(
-                    "/v1/visitors?start=0&stop=100&host_id=host-001",
+                    "/v1/dashboard/visitors?start=0&stop=100&host_id=host-001",
                     headers={"Authorization": "Bearer token-dept-001"},
                 )
 
@@ -162,11 +160,9 @@ class TestDashboardFilters:
         When filtering by a specific host_id, only sessions with that host_id
         should be returned.
         """
-        from security.auth import verify_system_user_token
+        from api.v1.dashboard_route import _admin_roles
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
-            MOCK_DEPT_ADMIN_PRINCIPAL
-        )
+        app.dependency_overrides[_admin_roles] = lambda: MOCK_DEPT_ADMIN_PRINCIPAL
 
         session_host1 = _make_visit_session_out(
             id="session-001",
@@ -175,7 +171,7 @@ class TestDashboardFilters:
         )
 
         with patch(
-            "services.visit_session_service.retrieve_visit_sessions",
+            "api.v1.dashboard_route.get_visitor_log",
             new_callable=AsyncMock,
         ) as mock_list:
             mock_list.return_value = [session_host1]
@@ -184,14 +180,14 @@ class TestDashboardFilters:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/visitors?start=0&stop=100&host_id=host-001",
+                    "/v1/dashboard/visitors?start=0&stop=100&host_id=host-001",
                     headers={"Authorization": "Bearer token-dept-001"},
                 )
 
             assert response.status_code == 200
             data = response.json()
             assert len(data["data"]) == 1
-            assert data["data"][0]["host_id"] == "host-001"
+            assert data["data"][0]["hostId"] == "host-001"
 
     @pytest.mark.asyncio
     async def test_visitor_log_filter_by_verification_status(
@@ -204,11 +200,9 @@ class TestDashboardFilters:
         query parameter and return only sessions with that verification status.
         This allows filtering by verified vs unverified visitors.
         """
-        from security.auth import verify_system_user_token
+        from api.v1.dashboard_route import _admin_roles
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
-            MOCK_DEPT_ADMIN_PRINCIPAL
-        )
+        app.dependency_overrides[_admin_roles] = lambda: MOCK_DEPT_ADMIN_PRINCIPAL
 
         verified_session = _make_visit_session_out(
             id="session-001",
@@ -227,7 +221,7 @@ class TestDashboardFilters:
         )
 
         with patch(
-            "services.visit_session_service.retrieve_visit_sessions",
+            "api.v1.dashboard_route.get_visitor_log",
             new_callable=AsyncMock,
         ) as mock_list:
             # Return only verified sessions
@@ -237,7 +231,7 @@ class TestDashboardFilters:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/visitors?start=0&stop=100&verification_status=verified",
+                    "/v1/dashboard/visitors?start=0&stop=100&verification_status=verified",
                     headers={"Authorization": "Bearer token-dept-001"},
                 )
 
@@ -245,7 +239,7 @@ class TestDashboardFilters:
             data = response.json()
             assert data["success"] is True
             assert len(data["data"]) == 1
-            assert data["data"][0]["verification_status"] == "verified"
+            assert data["data"][0]["verificationStatus"] == "verified"
 
     @pytest.mark.asyncio
     async def test_visitor_log_filter_by_verification_status_unverified(
@@ -256,11 +250,9 @@ class TestDashboardFilters:
 
         The filter should also work for unverified and denied statuses.
         """
-        from security.auth import verify_system_user_token
+        from api.v1.dashboard_route import _admin_roles
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
-            MOCK_DEPT_ADMIN_PRINCIPAL
-        )
+        app.dependency_overrides[_admin_roles] = lambda: MOCK_DEPT_ADMIN_PRINCIPAL
 
         unverified_session = _make_visit_session_out(
             id="session-001",
@@ -269,7 +261,7 @@ class TestDashboardFilters:
         )
 
         with patch(
-            "services.visit_session_service.retrieve_visit_sessions",
+            "api.v1.dashboard_route.get_visitor_log",
             new_callable=AsyncMock,
         ) as mock_list:
             mock_list.return_value = [unverified_session]
@@ -278,14 +270,14 @@ class TestDashboardFilters:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/visitors?start=0&stop=100&verification_status=unverified",
+                    "/v1/dashboard/visitors?start=0&stop=100&verification_status=unverified",
                     headers={"Authorization": "Bearer token-dept-001"},
                 )
 
             assert response.status_code == 200
             data = response.json()
             assert len(data["data"]) == 1
-            assert data["data"][0]["verification_status"] == "unverified"
+            assert data["data"][0]["verificationStatus"] == "unverified"
 
     @pytest.mark.asyncio
     async def test_visitor_log_combined_filters(self, cleanup_dependency_overrides):
@@ -295,11 +287,9 @@ class TestDashboardFilters:
         Filters should be composable - allowing simultaneous filtering by multiple
         fields like host_id and verification_status.
         """
-        from security.auth import verify_system_user_token
+        from api.v1.dashboard_route import _admin_roles
 
-        app.dependency_overrides[verify_system_user_token] = lambda *roles: (
-            MOCK_DEPT_ADMIN_PRINCIPAL
-        )
+        app.dependency_overrides[_admin_roles] = lambda: MOCK_DEPT_ADMIN_PRINCIPAL
 
         # Only this session matches both filters
         matching_session = _make_visit_session_out(
@@ -310,7 +300,7 @@ class TestDashboardFilters:
         )
 
         with patch(
-            "services.visit_session_service.retrieve_visit_sessions",
+            "api.v1.dashboard_route.get_visitor_log",
             new_callable=AsyncMock,
         ) as mock_list:
             mock_list.return_value = [matching_session]
@@ -319,12 +309,12 @@ class TestDashboardFilters:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/visitors?start=0&stop=100&host_id=host-001&verification_status=verified",
+                    "/v1/dashboard/visitors?start=0&stop=100&host_id=host-001&verification_status=verified",
                     headers={"Authorization": "Bearer token-dept-001"},
                 )
 
             assert response.status_code == 200
             data = response.json()
             assert len(data["data"]) == 1
-            assert data["data"][0]["host_id"] == "host-001"
-            assert data["data"][0]["verification_status"] == "verified"
+            assert data["data"][0]["hostId"] == "host-001"
+            assert data["data"][0]["verificationStatus"] == "verified"

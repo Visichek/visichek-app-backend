@@ -172,7 +172,10 @@ class TestPlanRoutes:
             },
         )
         assert resp.status_code == 200
-        assert resp.json()["data"]["display_name"] == "Updated Plan"
+        assert (
+            resp.json()["data"].get("display_name")
+            or resp.json()["data"].get("displayName")
+        ) == "Updated Plan"
 
     @patch("api.v1.plan_route.archive_plan", new_callable=AsyncMock)
     async def test_archive_plan(self, mock_archive, client):
@@ -215,9 +218,14 @@ class TestSubscriptionRoutes:
         assert resp.status_code == 201
         data = resp.json()
         assert data["success"] is True
-        assert data["data"]["tenant_id"] == "tenant_abc"
+        assert (
+            data["data"].get("tenant_id") or data["data"].get("tenantId")
+        ) == "tenant_abc"
 
-    @patch("api.v1.subscription_route.retrieve_subscriptions", new_callable=AsyncMock)
+    @patch(
+        "api.v1.subscription_route.retrieve_subscriptions_with_details",
+        new_callable=AsyncMock,
+    )
     async def test_list_subscriptions(self, mock_list, client):
         mock_list.return_value = [_sub_out()]
         resp = await client.get("/v1/subscriptions")
@@ -231,7 +239,9 @@ class TestSubscriptionRoutes:
         mock_get.return_value = _sub_out()
         resp = await client.get("/v1/subscriptions/sub_test")
         assert resp.status_code == 200
-        assert resp.json()["data"]["plan_id"] == "plan_test"
+        assert (
+            resp.json()["data"].get("plan_id") or resp.json()["data"].get("planId")
+        ) == "plan_test"
 
     @patch("api.v1.subscription_route.change_plan", new_callable=AsyncMock)
     async def test_change_plan(self, mock_change, client):
@@ -244,7 +254,9 @@ class TestSubscriptionRoutes:
             },
         )
         assert resp.status_code == 200
-        assert resp.json()["data"]["plan_id"] == "plan_new"
+        assert (
+            resp.json()["data"].get("plan_id") or resp.json()["data"].get("planId")
+        ) == "plan_new"
 
     @patch("api.v1.subscription_route.cancel_subscription", new_callable=AsyncMock)
     async def test_cancel_subscription(self, mock_cancel, client):

@@ -73,7 +73,8 @@ def error_response(
         status_code=status_code,
         headers=headers,
         content=jsonable_encoder(
-            error_payload(message=message, data=data, request_id=request_id)
+            error_payload(message=message, data=data, request_id=request_id),
+            by_alias=False,
         ),
     )
 
@@ -175,11 +176,12 @@ def document_response(
             if config.include_meta:
                 if isinstance(result, tuple) and len(result) == 2:
                     data, meta = result
-                elif (
-                    isinstance(result, dict) and "items" in result and "meta" in result
-                ):
+                elif isinstance(result, dict) and "items" in result:
                     data = result.get("items")
-                    meta = result.get("meta")
+                    if "meta" in result:
+                        meta = result.get("meta")
+                    else:
+                        meta = {k: v for k, v in result.items() if k != "items"} or None
 
             request = _extract_request(*args, **kwargs)
             request_id = _request_id_from_request(request)
@@ -192,9 +194,32 @@ def document_response(
                         message=message,
                         meta=meta,
                         request_id=request_id,
-                    )
+                    ),
+                    by_alias=False,
                 ),
             )
+
+        # Preserve the wrapped function's signature so FastAPI can introspect
+        # parameters (body models, query params, dependencies) correctly. Without
+        # this, FastAPI sees ``(*args, **kwargs)`` and mis-classifies body models
+        # as query parameters when PEP 563 annotations are in use.
+        try:
+            sig = inspect.signature(func)
+            try:
+                import typing as _typing
+
+                hints = _typing.get_type_hints(func, include_extras=True)
+                new_params = []
+                for name, param in sig.parameters.items():
+                    if name in hints:
+                        param = param.replace(annotation=hints[name])
+                    new_params.append(param)
+                sig = sig.replace(parameters=new_params)
+            except Exception:
+                pass
+            wrapper.__signature__ = sig  # type: ignore[attr-defined]
+        except (TypeError, ValueError):
+            pass
 
         setattr(wrapper, _RESPONSE_DOC_ATTR, config)
         return wrapper

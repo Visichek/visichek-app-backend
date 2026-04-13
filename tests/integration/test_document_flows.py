@@ -113,7 +113,7 @@ class TestDocumentUploadFlow:
             f"/v1/documents/{doc_id}", headers=auth_headers
         )
         assert resp.status_code == 200
-        assert resp.json()["data"]["id"] == doc_id
+        assert resp.json()["data"]["document"]["id"] == doc_id
 
     async def test_delete_document(
         self,

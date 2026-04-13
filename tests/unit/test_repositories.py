@@ -191,7 +191,7 @@ class TestSystemUserRepository:
             tenant_id="tenant123",
             full_name="John Receptionist",
             email="john@acme.com",
-            password_hash="password123",
+            password_hash="MyStr0ng!Passw0rd#2026",
             role=SystemUserRole.RECEPTIONIST,
         )
 

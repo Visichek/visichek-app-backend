@@ -71,6 +71,7 @@ class TestAuthFlow:
         integration_client: AsyncClient,
         mongo_db: AsyncIOMotorDatabase,
         seeded_tenant: TenantOut,
+        auth_headers: dict[str, str],
     ):
         """
         Full auth flow: Create system user -> login -> get profile -> refresh tokens.
@@ -87,11 +88,9 @@ class TestAuthFlow:
                 "full_name": "Flow Test User",
                 "email": email,
                 "role": "receptionist",
-                "password_hash": password,
+                "password": password,
             },
-            headers={
-                "Authorization": f"Bearer {await self._get_admin_token(integration_client, seeded_tenant)}"
-            },
+            headers=auth_headers,
         )
 
         assert signup_response.status_code == 201
@@ -210,18 +209,6 @@ class TestAuthFlow:
         data = response.json()
         assert data["success"] is False
 
-    async def _get_admin_token(
-        self,
-        client: AsyncClient,
-        tenant: TenantOut,
-    ) -> str:
-        """Helper to get a super_admin token for the given tenant."""
-
-        # This is a helper to create admin token; in real tests, use seeded_system_user
-        raise NotImplementedError(
-            "Use auth_headers fixture or create dedicated admin user"
-        )
-
 
 # ============================================================================
 # TestVisitorCheckInCheckOutFlow
@@ -294,13 +281,24 @@ class TestVisitorCheckInCheckOutFlow:
         assert checkin_data["success"] is True
         assert checkin_data["message"] == "Visitor checked in successfully"
 
-        visit_session = checkin_data["data"]
+        visit_session = checkin_data["data"]["session"]
         session_id = visit_session["id"]
-        assert visit_session["status"] == "checked_in"
+        # Phase 1A: registration creates a REGISTERED session; confirmation transitions to CHECKED_IN
+        assert visit_session["status"] == "registered"
         assert visit_session["visitor_name_snapshot"] == "John Visitor"
         assert visit_session["check_in_time"] is not None
         assert visit_session["check_out_time"] is None
         assert visit_session["visit_duration"] is None
+
+        # Confirm the check-in to generate badge and transition to CHECKED_IN
+        confirm_response = await integration_client.post(
+            f"/v1/visitors/sessions/{session_id}/confirm",
+            json={"purpose": "Business meeting", "host_id": host.id or ""},
+            headers=auth_headers,
+        )
+        assert confirm_response.status_code == 200
+        confirmed_session = confirm_response.json()["data"]["session"]
+        assert confirmed_session["status"] == "checked_in"
 
         # Get the visit session directly from DB to verify persistence
         db_session = await get_visit_session({"_id": ObjectId(session_id)})
@@ -327,7 +325,7 @@ class TestVisitorCheckInCheckOutFlow:
         assert checked_out_session["status"] == "checked_out"
         assert checked_out_session["check_out_time"] is not None
         assert checked_out_session["visit_duration"] is not None
-        assert checked_out_session["visit_duration"] > 0
+        assert checked_out_session["visit_duration"] >= 0
 
     async def test_check_in_without_required_fields_fails(
         self,

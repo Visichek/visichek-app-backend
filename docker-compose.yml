@@ -6,7 +6,7 @@
 services:
   web:
     build: .
-    command: gunicorn -w 5 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:7861 --timeout 120 --graceful-timeout 30 main:app
+    command: fastapi run main.py --host 0.0.0.0 --port 7861  --workers 5
     ports:
       - "7861:7861"
     env_file:
