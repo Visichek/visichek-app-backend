@@ -10,7 +10,7 @@ Tests:
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 
 from main import app
@@ -182,7 +182,7 @@ class TestVerification:
             verified_by="receptionist-001",
         )
 
-        updated_profile = _make_visitor_profile_out(
+        _make_visitor_profile_out(
             id_type="passport",
             id_number="AB123456",
             id_expiry=1744060800,

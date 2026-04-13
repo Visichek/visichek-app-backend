@@ -16,7 +16,6 @@ from schemas.system_user_schema import (
     SystemUserSignupRequest,
     SystemUserTenantLogin,
     SystemUserCreate,
-    SystemUserOut,
 )
 from schemas.imports import SystemUserRole
 

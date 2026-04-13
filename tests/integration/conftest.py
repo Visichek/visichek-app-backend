@@ -10,7 +10,7 @@ import pytest
 import pytest_asyncio
 import redis
 from dotenv import load_dotenv
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from fastapi import FastAPI
 
@@ -92,7 +92,7 @@ async def integration_client(integration_app: FastAPI) -> AsyncGenerator[AsyncCl
     """
     Fixture that provides an httpx AsyncClient for making requests to the FastAPI app.
     """
-    async with AsyncClient(app=integration_app, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=integration_app), base_url="http://test") as client:
         yield client
 
 

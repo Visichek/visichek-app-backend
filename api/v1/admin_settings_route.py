@@ -3,12 +3,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 
 from core.response_envelope import document_response
-from schemas.user_settings_schema import UserSettingsOut, UserSettingsUpdate, UserPreferenceUpdate
-from schemas.platform_settings_schema import PlatformSettingsOut, PlatformSettingsUpdate
+from schemas.user_settings_schema import UserSettingsUpdate, UserPreferenceUpdate
+from schemas.platform_settings_schema import PlatformSettingsUpdate
 from schemas.session_schema import (
     ChangePasswordRequest,
-    SessionOut,
-    TwoFactorSetupOut,
     TwoFactorVerifyRequest,
 )
 from security.auth import verify_admin_token

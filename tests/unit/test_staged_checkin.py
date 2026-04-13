@@ -10,13 +10,13 @@ Tests:
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 
 from main import app
 from schemas.imports import VisitStatus, VerificationStatus
 from security.principal import AuthPrincipal
-from schemas.visit_session_schema import VisitSessionOut
+
 
 
 # Mock auth principal for receptionist
@@ -288,7 +288,7 @@ class TestStagedCheckIn:
             id="session-002",
             status=VisitStatus.PENDING_VERIFICATION,
         )
-        checked_in_session = _make_visit_session_out(
+        _make_visit_session_out(
             id="session-003",
             status=VisitStatus.CHECKED_IN,
         )

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from dotenv import load_dotenv
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from fastapi import FastAPI
 
 # Load test environment variables FIRST before importing any app modules
@@ -37,7 +37,7 @@ async def app_instance() -> FastAPI:
 
 @pytest.fixture
 async def client(app_instance: FastAPI) -> AsyncClient:
-    async with AsyncClient(app=app_instance, base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app_instance), base_url="http://test") as ac:
         yield ac
 
 

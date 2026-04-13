@@ -17,7 +17,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from main import app
-from security.auth import verify_system_user_token
+from api.v1.branch_route import _super_admin_dep
 
 
 def _mock_super_admin(tenant_id: str = "integration-tenant-1"):
@@ -34,8 +34,7 @@ def _mock_super_admin(tenant_id: str = "integration-tenant-1"):
 @pytest_asyncio.fixture
 async def client():
     """Async HTTP client with super_admin auth overridden."""
-    dep_fn = verify_system_user_token("super_admin")
-    app.dependency_overrides[dep_fn] = lambda: _mock_super_admin()
+    app.dependency_overrides[_super_admin_dep] = lambda: _mock_super_admin()
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"

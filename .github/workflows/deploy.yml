@@ -8,23 +8,26 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: production
-    permissions:
-      contents: read
+    environment: production
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           port: 22
           script: |
-            cd visichek-app-backend
+            set -e
+
+            APP_DIR="$HOME/visichek-app-backend"
+            REPO_SSH="git@github.com-appbackend:Visichek/visichek-app-backend.git"
+
+            if [ ! -d "$APP_DIR/.git" ]; then
+              git clone "$REPO_SSH" "$APP_DIR"
+            fi
+
+            cd "$APP_DIR"
             git pull origin main
-            sudo docker compose down
-            sudo docker compose up --build -d
+            docker compose down
+            docker compose up --build -d

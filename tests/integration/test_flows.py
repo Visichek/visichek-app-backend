@@ -15,7 +15,7 @@ from schemas.system_user_schema import (
 )
 from schemas.department_schema import DepartmentCreate, DepartmentOut
 from schemas.visit_session_schema import CheckInRequest, CheckOutRequest
-from schemas.privacy_notice_schema import PrivacyNoticeCreate, PrivacyNoticeOut
+from schemas.privacy_notice_schema import PrivacyNoticeCreate, PrivacyNoticeOut, PrivacyNoticeUpdate
 from schemas.data_subject_request_schema import DSRCreate, DSRUpdate, DSROut
 from schemas.appointment_schema import AppointmentCreate, AppointmentOut
 from schemas.imports import (
@@ -31,6 +31,7 @@ from schemas.imports import (
     AppointmentStatus,
 )
 from repositories.tenant_repo import create_tenant, get_tenant
+from services.tenant_service import add_tenant
 from repositories.system_user_repo import (
     create_system_user,
     get_system_user,
@@ -464,7 +465,7 @@ class TestTenantDepartmentFlow:
         tenant_data1 = TenantCreate(
             company_name=company_name,
         )
-        tenant1 = await create_tenant(tenant_data1)
+        tenant1 = await add_tenant(tenant_data1)
         assert tenant1.id is not None
 
         # Attempt to create second tenant with same name
@@ -473,7 +474,7 @@ class TestTenantDepartmentFlow:
         )
 
         with pytest.raises(Exception):  # Should raise HTTPException 409
-            await create_tenant(tenant_data2)
+            await add_tenant(tenant_data2)
 
 
 # ============================================================================
