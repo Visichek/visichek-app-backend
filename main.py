@@ -358,8 +358,15 @@ app.add_middleware(PlanEnforcementMiddleware)
 app.add_middleware(RateLimitingMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 _cors_origins = list(settings.cors_origins) if settings.cors_origins else []
-if settings.env != "production" and "http://localhost:3000" not in _cors_origins:
-    _cors_origins.append("http://localhost:3000")
+_default_origins = [
+    "http://localhost:3000",
+    "https://visichek.app",
+    "https://client.visichek.app",
+    "https://visichek-app.vercel.app",
+]
+for _origin in _default_origins:
+    if _origin not in _cors_origins:
+        _cors_origins.append(_origin)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
