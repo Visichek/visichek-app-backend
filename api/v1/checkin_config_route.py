@@ -101,9 +101,7 @@ async def lookup_returning_visitor(
 
     # Get config to extract tenant_id
     config = await resolve_public_config(checkin_config_id)
-    return await lookup_visitor(
-        tenant_id=config.tenant_id, email=email, phone=phone
-    )
+    return await lookup_visitor(tenant_id=config.tenant_id, email=email, phone=phone)
 
 
 @router.post("/{checkin_config_id}/checkins", status_code=status.HTTP_201_CREATED)

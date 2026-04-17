@@ -138,7 +138,9 @@ def get_settings() -> Settings:
         gcp_project_id=os.getenv("GCP_PROJECT_ID"),
         gcp_location=os.getenv("GCP_LOCATION", "us"),
         docai_passport_processor_id=os.getenv("DOCAI_PASSPORT_PROCESSOR_ID"),
-        docai_drivers_license_processor_id=os.getenv("DOCAI_DRIVERS_LICENSE_PROCESSOR_ID"),
+        docai_drivers_license_processor_id=os.getenv(
+            "DOCAI_DRIVERS_LICENSE_PROCESSOR_ID"
+        ),
         docai_national_id_processor_id=os.getenv("DOCAI_NATIONAL_ID_PROCESSOR_ID"),
         gcp_access_token=os.getenv("GCP_ACCESS_TOKEN"),
         id_number_encryption_key=os.getenv("ID_NUMBER_ENCRYPTION_KEY"),

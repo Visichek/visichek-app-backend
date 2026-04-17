@@ -18,12 +18,8 @@ PDF_MAGIC = b"%PDF-"
 # Roboflow hosted inference config (override via env vars)
 ROBOFLOW_API_URL = os.getenv("ROBOFLOW_API_URL", "https://serverless.roboflow.com")
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY", "IDaqV6JQ9wkdFtO5mKeh")
-ROBOFLOW_WORKSPACE = os.getenv(
-    "ROBOFLOW_WORKSPACE", "final-year-project-x3ycf"
-)
-ROBOFLOW_WORKFLOW_ID = os.getenv(
-    "ROBOFLOW_WORKFLOW_ID", "general-segmentation-api"
-)
+ROBOFLOW_WORKSPACE = os.getenv("ROBOFLOW_WORKSPACE", "final-year-project-x3ycf")
+ROBOFLOW_WORKFLOW_ID = os.getenv("ROBOFLOW_WORKFLOW_ID", "general-segmentation-api")
 ROBOFLOW_CLASSES = os.getenv("ROBOFLOW_CLASSES", "face")
 
 

@@ -36,7 +36,7 @@ router = APIRouter(prefix="/badges", tags=["Badges"])
     },
 )
 async def validate_badge_endpoint(
-    qr_code_value: Annotated[str, Query(description="QR code value from badge")]
+    qr_code_value: Annotated[str, Query(description="QR code value from badge")],
 ):
     """Validate a badge by QR code (scanner/kiosk, unauthenticated)."""
     return await validate_badge(qr_code_value)

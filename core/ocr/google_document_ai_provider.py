@@ -139,48 +139,43 @@ class GoogleDocumentAIProvider:
         # Full name: concat given_names + family_name
         given_names = entity_map.get("given_names", {})
         family_name = entity_map.get("family_name", {})
-        given_text = (
-            given_names.get("normalizedValue", {}).get("text")
-            or given_names.get("mentionText", "")
-        )
-        family_text = (
-            family_name.get("normalizedValue", {}).get("text")
-            or family_name.get("mentionText", "")
-        )
+        given_text = given_names.get("normalizedValue", {}).get(
+            "text"
+        ) or given_names.get("mentionText", "")
+        family_text = family_name.get("normalizedValue", {}).get(
+            "text"
+        ) or family_name.get("mentionText", "")
         if given_text or family_text:
             fields["full_name"] = f"{given_text} {family_text}".strip()
 
         # Date of birth
         dob = entity_map.get("date_of_birth", {})
-        dob_text = (
-            dob.get("normalizedValue", {}).get("text") or dob.get("mentionText", "")
+        dob_text = dob.get("normalizedValue", {}).get("text") or dob.get(
+            "mentionText", ""
         )
         if dob_text:
             fields["date_of_birth"] = dob_text
 
         # Nationality
         nationality = entity_map.get("nationality", {})
-        nat_text = (
-            nationality.get("normalizedValue", {}).get("text")
-            or nationality.get("mentionText", "")
-        )
+        nat_text = nationality.get("normalizedValue", {}).get(
+            "text"
+        ) or nationality.get("mentionText", "")
         if nat_text:
             fields["nationality"] = nat_text
 
         # Address
         address = entity_map.get("address", {})
-        addr_text = (
-            address.get("normalizedValue", {}).get("text")
-            or address.get("mentionText", "")
+        addr_text = address.get("normalizedValue", {}).get("text") or address.get(
+            "mentionText", ""
         )
         if addr_text:
             fields["address"] = addr_text
 
         # ID number (document_id)
         doc_id = entity_map.get("document_id", {})
-        doc_id_text = (
-            doc_id.get("normalizedValue", {}).get("text")
-            or doc_id.get("mentionText", "")
+        doc_id_text = doc_id.get("normalizedValue", {}).get("text") or doc_id.get(
+            "mentionText", ""
         )
         if doc_id_text:
             fields["id_number"] = doc_id_text

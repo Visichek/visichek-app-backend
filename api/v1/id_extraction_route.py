@@ -12,7 +12,9 @@ from services.id_extraction_service import extract_id
 router = APIRouter(prefix="/id-extractions", tags=["ID Extractions"])
 
 
-@router.post("", response_model=IDExtractionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=IDExtractionResponse, status_code=status.HTTP_201_CREATED
+)
 @document_response(
     message="ID extracted successfully",
     description="Extract ID data from an uploaded document via OCR (kiosk, unauthenticated).",

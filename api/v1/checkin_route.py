@@ -125,9 +125,7 @@ async def get_checkin_analytics(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(gt=0, le=100)] = 20,
     principal: AuthPrincipal = Depends(
-        verify_system_user_token(
-            "receptionist", "super_admin", "dept_admin", "auditor"
-        )
+        verify_system_user_token("receptionist", "super_admin", "dept_admin", "auditor")
     ),
 ):
     """Get check-in analytics (receptionist/super_admin/dept_admin/auditor)."""

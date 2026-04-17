@@ -61,9 +61,7 @@ async def find_visitor_by_email_or_phone_any(
     if phone:
         or_clauses.append({"phone": phone})
 
-    doc = await db[COLLECTION].find_one(
-        {"tenant_id": tenant_id, "$or": or_clauses}
-    )
+    doc = await db[COLLECTION].find_one({"tenant_id": tenant_id, "$or": or_clauses})
     if doc is None:
         return None
     return VisitorOut(**doc)

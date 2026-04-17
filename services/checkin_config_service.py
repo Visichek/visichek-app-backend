@@ -38,9 +38,7 @@ async def resolve_public_config(checkin_config_id: str) -> PublicCheckinConfigOu
 
     tenant = await get_tenant({"_id": config.tenant_id})
     if not tenant:
-        raise resource_not_found(
-            resource="Tenant", resource_id=config.tenant_id
-        )
+        raise resource_not_found(resource="Tenant", resource_id=config.tenant_id)
 
     # Fetch logo URL if branding is configured
     logo_url = None
@@ -69,9 +67,7 @@ async def resolve_public_config(checkin_config_id: str) -> PublicCheckinConfigOu
     )
 
 
-async def update_config(
-    config_id: str, data: CheckinConfigUpdate
-) -> CheckinConfigOut:
+async def update_config(config_id: str, data: CheckinConfigUpdate) -> CheckinConfigOut:
     """Update a check-in configuration."""
     return await update_checkin_config(config_id, data)
 

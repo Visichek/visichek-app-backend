@@ -387,9 +387,7 @@ async def notify_checkin_approved(
                     f"Failed to notify receptionist {receptionist.id}", exc_info=True
                 )
     except Exception:
-        logger.warning(
-            "Failed to send check-in approved notification", exc_info=True
-        )
+        logger.warning("Failed to send check-in approved notification", exc_info=True)
 
 
 async def notify_checkin_rejected(
@@ -425,6 +423,4 @@ async def notify_checkin_rejected(
                     f"Failed to notify receptionist {receptionist.id}", exc_info=True
                 )
     except Exception:
-        logger.warning(
-            "Failed to send check-in rejected notification", exc_info=True
-        )
+        logger.warning("Failed to send check-in rejected notification", exc_info=True)

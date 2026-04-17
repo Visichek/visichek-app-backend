@@ -58,9 +58,7 @@ async def submit_verified_checkin(
     from schemas.visitor_schema import VisitorCreate
 
     # 1. Resolve config
-    config = await get_checkin_config(
-        {"_id": checkin_config_id, "active": True}
-    )
+    config = await get_checkin_config({"_id": checkin_config_id, "active": True})
     if not config:
         raise resource_not_found(
             resource="CheckinConfig", resource_id=checkin_config_id
@@ -230,9 +228,7 @@ async def submit_checkin(
     6. Fire notification
     """
     # Resolve config
-    config = await get_checkin_config(
-        {"_id": checkin_config_id, "active": True}
-    )
+    config = await get_checkin_config({"_id": checkin_config_id, "active": True})
     if not config:
         raise resource_not_found(
             resource="CheckinConfig", resource_id=checkin_config_id
@@ -348,9 +344,7 @@ async def confirm_checkin(
         # Fetch visitor for response payload
         visitor = await get_visitor({"_id": checkin.visitor_id})
         if not visitor:
-            raise resource_not_found(
-                resource="Visitor", resource_id=checkin.visitor_id
-            )
+            raise resource_not_found(resource="Visitor", resource_id=checkin.visitor_id)
 
         # Create badge
         now = int(time.time())
@@ -483,5 +477,3 @@ async def list_checkins_analytics(
     checkins = await get_checkins(filter_dict, skip=skip, limit=limit)
     total = await count_checkins(filter_dict)
     return checkins, total
-
-

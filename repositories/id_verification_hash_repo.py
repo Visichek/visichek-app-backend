@@ -11,12 +11,8 @@ from schemas.id_verification_hash_schema import (
 COLLECTION = "id_verification_hashes"
 
 
-async def find_by_hash(
-    tenant_id: str, sha256: str
-) -> Optional[IDVerificationHashOut]:
-    doc = await db[COLLECTION].find_one(
-        {"tenant_id": tenant_id, "sha256": sha256}
-    )
+async def find_by_hash(tenant_id: str, sha256: str) -> Optional[IDVerificationHashOut]:
+    doc = await db[COLLECTION].find_one({"tenant_id": tenant_id, "sha256": sha256})
     if doc is None:
         return None
     return IDVerificationHashOut(**doc)

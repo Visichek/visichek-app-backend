@@ -132,7 +132,9 @@ async def verify_visitor_from_id(
     cropped_bytes = await crop_face(file_bytes)
 
     # 4. Upload cropped face
-    portrait_url = await _upload_portrait(tenant_id=tenant_id, image_bytes=cropped_bytes)
+    portrait_url = await _upload_portrait(
+        tenant_id=tenant_id, image_bytes=cropped_bytes
+    )
 
     # 5. Derive visitor fields from OCR
     bio_data = dict(extraction.extracted_fields)
