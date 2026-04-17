@@ -620,6 +620,10 @@ from api.v1.unified_platform_settings_route import (
     router as v1_unified_platform_settings_route_router,
 )
 from api.v1.settings_manifest_route import router as v1_settings_manifest_route_router
+from api.v1.checkin_config_route import router as v1_checkin_config_route_router
+from api.v1.id_extraction_route import router as v1_id_extraction_route_router
+from api.v1.checkin_route import router as v1_checkin_route_router
+from api.v1.badge_route import router as v1_badge_route_router
 
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
@@ -661,6 +665,10 @@ app.include_router(v1_account_route_router, prefix="/v1")
 app.include_router(v1_unified_tenant_settings_route_router, prefix="/v1")
 app.include_router(v1_unified_platform_settings_route_router, prefix="/v1")
 app.include_router(v1_settings_manifest_route_router, prefix="/v1")
+app.include_router(v1_checkin_config_route_router, prefix="/v1")
+app.include_router(v1_id_extraction_route_router, prefix="/v1")
+app.include_router(v1_checkin_route_router, prefix="/v1")
+app.include_router(v1_badge_route_router, prefix="/v1")
 # --- auto-routes-end ---
 
 apply_response_documentation(app)

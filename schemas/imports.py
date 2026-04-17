@@ -141,3 +141,34 @@ class LogoPosition(str, Enum):
     TOP_CENTER = "top_center"
     TOP_RIGHT = "top_right"
     CENTER = "center"
+
+
+# --- Check-In Domain Enums ---
+
+
+class CheckinState(str, Enum):
+    PENDING_APPROVAL = "pending_approval"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    CHECKED_OUT = "checked_out"
+
+
+class IDType(str, Enum):
+    PASSPORT = "passport"
+    DRIVERS_LICENSE = "drivers_license"
+    NATIONAL_ID = "national_id"
+
+
+class IDExtractionProvider(str, Enum):
+    GOOGLE_DOCUMENT_AI = "google_document_ai"
+
+
+class CheckinFieldCategory(str, Enum):
+    BIO = "bio"
+    TENANT_SPECIFIC = "tenant_specific"
+
+
+class BadgeValidationReason(str, Enum):
+    EXPIRED = "expired"
+    NOT_FOUND = "not_found"
+    REVOKED = "revoked"

@@ -310,3 +310,121 @@ async def notify_new_user_added(
         )
     except Exception:
         logger.warning("Failed to send new user notification", exc_info=True)
+
+
+# --- Check-In Notifications ---
+
+
+async def notify_checkin_pending_approval(
+    tenant_id: str,
+    checkin_id: str,
+    visitor_name: str,
+    verified: bool,
+    purpose: str,
+    host_employee_id: Optional[str] = None,
+) -> None:
+    """Fire-and-forget: notify receptionists about pending check-in."""
+    try:
+        from repositories.system_user_repo import get_system_users
+
+        # Get all receptionists for the tenant
+        receptionists = await get_system_users(
+            {"tenant_id": tenant_id, "role": "receptionist"}
+        )
+
+        # Send to each receptionist
+        for receptionist in receptionists:
+            try:
+                await send_notification(
+                    user_id=receptionist.id or "",
+                    user_type="system_user",
+                    title="Pending Check-In Approval",
+                    body=f"{visitor_name} ({purpose}) is awaiting approval.",
+                    type="info",
+                    link=f"/app/checkins/{checkin_id}",
+                    tenant_id=tenant_id,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to notify receptionist {receptionist.id}", exc_info=True
+                )
+    except Exception:
+        logger.warning(
+            "Failed to send check-in pending approval notification", exc_info=True
+        )
+
+
+async def notify_checkin_approved(
+    tenant_id: str,
+    checkin_id: str,
+    badge_id: str,
+    visitor_name: str,
+    approved_by_user_id: str,
+    host_employee_id: Optional[str] = None,
+) -> None:
+    """Fire-and-forget: notify about approved check-in and badge issuance."""
+    try:
+        from repositories.system_user_repo import get_system_users
+
+        # Get all receptionists for the tenant
+        receptionists = await get_system_users(
+            {"tenant_id": tenant_id, "role": "receptionist"}
+        )
+
+        for receptionist in receptionists:
+            try:
+                await send_notification(
+                    user_id=receptionist.id or "",
+                    user_type="system_user",
+                    title="Check-In Approved",
+                    body=f"Badge issued for {visitor_name}. Badge ID: {badge_id}",
+                    type="success",
+                    link=f"/app/checkins/{checkin_id}",
+                    tenant_id=tenant_id,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to notify receptionist {receptionist.id}", exc_info=True
+                )
+    except Exception:
+        logger.warning(
+            "Failed to send check-in approved notification", exc_info=True
+        )
+
+
+async def notify_checkin_rejected(
+    tenant_id: str,
+    checkin_id: str,
+    visitor_name: str,
+    rejected_by_user_id: str,
+    reason: str,
+    host_employee_id: Optional[str] = None,
+) -> None:
+    """Fire-and-forget: notify about rejected check-in."""
+    try:
+        from repositories.system_user_repo import get_system_users
+
+        # Get all receptionists for the tenant
+        receptionists = await get_system_users(
+            {"tenant_id": tenant_id, "role": "receptionist"}
+        )
+
+        for receptionist in receptionists:
+            try:
+                await send_notification(
+                    user_id=receptionist.id or "",
+                    user_type="system_user",
+                    title="Check-In Rejected",
+                    body=f"Check-in for {visitor_name} was rejected. Reason: {reason}",
+                    type="warning",
+                    link=f"/app/checkins/{checkin_id}",
+                    tenant_id=tenant_id,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to notify receptionist {receptionist.id}", exc_info=True
+                )
+    except Exception:
+        logger.warning(
+            "Failed to send check-in rejected notification", exc_info=True
+        )

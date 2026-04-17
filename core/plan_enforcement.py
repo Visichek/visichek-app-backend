@@ -75,6 +75,8 @@ PATH_TO_COLLECTION = {
     "incidents": "incidents",
     "tenants": "tenants",
     "branches": "branches",
+    "checkins": "checkins",
+    "badges": "badges",
 }
 
 

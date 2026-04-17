@@ -35,6 +35,25 @@ class OCRManager:
                 api_key=settings.ocr_api_key,
                 api_url=settings.ocr_api_url,
             )
+        elif provider_name == "google_document_ai":
+            from core.ocr.google_document_ai_provider import GoogleDocumentAIProvider
+
+            if not settings.gcp_project_id:
+                raise RuntimeError(
+                    "GCP_PROJECT_ID is required for Google Document AI provider"
+                )
+            provider = GoogleDocumentAIProvider(
+                gcp_project_id=settings.gcp_project_id,
+                gcp_location=settings.gcp_location,
+                passport_processor_id=settings.docai_passport_processor_id or "",
+                drivers_license_processor_id=settings.docai_drivers_license_processor_id
+                or "",
+                national_id_processor_id=settings.docai_national_id_processor_id or "",
+                access_token=settings.gcp_access_token,
+            )
+        elif provider_name == "none":
+            logger.info("OCR provider set to 'none' - ID extraction disabled")
+            return
         else:
             raise RuntimeError(f"Unknown OCR provider: {provider_name}")
 

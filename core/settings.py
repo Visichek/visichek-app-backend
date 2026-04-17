@@ -51,6 +51,15 @@ class Settings:
     ocr_api_url: str | None
     qr_signing_secret: str
     retention_check_interval_hours: int
+    # Google Document AI (check-in system)
+    gcp_project_id: str | None = None
+    gcp_location: str = "us"
+    docai_passport_processor_id: str | None = None
+    docai_drivers_license_processor_id: str | None = None
+    docai_national_id_processor_id: str | None = None
+    gcp_access_token: str | None = None
+    # ID number encryption
+    id_number_encryption_key: str | None = None
     # Logging
     log_level: str = "INFO"
     # Billing / Dunning
@@ -126,6 +135,13 @@ def get_settings() -> Settings:
         retention_check_interval_hours=int(
             os.getenv("RETENTION_CHECK_INTERVAL_HOURS", "24")
         ),
+        gcp_project_id=os.getenv("GCP_PROJECT_ID"),
+        gcp_location=os.getenv("GCP_LOCATION", "us"),
+        docai_passport_processor_id=os.getenv("DOCAI_PASSPORT_PROCESSOR_ID"),
+        docai_drivers_license_processor_id=os.getenv("DOCAI_DRIVERS_LICENSE_PROCESSOR_ID"),
+        docai_national_id_processor_id=os.getenv("DOCAI_NATIONAL_ID_PROCESSOR_ID"),
+        gcp_access_token=os.getenv("GCP_ACCESS_TOKEN"),
+        id_number_encryption_key=os.getenv("ID_NUMBER_ENCRYPTION_KEY"),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         max_dunning_attempts=int(os.getenv("MAX_DUNNING_ATTEMPTS", "5")),
         dunning_retry_days=_parse_int_list(
