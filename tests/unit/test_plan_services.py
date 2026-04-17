@@ -175,6 +175,17 @@ class TestPlanService:
             await activate_plan("507f1f77bcf86cd799439011")
         assert exc_info.value.status_code == 400
 
+    @patch("services.plan_service.retrieve_plan_by_id", new_callable=AsyncMock)
+    async def test_activate_plan_not_found_raises_404(self, mock_retrieve):
+        mock_retrieve.return_value = None
+
+        from services.plan_service import activate_plan
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await activate_plan("507f1f77bcf86cd799439011")
+        assert exc_info.value.status_code == 404
+
     @patch("services.plan_service.get_plan", new_callable=AsyncMock)
     @patch("services.plan_service.retrieve_plan_by_id", new_callable=AsyncMock)
     @patch("services.plan_service.create_plan", new_callable=AsyncMock)

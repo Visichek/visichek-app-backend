@@ -101,7 +101,7 @@ async def update_plan_endpoint(
 async def activate_plan_endpoint(
     plan_id: str,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> PlanOut | None:
+) -> PlanOut:
     """Activate a draft plan, making it available for subscription."""
     return await activate_plan(plan_id)
 

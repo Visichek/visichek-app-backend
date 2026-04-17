@@ -21,6 +21,7 @@ from httpx import AsyncClient
 
 from schemas.admin_schema import AdminCreate
 from repositories.admin_repo import create_admin
+from tests.integration.conftest import unique_password_suffix
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -32,7 +33,7 @@ async def admin_auth_headers(
     integration_client: AsyncClient,
 ):
     """Create a application admin and log them in."""
-    raw_password = f"PlanTestAdmin_{int(time.time())}!"
+    raw_password = f"PlanTestAdmin_{unique_password_suffix()}!"
     admin_data = AdminCreate(
         full_name="Plan Test Admin",
         email=f"plan_admin_{int(time.time())}@test.example.com",

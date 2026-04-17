@@ -5,6 +5,7 @@ from typing import List, Optional
 from bson import ObjectId
 from fastapi import HTTPException, status
 
+from core.errors import resource_not_found
 from repositories.plan_repo import (
     create_plan,
     get_plan,
@@ -128,11 +129,11 @@ async def archive_plan(plan_id: str) -> Optional[PlanOut]:
     return archived
 
 
-async def activate_plan(plan_id: str) -> Optional[PlanOut]:
+async def activate_plan(plan_id: str) -> PlanOut:
     """Publish a draft plan."""
     plan = await retrieve_plan_by_id(plan_id)
     if not plan:
-        return None
+        raise resource_not_found(resource="Plan", resource_id=plan_id)
     if plan.status == PlanStatus.ARCHIVED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -142,25 +143,26 @@ async def activate_plan(plan_id: str) -> Optional[PlanOut]:
         plan_id,
         PlanUpdate(status=PlanStatus.ACTIVE),
     )
+    if not activated:
+        raise resource_not_found(resource="Plan", resource_id=plan_id)
 
     # Record audit event (fire-and-forget)
-    if activated:
-        try:
-            await record_audit_event(
-                actor_id="system",
-                actor_role="admin",
-                action="plan.activated",
-                resource_type="plan",
-                resource_id=plan_id,
-                details={
-                    "name": activated.name,
-                    "tier": activated.tier.value
-                    if hasattr(activated.tier, "value")
-                    else activated.tier,
-                },
-            )
-        except Exception:
-            pass
+    try:
+        await record_audit_event(
+            actor_id="system",
+            actor_role="admin",
+            action="plan.activated",
+            resource_type="plan",
+            resource_id=plan_id,
+            details={
+                "name": activated.name,
+                "tier": activated.tier.value
+                if hasattr(activated.tier, "value")
+                else activated.tier,
+            },
+        )
+    except Exception:
+        pass
 
     return activated
 

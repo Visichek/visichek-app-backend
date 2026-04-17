@@ -18,6 +18,7 @@ from httpx import AsyncClient
 
 from schemas.admin_schema import AdminCreate
 from repositories.admin_repo import create_admin
+from tests.integration.conftest import unique_password_suffix
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -32,7 +33,7 @@ async def admin_auth_headers(
     Create a application admin directly in MongoDB and log them in.
     Returns auth headers dict.
     """
-    raw_password = f"AdminPass_{int(time.time())}!"
+    raw_password = f"AdminPass_{unique_password_suffix()}!"
     admin_data = AdminCreate(
         full_name="Bootstrap Test Admin",
         email=f"bootstrap_admin_{int(time.time())}@test.example.com",

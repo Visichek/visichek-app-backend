@@ -58,7 +58,7 @@ After a tenant has a `super_admin`, that user can create the rest of the tenant'
 | Application Admins | `/v1/admins/` | Application admin token | Platform management, tenant bootstrap |
 | Application Admin Dashboard | `/v1/admins/dashboard/` | Application admin token | Platform-wide stats |
 | Tenants | `/v1/tenants/` | Application admin token | Tenant CRUD |
-| Plans | `/v1/plans/` | Application admin token | Subscription plan CRUD |
+| Plans | `/v1/plans` | Application admin token | Subscription plan CRUD |
 | Subscriptions | `/v1/subscriptions/` | Application admin token | Tenant subscription management |
 | Discounts | `/v1/discounts/` | Application admin token | Discount code management |
 | Tenant Users | `/v1/system-users/` | Tenant user token | Tenant user CRUD + login |

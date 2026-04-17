@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, cast
 
@@ -42,6 +43,36 @@ import core.database
 
 
 settings = get_settings()
+
+
+def unique_password_suffix(length: int = 12) -> str:
+    """
+    Generate a random hex suffix safe for passwords.
+
+    Retries if the candidate contains 4+ repeated identical characters
+    or 4+ sequential characters, both of which are blocked by the
+    password policy in security/password_policy.py.
+    """
+    while True:
+        candidate = uuid.uuid4().hex[:length]
+        lower = candidate.lower()
+        has_repeat = any(
+            len(set(candidate[i : i + 4])) == 1 for i in range(len(candidate) - 3)
+        )
+        if has_repeat:
+            continue
+        has_sequential = False
+        for i in range(len(lower) - 3):
+            chunk = lower[i : i + 4]
+            if all(ord(chunk[j + 1]) == ord(chunk[j]) + 1 for j in range(3)):
+                has_sequential = True
+                break
+            if all(ord(chunk[j + 1]) == ord(chunk[j]) - 1 for j in range(3)):
+                has_sequential = True
+                break
+        if has_sequential:
+            continue
+        return candidate
 
 
 def _patch_db_everywhere(new_db: AsyncIOMotorDatabase) -> dict:
@@ -191,7 +222,7 @@ async def seeded_system_user(
     Fixture that creates a real super_admin system user with hashed password in MongoDB.
     Returns tuple of (SystemUserOut, raw_password).
     """
-    raw_password = f"TestPassword123!_{int(time.time())}"
+    raw_password = f"TestPassword123!_{unique_password_suffix()}"
 
     user_data = SystemUserCreate(
         tenant_id=seeded_tenant.id or "",
