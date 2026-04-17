@@ -176,7 +176,7 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
         if not plan_data:
             # No subscription — deny access to tenant-scoped endpoints
             return error_response(
-                status_code=403,
+                status_code=402,
                 message="No active subscription",
                 data={
                     "code": "SUBSCRIPTION_REQUIRED",
@@ -189,7 +189,7 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
         sub_status = plan_data.get("subscription_status", "")
         if sub_status not in ("active", "trialing"):
             return error_response(
-                status_code=403,
+                status_code=402,
                 message="Subscription inactive",
                 data={
                     "code": "SUBSCRIPTION_INACTIVE",
@@ -202,7 +202,7 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
         trial_ends = plan_data.get("trial_ends_at")
         if sub_status == "trialing" and trial_ends and int(time.time()) > trial_ends:
             return error_response(
-                status_code=403,
+                status_code=402,
                 message="Trial expired",
                 data={
                     "code": "TRIAL_EXPIRED",

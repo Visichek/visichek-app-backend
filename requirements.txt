@@ -44,5 +44,12 @@ limits
 reportlab==4.0.9
 openpyxl==3.1.5
 
+# Face detection (test endpoint)
+opencv-python
+inference-sdk
+numpy
+pypdfium2
+Pillow
+
 # Legacy/misc
 dotenv==0.9.9

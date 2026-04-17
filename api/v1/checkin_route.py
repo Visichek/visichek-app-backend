@@ -46,7 +46,7 @@ async def list_pending_checkins(
     if principal.tenant_id != tenant_id:
         from core.errors import auth_permission_denied
 
-        raise auth_permission_denied()
+        raise auth_permission_denied("tenant_scope")
 
     checkins, total = await list_checkins_for_tenant(
         tenant_id=tenant_id, state=state, skip=skip, limit=limit
@@ -135,7 +135,7 @@ async def get_checkin_analytics(
     if principal.tenant_id != tenant_id:
         from core.errors import auth_permission_denied
 
-        raise auth_permission_denied()
+        raise auth_permission_denied("tenant_scope")
 
     checkins, total = await list_checkins_analytics(
         tenant_id=tenant_id,

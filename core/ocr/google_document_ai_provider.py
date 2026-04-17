@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -131,7 +131,7 @@ class GoogleDocumentAIProvider:
 
     def _normalize_entities(self, entities: list, id_type: IDType) -> dict:
         """Normalize Document AI entities to standard fields."""
-        fields = {}
+        fields: dict[str, Any] = {}
 
         # Build a map of entity type -> entity for quick lookup
         entity_map = {e.get("type", ""): e for e in entities}

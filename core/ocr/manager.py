@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from core.ocr.provider import OCRProvider
 from core.ocr.types import OCRResult
@@ -26,6 +27,7 @@ class OCRManager:
         settings = get_settings()
         provider_name = settings.ocr_provider
 
+        provider: Any
         if provider_name == "structocr":
             from core.ocr.structocr_provider import StructOCRProvider
 

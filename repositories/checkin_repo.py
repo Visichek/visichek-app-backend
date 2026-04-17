@@ -28,7 +28,7 @@ async def get_checkins(
     filter_dict: dict = {},
     skip: int = 0,
     limit: int = 20,
-    sort: list = None,
+    sort: Optional[list] = None,
 ) -> list[CheckinOut]:
     """Fetch multiple check-ins with pagination."""
     if sort is None:

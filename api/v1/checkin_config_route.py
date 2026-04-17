@@ -9,7 +9,6 @@ from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.checkin_config_service import (
     create_config,
-    delete_config,
     list_configs_for_tenant,
     resolve_public_config,
     update_config,
@@ -21,6 +20,7 @@ from schemas.checkin_config_schema import (
     CheckinConfigUpdate,
     PublicCheckinConfigOut,
 )
+from schemas.checkin_schema import CheckinSubmitRequest
 
 router = APIRouter(prefix="/checkin-configs", tags=["Check-In Configs"])
 

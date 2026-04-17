@@ -45,6 +45,47 @@ async def find_visitor_by_email_or_phone(
     return VisitorOut(**doc)
 
 
+async def find_visitor_by_email_or_phone_any(
+    tenant_id: str, email: Optional[str] = None, phone: Optional[str] = None
+) -> Optional[VisitorOut]:
+    """Find visitor where email OR phone matches (OR semantics, not AND).
+
+    Returns the first match or None.
+    """
+    if not email and not phone:
+        return None
+
+    or_clauses: list[dict] = []
+    if email:
+        or_clauses.append({"email": email})
+    if phone:
+        or_clauses.append({"phone": phone})
+
+    doc = await db[COLLECTION].find_one(
+        {"tenant_id": tenant_id, "$or": or_clauses}
+    )
+    if doc is None:
+        return None
+    return VisitorOut(**doc)
+
+
+async def list_visitors_for_tenant(
+    tenant_id: str, skip: int = 0, limit: int = 50
+) -> list[VisitorOut]:
+    """List visitors for a tenant, newest first."""
+    cursor = (
+        db[COLLECTION]
+        .find({"tenant_id": tenant_id})
+        .sort("date_created", -1)
+        .skip(skip)
+        .limit(limit)
+    )
+    items: list[VisitorOut] = []
+    async for doc in cursor:
+        items.append(VisitorOut(**doc))
+    return items
+
+
 async def update_visitor(visitor_id: str, data: VisitorUpdate) -> VisitorOut:
     """Update a visitor."""
     update_dict = data.model_dump(exclude_unset=True)

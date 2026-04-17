@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from core.errors import AppException, ErrorCode, resource_not_found
 from repositories.checkin_repo import (
@@ -20,9 +20,201 @@ from schemas.checkin_schema import (
     CheckinCreate,
     CheckinConfirmRequest,
     CheckinOut,
+    CheckinPurpose,
     CheckinState,
     CheckinSubmitRequest,
+    CheckinUpdate,
 )
+from schemas.imports import IDType
+
+
+async def submit_verified_checkin(
+    *,
+    checkin_config_id: str,
+    email: str,
+    phone: str,
+    bio_data: dict,
+    tenant_specific_data: dict,
+    purpose: CheckinPurpose,
+    id_file_bytes: Optional[bytes] = None,
+    id_file_mime: Optional[str] = None,
+    id_type: Optional[IDType] = None,
+) -> CheckinOut:
+    """Single-step check-in that optionally runs ID verification.
+
+    If id_file_bytes is provided:
+      - Runs OCR + face crop via visitor_verification_service.
+      - Creates/updates a visitor with verified=True.
+      - Merges OCR bio_data under submitted bio_data (submitted wins on conflict).
+      - On verification failure raises 422 telling the caller to either upload a
+        clearer document or fall back to manual entry (retry without id_file).
+    Otherwise:
+      - Upserts visitor by email/phone, verified=False, submitted bio_data only.
+
+    Either way, the visitor's `verified` flag propagates to the Checkin and the
+    check-in is created in PENDING_APPROVAL with the usual notification.
+    """
+    from repositories.visitor_repo import find_visitor_by_email_or_phone_any
+    from schemas.visitor_schema import VisitorCreate
+
+    # 1. Resolve config
+    config = await get_checkin_config(
+        {"_id": checkin_config_id, "active": True}
+    )
+    if not config:
+        raise resource_not_found(
+            resource="CheckinConfig", resource_id=checkin_config_id
+        )
+    tenant_id = config.tenant_id
+
+    if not email or not phone:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="email and phone are required",
+        )
+
+    if id_file_bytes and not id_type:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="id_type is required when an ID file is uploaded",
+        )
+
+    # 2. Resolve visitor — with or without verification
+    id_extraction_id: Optional[str] = None
+    merged_bio_data = dict(bio_data)
+
+    if id_file_bytes and id_type:
+        from services.visitor_verification_service import verify_visitor_from_id
+
+        try:
+            verified_visitor = await verify_visitor_from_id(
+                tenant_id=tenant_id,
+                file_bytes=id_file_bytes,
+                mime_type=id_file_mime or "application/octet-stream",
+                id_type=id_type,
+                email=email,
+                phone=phone,
+            )
+        except AppException:
+            # Re-raise with a friendlier combined message so the kiosk can
+            # present both options to the visitor.
+            raise AppException(
+                status_code=422,
+                code=ErrorCode.VALIDATION_FAILED,
+                message=(
+                    "We couldn't verify the uploaded ID. Please upload a clearer "
+                    "photo of the document, or continue by entering your details "
+                    "manually (re-submit without the id_file)."
+                ),
+            )
+
+        # OCR bio_data under submitted bio_data (submitted wins on conflict)
+        ocr_bio = dict(verified_visitor.bio_data or {})
+        ocr_bio.update(bio_data)
+        merged_bio_data = ocr_bio
+        visitor = verified_visitor
+    else:
+        # Unverified path — look up or create the visitor using submitted fields
+        existing = await find_visitor_by_email_or_phone_any(
+            tenant_id=tenant_id, email=email, phone=phone
+        )
+        if existing is not None:
+            # Reuse the upsert helper; it won't downgrade verified.
+            from repositories.visitor_repo import update_visitor as repo_update_visitor
+            from schemas.visitor_schema import VisitorUpdate
+
+            update_payload = VisitorUpdate(
+                full_name=str(merged_bio_data.get("full_name") or existing.full_name),
+                bio_data=merged_bio_data,
+            )
+            if not existing.email:
+                update_payload.email = email
+            if not existing.phone:
+                update_payload.phone = phone
+            assert existing.id is not None
+            visitor = await repo_update_visitor(existing.id, update_payload)
+        else:
+            from repositories.visitor_repo import create_visitor
+
+            visitor = await create_visitor(
+                VisitorCreate(
+                    tenant_id=tenant_id,
+                    full_name=str(merged_bio_data.get("full_name") or "Unknown"),
+                    email=email,
+                    phone=phone,
+                    bio_data=merged_bio_data,
+                    verified=False,
+                )
+            )
+
+    visitor_id = visitor.id or ""
+
+    # 3. Validate required fields against combined data
+    available_keys = set(merged_bio_data.keys()) | set(tenant_specific_data.keys())
+    required_field_keys = {f.key for f in config.required_fields}
+    missing_fields = required_field_keys - available_keys
+    if missing_fields:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Missing required fields",
+            details={"missing_fields": list(missing_fields)},
+        )
+
+    # 4. Reject if the visitor has another pending check-in
+    existing_pending = await get_active_pending_for_visitor(tenant_id, visitor_id)
+    if existing_pending:
+        raise AppException(
+            status_code=409,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Visitor has a pending check-in already",
+            details={"existing_checkin_id": existing_pending.id},
+        )
+
+    # If we went through verification, surface the extraction_id so the check-in
+    # record can reference it for audit.
+    if id_extraction_id is None and id_file_bytes:
+        from repositories.id_verification_hash_repo import find_by_hash
+        import hashlib
+
+        sha = hashlib.sha256(id_file_bytes).hexdigest()
+        hash_record = await find_by_hash(tenant_id=tenant_id, sha256=sha)
+        if hash_record is not None:
+            id_extraction_id = hash_record.extraction_id
+
+    # 5. Create check-in
+    create_data = CheckinCreate(
+        tenant_id=tenant_id,
+        visitor_id=visitor_id,
+        checkin_config_id=checkin_config_id,
+        id_extraction_id=id_extraction_id,
+        tenant_specific_data=tenant_specific_data,
+        purpose=purpose,
+        state=CheckinState.PENDING_APPROVAL,
+        verified=visitor.verified,
+    )
+    checkin = await create_checkin(create_data)
+
+    # 6. Fire notification (fire-and-forget — never fail the check-in on notify errors)
+    try:
+        from services.notification_service import notify_checkin_pending_approval
+
+        await notify_checkin_pending_approval(
+            tenant_id=tenant_id,
+            checkin_id=checkin.id or "",
+            visitor_name=visitor.full_name,
+            verified=visitor.verified,
+            purpose=purpose.purpose,
+            host_employee_id="",
+        )
+    except Exception as e:
+        import logging
+
+        logging.warning(f"Failed to send checkin notification: {e}")
+
+    return checkin
 
 
 async def submit_checkin(
@@ -176,12 +368,14 @@ async def confirm_checkin(
         badge = await create_badge(badge_create)
 
         # Update checkin
-        update_data = {
-            "state": CheckinState.APPROVED,
-            "approved_by_user_id": principal.user_id,
-            "approved_at": now,
-        }
-        await update_checkin(checkin_id, update_data)
+        await update_checkin(
+            checkin_id,
+            CheckinUpdate(
+                state=CheckinState.APPROVED,
+                approved_by_user_id=principal.user_id,
+                approved_at=now,
+            ),
+        )
 
         # Fire notification
         try:
@@ -222,11 +416,13 @@ async def confirm_checkin(
     elif req.action == "reject":
         now = int(time.time())
         # Update checkin
-        update_data = {
-            "state": CheckinState.REJECTED,
-            "rejection_reason": req.notes,
-        }
-        await update_checkin(checkin_id, update_data)
+        await update_checkin(
+            checkin_id,
+            CheckinUpdate(
+                state=CheckinState.REJECTED,
+                rejection_reason=req.notes,
+            ),
+        )
 
         # Fire notification
         try:
@@ -270,13 +466,13 @@ async def list_checkins_analytics(
     limit: int = 20,
 ) -> tuple[list[CheckinOut], int]:
     """List check-ins for analytics with date range filtering."""
-    filter_dict = {"tenant_id": tenant_id}
+    filter_dict: dict[str, Any] = {"tenant_id": tenant_id}
     if state:
         filter_dict["state"] = state
 
     # Add date range filter
     if from_ts is not None or to_ts is not None:
-        date_filter = {}
+        date_filter: dict[str, int] = {}
         if from_ts is not None:
             date_filter["$gte"] = from_ts
         if to_ts is not None:

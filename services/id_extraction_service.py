@@ -32,14 +32,14 @@ async def extract_id(
 
     # Extract using OCR
     ocr_manager = OCRManager.get_instance()
-    extraction_result = await ocr_manager.provider.extract(
+    extraction_result = await ocr_manager._provider.extract(  # type: ignore[union-attr]
         document_bytes=document_bytes,
         mime_type="image/jpeg",  # TODO: get actual mime type from document metadata
         id_type=req.id_type,
     )
 
     # Determine required fields if tenant_id provided
-    unmatched_required_fields = []
+    unmatched_required_fields: list[str] = []
     if tenant_id:
         try:
             # TODO: get checkin_config from tenant context

@@ -11,6 +11,7 @@ class VisitorBase(BaseModel):
     phone: Optional[str] = None
     bio_data: dict = Field(default_factory=dict)
     verified: bool = False
+    verification_method: Optional[IDType] = None
     id_number_encrypted: Optional[str] = None
     id_document_id: Optional[str] = None
     portrait_url: Optional[str] = None
@@ -27,6 +28,7 @@ class VisitorUpdate(BaseModel):
     phone: Optional[str] = None
     bio_data: Optional[dict] = None
     verified: Optional[bool] = None
+    verification_method: Optional[IDType] = None
     id_number_encrypted: Optional[str] = None
     id_document_id: Optional[str] = None
     portrait_url: Optional[str] = None

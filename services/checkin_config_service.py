@@ -52,7 +52,7 @@ async def resolve_public_config(checkin_config_id: str) -> PublicCheckinConfigOu
             from core.storage import DocumentStorageManager
 
             manager = DocumentStorageManager.get_instance()
-            logo_url = manager.provider.create_download_intent(
+            logo_url = manager.provider.download_url(
                 object_key=branding.logo_object_key
             )
     except Exception:
