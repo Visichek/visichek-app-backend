@@ -22,7 +22,7 @@ from security.auth import (
 )
 from schemas.otp_schema import MfaSettingsUpdate, OtpVerifyRequest
 from security.cookie_utils import (
-    set_auth_cookies,
+    build_auth_response,
     clear_auth_cookies,
     REFRESH_TOKEN_COOKIE,
 )
@@ -114,18 +114,14 @@ async def login_system_user(request: Request, login_data: SystemUserLogin):
 
     user = result
     is_prod = get_settings().env == "production"
-    response = JSONResponse(
-        content=jsonable_encoder(
-            success_payload(user, message="Login successful", request_id=request_id)
-        ),
-    )
-    set_auth_cookies(
-        response,
-        _attr_or_key(user, "access_token") or "",
-        _attr_or_key(user, "refresh_token") or "",
+    return build_auth_response(
+        request=request,
+        payload=user,
+        message="Login successful",
         is_production=is_prod,
-    )  # type: ignore
-    return response
+        access_token=_attr_or_key(user, "access_token") or "",
+        refresh_token=_attr_or_key(user, "refresh_token") or "",
+    )
 
 
 @router.post("/super-admin/login")
@@ -196,20 +192,14 @@ async def login_super_admin_global(request: Request, login_data: SystemUserLogin
 
     user = result["user"]
     is_prod = get_settings().env == "production"
-    response = JSONResponse(
-        content=jsonable_encoder(
-            success_payload(
-                result, message="Super admin login successful", request_id=request_id
-            )
-        ),
-    )
-    set_auth_cookies(
-        response,
-        _attr_or_key(user, "access_token") or "",
-        _attr_or_key(user, "refresh_token") or "",
+    return build_auth_response(
+        request=request,
+        payload=result,
+        message="Super admin login successful",
         is_production=is_prod,
+        access_token=_attr_or_key(user, "access_token") or "",
+        refresh_token=_attr_or_key(user, "refresh_token") or "",
     )
-    return response
 
 
 @router.post("/tenant/{tenant_id}/login")
@@ -281,18 +271,14 @@ async def login_system_user_by_tenant(
 
     user = result
     is_prod = get_settings().env == "production"
-    response = JSONResponse(
-        content=jsonable_encoder(
-            success_payload(user, message="Login successful", request_id=request_id)
-        ),
-    )
-    set_auth_cookies(
-        response,
-        _attr_or_key(user, "access_token") or "",
-        _attr_or_key(user, "refresh_token") or "",
+    return build_auth_response(
+        request=request,
+        payload=user,
+        message="Login successful",
         is_production=is_prod,
-    )  # type: ignore
-    return response
+        access_token=_attr_or_key(user, "access_token") or "",
+        refresh_token=_attr_or_key(user, "refresh_token") or "",
+    )
 
 
 @router.post("/signup")
@@ -403,21 +389,14 @@ async def refresh_tokens(
     )
 
     is_prod = get_settings().env == "production"
-    request_id = getattr(request.state, "request_id", None)
-    response = JSONResponse(
-        content=jsonable_encoder(
-            success_payload(
-                user, message="Tokens refreshed successfully", request_id=request_id
-            )
-        ),
-    )
-    set_auth_cookies(
-        response,
-        _attr_or_key(user, "access_token") or "",
-        _attr_or_key(user, "refresh_token") or "",
+    return build_auth_response(
+        request=request,
+        payload=user,
+        message="Tokens refreshed successfully",
         is_production=is_prod,
-    )  # type: ignore
-    return response
+        access_token=_attr_or_key(user, "access_token") or "",
+        refresh_token=_attr_or_key(user, "refresh_token") or "",
+    )
 
 
 @router.post("/verify-otp")
@@ -434,21 +413,14 @@ async def verify_system_user_otp_endpoint(request: Request, otp_data: OtpVerifyR
     user = await verify_system_user_otp(otp_data.otp_challenge_id, otp_data.otp_code)
 
     is_prod = get_settings().env == "production"
-    request_id = getattr(request.state, "request_id", None)
-    response = JSONResponse(
-        content=jsonable_encoder(
-            success_payload(
-                user, message="OTP verified, login successful", request_id=request_id
-            )
-        ),
-    )
-    set_auth_cookies(
-        response,
-        _attr_or_key(user, "access_token") or "",
-        _attr_or_key(user, "refresh_token") or "",
+    return build_auth_response(
+        request=request,
+        payload=user,
+        message="OTP verified, login successful",
         is_production=is_prod,
-    )  # type: ignore
-    return response
+        access_token=_attr_or_key(user, "access_token") or "",
+        refresh_token=_attr_or_key(user, "refresh_token") or "",
+    )
 
 
 @router.patch("/me/mfa")

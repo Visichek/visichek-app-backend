@@ -12,7 +12,7 @@ from schemas.tenant_schema import TenantBootstrapRequest
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_admin_refresh_token
 from security.cookie_utils import (
-    set_auth_cookies,
+    build_auth_response,
     clear_auth_cookies,
     REFRESH_TOKEN_COOKIE,
 )
@@ -245,23 +245,17 @@ async def login_admin(request: Request, admin_data: AdminLogin):
             ),
         )
 
-    # No 2FA — return tokens + cookies
+    # No 2FA — tokens are set as httpOnly cookies; JSON body includes them
+    # only when the caller sends ``X-Auth-Include-Tokens: 1`` (see
+    # security/cookie_utils.build_auth_response).
     admin = result
     is_prod = get_settings().env == "production"
-    response = JSONResponse(
-        content=jsonable_encoder(
-            success_payload(
-                admin, message="Admin login successful", request_id=request_id
-            )
-        ),
-    )
-    set_auth_cookies(
-        response,
-        admin.access_token or "",
-        admin.refresh_token or "",
+    return build_auth_response(
+        request=request,
+        payload=admin,
+        message="Admin login successful",
         is_production=is_prod,
     )
-    return response
 
 
 @router.post("/refresh")
@@ -306,23 +300,12 @@ async def refresh_admin_tokens(
     admin.password = ""
 
     is_prod = get_settings().env == "production"
-    request_id = getattr(request.state, "request_id", None)
-    response = JSONResponse(
-        content=jsonable_encoder(
-            success_payload(
-                admin,
-                message="Admin tokens refreshed successfully",
-                request_id=request_id,
-            )
-        ),
-    )
-    set_auth_cookies(
-        response,
-        admin.access_token or "",
-        admin.refresh_token or "",
+    return build_auth_response(
+        request=request,
+        payload=admin,
+        message="Admin tokens refreshed successfully",
         is_production=is_prod,
     )
-    return response
 
 
 @router.post("/verify-otp")
@@ -339,21 +322,12 @@ async def verify_admin_otp_endpoint(request: Request, otp_data: OtpVerifyRequest
     admin = await verify_admin_otp(otp_data.otp_challenge_id, otp_data.otp_code)
 
     is_prod = get_settings().env == "production"
-    request_id = getattr(request.state, "request_id", None)
-    response = JSONResponse(
-        content=jsonable_encoder(
-            success_payload(
-                admin, message="OTP verified, login successful", request_id=request_id
-            )
-        ),
-    )
-    set_auth_cookies(
-        response,
-        admin.access_token or "",
-        admin.refresh_token or "",
+    return build_auth_response(
+        request=request,
+        payload=admin,
+        message="OTP verified, login successful",
         is_production=is_prod,
     )
-    return response
 
 
 @router.post("/logout")

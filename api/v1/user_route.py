@@ -24,7 +24,7 @@ from services.user_service import (
 from security.account_status_check import check_user_account_status_and_permissions
 from security.auth import verify_user_refresh_token
 from security.cookie_utils import (
-    set_auth_cookies,
+    build_auth_response,
     clear_auth_cookies,
     REFRESH_TOKEN_COOKIE,
 )
@@ -231,19 +231,12 @@ async def login_user(request: Request, login_data: UserLogin):
     user = await authenticate_user(login_data=login_data)
 
     is_prod = get_settings().env == "production"
-    request_id = getattr(request.state, "request_id", None)
-    response = JSONResponse(
-        content=jsonable_encoder(
-            success_payload(user, message="Login successful", request_id=request_id)
-        ),
-    )
-    set_auth_cookies(
-        response,
-        user.access_token or "",
-        user.refresh_token or "",
+    return build_auth_response(
+        request=request,
+        payload=user,
+        message="Login successful",
         is_production=is_prod,
     )
-    return response
 
 
 @router.post("/refresh")
@@ -295,21 +288,12 @@ async def refresh_user_tokens(
     )
 
     is_prod = get_settings().env == "production"
-    request_id = getattr(request.state, "request_id", None)
-    response = JSONResponse(
-        content=jsonable_encoder(
-            success_payload(
-                user, message="Tokens refreshed successfully", request_id=request_id
-            )
-        ),
-    )
-    set_auth_cookies(
-        response,
-        user.access_token or "",
-        user.refresh_token or "",
+    return build_auth_response(
+        request=request,
+        payload=user,
+        message="Tokens refreshed successfully",
         is_production=is_prod,
     )
-    return response
 
 
 @router.post("/logout")

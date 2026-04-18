@@ -3,12 +3,10 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request, status
-from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from core.errors import auth_invalid_token
-from core.response_envelope import document_response, success_payload
+from core.response_envelope import document_response
 from core.settings import get_settings
 from schemas.admin_schema import AdminRefresh
 from schemas.session_schema import (
@@ -20,7 +18,7 @@ from schemas.session_schema import (
 from schemas.system_user_schema import SystemUserRefresh
 from schemas.user_schema import UserRefresh
 from security.auth import verify_any_refresh_token, verify_any_token
-from security.cookie_utils import REFRESH_TOKEN_COOKIE, set_auth_cookies
+from security.cookie_utils import REFRESH_TOKEN_COOKIE, build_auth_response
 from security.principal import AuthPrincipal, TENANT_USER_ROLES
 from services.admin_service import refresh_admin_tokens_reduce_number_of_logins
 from services.password_change_service import (
@@ -302,15 +300,9 @@ async def refresh_tokens(
         raise auth_invalid_token(details={"role": principal.role})
 
     is_prod = get_settings().env == "production"
-    request_id = getattr(request.state, "request_id", None)
-    response = JSONResponse(
-        content=jsonable_encoder(
-            success_payload(
-                result, message="Tokens refreshed successfully", request_id=request_id
-            ),
-        ),
+    return build_auth_response(
+        request=request,
+        payload=result,
+        message="Tokens refreshed successfully",
+        is_production=is_prod,
     )
-    set_auth_cookies(
-        response, result.access_token, result.refresh_token, is_production=is_prod
-    )
-    return response
