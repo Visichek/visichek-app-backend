@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
 
+from core.errors import auth_permission_denied, auth_role_mismatch
 from core.response_envelope import document_response
 from schemas.subscription_schema import (
     SubscriptionOut,
@@ -22,6 +23,8 @@ from services.subscription_service import (
     update_subscription_overrides,
 )
 from security.account_status_check import check_admin_account_status_and_permissions
+from security.auth import verify_any_token
+from security.principal import AuthPrincipal
 
 router = APIRouter(prefix="/subscriptions", tags=["Subscriptions"])
 
@@ -116,14 +119,24 @@ async def list_subscriptions_endpoint(
 @router.get("/tenant/{tenant_id}/active")
 @document_response(
     message="Active subscription retrieved",
-    description="Get a tenant's current active subscription",
+    description=(
+        "Get a tenant's current active subscription. Application admins can "
+        "read any tenant; tenant super_admins can only read their own tenant."
+    ),
     summary="Get tenant active subscription",
 )
 async def get_tenant_active_subscription_endpoint(
     tenant_id: str,
-    admin=Depends(check_admin_account_status_and_permissions),
+    principal: AuthPrincipal = Depends(verify_any_token),
 ) -> SubscriptionOut | None:
     """Get the active subscription for a specific tenant."""
+    if principal.role == "admin":
+        pass  # application admin can read any tenant
+    elif principal.role == "super_admin":
+        if principal.tenant_id != tenant_id:
+            raise auth_permission_denied(permission_key="subscription.read")
+    else:
+        raise auth_role_mismatch(required_role="admin", actual_role=principal.role)
     return await retrieve_tenant_active_subscription(tenant_id)
 
 
