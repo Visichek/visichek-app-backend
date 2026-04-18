@@ -93,12 +93,25 @@ def _extract_collection_from_path(path: str) -> Optional[str]:
 
 
 def _is_exempt_path(path: str) -> bool:
-    """Check if the path is exempt from enforcement."""
+    """Check if the path is exempt from enforcement.
+
+    Matches both the prefix form (``/v1/plans/something``) and the exact
+    collection form (``/v1/plans``). The second case matters because the
+    route files register collection endpoints at ``""`` / no trailing slash,
+    and without this every hit on ``/v1/plans`` would fall through to
+    subscription-required enforcement — exactly the loop we're trying to
+    avoid for admin-only management endpoints.
+    """
     for prefix in EXEMPT_PATH_PREFIXES:
         if prefix == "/":
             if path == "/":
                 return True
-        elif path.startswith(prefix):
+            continue
+        if path.startswith(prefix):
+            return True
+        # Allow the no-trailing-slash form of a slash-suffixed prefix
+        # (e.g. prefix="/v1/plans/" matches path="/v1/plans").
+        if prefix.endswith("/") and path == prefix[:-1]:
             return True
     return False
 
