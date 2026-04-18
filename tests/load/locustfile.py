@@ -76,7 +76,7 @@ class VisichekLoadUser(HttpUser):
                 "country_of_hosting": "United States",
             }
             resp = self.client.post(
-                "/v1/tenants/",
+                "/v1/tenants",
                 json=tenant_data,
                 headers=self.headers,
                 name="/v1/tenants/ (create)",
@@ -93,7 +93,7 @@ class VisichekLoadUser(HttpUser):
             "is_active": True,
         }
         resp = self.client.post(
-            "/v1/departments/",
+            "/v1/departments",
             json=dept_data,
             headers=self.headers,
             name="/v1/departments/ (create)",
@@ -477,7 +477,7 @@ class ComplianceLoadUser(HttpUser):
             "uses_data_for_training": False,
         }
         resp = self.client.post(
-            "/v1/sub-processors/",
+            "/v1/sub-processors",
             json=payload,
             headers=self.headers,
             name="/v1/sub-processors/ (create)",
@@ -491,7 +491,7 @@ class ComplianceLoadUser(HttpUser):
     @tag("compliance", "sub_processor")
     def list_sub_processors(self) -> None:
         self.client.get(
-            "/v1/sub-processors/",
+            "/v1/sub-processors",
             headers=self.headers,
             name="/v1/sub-processors/ (list)",
         )
@@ -523,7 +523,7 @@ class ComplianceLoadUser(HttpUser):
             "action": random.choice(["anonymise", "delete"]),
         }
         resp = self.client.post(
-            "/v1/retention-policies/",
+            "/v1/retention-policies",
             json=payload,
             headers=self.headers,
             name="/v1/retention-policies/ (create)",
@@ -537,7 +537,7 @@ class ComplianceLoadUser(HttpUser):
     @tag("compliance", "retention")
     def list_retention_policies(self) -> None:
         self.client.get(
-            "/v1/retention-policies/",
+            "/v1/retention-policies",
             headers=self.headers,
             name="/v1/retention-policies/ (list)",
         )
@@ -564,7 +564,7 @@ class ComplianceLoadUser(HttpUser):
             "detection_time": int(time.time()) - random.randint(60, 7200),
         }
         resp = self.client.post(
-            "/v1/incidents/",
+            "/v1/incidents",
             json=payload,
             headers=self.headers,
             name="/v1/incidents/ (create)",
@@ -578,7 +578,7 @@ class ComplianceLoadUser(HttpUser):
     @tag("compliance", "incident")
     def list_incidents(self) -> None:
         self.client.get(
-            "/v1/incidents/",
+            "/v1/incidents",
             headers=self.headers,
             name="/v1/incidents/ (list)",
         )
@@ -602,7 +602,7 @@ class ComplianceLoadUser(HttpUser):
     @tag("compliance", "audit")
     def list_audit_logs(self) -> None:
         self.client.get(
-            "/v1/audit-logs/",
+            "/v1/audit-logs",
             headers=self.headers,
             name="/v1/audit-logs/ (list)",
         )
@@ -702,7 +702,7 @@ class AdminLoadUser(HttpUser):
     @tag("admin", "profiles")
     def list_visitor_profiles(self) -> None:
         self.client.get(
-            "/v1/visitor-profiles/",
+            "/v1/visitor-profiles",
             headers=self.headers,
             name="/v1/visitor-profiles/ (list)",
         )
@@ -915,7 +915,7 @@ class BootstrapLoadUser(HttpUser):
         }
 
         self.client.post(
-            "/v1/tenants/",
+            "/v1/tenants",
             json=payload,
             headers=self.headers,
             name="/v1/tenants/ (admin create)",
@@ -997,7 +997,7 @@ class BillingLoadUser(HttpUser):
         if not self.admin_headers:
             return
         self.client.get(
-            "/v1/plans/",
+            "/v1/plans",
             params={"start": 0, "stop": 50},
             headers=self.admin_headers,
             name="/v1/plans/ (list)",
@@ -1019,7 +1019,7 @@ class BillingLoadUser(HttpUser):
             "status": "active",
         }
         resp = self.client.post(
-            "/v1/plans/",
+            "/v1/plans",
             json=payload,
             headers=self.admin_headers,
             name="/v1/plans/ (create)",
@@ -1069,7 +1069,7 @@ class BillingLoadUser(HttpUser):
         if not self.headers:
             return
         self.client.get(
-            "/v1/subscriptions/",
+            "/v1/subscriptions",
             params={"start": 0, "stop": 50},
             headers=self.headers,
             name="/v1/subscriptions/ (list)",
@@ -1090,7 +1090,7 @@ class BillingLoadUser(HttpUser):
             "status": "active",
         }
         resp = self.client.post(
-            "/v1/subscriptions/",
+            "/v1/subscriptions",
             json=payload,
             headers=self.admin_headers,
             name="/v1/subscriptions/ (create)",
@@ -1157,7 +1157,7 @@ class BillingLoadUser(HttpUser):
         if not self.headers:
             return
         self.client.get(
-            "/v1/invoices/",
+            "/v1/invoices",
             params={"start": 0, "stop": 50},
             headers=self.headers,
             name="/v1/invoices/ (list)",
@@ -1198,7 +1198,7 @@ class BillingLoadUser(HttpUser):
         if not self.admin_headers:
             return
         self.client.get(
-            "/v1/discounts/",
+            "/v1/discounts",
             params={"start": 0, "stop": 50},
             headers=self.admin_headers,
             name="/v1/discounts/ (list)",
@@ -1222,7 +1222,7 @@ class BillingLoadUser(HttpUser):
             "max_redemptions": random.choice([10, 50, 100, 500]),
         }
         resp = self.client.post(
-            "/v1/discounts/",
+            "/v1/discounts",
             json=payload,
             headers=self.admin_headers,
             name="/v1/discounts/ (create)",

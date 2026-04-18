@@ -120,7 +120,7 @@ class TestTenantRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/v1/tenants/",
+                    "/v1/tenants",
                     json={
                         "company_name": "Acme Corp",
                         "lawful_basis": "legitimate_interest",
@@ -171,7 +171,7 @@ class TestTenantRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/tenants/?start=0&stop=100",
+                    "/v1/tenants?start=0&stop=100",
                     headers={"Authorization": "Bearer token-123"},
                 )
 
@@ -308,7 +308,7 @@ class TestDepartmentRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/v1/departments/",
+                    "/v1/departments",
                     json={
                         "tenant_id": "tenant-001",
                         "code": "HR-001",
@@ -348,7 +348,7 @@ class TestDepartmentRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/departments/?start=0&stop=100",
+                    "/v1/departments?start=0&stop=100",
                     headers={"Authorization": "Bearer token-123"},
                 )
 
@@ -594,7 +594,7 @@ class TestSystemUserRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/system-users/?start=0&stop=100",
+                    "/v1/system-users?start=0&stop=100",
                     headers={"Authorization": "Bearer token-123"},
                 )
 
@@ -875,7 +875,7 @@ class TestAppointmentRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/v1/appointments/",
+                    "/v1/appointments",
                     json={
                         "tenant_id": "tenant-001",
                         "visitor_profile_id": "visitor-001",
@@ -920,7 +920,7 @@ class TestAppointmentRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/appointments/?start=0&stop=100",
+                    "/v1/appointments?start=0&stop=100",
                     headers={"Authorization": "Bearer token-789"},
                 )
 
@@ -1059,7 +1059,7 @@ class TestPrivacyNoticeRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/v1/privacy-notices/",
+                    "/v1/privacy-notices",
                     json={
                         "tenant_id": "tenant-001",
                         "version_code": "v2.1",
@@ -1137,7 +1137,7 @@ class TestPrivacyNoticeRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/privacy-notices/?start=0&stop=100",
+                    "/v1/privacy-notices?start=0&stop=100",
                     headers={"Authorization": "Bearer token-123"},
                 )
 
@@ -1209,7 +1209,7 @@ class TestIncidentRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/v1/incidents/",
+                    "/v1/incidents",
                     json={
                         "tenant_id": "tenant-001",
                         "reported_by": "security-officer-999",
@@ -1252,7 +1252,7 @@ class TestIncidentRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/incidents/?start=0&stop=100",
+                    "/v1/incidents?start=0&stop=100",
                     headers={"Authorization": "Bearer token-999"},
                 )
 
@@ -1342,7 +1342,7 @@ class TestErrorHandling:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
-            response = await client.get("/v1/tenants/")
+            response = await client.get("/v1/tenants")
 
             assert response.status_code in (401, 403)
             data = response.json()
@@ -1385,7 +1385,7 @@ class TestResponseEnvelopeFormat:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/tenants/",
+                    "/v1/tenants",
                     headers={"Authorization": "Bearer token-123"},
                 )
 

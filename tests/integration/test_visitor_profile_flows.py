@@ -61,7 +61,7 @@ class TestVisitorProfileFlow:
         _profiles,
     ):
         resp = await integration_client.get(
-            "/v1/visitor-profiles/", headers=auth_headers
+            "/v1/visitor-profiles", headers=auth_headers
         )
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -162,5 +162,5 @@ class TestVisitorProfileFlow:
         assert resp.status_code in (200, 404)
 
     async def test_list_profiles_unauthorized(self, integration_client: AsyncClient):
-        resp = await integration_client.get("/v1/visitor-profiles/")
+        resp = await integration_client.get("/v1/visitor-profiles")
         assert resp.status_code in (401, 403)

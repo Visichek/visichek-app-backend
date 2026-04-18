@@ -248,7 +248,7 @@ class TestTenantCreationAuthChange:
         """Application admin should be able to create a tenant directly."""
         ts = int(time.time())
         resp = await integration_client.post(
-            "/v1/tenants/",
+            "/v1/tenants",
             json={
                 "company_name": f"Admin Created Tenant {ts}",
                 "lawful_basis": "legitimate_interest",
@@ -266,7 +266,7 @@ class TestTenantCreationAuthChange:
     ):
         """Tenant creation without auth should fail."""
         resp = await integration_client.post(
-            "/v1/tenants/",
+            "/v1/tenants",
             json={"company_name": "Unauthed Tenant"},
         )
         assert resp.status_code in (401, 403)
@@ -279,7 +279,7 @@ class TestTenantCreationAuthChange:
         """System user (super_admin) should no longer be able to create tenants via POST /tenants/."""
         ts = int(time.time())
         resp = await integration_client.post(
-            "/v1/tenants/",
+            "/v1/tenants",
             json={
                 "company_name": f"SA Attempted Tenant {ts}",
                 "lawful_basis": "consent",

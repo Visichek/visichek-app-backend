@@ -28,7 +28,7 @@ class TestAuditLogFlow:
         self, integration_client: AsyncClient, auth_headers: dict
     ):
         """Empty DB should return an empty list, not an error."""
-        resp = await integration_client.get("/v1/audit-logs/", headers=auth_headers)
+        resp = await integration_client.get("/v1/audit-logs", headers=auth_headers)
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
@@ -36,7 +36,7 @@ class TestAuditLogFlow:
 
     async def test_list_audit_logs_unauthorized(self, integration_client: AsyncClient):
         """Request without auth should be rejected."""
-        resp = await integration_client.get("/v1/audit-logs/")
+        resp = await integration_client.get("/v1/audit-logs")
         assert resp.status_code in (401, 403)
 
 
@@ -68,7 +68,7 @@ class TestIncidentLifecycleFlow:
         _incident_payload: dict,
     ):
         resp = await integration_client.post(
-            "/v1/incidents/", json=_incident_payload, headers=auth_headers
+            "/v1/incidents", json=_incident_payload, headers=auth_headers
         )
         assert resp.status_code in (200, 201), resp.text
         data = resp.json()["data"]
@@ -83,9 +83,9 @@ class TestIncidentLifecycleFlow:
     ):
         # seed one
         await integration_client.post(
-            "/v1/incidents/", json=_incident_payload, headers=auth_headers
+            "/v1/incidents", json=_incident_payload, headers=auth_headers
         )
-        resp = await integration_client.get("/v1/incidents/", headers=auth_headers)
+        resp = await integration_client.get("/v1/incidents", headers=auth_headers)
         assert resp.status_code == 200
         items = resp.json()["data"]
         assert isinstance(items, list)
@@ -98,7 +98,7 @@ class TestIncidentLifecycleFlow:
         _incident_payload: dict,
     ):
         create_resp = await integration_client.post(
-            "/v1/incidents/", json=_incident_payload, headers=auth_headers
+            "/v1/incidents", json=_incident_payload, headers=auth_headers
         )
         incident_id = create_resp.json()["data"]["id"]
 
@@ -115,7 +115,7 @@ class TestIncidentLifecycleFlow:
         _incident_payload: dict,
     ):
         create_resp = await integration_client.post(
-            "/v1/incidents/", json=_incident_payload, headers=auth_headers
+            "/v1/incidents", json=_incident_payload, headers=auth_headers
         )
         incident_id = create_resp.json()["data"]["id"]
 
@@ -143,7 +143,7 @@ class TestIncidentLifecycleFlow:
         _incident_payload: dict,
     ):
         create_resp = await integration_client.post(
-            "/v1/incidents/", json=_incident_payload, headers=auth_headers
+            "/v1/incidents", json=_incident_payload, headers=auth_headers
         )
         incident_id = create_resp.json()["data"]["id"]
 

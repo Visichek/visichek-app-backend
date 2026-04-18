@@ -87,7 +87,7 @@ class TestSaaSLifecycle:
         }
 
         plan_response = await client.post(
-            "/v1/plans/",
+            "/v1/plans",
             json=plan_payload,
             headers=headers,
         )
@@ -113,7 +113,7 @@ class TestSaaSLifecycle:
         }
 
         tenant_response = await client.post(
-            "/v1/tenants/",
+            "/v1/tenants",
             json=tenant_payload,
             headers=headers,
         )
@@ -137,7 +137,7 @@ class TestSaaSLifecycle:
         }
 
         subscription_response = await client.post(
-            "/v1/subscriptions/",
+            "/v1/subscriptions",
             json=subscription_payload,
             headers=headers,
         )
@@ -168,7 +168,7 @@ class TestSaaSLifecycle:
         # Phase 5: List subscriptions for tenant
         # ======================================================================
         list_response = await client.get(
-            f"/v1/subscriptions/?tenant_id={tenant_id}",
+            f"/v1/subscriptions?tenant_id={tenant_id}",
             headers=headers,
         )
 
@@ -207,7 +207,7 @@ class TestSaaSLifecycle:
         }
 
         invoice_response = await client.post(
-            "/v1/invoices/",
+            "/v1/invoices",
             json=invoice_payload,
             headers=headers,
         )
@@ -252,7 +252,7 @@ class TestSaaSLifecycle:
         }
 
         discount_response = await client.post(
-            "/v1/discounts/",
+            "/v1/discounts",
             json=discount_payload,
             headers=headers,
         )
@@ -338,7 +338,7 @@ class TestSaaSLifecycle:
         }
 
         plan_response = await client.post(
-            "/v1/plans/",
+            "/v1/plans",
             json=plan_payload,
             headers=headers,
         )
@@ -358,7 +358,7 @@ class TestSaaSLifecycle:
         # Note: May need a tenant_id if required
         # Try with minimal payload first
         sub_response = await client.post(
-            "/v1/subscriptions/",
+            "/v1/subscriptions",
             json=sub_payload,
             headers=headers,
         )

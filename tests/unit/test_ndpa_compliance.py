@@ -347,7 +347,7 @@ class TestNDPACompliance:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/v1/incidents/",
+                    "/v1/incidents",
                     json={
                         "incident_type": "data_breach",
                         "description": "Potential data exposure detected",
@@ -407,7 +407,7 @@ class TestNDPACompliance:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/v1/incidents/",
+                    "/v1/incidents",
                     json={
                         "incident_type": "unauthorized_access",
                         "description": "Unauthorized system access",
@@ -463,7 +463,7 @@ class TestNDPACompliance:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/v1/incidents/",
+                    "/v1/incidents",
                     json={
                         "incident_type": "data_export_exposure",
                         "description": "Exported data found on public server",

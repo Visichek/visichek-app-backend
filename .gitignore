@@ -187,3 +187,6 @@ pyrightconfig.json
 check-in-flow.md
 walkthrough.md
 truth.md
+
+# Perf suite artifacts (regenerated every run)
+perf_report.json

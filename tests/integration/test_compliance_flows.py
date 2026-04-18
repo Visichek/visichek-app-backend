@@ -119,7 +119,7 @@ class TestSubProcessorFlow:
         _sp_payload: dict,
     ):
         resp = await integration_client.post(
-            "/v1/sub-processors/", json=_sp_payload, headers=auth_headers
+            "/v1/sub-processors", json=_sp_payload, headers=auth_headers
         )
         assert resp.status_code in (200, 201), resp.text
         data = resp.json()["data"]
@@ -134,9 +134,9 @@ class TestSubProcessorFlow:
     ):
         # seed one
         await integration_client.post(
-            "/v1/sub-processors/", json=_sp_payload, headers=auth_headers
+            "/v1/sub-processors", json=_sp_payload, headers=auth_headers
         )
-        resp = await integration_client.get("/v1/sub-processors/", headers=auth_headers)
+        resp = await integration_client.get("/v1/sub-processors", headers=auth_headers)
         assert resp.status_code == 200
         assert len(resp.json()["data"]) >= 1
 
@@ -147,7 +147,7 @@ class TestSubProcessorFlow:
         _sp_payload: dict,
     ):
         create_resp = await integration_client.post(
-            "/v1/sub-processors/", json=_sp_payload, headers=auth_headers
+            "/v1/sub-processors", json=_sp_payload, headers=auth_headers
         )
         sp_id = create_resp.json()["data"]["id"]
 
@@ -168,7 +168,7 @@ class TestSubProcessorFlow:
         _sp_payload: dict,
     ):
         create_resp = await integration_client.post(
-            "/v1/sub-processors/", json=_sp_payload, headers=auth_headers
+            "/v1/sub-processors", json=_sp_payload, headers=auth_headers
         )
         sp_id = create_resp.json()["data"]["id"]
 
@@ -179,7 +179,7 @@ class TestSubProcessorFlow:
 
         # verify it's gone
         list_resp = await integration_client.get(
-            "/v1/sub-processors/", headers=auth_headers
+            "/v1/sub-processors", headers=auth_headers
         )
         ids = [item["id"] for item in list_resp.json()["data"]]
         assert sp_id not in ids
@@ -209,7 +209,7 @@ class TestRetentionPolicyFlow:
         _policy_payload: dict,
     ):
         resp = await integration_client.post(
-            "/v1/retention-policies/", json=_policy_payload, headers=auth_headers
+            "/v1/retention-policies", json=_policy_payload, headers=auth_headers
         )
         assert resp.status_code in (200, 201), resp.text
         data = resp.json()["data"]
@@ -223,10 +223,10 @@ class TestRetentionPolicyFlow:
         _policy_payload: dict,
     ):
         await integration_client.post(
-            "/v1/retention-policies/", json=_policy_payload, headers=auth_headers
+            "/v1/retention-policies", json=_policy_payload, headers=auth_headers
         )
         resp = await integration_client.get(
-            "/v1/retention-policies/", headers=auth_headers
+            "/v1/retention-policies", headers=auth_headers
         )
         assert resp.status_code == 200
         assert len(resp.json()["data"]) >= 1
@@ -238,7 +238,7 @@ class TestRetentionPolicyFlow:
         _policy_payload: dict,
     ):
         create_resp = await integration_client.post(
-            "/v1/retention-policies/", json=_policy_payload, headers=auth_headers
+            "/v1/retention-policies", json=_policy_payload, headers=auth_headers
         )
         policy_id = create_resp.json()["data"]["id"]
 
@@ -261,7 +261,7 @@ class TestRetentionPolicyFlow:
         scopes = ["visit_sessions", "id_images", "visitor_profiles"]
         for scope in scopes:
             resp = await integration_client.post(
-                "/v1/retention-policies/",
+                "/v1/retention-policies",
                 json={
                     "tenant_id": seeded_tenant.id,
                     "scope": scope,
@@ -273,7 +273,7 @@ class TestRetentionPolicyFlow:
             assert resp.status_code in (200, 201)
 
         resp = await integration_client.get(
-            "/v1/retention-policies/", headers=auth_headers
+            "/v1/retention-policies", headers=auth_headers
         )
         assert len(resp.json()["data"]) >= 3
 

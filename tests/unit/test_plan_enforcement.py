@@ -59,11 +59,11 @@ class TestExemptPaths:
         assert _is_exempt_path("/v1/admins/tenants/bootstrap") is True
 
     def test_plan_management_exempt(self):
-        assert _is_exempt_path("/v1/plans/") is True
+        assert _is_exempt_path("/v1/plans") is True
         assert _is_exempt_path("/v1/plans/plan_123") is True
 
     def test_subscription_management_exempt(self):
-        assert _is_exempt_path("/v1/subscriptions/") is True
+        assert _is_exempt_path("/v1/subscriptions") is True
 
     def test_visitor_not_exempt(self):
         assert _is_exempt_path("/v1/visitors/abc") is False
