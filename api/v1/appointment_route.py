@@ -23,7 +23,7 @@ router = APIRouter(prefix="/appointments", tags=["Appointments"])
 _admin_roles = verify_system_user_token("dept_admin", "super_admin", "receptionist")
 
 
-@router.post("/")
+@router.post("")
 @document_response(
     message="Appointment created successfully",
     status_code=status.HTTP_201_CREATED,

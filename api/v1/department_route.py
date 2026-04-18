@@ -23,7 +23,7 @@ router = APIRouter(prefix="/departments", tags=["Departments"])
 _admin_roles = verify_system_user_token("super_admin", "dept_admin")
 
 
-@router.post("/")
+@router.post("")
 @document_response(
     message="Department created successfully",
     status_code=status.HTTP_201_CREATED,

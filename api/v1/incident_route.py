@@ -16,7 +16,7 @@ router = APIRouter(prefix="/incidents", tags=["Incidents"])
 _security_roles = verify_system_user_token("super_admin", "security_officer")
 
 
-@router.post("/")
+@router.post("")
 @document_response(
     message="Incident created successfully",
     status_code=status.HTTP_201_CREATED,

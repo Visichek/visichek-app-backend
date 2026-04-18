@@ -14,7 +14,7 @@ router = APIRouter(prefix="/retention-policies", tags=["Retention Policies"])
 _dpo_roles = verify_system_user_token("super_admin", "dpo")
 
 
-@router.post("/")
+@router.post("")
 @document_response(
     message="Retention policy created successfully",
     status_code=status.HTTP_201_CREATED,
