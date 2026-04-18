@@ -14,6 +14,7 @@ from repositories.invoice_repo import (
     get_next_invoice_number,
     update_invoice,
 )
+from core.queue.manager import QueueManager
 from schemas.invoice_schema import (
     InvoiceCreate,
     InvoiceLineItem,
@@ -22,7 +23,7 @@ from schemas.invoice_schema import (
     InvoiceUpdate,
     InvoiceWithSummaryOut,
 )
-from services.invoice_pdf_service import generate_invoice_pdf, get_invoice_pdf_url
+from services.invoice_pdf_service import get_invoice_pdf_url
 
 logger = logging.getLogger(__name__)
 
@@ -108,26 +109,21 @@ async def generate_invoice(
         currency,
     )
 
-    # Generate PDF asynchronously (fire and forget pattern)
-    # If PDF generation fails, the invoice still exists - it's not critical
-    try:
-        pdf_object_key = await generate_invoice_pdf(invoice)
-        if pdf_object_key:
-            await update_invoice(
-                invoice.id or "",
-                InvoiceUpdate(pdf_object_key=pdf_object_key),
+    # Offload PDF rendering to the Celery worker — reportlab is synchronous
+    # CPU work plus a storage upload, both of which can add 500 ms+ to the
+    # request if run inline. The invoice record exists regardless; the PDF
+    # object key is attached by the worker when rendering finishes.
+    if invoice.id:
+        try:
+            QueueManager.get_instance().enqueue(
+                "invoice.generate_pdf", {"invoice_id": invoice.id}
             )
-            logger.info(
-                "Invoice PDF generated and stored: invoice_id=%s object_key=%s",
+        except Exception as e:
+            logger.warning(
+                "Failed to enqueue invoice.generate_pdf for %s: %s",
                 invoice.id,
-                pdf_object_key,
+                e,
             )
-    except Exception as e:
-        logger.warning(
-            "Failed to generate PDF for invoice %s: %s",
-            invoice.id,
-            str(e),
-        )
 
     return invoice
 

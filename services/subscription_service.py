@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from bson import ObjectId
 from fastapi import HTTPException, status
@@ -288,61 +288,35 @@ async def retrieve_subscriptions(
     return await get_subscriptions(filter_dict, start=start, stop=stop)
 
 
-async def _enrich_subscription(sub: SubscriptionOut) -> SubscriptionWithDetailsOut:
-    import asyncio
-    from repositories.tenant_repo import get_tenant
-    from bson import ObjectId as BsonObjectId
+def _build_tenant_info(t) -> SubscriptionTenantInfo:
+    return SubscriptionTenantInfo(
+        id=t.id,
+        company_name=t.company_name,
+        is_active=t.is_active,
+        country_of_hosting=t.country_of_hosting,
+        dpo_contact_email=t.dpo_contact_email,
+        default_payment_provider=t.default_payment_provider,
+        stripe_customer_id=t.stripe_customer_id,
+        flutterwave_customer_id=t.flutterwave_customer_id,
+    )
 
-    async def _fetch_tenant():
-        if not sub.tenant_id:
-            return None
-        try:
-            t = await get_tenant({"_id": BsonObjectId(sub.tenant_id)})
-            if not t:
-                return None
-            return SubscriptionTenantInfo(
-                id=t.id,
-                company_name=t.company_name,
-                is_active=t.is_active,
-                country_of_hosting=t.country_of_hosting,
-                dpo_contact_email=t.dpo_contact_email,
-                default_payment_provider=t.default_payment_provider,
-                stripe_customer_id=t.stripe_customer_id,
-                flutterwave_customer_id=t.flutterwave_customer_id,
-            )
-        except Exception:
-            return None
 
-    async def _fetch_plan():
-        if not sub.plan_id:
-            return None
-        try:
-            p = await get_plan({"_id": BsonObjectId(sub.plan_id)})
-            if not p:
-                return None
-            caps = p.tenant_caps.model_dump() if p.tenant_caps else None
-            return SubscriptionPlanInfo(
-                id=p.id,
-                name=p.name,
-                display_name=p.display_name,
-                tier=p.tier,
-                description=p.description,
-                base_price_monthly=p.base_price_monthly,
-                base_price_yearly=p.base_price_yearly,
-                currency=p.currency,
-                priority_support=p.priority_support,
-                custom_branding=p.custom_branding,
-                api_access=p.api_access,
-                tenant_caps=caps,
-            )
-        except Exception:
-            return None
-
-    tenant_info, plan_info = await asyncio.gather(_fetch_tenant(), _fetch_plan())
-    data = sub.model_dump(by_alias=False)
-    data["tenant"] = tenant_info
-    data["plan"] = plan_info
-    return SubscriptionWithDetailsOut(**data)
+def _build_plan_info(p) -> SubscriptionPlanInfo:
+    caps = p.tenant_caps.model_dump() if p.tenant_caps else None
+    return SubscriptionPlanInfo(
+        id=p.id,
+        name=p.name,
+        display_name=p.display_name,
+        tier=p.tier,
+        description=p.description,
+        base_price_monthly=p.base_price_monthly,
+        base_price_yearly=p.base_price_yearly,
+        currency=p.currency,
+        priority_support=p.priority_support,
+        custom_branding=p.custom_branding,
+        api_access=p.api_access,
+        tenant_caps=caps,
+    )
 
 
 async def retrieve_subscriptions_with_details(
@@ -351,12 +325,63 @@ async def retrieve_subscriptions_with_details(
     start: int = 0,
     stop: int = 100,
 ) -> List[SubscriptionWithDetailsOut]:
-    import asyncio
+    """Bulk-enriched subscriptions list.
+
+    Previously did 2 Mongo queries (tenant + plan) per subscription via
+    ``asyncio.gather``; for a page of 50 that's 100 round trips which
+    partially serialises on the event loop. Now: one ``find`` for the
+    matching tenants, one for the matching plans, then a dict lookup per
+    row. O(1) round-trip cost regardless of page size.
+    """
+    from core.database import db
+    from bson import ObjectId as BsonObjectId
 
     subs = await retrieve_subscriptions(
         tenant_id=tenant_id, status_filter=status_filter, start=start, stop=stop
     )
-    return list(await asyncio.gather(*[_enrich_subscription(s) for s in subs]))
+    if not subs:
+        return []
+
+    tenant_oids: list[BsonObjectId] = []
+    plan_oids: list[BsonObjectId] = []
+    for s in subs:
+        if s.tenant_id and BsonObjectId.is_valid(s.tenant_id):
+            tenant_oids.append(BsonObjectId(s.tenant_id))
+        if s.plan_id and BsonObjectId.is_valid(s.plan_id):
+            plan_oids.append(BsonObjectId(s.plan_id))
+
+    tenants_by_id: dict[str, Any] = {}
+    plans_by_id: dict[str, Any] = {}
+    if tenant_oids:
+        from schemas.tenant_schema import TenantOut
+
+        async for doc in db["tenant_companies"].find({"_id": {"$in": tenant_oids}}):
+            try:
+                tenant_model = TenantOut(**doc)
+            except Exception:
+                continue
+            if tenant_model.id:
+                tenants_by_id[tenant_model.id] = tenant_model
+    if plan_oids:
+        from schemas.plan_schema import PlanOut
+
+        async for doc in db["plans"].find({"_id": {"$in": plan_oids}}):
+            try:
+                plan_model = PlanOut(**doc)
+            except Exception:
+                continue
+            if plan_model.id:
+                plans_by_id[plan_model.id] = plan_model
+
+    results: List[SubscriptionWithDetailsOut] = []
+    for sub in subs:
+        data = sub.model_dump(by_alias=False)
+        t = tenants_by_id.get(sub.tenant_id or "") if sub.tenant_id else None
+        p = plans_by_id.get(sub.plan_id or "") if sub.plan_id else None
+        data["tenant"] = _build_tenant_info(t) if t else None
+        data["plan"] = _build_plan_info(p) if p else None
+        results.append(SubscriptionWithDetailsOut(**data))
+    return results
 
 
 async def change_plan(

@@ -1,4 +1,5 @@
 from core.database import db
+from core import token_cache
 
 from schemas.tokens_schema import (
     accessTokenCreate,
@@ -71,6 +72,10 @@ async def add_refresh_tokens(token_data: refreshTokenCreate) -> refreshTokenOut:
 async def delete_access_token(accessToken):
     # await db.refreshToken.delete_many({"previousAccessToken":accessToken})
     await db.accessToken.find_one_and_delete({"_id": ObjectId(accessToken)})
+    # Drop any in-process cache entries that point at this token so a
+    # logout on the same worker takes effect immediately. Cross-worker
+    # invalidation is bounded by the cache TTL.
+    token_cache.invalidate_by_token_id(str(accessToken))
 
 
 async def delete_refresh_token(refreshToken: str):
@@ -122,6 +127,14 @@ async def _resolve_access_token_id(accessToken: str, allow_expired: bool) -> str
 async def get_access_token(
     accessToken: str, allow_expired: bool = False
 ) -> accessTokenOut | None:
+    # Fast path: serve from the in-process cache when we're doing a
+    # standard (non-expired) lookup. The expired-read path is rare and
+    # bypasses the cache so stale state can't mask rotation issues.
+    if not allow_expired:
+        cached = token_cache.get(accessToken)
+        if cached is not None:
+            return cached
+
     token_id = await _resolve_access_token_id(
         accessToken=accessToken, allow_expired=allow_expired
     )
@@ -139,7 +152,10 @@ async def get_access_token(
     if token.get("role") == "admin" and token.get("status") != "active":
         return None
 
-    return accessTokenOut(**token)
+    result = accessTokenOut(**token)
+    if not allow_expired:
+        token_cache.put(accessToken, result)
+    return result
 
 
 async def get_access_tokens(accessToken: str) -> accessTokenOut | None:
@@ -195,8 +211,13 @@ async def delete_access_and_refresh_token_with_user_id(userId: str) -> bool:
 async def delete_all_tokens_with_user_id(userId: str):
     await db.refreshToken.delete_many(filter={"userId": userId})
     await db.accessToken.delete_many(filter={"userId": userId})
+    # Bulk revocation: clearing the whole in-process cache is cheaper and
+    # simpler than tracking which entries belong to this user. The cache
+    # rebuilds from the next few requests.
+    token_cache.clear()
 
 
 async def delete_all_tokens_with_admin_id(adminId: str):
     await db.refreshToken.delete_many(filter={"userId": adminId})
     await db.accessToken.delete_many(filter={"userId": adminId})
+    token_cache.clear()

@@ -279,6 +279,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Could not create pending_otp TTL index")
 
+    # Ensure the rest of the hot-path indexes exist (idempotent).
+    try:
+        from core.database import db as _db
+        from core.indexes import ensure_indexes
+
+        await ensure_indexes(_db)
+    except Exception:
+        logger.warning("ensure_indexes failed at startup", exc_info=True)
+
     # Schedule retention cleanup job
     from services.retention_service import run_retention_cleanup
 
@@ -338,6 +347,15 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Allow in-flight fire-and-forget tasks (e.g. audit writes) to
+        # settle before the process goes down. Bounded so a stuck task
+        # can't delay shutdown forever.
+        try:
+            from core.background_tasks import drain_pending
+
+            await drain_pending(timeout=5.0)
+        except Exception:
+            logger.warning("drain_pending raised during shutdown", exc_info=True)
         scheduler.shutdown()
 
 
