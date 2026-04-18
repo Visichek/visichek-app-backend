@@ -183,6 +183,18 @@ async def _handle_charge_completed(payload: dict) -> dict:
             logger.info(
                 f"Updated payment transaction: reference={tx_ref}, status=succeeded"
             )
+            # Bridge to checkout sessions: activate the subscription if this
+            # reference corresponds to a pending checkout.
+            try:
+                from services.checkout_service import (
+                    maybe_complete_checkout_from_reference,
+                )
+
+                await maybe_complete_checkout_from_reference(tx_ref, "success")
+            except Exception:
+                logger.exception(
+                    "Failed to complete checkout session from Flutterwave webhook"
+                )
             return {
                 "handled": True,
                 "action": "payment_updated",
@@ -218,6 +230,16 @@ async def _handle_charge_failed(payload: dict) -> dict:
             logger.info(
                 f"Updated payment transaction: reference={tx_ref}, status=failed"
             )
+            try:
+                from services.checkout_service import (
+                    maybe_complete_checkout_from_reference,
+                )
+
+                await maybe_complete_checkout_from_reference(tx_ref, "failure")
+            except Exception:
+                logger.exception(
+                    "Failed to mark checkout session failed from Flutterwave webhook"
+                )
             return {
                 "handled": True,
                 "action": "payment_updated",

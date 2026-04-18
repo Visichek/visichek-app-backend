@@ -70,7 +70,7 @@ async def create_tenant_endpoint(
     return await add_tenant(tenant_data=tenant_data)
 
 
-@router.get("")
+@router.get("/")
 @document_response(
     message="Tenants fetched successfully",
     description="Retrieve a paginated list of all tenants. Only super-admin users can list tenants.",

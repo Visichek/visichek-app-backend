@@ -144,6 +144,21 @@ async def process_webhook(*, provider_name: str, body: bytes, headers: dict[str,
             provider=provider_name_lower, event_id=event.event_id, created_at=_epoch()
         )
     )
+
+    # Bridge to the checkout session system: if this transaction's reference
+    # matches a pending checkout, complete it (provisions the subscription on
+    # success, marks it failed on decline). Non-checkout payments are ignored.
+    try:
+        from services.checkout_service import maybe_complete_checkout_from_reference
+        from core.payments.types import PaymentStatus
+
+        if tx.status == PaymentStatus.SUCCEEDED:
+            await maybe_complete_checkout_from_reference(reference, "success")
+        elif tx.status == PaymentStatus.FAILED:
+            await maybe_complete_checkout_from_reference(reference, "failure")
+    except Exception:
+        logger.exception("Failed to update checkout session from webhook")
+
     return {"processed": True, "reference": reference, "status": tx.status.value}
 
 

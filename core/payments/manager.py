@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from threading import Lock
 
+from core.payments.app_provider import AppCheckoutPaymentProvider
 from core.payments.flutterwave_provider import FlutterwavePaymentProvider
 from core.payments.provider import PaymentProvider
 from core.payments.stripe_provider import StripePaymentProvider
 from core.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class PaymentManager:
@@ -24,26 +28,37 @@ class PaymentManager:
         providers: dict[str, PaymentProvider] = {}
 
         if settings.flutterwave_secret_key:
-            providers["flutterwave"] = FlutterwavePaymentProvider(
-                secret_key=settings.flutterwave_secret_key,
-                webhook_secret_hash=settings.flutterwave_webhook_secret_hash,
-            )
+            try:
+                providers["flutterwave"] = FlutterwavePaymentProvider(
+                    secret_key=settings.flutterwave_secret_key,
+                    webhook_secret_hash=settings.flutterwave_webhook_secret_hash,
+                )
+            except Exception as err:
+                logger.warning("Flutterwave provider unavailable: %s", err)
 
         if settings.stripe_secret_key:
-            providers["stripe"] = StripePaymentProvider(
-                secret_key=settings.stripe_secret_key,
-                webhook_secret=settings.stripe_webhook_secret,
-            )
+            try:
+                providers["stripe"] = StripePaymentProvider(
+                    secret_key=settings.stripe_secret_key,
+                    webhook_secret=settings.stripe_webhook_secret,
+                )
+            except Exception as err:
+                logger.warning("Stripe provider unavailable: %s", err)
 
-        if not providers:
-            raise RuntimeError(
-                "At least one payment provider must be configured. "
-                "Set FLUTTERWAVE_SECRET_KEY and/or STRIPE_SECRET_KEY."
-            )
+        # The app provider is always registered as a fallback so a checkout
+        # can still be issued when no external provider is configured.
+        providers["app"] = AppCheckoutPaymentProvider(
+            base_url=(getattr(settings, "app_base_url", "") or "").strip()
+        )
 
         default_provider = settings.payment_default_provider
         if default_provider not in providers:
-            default_provider = next(iter(providers.keys()))
+            # Prefer any real provider; fall back to app mode only if neither
+            # Stripe nor Flutterwave is configured.
+            for preferred in ("stripe", "flutterwave", "app"):
+                if preferred in providers:
+                    default_provider = preferred
+                    break
 
         with cls._lock:
             cls._instance = cls(providers=providers, default_provider=default_provider)
@@ -60,3 +75,13 @@ class PaymentManager:
         if key not in self._providers:
             raise ValueError(f"Unsupported payment provider '{provider}'")
         return self._providers[key]
+
+    def has_provider(self, provider: str) -> bool:
+        return provider.lower() in self._providers
+
+    def available_providers(self) -> list[str]:
+        return list(self._providers.keys())
+
+    @property
+    def default_provider(self) -> str:
+        return self._default_provider

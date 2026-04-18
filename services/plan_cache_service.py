@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any, Optional, cast
+from typing import Any, List, Optional, cast
 
 from core.redis_cache import cache_db
 
@@ -209,3 +210,162 @@ def _merge_tenant_caps(plan_caps: dict, overrides: Optional[dict]) -> dict:
     if not overrides:
         return plan_caps
     return {**plan_caps, **overrides}
+
+
+def _build_resolved_from_raw(sub: dict, plan: dict, tenant_id: str) -> dict:
+    """Build the resolved plan dict from raw Mongo documents.
+
+    Same merge rules as ``resolve_tenant_plan`` but operating on plain dicts —
+    used by the bulk path to avoid constructing Pydantic models for every row.
+    """
+    from bson import ObjectId
+
+    plan_id = sub.get("plan_id")
+    sub_id_raw = sub.get("_id")
+    sub_id = str(sub_id_raw) if isinstance(sub_id_raw, ObjectId) else sub_id_raw
+
+    return {
+        "plan_id": plan_id,
+        "plan_name": plan.get("name"),
+        "plan_display_name": plan.get("display_name"),
+        "tier": plan.get("tier"),
+        "subscription_id": sub_id,
+        "subscription_status": sub.get("status"),
+        "tenant_id": tenant_id,
+        "feature_rules": _merge_feature_rules(
+            plan.get("feature_rules", []),
+            sub.get("feature_overrides"),
+        ),
+        "crud_limits": _merge_crud_limits(
+            plan.get("crud_limits", []),
+            sub.get("crud_limit_overrides"),
+        ),
+        "retrieval_quotas": _merge_retrieval_quotas(
+            plan.get("retrieval_quotas", []),
+            sub.get("retrieval_quota_overrides"),
+        ),
+        "storage_limits": plan.get("storage_limits", {}),
+        "tenant_caps": _merge_tenant_caps(
+            plan.get("tenant_caps", {}),
+            sub.get("tenant_cap_overrides"),
+        ),
+        "priority_support": plan.get("priority_support"),
+        "custom_branding": plan.get("custom_branding"),
+        "api_access": plan.get("api_access"),
+        "effective_price": sub.get("effective_price"),
+        "billing_cycle": sub.get("billing_cycle"),
+        "current_period_end": sub.get("current_period_end"),
+        "trial_ends_at": sub.get("trial_ends_at"),
+    }
+
+
+async def resolve_tenant_plans_bulk(tenant_ids: List[str]) -> dict[str, dict]:
+    """Resolve effective plans for many tenants in batched I/O.
+
+    Replaces the per-tenant loop of ``resolve_tenant_plan`` with:
+      1. One Redis ``MGET`` for all cached plans (off the event loop).
+      2. One Mongo ``find`` on ``subscriptions`` for cache misses.
+      3. One Mongo ``find`` on ``plans`` for the referenced plan ids.
+      4. One pipelined Redis write to repopulate the misses.
+
+    This turns the previous N+1 blocking pattern into O(1) round trips
+    regardless of tenant count, which is the main win for list endpoints.
+    Cache key format and payload shape are identical to
+    ``resolve_tenant_plan`` so a hit from one function is reusable by the
+    other.
+    """
+    if not tenant_ids:
+        return {}
+
+    keys = [f"{TENANT_PLAN_PREFIX}{tid}" for tid in tenant_ids]
+
+    try:
+        cached_raw = cast(
+            List[Optional[str]], await asyncio.to_thread(cache_db.mget, keys)
+        )
+    except Exception:
+        cached_raw = [None] * len(keys)
+
+    result: dict[str, dict] = {}
+    missing: List[str] = []
+    for tid, raw in zip(tenant_ids, cached_raw or []):
+        if raw:
+            try:
+                result[tid] = json.loads(cast(Any, raw))
+                continue
+            except Exception:
+                pass
+        missing.append(tid)
+
+    if not missing:
+        return result
+
+    # Bulk-fetch active/trialing subscriptions for the missing tenants.
+    from core.database import db
+    from schemas.subscription_schema import SubscriptionStatus
+
+    sub_filter = {
+        "tenant_id": {"$in": missing},
+        "status": {
+            "$in": [
+                SubscriptionStatus.ACTIVE.value,
+                SubscriptionStatus.TRIALING.value,
+            ]
+        },
+    }
+    subs_by_tenant: dict[str, dict] = {}
+    plan_ids: set[str] = set()
+    async for sub in db["subscriptions"].find(sub_filter):
+        tid = sub.get("tenant_id")
+        if not tid:
+            continue
+        # If a tenant has multiple active/trialing subs somehow, keep the first.
+        subs_by_tenant.setdefault(tid, sub)
+        pid = sub.get("plan_id")
+        if pid:
+            plan_ids.add(pid)
+
+    if not subs_by_tenant:
+        return result
+
+    # Bulk-fetch the plans referenced by those subscriptions.
+    from bson import ObjectId
+
+    plan_oids = [ObjectId(pid) for pid in plan_ids if ObjectId.is_valid(pid)]
+    plans_by_id: dict[str, dict] = {}
+    if plan_oids:
+        async for plan in db["plans"].find({"_id": {"$in": plan_oids}}):
+            plans_by_id[str(plan["_id"])] = plan
+
+    if not plans_by_id:
+        return result
+
+    # Merge + stage writes.
+    to_cache: dict[str, str] = {}
+    for tid, sub in subs_by_tenant.items():
+        plan = plans_by_id.get(str(sub.get("plan_id")))
+        if not plan:
+            continue
+        resolved = _build_resolved_from_raw(sub, plan, tid)
+        result[tid] = resolved
+        try:
+            to_cache[f"{TENANT_PLAN_PREFIX}{tid}"] = json.dumps(resolved)
+        except Exception:
+            # A non-serialisable value should never slip through, but we'd
+            # rather serve the request than blow up on a cache write.
+            continue
+
+    if to_cache:
+
+        def _pipeline_write() -> None:
+            pipe = cache_db.pipeline()
+            for key, value in to_cache.items():
+                pipe.setex(key, PLAN_CACHE_TTL, value)
+            pipe.execute()
+
+        try:
+            await asyncio.to_thread(_pipeline_write)
+        except Exception:
+            pass
+
+    return result

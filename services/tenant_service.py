@@ -167,10 +167,31 @@ async def _enrich_tenant(tenant: TenantOut) -> TenantWithSummaryOut:
 async def retrieve_tenants_with_summary(
     start=0, stop=100
 ) -> List[TenantWithSummaryOut]:
-    import asyncio
+    """List tenants with their plan summary.
+
+    Uses ``resolve_tenant_plans_bulk`` so the whole page is served in a
+    constant number of round trips: one Redis ``MGET`` + at most one
+    ``subscriptions`` find + one ``plans`` find + one pipelined cache write,
+    regardless of how many tenants are returned. Previously this did N sync
+    Redis ``GET``s and 2N Mongo queries under ``asyncio.gather``, which
+    serialised on the event loop.
+    """
+    from services.plan_cache_service import resolve_tenant_plans_bulk
 
     tenants = await get_tenants(start=start, stop=stop)
-    return list(await asyncio.gather(*[_enrich_tenant(t) for t in tenants]))
+    if not tenants:
+        return []
+
+    tenant_ids = [t.id for t in tenants if t.id]
+    plans_by_tenant = await resolve_tenant_plans_bulk(tenant_ids)
+
+    results: List[TenantWithSummaryOut] = []
+    for tenant in tenants:
+        plan_data = plans_by_tenant.get(tenant.id or "")
+        data = tenant.model_dump(by_alias=False)
+        data["plan_summary"] = _build_plan_summary(plan_data)
+        results.append(TenantWithSummaryOut(**data))
+    return results
 
 
 async def retrieve_tenant_by_id_with_summary(tenant_id: str) -> TenantWithSummaryOut:

@@ -342,6 +342,7 @@ async def lifespan(app: FastAPI):
 
 
 from core.case_conversion import CaseConversionMiddleware
+from core.http_cache import HttpCacheMiddleware
 from core.plan_enforcement import PlanEnforcementMiddleware
 
 app = FastAPI(lifespan=lifespan, title="VisiChek REST API")
@@ -354,6 +355,7 @@ app.add_middleware(
     secret_key=settings.session_secret_key
     or "dev-only-session-secret-NOT-FOR-PRODUCTION",
 )
+app.add_middleware(HttpCacheMiddleware)
 app.add_middleware(PlanEnforcementMiddleware)
 app.add_middleware(RateLimitingMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
@@ -629,6 +631,8 @@ from api.v1.visitor_verification_route import (
     router as v1_visitor_verification_route_router,
 )
 from api.v1.checkin_submit_route import router as v1_checkin_submit_route_router
+from api.v1.checkout_route import router as v1_checkout_route_router
+from api.v1.app_payment_route import router as app_payment_route_router
 
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
@@ -677,6 +681,10 @@ app.include_router(v1_badge_route_router, prefix="/v1")
 app.include_router(v1_face_crop_route_router, prefix="/v1")
 app.include_router(v1_visitor_verification_route_router, prefix="/v1")
 app.include_router(v1_checkin_submit_route_router, prefix="/v1")
+app.include_router(v1_checkout_route_router, prefix="/v1")
+# App-mode payment simulator — deliberately NOT under /v1 so the URLs
+# match the checkout_url emitted by AppCheckoutPaymentProvider.
+app.include_router(app_payment_route_router)
 # --- auto-routes-end ---
 
 apply_response_documentation(app)
