@@ -15,7 +15,7 @@ router = APIRouter(prefix="/dsr", tags=["Data Subject Requests"])
 _dpo_roles = verify_system_user_token("super_admin", "dpo")
 
 
-@router.get("")
+@router.post("/")
 @document_response(
     message="DSR created successfully",
     status_code=status.HTTP_201_CREATED,

@@ -14,7 +14,7 @@ router = APIRouter(prefix="/sub-processors", tags=["Sub-Processors"])
 _dpo_roles = verify_system_user_token("super_admin", "dpo")
 
 
-@router.get("")
+@router.post("/")
 @document_response(
     message="Sub-processor created successfully",
     status_code=status.HTTP_201_CREATED,
