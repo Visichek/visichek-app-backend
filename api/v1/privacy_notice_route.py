@@ -18,7 +18,7 @@ router = APIRouter(prefix="/privacy-notices", tags=["Privacy Notices"])
 _admin_roles = verify_system_user_token("super_admin", "dpo")
 
 
-@router.post("/")
+@router.get("")
 @document_response(
     message="Privacy notice created successfully",
     status_code=status.HTTP_201_CREATED,

@@ -18,7 +18,7 @@ from services.tenant_service import (
 router = APIRouter(prefix="/tenants", tags=["Tenants"])
 
 
-@router.post("/")
+@router.get("")
 @document_response(
     message="Tenant created successfully",
     status_code=status.HTTP_201_CREATED,
