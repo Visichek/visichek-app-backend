@@ -71,7 +71,7 @@ async def create_incident(
     return await add_incident(log_data=log_data)
 
 
-@router.get("/")
+@router.get("")
 @document_response(
     message="Incidents fetched successfully",
     success_example=[

@@ -68,7 +68,7 @@ async def create_dsr_endpoint(
     return await add_dsr(dsr_data=dsr_data)
 
 
-@router.get("/")
+@router.get("")
 @document_response(
     message="DSRs fetched successfully",
     summary="List data subject requests",

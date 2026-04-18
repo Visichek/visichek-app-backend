@@ -545,7 +545,7 @@ async def get_my_profile(
     return SystemUserProfileOut(**user.model_dump(), tenant=tenant_summary)
 
 
-@router.get("/")
+@router.get("")
 @document_response(
     message="System users fetched successfully",
     success_example=[

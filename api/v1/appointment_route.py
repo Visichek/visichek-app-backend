@@ -74,7 +74,7 @@ async def create_appointment_endpoint(
     return await add_appointment(appt_data=appt_data)
 
 
-@router.get("/")
+@router.get("")
 @document_response(
     message="Appointments fetched successfully",
     description="Retrieve paginated list of appointments for the current tenant.",

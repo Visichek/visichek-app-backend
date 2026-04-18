@@ -67,7 +67,7 @@ async def create_sp(
     return await add_sub_processor(sp_data=sp_data)
 
 
-@router.get("/")
+@router.get("")
 @document_response(
     message="Sub-processors fetched successfully",
     summary="List sub-processors",

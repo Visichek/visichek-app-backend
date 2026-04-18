@@ -61,7 +61,7 @@ async def search_visitor_profiles_endpoint(
     return await search_profiles(tenant_id=tenant_id, query=q, start=start, stop=stop)
 
 
-@router.get("/")
+@router.get("")
 @document_response(
     message="Visitor profiles fetched successfully",
     description="Retrieve paginated list of all visitor profiles for the tenant.",

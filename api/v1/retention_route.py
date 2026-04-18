@@ -59,7 +59,7 @@ async def create_policy(
     return await create_retention_policy(policy_data)
 
 
-@router.get("/")
+@router.get("")
 @document_response(
     message="Retention policies fetched successfully",
     summary="List retention policies",

@@ -117,7 +117,7 @@ async def get_active_notice(
     return await retrieve_active_notice(tenant_id=tenant_id)
 
 
-@router.get("/")
+@router.get("")
 @document_response(
     message="Privacy notices fetched successfully",
     summary="List privacy notices",

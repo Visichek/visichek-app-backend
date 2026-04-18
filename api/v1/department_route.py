@@ -70,7 +70,7 @@ async def create_department_endpoint(
     return await add_department(dept_data=dept_data, created_by=principal.user_id)
 
 
-@router.get("/")
+@router.get("")
 @document_response(
     message="Departments fetched successfully",
     description="Retrieve a paginated list of departments. Super-admins see all departments; department admins see only their tenant's departments.",

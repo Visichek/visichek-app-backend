@@ -10,7 +10,7 @@ router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 _audit_roles = verify_system_user_token("super_admin", "auditor", "dpo")
 
 
-@router.get("/")
+@router.get("")
 @document_response(
     message="Audit logs fetched successfully",
     success_example=[
