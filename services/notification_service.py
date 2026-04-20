@@ -424,3 +424,137 @@ async def notify_checkin_rejected(
                 )
     except Exception:
         logger.warning("Failed to send check-in rejected notification", exc_info=True)
+
+
+# --- Queued Job Failure Notification ---
+
+
+_VERB_PAST_TENSE = {
+    "create": "create",
+    "update": "update",
+    "delete": "delete",
+    "archive": "archive",
+    "unarchive": "restore",
+    "publish": "publish",
+    "unpublish": "unpublish",
+    "activate": "activate",
+    "deactivate": "deactivate",
+    "disable": "disable",
+    "enable": "enable",
+    "cancel": "cancel",
+    "approve": "approve",
+    "reject": "reject",
+    "reset": "reset",
+    "suspend": "suspend",
+    "offboard": "offboard",
+    "assign": "assign",
+    "revoke": "revoke",
+    "subscribe": "subscribe to",
+    "change_plan": "change plan for",
+    "clone": "clone",
+    "upload": "upload",
+}
+
+
+def _format_action_from_writer_key(writer_key: str) -> str:
+    """Turn ``discount.delete`` into ``Couldn't delete discount``."""
+    resource, _, verb = writer_key.partition(".")
+    if not verb:
+        return f"Action failed: {writer_key}"
+    resource_label = resource.replace("_", " ")
+    verb_label = _VERB_PAST_TENSE.get(verb, verb.replace("_", " "))
+    return f"Couldn't {verb_label} {resource_label}"
+
+
+def _extract_failure_message(exception: BaseException) -> tuple[str, Optional[str]]:
+    """Return ``(body, error_code)`` for a failed job exception.
+
+    ``AppException`` / ``HTTPException`` carry user-facing detail that the
+    user is allowed to see; anything else gets a generic message with the
+    job id surfaced so support can trace it.
+    """
+    from core.errors import AppException
+
+    if isinstance(exception, AppException):
+        detail: dict = exception.detail if isinstance(exception.detail, dict) else {}
+        message = detail.get("message")
+        code = detail.get("code")
+        return (message or "The operation failed.", code)
+
+    if isinstance(exception, HTTPException):
+        raw_detail = getattr(exception, "detail", None)
+        if isinstance(raw_detail, str) and raw_detail:
+            return (raw_detail, None)
+        if isinstance(raw_detail, dict):
+            message = raw_detail.get("message") or raw_detail.get("detail")
+            if isinstance(message, str) and message:
+                return (message, raw_detail.get("code"))
+        return ("The operation failed.", None)
+
+    return (
+        "The operation failed unexpectedly. Support has been notified.",
+        None,
+    )
+
+
+def _user_type_for_role(role: Optional[str]) -> Optional[str]:
+    """Map an auth role to the ``user_type`` used on notifications."""
+    if not role:
+        return None
+    from security.principal import TENANT_USER_ROLES
+
+    if role in TENANT_USER_ROLES:
+        return "system_user"
+    if role == "admin":
+        return "admin"
+    if role == "user":
+        return "user"
+    return None
+
+
+async def notify_job_failure(
+    task_id: str,
+    writer_key: str,
+    exception: BaseException,
+) -> None:
+    """Fire-and-forget: notify the user who enqueued a failed write.
+
+    Looks up ``queue_job_log`` by ``task_id`` to recover the actor and
+    delivers a notification explaining what went wrong. Silent if the job
+    has no actor (system-initiated write) or the actor's role isn't
+    notifiable.
+    """
+    try:
+        from repositories.queue_job_log_repo import get_job_log_by_task_id
+
+        log_entry = await get_job_log_by_task_id(task_id)
+        if log_entry is None:
+            logger.warning(
+                "notify_job_failure: no queue_job_log for task_id=%s", task_id
+            )
+            return
+        if not log_entry.actor_id:
+            return
+
+        user_type = _user_type_for_role(log_entry.actor_role)
+        if not user_type:
+            return
+
+        body, _ = _extract_failure_message(exception)
+        title = _format_action_from_writer_key(writer_key)
+
+        await send_notification(
+            user_id=log_entry.actor_id,
+            user_type=user_type,
+            title=title,
+            body=body,
+            type="error",
+            link=f"/app/jobs/{task_id}",
+            tenant_id=log_entry.tenant_id,
+        )
+    except Exception:
+        logger.warning(
+            "notify_job_failure: failed to deliver notification task_id=%s",
+            task_id,
+            exc_info=True,
+        )

@@ -141,6 +141,18 @@ async def _db_write_dispatcher(
                     task_id,
                     exc_info=True,
                 )
+            try:
+                from services.notification_service import notify_job_failure
+
+                await notify_job_failure(
+                    task_id=task_id, writer_key=writer_key, exception=exc
+                )
+            except Exception:
+                logger.warning(
+                    "job-failure notification failed for task_id=%s",
+                    task_id,
+                    exc_info=True,
+                )
         logger.exception(
             "db.write failed: writer=%s resource_id=%s", writer_key, resource_id
         )
