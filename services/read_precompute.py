@@ -156,9 +156,7 @@ async def _precompute_invoices_for_tenant(tenant_id: str) -> Any:
     )
     return {
         "items": [
-            i.model_dump(mode="json", by_alias=True)
-            if hasattr(i, "model_dump")
-            else i
+            i.model_dump(mode="json", by_alias=True) if hasattr(i, "model_dump") else i
             for i in invoices
         ],
         "total": total,
@@ -174,9 +172,7 @@ async def _precompute_invoices_admin_list(_tenant_id: str) -> Any:
     )
     return {
         "items": [
-            i.model_dump(mode="json", by_alias=True)
-            if hasattr(i, "model_dump")
-            else i
+            i.model_dump(mode="json", by_alias=True) if hasattr(i, "model_dump") else i
             for i in invoices
         ],
         "total": total,

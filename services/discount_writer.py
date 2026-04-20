@@ -47,9 +47,7 @@ async def _discount_update(resource_id: str, data: dict[str, Any]) -> dict[str, 
 
 
 @write_handler("discount.disable")
-async def _discount_disable(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _discount_disable(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     result = await disable_discount(discount_id=resource_id)
     _enqueue_list_refresh()
     return {"id": result.id if result else resource_id, "status": "disabled"}

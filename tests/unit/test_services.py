@@ -79,7 +79,7 @@ class TestTenantService:
         assert result.id == tenant_id
         assert result.company_name == "Acme Corp"
         mock_get.assert_called_once_with(filter_dict={"company_name": "Acme Corp"})
-        mock_create.assert_called_once_with(tenant_data)
+        mock_create.assert_called_once_with(tenant_data, preassigned_id=None)
 
     @patch("services.tenant_service.get_tenant")
     async def test_add_tenant_duplicate_name_raises_409(self, mock_get):

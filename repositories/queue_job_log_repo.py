@@ -65,7 +65,12 @@ async def update_job_log_by_task_id(
 async def mark_processing(task_id: str) -> None:
     await db[COLLECTION].update_one(
         {"task_id": task_id},
-        {"$set": {"status": QueueJobStatus.PROCESSING.value, "last_updated": int(time.time())}},
+        {
+            "$set": {
+                "status": QueueJobStatus.PROCESSING.value,
+                "last_updated": int(time.time()),
+            }
+        },
     )
 
 

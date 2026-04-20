@@ -69,4 +69,8 @@ async def _load_my_usage(tenant_id: str) -> TenantUsageSummary | dict:
         subscription_id=plan_data.get("subscription_id", ""),
         plan_data=plan_data,
     )
-    return result.model_dump(mode="json", by_alias=True) if hasattr(result, "model_dump") else result  # type: ignore[return-value]
+    return (
+        result.model_dump(mode="json", by_alias=True)
+        if hasattr(result, "model_dump")
+        else result
+    )  # type: ignore[return-value]

@@ -33,10 +33,20 @@ _SNAKE_RE = re.compile(r"_([a-z0-9])")
 
 
 def _to_camel(name: str) -> str:
-    """Convert snake_case → camelCase.  Preserves leading underscores."""
+    """Convert snake_case → camelCase.
+
+    Leading underscores are stripped so MongoDB-style ``_id`` fields collapse
+    to ``id`` uniformly, matching how Pydantic models serialise with
+    ``by_alias=False``. Without this, precompute/cache paths that dump with
+    ``by_alias=True`` would surface ``Id`` to clients while direct responses
+    surface ``id``.
+    """
     if "_" not in name:
         return name
-    parts = name.split("_")
+    stripped = name.lstrip("_")
+    if "_" not in stripped:
+        return stripped
+    parts = stripped.split("_")
     return parts[0] + "".join(w.capitalize() for w in parts[1:] if w)
 
 

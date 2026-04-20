@@ -120,11 +120,7 @@ def iter_active_tenant_ids() -> list[str]:
     try:
         keys = cast(
             list[str],
-            list(
-                cache_db.scan_iter(
-                    match=f"{_ACTIVE_TENANT_PREFIX}:*", count=200
-                )
-            ),
+            list(cache_db.scan_iter(match=f"{_ACTIVE_TENANT_PREFIX}:*", count=200)),
         )
     except Exception:
         logger.warning("iter_active_tenant_ids scan failed", exc_info=True)
@@ -166,11 +162,7 @@ def iter_active_users() -> list[tuple[str, str]]:
     try:
         keys = cast(
             list[str],
-            list(
-                cache_db.scan_iter(
-                    match=f"{_ACTIVE_USER_PREFIX}:*", count=200
-                )
-            ),
+            list(cache_db.scan_iter(match=f"{_ACTIVE_USER_PREFIX}:*", count=200)),
         )
     except Exception:
         logger.warning("iter_active_users scan failed", exc_info=True)
@@ -224,9 +216,7 @@ async def get_or_compute(
     try:
         cache_db.setex(redis_key, ttl, json.dumps(result, default=_json_default))
     except Exception:
-        logger.warning(
-            "precompute cache setex failed for %s", redis_key, exc_info=True
-        )
+        logger.warning("precompute cache setex failed for %s", redis_key, exc_info=True)
     return result
 
 
@@ -252,7 +242,9 @@ async def run_precompute(
         result = await loader(tenant_id)
     elif scope is PrecomputeScope.USER:
         if not user_id:
-            logger.warning("precompute: user-scope resource %s missing user_id", resource)
+            logger.warning(
+                "precompute: user-scope resource %s missing user_id", resource
+            )
             return
         scope_key = f"tenant:{tenant_id or '_'}:user:{user_id}"
         result = await loader(user_id)
@@ -268,9 +260,7 @@ async def run_precompute(
             json.dumps(result, default=_json_default),
         )
     except Exception:
-        logger.warning(
-            "run_precompute write failed for %s", redis_key, exc_info=True
-        )
+        logger.warning("run_precompute write failed for %s", redis_key, exc_info=True)
 
 
 async def fanout_for_active_tenants() -> None:

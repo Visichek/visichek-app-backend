@@ -562,12 +562,16 @@ async def list_system_users(
 
     tenant_id = principal.tenant_id or ""
     if start == 0 and stop == 100 and tenant_id:
+
         async def _load() -> list:
             users = await retrieve_system_users(tenant_id=tenant_id, start=0, stop=100)
             return [
-                u.model_dump(mode="json", by_alias=True) if hasattr(u, "model_dump") else u
+                u.model_dump(mode="json", by_alias=True)
+                if hasattr(u, "model_dump")
+                else u
                 for u in users
             ]
+
         return await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
             resource="system_users.list",

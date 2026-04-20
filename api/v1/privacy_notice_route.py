@@ -83,7 +83,11 @@ async def get_active_notice(
 
 async def _load_active_notice(tenant_id: str) -> Any:
     notice = await retrieve_active_notice(tenant_id=tenant_id)
-    return notice.model_dump(mode="json", by_alias=True) if hasattr(notice, "model_dump") else notice
+    return (
+        notice.model_dump(mode="json", by_alias=True)
+        if hasattr(notice, "model_dump")
+        else notice
+    )
 
 
 @router.get("")

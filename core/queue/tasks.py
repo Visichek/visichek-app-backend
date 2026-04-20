@@ -148,9 +148,7 @@ async def _db_write_dispatcher(
 
     if task_id:
         try:
-            await mark_succeeded(
-                task_id, result if isinstance(result, dict) else None
-            )
+            await mark_succeeded(task_id, result if isinstance(result, dict) else None)
         except Exception:
             logger.warning(
                 "mark_succeeded logging failed for task_id=%s",

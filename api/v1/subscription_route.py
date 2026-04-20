@@ -160,7 +160,11 @@ async def _load_active_subscription(tenant_id: str) -> Any:
     sub = await retrieve_tenant_active_subscription(tenant_id)
     if not sub:
         return None
-    return sub.model_dump(mode="json", by_alias=True) if hasattr(sub, "model_dump") else sub
+    return (
+        sub.model_dump(mode="json", by_alias=True)
+        if hasattr(sub, "model_dump")
+        else sub
+    )
 
 
 @router.get("/{subscription_id}")

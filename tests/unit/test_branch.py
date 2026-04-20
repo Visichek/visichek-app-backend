@@ -288,24 +288,26 @@ async def test_ensure_default_branch_returns_existing(mock_branch_repo):
 
 @pytest.mark.asyncio
 async def test_branch_create_route():
-    """POST /v1/branches returns 201."""
+    """POST /v1/branches enqueues a branch.create write and returns 202."""
     mock_principal = MagicMock()
     mock_principal.tenant_id = "t1"
+    mock_principal.user_id = "u1"
     mock_principal.role = "super_admin"
 
-    branch_out = _make_branch_out(name="Lagos Office")
-
     with patch(
-        "api.v1.branch_route.add_branch",
+        "api.v1.branch_route.enqueue_write",
         new_callable=AsyncMock,
-        return_value=branch_out,
-    ):
+    ) as mock_enqueue:
+        mock_enqueue.return_value = {
+            "id": "branch-001",
+            "job_id": "job-branch-abc",
+            "status": "queued",
+        }
+
         from main import app
         from security.auth import verify_system_user_token
         from httpx import AsyncClient, ASGITransport
 
-        # The route uses verify_system_user_token("super_admin") which returns a callable
-        # We need to override the actual dep function
         dep_fn = verify_system_user_token("super_admin")
         app.dependency_overrides[dep_fn] = lambda: mock_principal
 
@@ -317,9 +319,11 @@ async def test_branch_create_route():
                     "/v1/branches",
                     json={"tenant_id": "t1", "name": "Lagos Office"},
                 )
-                # If dep override works, we get 201; otherwise 401/403
-                # Due to dep resolution nuances, we accept 200 or 201
-                assert resp.status_code in (200, 201)
+                assert resp.status_code == 202
+                data = resp.json()
+                assert data["data"]["jobId"] == "job-branch-abc"
+                mock_enqueue.assert_awaited_once()
+                assert mock_enqueue.await_args.kwargs["writer_key"] == "branch.create"
         finally:
             app.dependency_overrides.clear()
 

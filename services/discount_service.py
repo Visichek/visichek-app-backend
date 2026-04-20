@@ -4,8 +4,9 @@ import time
 from typing import List, Optional
 
 from bson import ObjectId
-from fastapi import HTTPException, status
+from fastapi import status
 
+from core.errors import AppException, ErrorCode, resource_not_found
 from repositories.discount_repo import (
     create_discount,
     get_discount,
@@ -31,9 +32,11 @@ async def add_discount(
     # Check for duplicate code
     existing = await get_discount({"code": discount_data.code})
     if existing:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Discount code '{discount_data.code}' already exists",
+            code=ErrorCode.VALIDATION_FAILED,
+            message=f"Discount code '{discount_data.code}' already exists",
+            details={"code": discount_data.code},
         )
     return await create_discount(discount_data, preassigned_id=preassigned_id)
 
@@ -92,47 +95,81 @@ async def validate_discount_code(
     """
     discount = await retrieve_discount_by_code(code)
     if not discount:
-        raise HTTPException(status_code=404, detail="Discount code not found")
+        raise resource_not_found(resource="Discount code", resource_id=code)
 
     now = int(time.time())
 
     if discount.status != DiscountStatus.ACTIVE:
-        raise HTTPException(status_code=400, detail="Discount code is not active")
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.DISCOUNT_INVALID,
+            message="Discount code is not active",
+            details={"code": code, "status": discount.status.value},
+        )
 
     if discount.valid_from and now < discount.valid_from:
-        raise HTTPException(status_code=400, detail="Discount code is not yet valid")
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.DISCOUNT_INVALID,
+            message="Discount code is not yet valid",
+            details={"code": code, "valid_from": discount.valid_from},
+        )
 
     if discount.valid_until and now > discount.valid_until:
-        raise HTTPException(status_code=400, detail="Discount code has expired")
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.DISCOUNT_INVALID,
+            message="Discount code has expired",
+            details={"code": code, "valid_until": discount.valid_until},
+        )
 
     if (
         discount.max_redemptions
         and discount.current_redemptions >= discount.max_redemptions
     ):
-        raise HTTPException(
-            status_code=400, detail="Discount code has reached max redemptions"
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.DISCOUNT_INVALID,
+            message="Discount code has reached max redemptions",
+            details={
+                "code": code,
+                "max_redemptions": discount.max_redemptions,
+                "current_redemptions": discount.current_redemptions,
+            },
         )
 
     if (
         discount.scope == DiscountScope.TENANT
         and discount.target_tenant_id != tenant_id
     ):
-        raise HTTPException(
-            status_code=400, detail="Discount code is not valid for this tenant"
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.DISCOUNT_INVALID,
+            message="Discount code is not valid for this tenant",
+            details={"code": code, "tenant_id": tenant_id},
         )
 
     if discount.scope == DiscountScope.PLAN and plan_id not in discount.target_plan_ids:
-        raise HTTPException(
-            status_code=400, detail="Discount code is not valid for this plan"
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.DISCOUNT_INVALID,
+            message="Discount code is not valid for this plan",
+            details={"code": code, "plan_id": plan_id},
         )
 
     if (
         discount.min_subscription_value
         and subscription_value < discount.min_subscription_value
     ):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Subscription value must be at least {discount.min_subscription_value}",
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.DISCOUNT_INVALID,
+            message=f"Subscription value must be at least {discount.min_subscription_value}",
+            details={
+                "code": code,
+                "min_subscription_value": discount.min_subscription_value,
+                "subscription_value": subscription_value,
+            },
         )
 
     return discount
@@ -142,16 +179,23 @@ async def remove_discount(discount_id: str) -> bool:
     """Hard delete a discount. Only allowed for disabled discounts with 0 redemptions."""
     discount = await retrieve_discount_by_id(discount_id)
     if not discount:
-        raise HTTPException(status_code=404, detail="Discount not found")
+        raise resource_not_found(resource="Discount", resource_id=discount_id)
     if discount.status == DiscountStatus.ACTIVE:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete an active discount. Disable it first.",
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Cannot delete an active discount. Disable it first.",
+            details={"discount_id": discount_id, "status": discount.status.value},
         )
     if discount.current_redemptions > 0:
-        raise HTTPException(
-            status_code=409,
-            detail="Cannot delete a discount that has been redeemed. Disable it instead.",
+        raise AppException(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Cannot delete a discount that has been redeemed. Disable it instead.",
+            details={
+                "discount_id": discount_id,
+                "current_redemptions": discount.current_redemptions,
+            },
         )
     await delete_discount({"_id": ObjectId(discount_id)})
     return True

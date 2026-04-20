@@ -39,7 +39,10 @@ async def list_tenant_invoices(
             ttl=60,
             loader=lambda: _load_invoices_for_tenant(tenant_id),
         )
-        return {"items": cached.get("items", []), "meta": {"total": cached.get("total", 0), "start": start, "stop": stop}}
+        return {
+            "items": cached.get("items", []),
+            "meta": {"total": cached.get("total", 0), "start": start, "stop": stop},
+        }
 
     invoices, total = await retrieve_invoices_for_tenant_with_summary(
         tenant_id=tenant_id,
@@ -84,7 +87,10 @@ async def list_all_invoices(
             ttl=120,
             loader=_load_all_invoices,
         )
-        return {"items": cached.get("items", []), "meta": {"total": cached.get("total", 0), "start": start, "stop": stop}}
+        return {
+            "items": cached.get("items", []),
+            "meta": {"total": cached.get("total", 0), "start": start, "stop": stop},
+        }
 
     invoices, total = await retrieve_all_invoices_with_summary(
         skip=start,

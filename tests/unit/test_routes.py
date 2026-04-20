@@ -487,6 +487,7 @@ class TestSystemUserRoutes:
                         "email": "sarah.wilson@clinic.example.com",
                         "password": "secure_password",
                     },
+                    headers={"X-Auth-Include-Tokens": "true"},
                 )
 
             assert response.status_code == 200
@@ -1065,7 +1066,9 @@ class TestPrivacyNoticeRoutes:
             data = response.json()
             assert data["data"]["jobId"] == "job-notice-create"
             mock_enqueue.assert_awaited_once()
-            assert mock_enqueue.await_args.kwargs["writer_key"] == "privacy_notice.create"
+            assert (
+                mock_enqueue.await_args.kwargs["writer_key"] == "privacy_notice.create"
+            )
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -1166,7 +1169,9 @@ class TestPrivacyNoticeRoutes:
             data = response.json()
             assert data["data"]["jobId"] == "job-notice-upd"
             mock_enqueue.assert_awaited_once()
-            assert mock_enqueue.await_args.kwargs["writer_key"] == "privacy_notice.update"
+            assert (
+                mock_enqueue.await_args.kwargs["writer_key"] == "privacy_notice.update"
+            )
 
 
 class TestIncidentRoutes:

@@ -16,7 +16,7 @@ from httpx import AsyncClient, ASGITransport
 
 from main import app
 from security.principal import AuthPrincipal
-from schemas.imports import ProfilingPreference, IncidentStatus
+from schemas.imports import ProfilingPreference
 
 
 MOCK_DEPT_ADMIN_PRINCIPAL = AuthPrincipal(
@@ -323,25 +323,14 @@ class TestNDPACompliance:
             MOCK_DPO_PRINCIPAL
         )
 
-        now = 1712532000
-        expected_deadline = now + (72 * 3600)  # 72 hours
-
-        incident_out = {
-            "id": "incident-001",
-            "tenant_id": "tenant-001",
-            "incident_type": "data_breach",
-            "status": IncidentStatus.OPEN,
-            "description": "Potential data exposure detected",
-            "date_created": now,
-            "notification_deadline": expected_deadline,
-            "reported_to_ndpc": False,
-            "reported_at": None,
-        }
-
         with patch(
-            "api.v1.incident_route.add_incident", new_callable=AsyncMock
-        ) as mock_create:
-            mock_create.return_value = incident_out
+            "api.v1.incident_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
+                "id": "incident-001",
+                "job_id": "job-inc-001",
+                "status": "queued",
+            }
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -359,15 +348,12 @@ class TestNDPACompliance:
                     headers={"Authorization": "Bearer token-dpo-001"},
                 )
 
-            assert response.status_code == 201
+            assert response.status_code == 202
             data = response.json()
             assert data["success"] is True
-            assert data["data"]["status"] == "open"
-            # Verify 72h deadline was set
-            deadline = data["data"].get("notification_deadline") or data["data"].get(
-                "notificationDeadline"
-            )
-            assert deadline == expected_deadline
+            assert data["data"]["jobId"] == "job-inc-001"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "incident.create"
 
     @pytest.mark.asyncio
     async def test_incident_deadline_calculation(self, cleanup_dependency_overrides):
@@ -382,26 +368,14 @@ class TestNDPACompliance:
             MOCK_DPO_PRINCIPAL
         )
 
-        now = 1712532000
-        seventy_two_hours_seconds = 72 * 60 * 60  # 259200 seconds
-        expected_deadline = now + seventy_two_hours_seconds
-
-        incident_out = {
-            "id": "incident-002",
-            "tenant_id": "tenant-001",
-            "incident_type": "unauthorized_access",
-            "status": IncidentStatus.OPEN,
-            "description": "Unauthorized system access",
-            "date_created": now,
-            "notification_deadline": expected_deadline,
-            "reported_to_ndpc": False,
-            "reported_at": None,
-        }
-
         with patch(
-            "api.v1.incident_route.add_incident", new_callable=AsyncMock
-        ) as mock_create:
-            mock_create.return_value = incident_out
+            "api.v1.incident_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
+                "id": "incident-002",
+                "job_id": "job-inc-002",
+                "status": "queued",
+            }
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -419,14 +393,11 @@ class TestNDPACompliance:
                     headers={"Authorization": "Bearer token-dpo-001"},
                 )
 
-            assert response.status_code == 201
+            assert response.status_code == 202
             data = response.json()
-            deadline = data["data"].get("notification_deadline") or data["data"].get(
-                "notificationDeadline"
-            )
-            # Verify calculation: deadline = created + (72 * 3600)
-            assert deadline == expected_deadline
-            assert (deadline - now) == seventy_two_hours_seconds
+            assert data["data"]["jobId"] == "job-inc-002"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "incident.create"
 
     @pytest.mark.asyncio
     async def test_dpo_incident_access(self, cleanup_dependency_overrides):
@@ -442,22 +413,14 @@ class TestNDPACompliance:
             MOCK_DPO_PRINCIPAL
         )
 
-        incident_out = {
-            "id": "incident-003",
-            "tenant_id": "tenant-001",
-            "incident_type": "data_export_exposure",
-            "status": IncidentStatus.INVESTIGATING,
-            "description": "Exported data found on public server",
-            "date_created": 1712532000,
-            "notification_deadline": 1712532000 + (72 * 3600),
-            "reported_to_ndpc": False,
-            "reported_at": None,
-        }
-
         with patch(
-            "api.v1.incident_route.add_incident", new_callable=AsyncMock
-        ) as mock_create:
-            mock_create.return_value = incident_out
+            "api.v1.incident_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
+                "id": "incident-003",
+                "job_id": "job-inc-003",
+                "status": "queued",
+            }
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -475,7 +438,9 @@ class TestNDPACompliance:
                     headers={"Authorization": "Bearer token-dpo-001"},
                 )
 
-            assert response.status_code == 201
+            assert response.status_code == 202
             data = response.json()
             assert data["success"] is True
-            mock_create.assert_called_once()
+            assert data["data"]["jobId"] == "job-inc-003"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "incident.create"

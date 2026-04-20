@@ -88,7 +88,10 @@ async def _subscription_change_plan(
         billing_cycle=data.get("billing_cycle"),
     )
     _enqueue_refresh(tenant_id)
-    return {"id": result.id if result else None, "plan_id": result.plan_id if result else data.get("new_plan_id")}
+    return {
+        "id": result.id if result else None,
+        "plan_id": result.plan_id if result else data.get("new_plan_id"),
+    }
 
 
 @write_handler("subscription.cancel")

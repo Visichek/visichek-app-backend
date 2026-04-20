@@ -79,7 +79,11 @@ async def dashboard_stats(
 
 async def _load_dashboard_stats(tenant_id: str) -> Any:
     result = await get_dashboard_stats(tenant_id=tenant_id)
-    return result.model_dump(mode="json", by_alias=True) if hasattr(result, "model_dump") else result
+    return (
+        result.model_dump(mode="json", by_alias=True)
+        if hasattr(result, "model_dump")
+        else result
+    )
 
 
 @router.get("/visitors")

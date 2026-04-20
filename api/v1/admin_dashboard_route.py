@@ -107,7 +107,11 @@ async def admin_dashboard_stats(
 
 async def _load_admin_stats() -> Any:
     result = await get_admin_dashboard_stats()
-    return result.model_dump(mode="json", by_alias=True) if hasattr(result, "model_dump") else result
+    return (
+        result.model_dump(mode="json", by_alias=True)
+        if hasattr(result, "model_dump")
+        else result
+    )
 
 
 @router.get("/billing")
@@ -176,7 +180,11 @@ async def billing_summary(
 async def _load_billing_30d() -> Any:
     now = int(time.time())
     result = await get_billing_summary(start_date=now - (30 * 86400), end_date=now)
-    return result.model_dump(mode="json", by_alias=True) if hasattr(result, "model_dump") else result
+    return (
+        result.model_dump(mode="json", by_alias=True)
+        if hasattr(result, "model_dump")
+        else result
+    )
 
 
 @router.get("/billing/discrepancies")

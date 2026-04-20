@@ -160,9 +160,7 @@ def invalidate_gate(user_id: str, role: Optional[str] = None) -> None:
             cache_db.delete(_gate_key(role, user_id))
             return
         pattern = f"{_GATE_PREFIX}:*:{user_id}"
-        keys: list[str] = [
-            str(k) for k in cache_db.scan_iter(match=pattern, count=100)
-        ]
+        keys: list[str] = [str(k) for k in cache_db.scan_iter(match=pattern, count=100)]
         if keys:
             cache_db.delete(*keys)
     except Exception:

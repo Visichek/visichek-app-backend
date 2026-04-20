@@ -36,9 +36,7 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
 
 
 @write_handler("appointment.create")
-async def _appointment_create(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _appointment_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     appt = AppointmentCreate(**data)
     result = await add_appointment(appt_data=appt, preassigned_id=resource_id)
     _enqueue_list_refresh(result.tenant_id)
@@ -50,9 +48,7 @@ async def _appointment_create(
 
 
 @write_handler("appointment.update")
-async def _appointment_update(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _appointment_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
     upd = AppointmentUpdate(**data)
     result = await update_appointment_by_id(
@@ -63,9 +59,7 @@ async def _appointment_update(
 
 
 @write_handler("appointment.delete")
-async def _appointment_delete(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _appointment_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.get("tenant_id", "") or ""
     await remove_appointment(appointment_id=resource_id, tenant_id=tenant_id)
     _enqueue_list_refresh(tenant_id)

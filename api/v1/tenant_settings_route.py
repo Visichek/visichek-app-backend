@@ -39,7 +39,11 @@ async def get_tenant_settings(
 
 async def _load_tenant_settings(tenant_id: str) -> Any:
     result = await retrieve_or_create_tenant_settings(tenant_id)
-    return result.model_dump(mode="json", by_alias=True) if hasattr(result, "model_dump") else result
+    return (
+        result.model_dump(mode="json", by_alias=True)
+        if hasattr(result, "model_dump")
+        else result
+    )
 
 
 @router.patch("/{tenant_id}/settings")

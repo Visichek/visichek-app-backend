@@ -113,7 +113,9 @@ async def list_deletion_logs(
 async def _load_deletion_logs(tenant_id: str) -> List[Any]:
     logs = await get_deletion_logs({"tenant_id": tenant_id}, start=0, stop=100)
     return [
-        log.model_dump(mode="json", by_alias=True) if hasattr(log, "model_dump") else log
+        log.model_dump(mode="json", by_alias=True)
+        if hasattr(log, "model_dump")
+        else log
         for log in logs
     ]
 

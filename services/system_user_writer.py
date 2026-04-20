@@ -59,9 +59,7 @@ def _invalidate_gate_roles(user_id: str) -> None:
 
 
 @write_handler("system_user.invite")
-async def _system_user_invite(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _system_user_invite(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     user = SystemUserCreate(**data)
     result = await add_system_user(user_data=user, preassigned_id=resource_id)
     _enqueue_list_refresh(result.tenant_id)
@@ -69,16 +67,12 @@ async def _system_user_invite(
         "id": result.id,
         "tenant_id": result.tenant_id,
         "email": result.email,
-        "role": result.role.value
-        if hasattr(result.role, "value")
-        else result.role,
+        "role": result.role.value if hasattr(result.role, "value") else result.role,
     }
 
 
 @write_handler("system_user.update")
-async def _system_user_update(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _system_user_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
     upd = SystemUserUpdate(**data)
     result = await update_system_user_by_id(
@@ -90,9 +84,7 @@ async def _system_user_update(
 
 
 @write_handler("system_user.delete")
-async def _system_user_delete(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _system_user_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.get("tenant_id", "") or ""
     await remove_system_user(user_id=resource_id, tenant_id=tenant_id)
     _invalidate_gate_roles(resource_id)

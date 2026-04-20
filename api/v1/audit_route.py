@@ -99,7 +99,9 @@ async def _load_audit_recent(tenant_id: str) -> Dict[str, Any]:
     total = await count_audit_logs(filter_dict)
     return {
         "items": [
-            log.model_dump(mode="json", by_alias=True) if hasattr(log, "model_dump") else log
+            log.model_dump(mode="json", by_alias=True)
+            if hasattr(log, "model_dump")
+            else log
             for log in logs
         ],
         "total": total,

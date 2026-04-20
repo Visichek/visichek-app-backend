@@ -130,9 +130,13 @@ def _discount_out(**overrides) -> DiscountOut:
 
 
 class TestPlanRoutes:
-    @patch("api.v1.plan_route.add_plan", new_callable=AsyncMock)
-    async def test_create_plan(self, mock_add, client):
-        mock_add.return_value = _plan_out()
+    @patch("api.v1.plan_route.enqueue_write", new_callable=AsyncMock)
+    async def test_create_plan(self, mock_enqueue, client):
+        mock_enqueue.return_value = {
+            "id": "plan_test",
+            "job_id": "job-plan-create",
+            "status": "queued",
+        }
         resp = await client.post(
             "/v1/plans",
             json={
@@ -140,10 +144,12 @@ class TestPlanRoutes:
                 "display_name": "Test Plan",
             },
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 202
         data = resp.json()
         assert data["success"] is True
-        assert data["data"]["name"] == "test-plan"
+        assert data["data"]["jobId"] == "job-plan-create"
+        mock_enqueue.assert_awaited_once()
+        assert mock_enqueue.await_args.kwargs["writer_key"] == "plan.create"
 
     @patch("api.v1.plan_route.retrieve_plans", new_callable=AsyncMock)
     async def test_list_plans(self, mock_list, client):
@@ -161,42 +167,59 @@ class TestPlanRoutes:
         assert resp.status_code == 200
         assert resp.json()["data"]["name"] == "test-plan"
 
-    @patch("api.v1.plan_route.update_plan_by_id", new_callable=AsyncMock)
-    async def test_update_plan(self, mock_update, client):
-        updated = _plan_out(display_name="Updated Plan")
-        mock_update.return_value = updated
+    @patch("api.v1.plan_route.enqueue_write", new_callable=AsyncMock)
+    async def test_update_plan(self, mock_enqueue, client):
+        mock_enqueue.return_value = {
+            "id": "plan_test",
+            "job_id": "job-plan-update",
+            "status": "queued",
+        }
         resp = await client.put(
             "/v1/plans/plan_test",
             json={
                 "display_name": "Updated Plan",
             },
         )
-        assert resp.status_code == 200
-        assert (
-            resp.json()["data"].get("display_name")
-            or resp.json()["data"].get("displayName")
-        ) == "Updated Plan"
+        assert resp.status_code == 202
+        assert resp.json()["data"]["jobId"] == "job-plan-update"
+        mock_enqueue.assert_awaited_once()
+        assert mock_enqueue.await_args.kwargs["writer_key"] == "plan.update"
 
-    @patch("api.v1.plan_route.archive_plan", new_callable=AsyncMock)
-    async def test_archive_plan(self, mock_archive, client):
-        mock_archive.return_value = _plan_out(status=PlanStatus.ARCHIVED.value)
+    @patch("api.v1.plan_route.enqueue_write", new_callable=AsyncMock)
+    async def test_archive_plan(self, mock_enqueue, client):
+        mock_enqueue.return_value = {
+            "id": "plan_test",
+            "job_id": "job-plan-archive",
+            "status": "queued",
+        }
         resp = await client.post("/v1/plans/plan_test/archive")
-        assert resp.status_code == 200
-        assert resp.json()["data"]["status"] == "archived"
+        assert resp.status_code == 202
+        assert resp.json()["data"]["jobId"] == "job-plan-archive"
+        assert mock_enqueue.await_args.kwargs["writer_key"] == "plan.archive"
 
-    @patch("api.v1.plan_route.activate_plan", new_callable=AsyncMock)
-    async def test_activate_plan(self, mock_activate, client):
-        mock_activate.return_value = _plan_out(status=PlanStatus.ACTIVE.value)
+    @patch("api.v1.plan_route.enqueue_write", new_callable=AsyncMock)
+    async def test_activate_plan(self, mock_enqueue, client):
+        mock_enqueue.return_value = {
+            "id": "plan_test",
+            "job_id": "job-plan-activate",
+            "status": "queued",
+        }
         resp = await client.post("/v1/plans/plan_test/activate")
-        assert resp.status_code == 200
-        assert resp.json()["data"]["status"] == "active"
+        assert resp.status_code == 202
+        assert resp.json()["data"]["jobId"] == "job-plan-activate"
+        assert mock_enqueue.await_args.kwargs["writer_key"] == "plan.activate"
 
-    @patch("api.v1.plan_route.remove_plan", new_callable=AsyncMock)
-    async def test_delete_plan(self, mock_remove, client):
-        mock_remove.return_value = True
+    @patch("api.v1.plan_route.enqueue_write", new_callable=AsyncMock)
+    async def test_delete_plan(self, mock_enqueue, client):
+        mock_enqueue.return_value = {
+            "id": "plan_test",
+            "job_id": "job-plan-delete",
+            "status": "queued",
+        }
         resp = await client.delete("/v1/plans/plan_test")
-        assert resp.status_code == 200
-        assert resp.json()["data"]["deleted"] is True
+        assert resp.status_code == 202
+        assert resp.json()["data"]["jobId"] == "job-plan-delete"
+        assert mock_enqueue.await_args.kwargs["writer_key"] == "plan.delete"
 
 
 # ============================================================================
@@ -205,9 +228,13 @@ class TestPlanRoutes:
 
 
 class TestSubscriptionRoutes:
-    @patch("api.v1.subscription_route.subscribe_tenant", new_callable=AsyncMock)
-    async def test_create_subscription(self, mock_sub, client):
-        mock_sub.return_value = _sub_out()
+    @patch("api.v1.subscription_route.enqueue_write", new_callable=AsyncMock)
+    async def test_create_subscription(self, mock_enqueue, client):
+        mock_enqueue.return_value = {
+            "id": "sub_test",
+            "job_id": "job-sub-create",
+            "status": "queued",
+        }
         resp = await client.post(
             "/v1/subscriptions",
             json={
@@ -215,12 +242,11 @@ class TestSubscriptionRoutes:
                 "plan_id": "plan_test",
             },
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 202
         data = resp.json()
         assert data["success"] is True
-        assert (
-            data["data"].get("tenant_id") or data["data"].get("tenantId")
-        ) == "tenant_abc"
+        assert data["data"]["jobId"] == "job-sub-create"
+        assert mock_enqueue.await_args.kwargs["writer_key"] == "subscription.create"
 
     @patch(
         "api.v1.subscription_route.retrieve_subscriptions_with_details",
@@ -243,9 +269,13 @@ class TestSubscriptionRoutes:
             resp.json()["data"].get("plan_id") or resp.json()["data"].get("planId")
         ) == "plan_test"
 
-    @patch("api.v1.subscription_route.change_plan", new_callable=AsyncMock)
-    async def test_change_plan(self, mock_change, client):
-        mock_change.return_value = _sub_out(plan_id="plan_new")
+    @patch("api.v1.subscription_route.enqueue_write", new_callable=AsyncMock)
+    async def test_change_plan(self, mock_enqueue, client):
+        mock_enqueue.return_value = {
+            "id": "sub_test",
+            "job_id": "job-sub-change",
+            "status": "queued",
+        }
         resp = await client.post(
             "/v1/subscriptions/change-plan",
             json={
@@ -253,17 +283,19 @@ class TestSubscriptionRoutes:
                 "new_plan_id": "plan_new",
             },
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 202
+        assert resp.json()["data"]["jobId"] == "job-sub-change"
         assert (
-            resp.json()["data"].get("plan_id") or resp.json()["data"].get("planId")
-        ) == "plan_new"
-
-    @patch("api.v1.subscription_route.cancel_subscription", new_callable=AsyncMock)
-    async def test_cancel_subscription(self, mock_cancel, client):
-        mock_cancel.return_value = _sub_out(
-            status=SubscriptionStatus.CANCELLED.value,
-            cancelled_at=int(time.time()),
+            mock_enqueue.await_args.kwargs["writer_key"] == "subscription.change_plan"
         )
+
+    @patch("api.v1.subscription_route.enqueue_write", new_callable=AsyncMock)
+    async def test_cancel_subscription(self, mock_enqueue, client):
+        mock_enqueue.return_value = {
+            "id": "sub_test",
+            "job_id": "job-sub-cancel",
+            "status": "queued",
+        }
         resp = await client.post(
             "/v1/subscriptions/cancel",
             json={
@@ -271,8 +303,9 @@ class TestSubscriptionRoutes:
                 "immediate": True,
             },
         )
-        assert resp.status_code == 200
-        assert resp.json()["data"]["status"] == "cancelled"
+        assert resp.status_code == 202
+        assert resp.json()["data"]["jobId"] == "job-sub-cancel"
+        assert mock_enqueue.await_args.kwargs["writer_key"] == "subscription.cancel"
 
 
 # ============================================================================
@@ -281,9 +314,13 @@ class TestSubscriptionRoutes:
 
 
 class TestDiscountRoutes:
-    @patch("api.v1.discount_route.add_discount", new_callable=AsyncMock)
-    async def test_create_discount(self, mock_add, client):
-        mock_add.return_value = _discount_out()
+    @patch("api.v1.discount_route.enqueue_write", new_callable=AsyncMock)
+    async def test_create_discount(self, mock_enqueue, client):
+        mock_enqueue.return_value = {
+            "id": "disc_test",
+            "job_id": "job-disc-create",
+            "status": "queued",
+        }
         resp = await client.post(
             "/v1/discounts",
             json={
@@ -292,8 +329,9 @@ class TestDiscountRoutes:
                 "value": 10.0,
             },
         )
-        assert resp.status_code == 201
-        assert resp.json()["data"]["code"] == "TESTCODE"
+        assert resp.status_code == 202
+        assert resp.json()["data"]["jobId"] == "job-disc-create"
+        assert mock_enqueue.await_args.kwargs["writer_key"] == "discount.create"
 
     @patch("api.v1.discount_route.retrieve_discounts", new_callable=AsyncMock)
     async def test_list_discounts(self, mock_list, client):
@@ -309,16 +347,26 @@ class TestDiscountRoutes:
         assert resp.status_code == 200
         assert resp.json()["data"]["value"] == 10.0
 
-    @patch("api.v1.discount_route.disable_discount", new_callable=AsyncMock)
-    async def test_disable_discount(self, mock_disable, client):
-        mock_disable.return_value = _discount_out(status=DiscountStatus.DISABLED.value)
+    @patch("api.v1.discount_route.enqueue_write", new_callable=AsyncMock)
+    async def test_disable_discount(self, mock_enqueue, client):
+        mock_enqueue.return_value = {
+            "id": "disc_test",
+            "job_id": "job-disc-disable",
+            "status": "queued",
+        }
         resp = await client.post("/v1/discounts/disc_test/disable")
-        assert resp.status_code == 200
-        assert resp.json()["data"]["status"] == "disabled"
+        assert resp.status_code == 202
+        assert resp.json()["data"]["jobId"] == "job-disc-disable"
+        assert mock_enqueue.await_args.kwargs["writer_key"] == "discount.disable"
 
-    @patch("api.v1.discount_route.remove_discount", new_callable=AsyncMock)
-    async def test_delete_discount(self, mock_remove, client):
-        mock_remove.return_value = True
+    @patch("api.v1.discount_route.enqueue_write", new_callable=AsyncMock)
+    async def test_delete_discount(self, mock_enqueue, client):
+        mock_enqueue.return_value = {
+            "id": "disc_test",
+            "job_id": "job-disc-delete",
+            "status": "queued",
+        }
         resp = await client.delete("/v1/discounts/disc_test")
-        assert resp.status_code == 200
-        assert resp.json()["data"]["deleted"] is True
+        assert resp.status_code == 202
+        assert resp.json()["data"]["jobId"] == "job-disc-delete"
+        assert mock_enqueue.await_args.kwargs["writer_key"] == "discount.delete"

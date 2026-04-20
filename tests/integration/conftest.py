@@ -187,7 +187,7 @@ async def integration_client(
     async with AsyncClient(
         transport=ASGITransport(app=cast(object, integration_app)),  # type: ignore[arg-type]
         base_url="http://test",
-        headers={"X-Response-Case": "snake"},
+        headers={"X-Response-Case": "snake", "X-Auth-Include-Tokens": "1"},
     ) as client:
         yield client
 
