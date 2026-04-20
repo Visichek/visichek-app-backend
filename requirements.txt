@@ -17,6 +17,7 @@ authlib
 # Cache & Queue
 redis
 celery
+celery-aio-pool
 flower
 eventlet
 
