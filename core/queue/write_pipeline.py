@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Awaitable, Callable, Optional
+from uuid import uuid4
 
 from bson import ObjectId
 
@@ -117,20 +118,16 @@ async def enqueue_write(
     if not resource_id:
         resource_id = str(ObjectId())
 
-    job_payload: dict[str, Any] = {
-        "writer_key": writer_key,
-        "resource_id": resource_id,
-        "data": payload,
-    }
-
-    job_result = QueueManager.get_instance().enqueue(
-        task_key="db.write", payload=job_payload
-    )
+    # Pre-generate the celery task_id so we can insert the audit row BEFORE
+    # the worker ever sees the task. Otherwise a fast worker can start
+    # processing (mark_processing / mark_failed / notify_job_failure) before
+    # the queue_job_log insert completes, leaving those lookups racy.
+    task_id = str(uuid4())
 
     try:
         await insert_job_log(
             QueueJobLogCreate(
-                task_id=job_result.task_id,
+                task_id=task_id,
                 task_key=f"db.write:{writer_key}",
                 resource_type=resource_type,
                 resource_id=resource_id,
@@ -145,9 +142,19 @@ async def enqueue_write(
     except Exception:
         logger.exception(
             "Failed to persist queue_job_log for task_id=%s writer=%s",
-            job_result.task_id,
+            task_id,
             writer_key,
         )
+
+    job_payload: dict[str, Any] = {
+        "writer_key": writer_key,
+        "resource_id": resource_id,
+        "data": payload,
+    }
+
+    job_result = QueueManager.get_instance().enqueue(
+        task_key="db.write", payload=job_payload, task_id=task_id
+    )
 
     return {
         "id": resource_id,

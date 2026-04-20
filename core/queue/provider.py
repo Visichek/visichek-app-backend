@@ -9,11 +9,18 @@ class QueueProvider(Protocol):
     backend_name: str
 
     def enqueue(
-        self, task_key: QueueTaskKey, payload: dict[str, Any]
+        self,
+        task_key: QueueTaskKey,
+        payload: dict[str, Any],
+        task_id: str | None = None,
     ) -> QueueJobResult: ...
 
     def enqueue_in(
-        self, seconds: int, task_key: QueueTaskKey, payload: dict[str, Any]
+        self,
+        seconds: int,
+        task_key: QueueTaskKey,
+        payload: dict[str, Any],
+        task_id: str | None = None,
     ) -> QueueJobResult: ...
 
     def get_status(self, task_id: str) -> str: ...

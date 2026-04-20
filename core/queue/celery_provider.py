@@ -29,26 +29,35 @@ class CeleryQueueProvider(QueueProvider):
         self._celery_app = celery_app
 
     def enqueue(
-        self, task_key: QueueTaskKey, payload: dict[str, Any]
+        self,
+        task_key: QueueTaskKey,
+        payload: dict[str, Any],
+        task_id: str | None = None,
     ) -> QueueJobResult:
         wrapper = _pick_celery_task_name(str(task_key))
-        result = self._celery_app.send_task(
-            wrapper,
-            args=[str(task_key), payload],
-        )
+        send_kwargs: dict[str, Any] = {"args": [str(task_key), payload]}
+        if task_id:
+            send_kwargs["task_id"] = task_id
+        result = self._celery_app.send_task(wrapper, **send_kwargs)
         return QueueJobResult(
             task_id=result.id, backend=self.backend_name, status="queued"
         )
 
     def enqueue_in(
-        self, seconds: int, task_key: QueueTaskKey, payload: dict[str, Any]
+        self,
+        seconds: int,
+        task_key: QueueTaskKey,
+        payload: dict[str, Any],
+        task_id: str | None = None,
     ) -> QueueJobResult:
         wrapper = _pick_celery_task_name(str(task_key))
-        result = self._celery_app.send_task(
-            wrapper,
-            args=[str(task_key), payload],
-            countdown=max(seconds, 0),
-        )
+        send_kwargs: dict[str, Any] = {
+            "args": [str(task_key), payload],
+            "countdown": max(seconds, 0),
+        }
+        if task_id:
+            send_kwargs["task_id"] = task_id
+        result = self._celery_app.send_task(wrapper, **send_kwargs)
         return QueueJobResult(
             task_id=result.id, backend=self.backend_name, status="scheduled"
         )

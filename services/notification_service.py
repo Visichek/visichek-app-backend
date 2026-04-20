@@ -552,6 +552,12 @@ async def notify_job_failure(
             link=f"/app/jobs/{task_id}",
             tenant_id=log_entry.tenant_id,
         )
+        logger.info(
+            "notify_job_failure: delivered task_id=%s writer=%s actor=%s",
+            task_id,
+            writer_key,
+            log_entry.actor_id,
+        )
     except Exception:
         logger.warning(
             "notify_job_failure: failed to deliver notification task_id=%s",

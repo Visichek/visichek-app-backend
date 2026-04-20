@@ -26,14 +26,28 @@ class QueueManager:
             raise RuntimeError("QueueManager is not configured")
         return cls._instance
 
-    def enqueue(self, task_key: str, payload: dict[str, Any]) -> QueueJobResult:
-        return self._provider.enqueue(QueueTaskKey(task_key), payload)
+    def enqueue(
+        self,
+        task_key: str,
+        payload: dict[str, Any],
+        task_id: str | None = None,
+    ) -> QueueJobResult:
+        return self._provider.enqueue(
+            QueueTaskKey(task_key), payload, task_id=task_id
+        )
 
     def enqueue_in(
-        self, seconds: int, task_key: str, payload: dict[str, Any]
+        self,
+        seconds: int,
+        task_key: str,
+        payload: dict[str, Any],
+        task_id: str | None = None,
     ) -> QueueJobResult:
         return self._provider.enqueue_in(
-            seconds=seconds, task_key=QueueTaskKey(task_key), payload=payload
+            seconds=seconds,
+            task_key=QueueTaskKey(task_key),
+            payload=payload,
+            task_id=task_id,
         )
 
     def get_status(self, task_id: str) -> str:
