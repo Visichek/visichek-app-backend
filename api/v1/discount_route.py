@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.precompute import PrecomputeScope, get_or_compute
+from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.discount_schema import (
     DiscountCreate,
@@ -13,14 +15,10 @@ from schemas.discount_schema import (
     DiscountStatus,
 )
 from services.discount_service import (
-    add_discount,
     retrieve_discount_by_id,
     retrieve_discount_by_code,
     retrieve_discounts,
-    update_discount_by_id,
-    disable_discount,
     validate_discount_code,
-    remove_discount,
 )
 from security.account_status_check import check_admin_account_status_and_permissions
 
@@ -29,23 +27,35 @@ router = APIRouter(prefix="/discounts", tags=["Discounts"])
 
 @router.post("")
 @document_response(
-    message="Discount created successfully",
-    status_code=status.HTTP_201_CREATED,
-    description="Create a new discount code (application admin only)",
-    summary="Create discount",
+    message="Discount creation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a discount-code create (application admin only).",
+    summary="Create discount (async)",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "job_id": "a2c4e6f8-1234-4abc-8def-0123456789ab",
+        "status": "queued",
+    },
 )
 async def create_discount_endpoint(
     payload: DiscountCreate,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> DiscountOut:
-    """Create a new discount code for tenants."""
-    return await add_discount(payload)
+):
+    return await enqueue_write(
+        writer_key="discount.create",
+        payload=payload.model_dump(exclude_none=True),
+        resource_type="discount",
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.get("")
 @document_response(
     message="Discounts retrieved successfully",
-    description="List discounts with optional filters (application admin only)",
+    description="Unfiltered first page served from the global precompute cache.",
     summary="List discounts",
     include_meta=True,
 )
@@ -56,8 +66,16 @@ async def list_discounts_endpoint(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     admin=Depends(check_admin_account_status_and_permissions),
-) -> list[DiscountOut]:
-    """List all discounts. Admin can filter by scope, status, or tenant."""
+) -> Any:
+    unfiltered = not (scope or status_filter or tenant_id)
+    if unfiltered and skip == 0 and limit in (50, 100):
+        cached: List[Any] = await get_or_compute(
+            scope_key=PrecomputeScope.GLOBAL.value,
+            resource="discounts.list",
+            ttl=60,
+            loader=_load_discounts,
+        )
+        return cached[:limit]
     return await retrieve_discounts(
         scope_filter=scope,
         status_filter=status_filter,
@@ -67,67 +85,89 @@ async def list_discounts_endpoint(
     )
 
 
+async def _load_discounts() -> List[Any]:
+    discounts = await retrieve_discounts(start=0, stop=100)
+    return [
+        d.model_dump(mode="json", by_alias=True) if hasattr(d, "model_dump") else d
+        for d in discounts
+    ]
+
+
 @router.get("/code/{code}")
 @document_response(
     message="Discount retrieved successfully",
-    description="Look up a discount by its code",
     summary="Get discount by code",
 )
 async def get_discount_by_code_endpoint(
     code: str,
     admin=Depends(check_admin_account_status_and_permissions),
 ) -> DiscountOut | None:
-    """Look up a discount by its code."""
     return await retrieve_discount_by_code(code)
 
 
 @router.get("/{discount_id}")
 @document_response(
     message="Discount retrieved successfully",
-    description="Get a specific discount by ID",
     summary="Get discount",
 )
 async def get_discount_endpoint(
     discount_id: str,
     admin=Depends(check_admin_account_status_and_permissions),
 ) -> DiscountOut | None:
-    """Retrieve a specific discount by ID."""
     return await retrieve_discount_by_id(discount_id)
 
 
 @router.put("/{discount_id}")
 @document_response(
-    message="Discount updated successfully",
-    description="Update a discount (application admin only)",
-    summary="Update discount",
+    message="Discount update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a discount update.",
+    summary="Update discount (async)",
 )
 async def update_discount_endpoint(
     discount_id: str,
     payload: DiscountUpdate,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> DiscountOut | None:
-    """Update a discount's properties."""
-    return await update_discount_by_id(discount_id, payload)
+):
+    return await enqueue_write(
+        writer_key="discount.update",
+        payload=payload.model_dump(exclude_none=True),
+        resource_type="discount",
+        resource_id=discount_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.post("/{discount_id}/disable")
 @document_response(
-    message="Discount disabled successfully",
-    description="Disable a discount code (application admin only)",
-    summary="Disable discount",
+    message="Discount disable queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue disabling a discount code.",
+    summary="Disable discount (async)",
 )
 async def disable_discount_endpoint(
     discount_id: str,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> DiscountOut | None:
-    """Disable a discount code. It can no longer be redeemed."""
-    return await disable_discount(discount_id)
+):
+    return await enqueue_write(
+        writer_key="discount.disable",
+        payload={},
+        resource_type="discount",
+        resource_id=discount_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.post("/validate")
 @document_response(
     message="Discount code is valid",
-    description="Validate a discount code for a specific tenant and plan",
+    description="Validate a discount code for a specific tenant and plan — stays sync for immediate feedback.",
     summary="Validate discount code",
 )
 async def validate_discount_endpoint(
@@ -137,20 +177,27 @@ async def validate_discount_endpoint(
     subscription_value: float = Query(0.0),
     admin=Depends(check_admin_account_status_and_permissions),
 ) -> DiscountOut:
-    """Validate a discount code before applying it to a subscription."""
     return await validate_discount_code(code, tenant_id, plan_id, subscription_value)
 
 
 @router.delete("/{discount_id}")
 @document_response(
-    message="Discount deleted successfully",
-    description="Permanently delete a disabled discount with 0 redemptions (application admin only)",
-    summary="Delete discount",
+    message="Discount deletion queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue hard delete for a disabled discount with 0 redemptions.",
+    summary="Delete discount (async)",
 )
 async def delete_discount_endpoint(
     discount_id: str,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> dict:
-    """Permanently delete a discount. Only allowed for disabled discounts with 0 redemptions."""
-    await remove_discount(discount_id)
-    return {"deleted": True}
+):
+    return await enqueue_write(
+        writer_key="discount.delete",
+        payload={},
+        resource_type="discount",
+        resource_id=discount_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )

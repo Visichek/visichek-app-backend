@@ -20,7 +20,10 @@ from services.plan_limits import enforce_entity_cap
 
 
 async def add_department(
-    dept_data: DepartmentCreate, created_by: Optional[str] = None
+    dept_data: DepartmentCreate,
+    created_by: Optional[str] = None,
+    *,
+    preassigned_id: Optional[str] = None,
 ) -> DepartmentOut:
     # Enforce plan cap on total departments for this tenant
     current_count = await count_departments({"tenant_id": dept_data.tenant_id})
@@ -43,7 +46,7 @@ async def add_department(
         )
     if created_by:
         dept_data.created_by = created_by
-    return await create_department(dept_data)
+    return await create_department(dept_data, preassigned_id=preassigned_id)
 
 
 async def retrieve_department_by_id(

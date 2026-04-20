@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 
+from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.response_envelope import document_response
 from schemas.admin_schema import AdminOut
 from security.account_status_check import check_admin_account_status_and_permissions
@@ -93,9 +95,19 @@ router = APIRouter(prefix="/admins/dashboard", tags=["Application Admin Dashboar
 )
 async def admin_dashboard_stats(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-):
-    """Platform-wide dashboard for application admins."""
-    return await get_admin_dashboard_stats()
+) -> Any:
+    """Platform-wide dashboard for application admins — precomputed globally."""
+    return await get_or_compute(
+        scope_key=PrecomputeScope.GLOBAL.value,
+        resource="admin_dashboard.stats",
+        ttl=120,
+        loader=_load_admin_stats,
+    )
+
+
+async def _load_admin_stats() -> Any:
+    result = await get_admin_dashboard_stats()
+    return result.model_dump(mode="json", by_alias=True) if hasattr(result, "model_dump") else result
 
 
 @router.get("/billing")
@@ -140,14 +152,31 @@ async def billing_summary(
         description="Period end (Unix timestamp). Defaults to now.",
     ),
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-):
-    """Billing summary with revenue, MRR, and subscription metrics."""
+) -> Any:
+    """Billing summary with revenue, MRR, and subscription metrics.
+
+    Default range (last 30 days, no args) is served from the precompute
+    cache. Custom ranges bypass the cache.
+    """
     now = int(time.time())
+    if end_date is None and start_date is None:
+        return await get_or_compute(
+            scope_key=PrecomputeScope.GLOBAL.value,
+            resource="admin_dashboard.billing_30d",
+            ttl=300,
+            loader=_load_billing_30d,
+        )
     if end_date is None:
         end_date = now
     if start_date is None:
-        start_date = now - (30 * 86400)  # 30 days ago
+        start_date = now - (30 * 86400)
     return await get_billing_summary(start_date=start_date, end_date=end_date)
+
+
+async def _load_billing_30d() -> Any:
+    now = int(time.time())
+    result = await get_billing_summary(start_date=now - (30 * 86400), end_date=now)
+    return result.model_dump(mode="json", by_alias=True) if hasattr(result, "model_dump") else result
 
 
 @router.get("/billing/discrepancies")
@@ -184,6 +213,21 @@ async def billing_summary(
 )
 async def billing_discrepancies(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-):
+) -> Any:
     """Reconciliation check: finds missing invoices and orphaned payments."""
-    return await get_payment_discrepancies()
+    return await get_or_compute(
+        scope_key=PrecomputeScope.GLOBAL.value,
+        resource="admin_dashboard.discrepancies",
+        ttl=300,
+        loader=_load_discrepancies,
+    )
+
+
+async def _load_discrepancies() -> Any:
+    result = await get_payment_discrepancies()
+    if isinstance(result, list):
+        return [
+            r.model_dump(mode="json", by_alias=True) if hasattr(r, "model_dump") else r
+            for r in result
+        ]
+    return result

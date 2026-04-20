@@ -1,19 +1,20 @@
-from typing import Annotated
+from typing import Annotated, Any, List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.precompute import PrecomputeScope, get_or_compute
+from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.visitor_profile_schema import (
     VisitorProfileUpdate,
     VisitorProfileWithSummaryOut,
 )
-from security.auth import verify_system_user_token, verify_any_system_user_token
+from security.auth import verify_any_system_user_token, verify_system_user_token
 from security.principal import AuthPrincipal
 from services.visitor_profile_service import (
     retrieve_visitor_profile_by_id_with_summary,
     retrieve_visitor_profiles_with_summary,
     search_profiles,
-    update_profile_by_id,
 )
 
 router = APIRouter(prefix="/visitor-profiles", tags=["Visitor Profiles"])
@@ -22,29 +23,8 @@ router = APIRouter(prefix="/visitor-profiles", tags=["Visitor Profiles"])
 @router.get("/search")
 @document_response(
     message="Visitor profiles search results",
-    description="Search visitor profiles by name, phone, or email with pagination.",
+    description="Interactive search — runs live against the DB (no precompute).",
     summary="Search visitor profiles",
-    success_example=[
-        {
-            "id": "507f1f77bcf86cd799439012",
-            "tenant_id": "t12345",
-            "phone": "+1-555-0123",
-            "email_address": "john.doe@acmecorp.com",
-            "full_name": "John Doe",
-            "company": "Acme Corp",
-            "photo_object_key": "photos/profile_507f1f77bcf86cd799439012.jpg",
-            "id_type": "driver_license",
-            "id_number": "DL123456789",
-            "id_image_object_key": "id_images/profile_507f1f77bcf86cd799439012.jpg",
-            "profiling_preference": "allowed",
-            "last_verification_date": 1712520000,
-            "date_created": 1710000000,
-            "last_updated": 1712520000,
-            "deleted_at": None,
-            "total_visits": 5,
-            "last_visit_date": 1712532000,
-        }
-    ],
     include_meta=True,
     response_codes={
         401: "Unauthorized - invalid or missing token",
@@ -64,29 +44,8 @@ async def search_visitor_profiles_endpoint(
 @router.get("")
 @document_response(
     message="Visitor profiles fetched successfully",
-    description="Retrieve paginated list of all visitor profiles for the tenant.",
+    description="First page served from the per-tenant precompute cache.",
     summary="List visitor profiles",
-    success_example=[
-        {
-            "id": "507f1f77bcf86cd799439012",
-            "tenant_id": "t12345",
-            "phone": "+1-555-0123",
-            "email_address": "john.doe@acmecorp.com",
-            "full_name": "John Doe",
-            "company": "Acme Corp",
-            "photo_object_key": "photos/profile_507f1f77bcf86cd799439012.jpg",
-            "id_type": "driver_license",
-            "id_number": "DL123456789",
-            "id_image_object_key": "id_images/profile_507f1f77bcf86cd799439012.jpg",
-            "profiling_preference": "allowed",
-            "last_verification_date": 1712520000,
-            "date_created": 1710000000,
-            "last_updated": 1712520000,
-            "deleted_at": None,
-            "total_visits": 5,
-            "last_visit_date": 1712532000,
-        }
-    ],
     include_meta=True,
     response_codes={
         401: "Unauthorized - invalid or missing token",
@@ -99,48 +58,39 @@ async def list_visitor_profiles(
     principal: AuthPrincipal = Depends(
         verify_system_user_token("dept_admin", "super_admin", "auditor")
     ),
-) -> list[VisitorProfileWithSummaryOut]:
+) -> Any:
     tenant_id = principal.tenant_id or ""
+    if start == 0 and stop == 100 and tenant_id:
+        return await get_or_compute(
+            scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+            resource="visitor_profiles.list",
+            ttl=60,
+            loader=lambda: _load_visitor_profiles_for_tenant(tenant_id),
+        )
     return await retrieve_visitor_profiles_with_summary(
         tenant_id=tenant_id, start=start, stop=stop
     )
 
 
+async def _load_visitor_profiles_for_tenant(tenant_id: str) -> List[Any]:
+    profiles = await retrieve_visitor_profiles_with_summary(
+        tenant_id=tenant_id, start=0, stop=100
+    )
+    return [
+        p.model_dump(mode="json", by_alias=True) if hasattr(p, "model_dump") else p
+        for p in profiles
+    ]
+
+
 @router.get("/{profile_id}")
 @document_response(
     message="Visitor profile fetched successfully",
-    description="Retrieve detailed information about a specific visitor profile.",
+    description="Retrieve a specific visitor profile by ID.",
     summary="Fetch visitor profile by ID",
-    success_example={
-        "id": "507f1f77bcf86cd799439012",
-        "tenant_id": "t12345",
-        "phone": "+1-555-0123",
-        "email_address": "john.doe@acmecorp.com",
-        "full_name": "John Doe",
-        "company": "Acme Corp",
-        "photo_object_key": "photos/profile_507f1f77bcf86cd799439012.jpg",
-        "id_type": "driver_license",
-        "id_number": "DL123456789",
-        "id_image_object_key": "id_images/profile_507f1f77bcf86cd799439012.jpg",
-        "profiling_preference": "allowed",
-        "last_verification_date": 1712520000,
-        "date_created": 1710000000,
-        "last_updated": 1712520000,
-        "deleted_at": None,
-        "total_visits": 5,
-        "last_visit_date": 1712532000,
-    },
     response_codes={
         401: "Unauthorized - invalid or missing token",
         403: "Forbidden - insufficient permissions",
         404: "Visitor profile not found",
-    },
-    error_examples={
-        404: {
-            "success": False,
-            "message": "Visitor profile not found",
-            "code": "RESOURCE_NOT_FOUND",
-        },
     },
 )
 async def get_visitor_profile_endpoint(
@@ -155,49 +105,38 @@ async def get_visitor_profile_endpoint(
 
 @router.patch("/{profile_id}")
 @document_response(
-    message="Visitor profile updated successfully",
-    description="Update visitor profile fields such as contact info or personal details.",
-    summary="Update visitor profile",
+    message="Visitor profile update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a partial visitor-profile update.",
+    summary="Update visitor profile (async)",
     success_example={
         "id": "507f1f77bcf86cd799439012",
-        "tenant_id": "t12345",
-        "phone": "+1-555-0124",
-        "email_address": "john.doe.updated@acmecorp.com",
-        "full_name": "John Doe",
-        "company": "Acme Corp",
-        "photo_object_key": "photos/profile_507f1f77bcf86cd799439012.jpg",
-        "id_type": "driver_license",
-        "id_number": "DL123456789",
-        "id_image_object_key": "id_images/profile_507f1f77bcf86cd799439012.jpg",
-        "profiling_preference": "allowed",
-        "last_verification_date": 1712520000,
-        "date_created": 1710000000,
-        "last_updated": 1712535600,
-        "deleted_at": None,
-        "total_visits": 5,
-        "last_visit_date": 1712532000,
+        "job_id": "b3d5f7a9-2345-4def-8abc-1234567890bc",
+        "status": "queued",
     },
     response_codes={
         401: "Unauthorized - invalid or missing token",
         403: "Forbidden - insufficient permissions",
-        404: "Visitor profile not found",
-    },
-    error_examples={
-        404: {
-            "success": False,
-            "message": "Visitor profile not found",
-            "code": "RESOURCE_NOT_FOUND",
-        },
     },
 )
 async def update_visitor_profile_endpoint(
     profile_id: str,
     profile_data: VisitorProfileUpdate,
+    request: Request,
     principal: AuthPrincipal = Depends(
         verify_system_user_token("receptionist", "dept_admin", "super_admin")
     ),
 ):
     tenant_id = principal.tenant_id or ""
-    return await update_profile_by_id(
-        profile_id=profile_id, tenant_id=tenant_id, profile_data=profile_data
+    payload = profile_data.model_dump(exclude_none=True)
+    payload["tenant_id"] = tenant_id
+    return await enqueue_write(
+        writer_key="visitor_profile.update",
+        payload=payload,
+        resource_type="visitor_profile",
+        resource_id=profile_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
     )

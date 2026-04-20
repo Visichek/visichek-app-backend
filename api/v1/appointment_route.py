@@ -1,7 +1,9 @@
-from typing import Annotated, List
+from typing import Annotated, Any, List
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.precompute import PrecomputeScope, get_or_compute
+from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.appointment_schema import (
     AppointmentCreate,
@@ -11,11 +13,8 @@ from schemas.appointment_schema import (
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.appointment_service import (
-    add_appointment,
     retrieve_appointment_by_id_with_summary,
     retrieve_appointments_with_summary,
-    update_appointment_by_id,
-    remove_appointment,
 )
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
@@ -25,77 +24,46 @@ _admin_roles = verify_system_user_token("dept_admin", "super_admin", "receptioni
 
 @router.post("")
 @document_response(
-    message="Appointment created successfully",
-    status_code=status.HTTP_201_CREATED,
-    description="Create a new visitor appointment with date, time, and host information.",
-    summary="Create new appointment",
+    message="Appointment creation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue an appointment create. The ID is pre-assigned so the client can poll the list view.",
+    summary="Create new appointment (async)",
     success_example={
         "id": "507f1f77bcf86cd799439013",
-        "tenant_id": "t12345",
-        "visitor_profile_id": "507f1f77bcf86cd799439012",
-        "host_id": "h12345",
-        "department_id": "d12345",
-        "visitor_name_snapshot": "John Doe",
-        "host_name_snapshot": "Jane Smith",
-        "scheduled_datetime": 1712618400,
-        "purpose": "Sales consultation",
-        "status": "scheduled",
-        "created_by": "r12345",
-        "date_created": 1712532000,
-        "last_updated": 1712532000,
+        "job_id": "a2c4e6f8-1234-4abc-8def-0123456789ab",
+        "status": "queued",
     },
     response_codes={
         401: "Unauthorized - invalid or missing token",
         403: "Forbidden - insufficient permissions",
-        404: "Host or department not found",
-        409: "Scheduling conflict - requested time slot unavailable",
-        422: "Validation error - invalid appointment data",
-    },
-    error_examples={
-        409: {
-            "success": False,
-            "message": "Scheduling conflict at requested time",
-            "code": "CONFLICT",
-        },
-        422: {
-            "success": False,
-            "message": "Invalid appointment data",
-            "code": "VALIDATION_FAILED",
-        },
+        422: "Validation error",
     },
 )
 async def create_appointment_endpoint(
     appt_data: AppointmentCreate,
+    request: Request,
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
+    payload = appt_data.model_dump(exclude_none=True)
     if principal.tenant_id:
-        appt_data.tenant_id = principal.tenant_id
-    appt_data.created_by = principal.user_id
-    return await add_appointment(appt_data=appt_data)
+        payload["tenant_id"] = principal.tenant_id
+    payload["created_by"] = principal.user_id
+    return await enqueue_write(
+        writer_key="appointment.create",
+        payload=payload,
+        resource_type="appointment",
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.get("")
 @document_response(
     message="Appointments fetched successfully",
-    description="Retrieve paginated list of appointments for the current tenant.",
+    description="First page served from the per-tenant precompute cache.",
     summary="List appointments with pagination",
-    success_example=[
-        {
-            "id": "507f1f77bcf86cd799439013",
-            "tenant_id": "t12345",
-            "visitor_profile_id": "507f1f77bcf86cd799439012",
-            "host_id": "h12345",
-            "department_id": "d12345",
-            "visitor_name_snapshot": "John Doe",
-            "host_name_snapshot": "Jane Smith",
-            "scheduled_datetime": 1712618400,
-            "purpose": "Sales consultation",
-            "status": "scheduled",
-            "created_by": "r12345",
-            "date_created": 1712532000,
-            "last_updated": 1712532000,
-        }
-    ],
     include_meta=True,
     response_codes={
         401: "Unauthorized - invalid or missing token",
@@ -106,11 +74,28 @@ async def list_appointments(
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(_admin_roles),
-) -> List[AppointmentWithSummaryOut]:
+) -> Any:
     tenant_id = principal.tenant_id or ""
+    if start == 0 and stop == 100 and tenant_id:
+        return await get_or_compute(
+            scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+            resource="appointments.list",
+            ttl=60,
+            loader=lambda: _load_appointments_for_tenant(tenant_id),
+        )
     return await retrieve_appointments_with_summary(
         tenant_id=tenant_id, start=start, stop=stop
     )
+
+
+async def _load_appointments_for_tenant(tenant_id: str) -> List[Any]:
+    appts = await retrieve_appointments_with_summary(
+        tenant_id=tenant_id, start=0, stop=100
+    )
+    return [
+        a.model_dump(mode="json", by_alias=True) if hasattr(a, "model_dump") else a
+        for a in appts
+    ]
 
 
 @router.get("/{appointment_id}")
@@ -118,32 +103,10 @@ async def list_appointments(
     message="Appointment fetched successfully",
     description="Retrieve detailed information about a specific appointment.",
     summary="Fetch appointment by ID",
-    success_example={
-        "id": "507f1f77bcf86cd799439013",
-        "tenant_id": "t12345",
-        "visitor_profile_id": "507f1f77bcf86cd799439012",
-        "host_id": "h12345",
-        "department_id": "d12345",
-        "visitor_name_snapshot": "John Doe",
-        "host_name_snapshot": "Jane Smith",
-        "scheduled_datetime": 1712618400,
-        "purpose": "Sales consultation",
-        "status": "scheduled",
-        "created_by": "r12345",
-        "date_created": 1712532000,
-        "last_updated": 1712532000,
-    },
     response_codes={
         401: "Unauthorized - invalid or missing token",
         403: "Forbidden - insufficient permissions",
         404: "Appointment not found",
-    },
-    error_examples={
-        404: {
-            "success": False,
-            "message": "Appointment not found",
-            "code": "RESOURCE_NOT_FOUND",
-        },
     },
 )
 async def get_appointment_endpoint(
@@ -158,92 +121,73 @@ async def get_appointment_endpoint(
 
 @router.patch("/{appointment_id}")
 @document_response(
-    message="Appointment updated successfully",
-    description="Update appointment details such as date, time, or host information.",
-    summary="Update appointment",
+    message="Appointment update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a partial appointment update.",
+    summary="Update appointment (async)",
     success_example={
         "id": "507f1f77bcf86cd799439013",
-        "tenant_id": "t12345",
-        "visitor_profile_id": "507f1f77bcf86cd799439012",
-        "host_id": "h12345",
-        "department_id": "d12345",
-        "visitor_name_snapshot": "John Doe",
-        "host_name_snapshot": "Jane Smith",
-        "scheduled_datetime": 1712704800,
-        "purpose": "Sales consultation",
-        "status": "scheduled",
-        "created_by": "r12345",
-        "date_created": 1712532000,
-        "last_updated": 1712535600,
+        "job_id": "b3d5f7a9-2345-4def-8abc-1234567890bc",
+        "status": "queued",
     },
     response_codes={
         401: "Unauthorized - invalid or missing token",
         403: "Forbidden - insufficient permissions",
-        404: "Appointment not found",
-        409: "Scheduling conflict - new time slot unavailable",
-    },
-    error_examples={
-        404: {
-            "success": False,
-            "message": "Appointment not found",
-            "code": "RESOURCE_NOT_FOUND",
-        },
-        409: {
-            "success": False,
-            "message": "Scheduling conflict at requested time",
-            "code": "CONFLICT",
-        },
+        422: "Validation error",
     },
 )
 async def update_appointment_endpoint(
     appointment_id: str,
     appt_data: AppointmentUpdate,
+    request: Request,
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
     tenant_id = principal.tenant_id or ""
-    return await update_appointment_by_id(
-        appointment_id=appointment_id, tenant_id=tenant_id, appt_data=appt_data
+    payload = appt_data.model_dump(exclude_none=True)
+    payload["tenant_id"] = tenant_id
+    return await enqueue_write(
+        writer_key="appointment.update",
+        payload=payload,
+        resource_type="appointment",
+        resource_id=appointment_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
 @router.delete("/{appointment_id}")
 @document_response(
-    message="Appointment deleted successfully",
-    description="Delete an appointment by ID. Only dept_admin and super_admin can delete.",
-    summary="Delete appointment",
+    message="Appointment deletion queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue an appointment deletion. Only dept_admin / super_admin may call.",
+    summary="Delete appointment (async)",
     success_example={
         "id": "507f1f77bcf86cd799439013",
-        "tenant_id": "t12345",
-        "visitor_profile_id": "507f1f77bcf86cd799439012",
-        "host_id": "h12345",
-        "department_id": "d12345",
-        "visitor_name_snapshot": "John Doe",
-        "host_name_snapshot": "Jane Smith",
-        "scheduled_datetime": 1712618400,
-        "purpose": "Sales consultation",
-        "status": "scheduled",
-        "created_by": "r12345",
-        "date_created": 1712532000,
-        "last_updated": 1712535600,
+        "job_id": "c4e6f8a0-3456-4fab-9bcd-2345678901cd",
+        "status": "queued",
     },
     response_codes={
         401: "Unauthorized - invalid or missing token",
         403: "Forbidden - insufficient permissions",
-        404: "Appointment not found",
-    },
-    error_examples={
-        404: {
-            "success": False,
-            "message": "Appointment not found",
-            "code": "RESOURCE_NOT_FOUND",
-        },
     },
 )
 async def delete_appointment_endpoint(
     appointment_id: str,
+    request: Request,
     principal: AuthPrincipal = Depends(
         verify_system_user_token("dept_admin", "super_admin")
     ),
 ):
     tenant_id = principal.tenant_id or ""
-    return await remove_appointment(appointment_id=appointment_id, tenant_id=tenant_id)
+    return await enqueue_write(
+        writer_key="appointment.delete",
+        payload={"tenant_id": tenant_id},
+        resource_type="appointment",
+        resource_id=appointment_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )

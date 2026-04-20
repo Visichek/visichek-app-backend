@@ -1,22 +1,21 @@
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated, Any, List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.precompute import PrecomputeScope, get_or_compute
+from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.checkin_config_service import (
-    create_config,
     list_configs_for_tenant,
     resolve_public_config,
-    update_config,
 )
 from services.visitor_service import lookup_visitor
 from schemas.checkin_config_schema import (
     CheckinConfigCreate,
-    CheckinConfigOut,
     CheckinConfigUpdate,
     PublicCheckinConfigOut,
 )
@@ -30,26 +29,7 @@ router = APIRouter(prefix="/checkin-configs", tags=["Check-In Configs"])
     message="Check-in configuration retrieved",
     description="Get public check-in configuration for a kiosk (unauthenticated).",
     summary="Get public check-in config",
-    success_example={
-        "checkin_config_id": "507f1f77bcf86cd799439012",
-        "tenant_id": "t12345",
-        "tenant_name": "Acme Corp",
-        "logo_url": "https://s3.example.com/logos/acme.png",
-        "id_upload_enabled": True,
-        "allow_returning_visitor_lookup": True,
-        "required_fields": [
-            {
-                "key": "full_name",
-                "label": "Full Name",
-                "type": "text",
-                "required": True,
-                "category": "bio",
-            }
-        ],
-    },
-    response_codes={
-        404: "Check-in config not found or inactive",
-    },
+    response_codes={404: "Check-in config not found or inactive"},
 )
 async def get_public_checkin_config(checkin_config_id: str):
     """Get public check-in configuration (unauthenticated endpoint for kiosk)."""
@@ -61,23 +41,6 @@ async def get_public_checkin_config(checkin_config_id: str):
     message="Visitor lookup result",
     description="Search for a returning visitor by email and/or phone (kiosk).",
     summary="Lookup visitor",
-    success_example={
-        "found": True,
-        "visitor": {
-            "id": "507f1f77bcf86cd799439012",
-            "tenant_id": "t12345",
-            "full_name": "John Doe",
-            "email": "john@example.com",
-            "phone": "+1-555-0123",
-            "bio_data": {},
-            "verified": False,
-            "id_number_encrypted": None,
-            "id_document_id": None,
-            "portrait_url": None,
-            "date_created": 1710000000,
-            "last_updated": 1710000000,
-        },
-    },
     response_codes={
         400: "Neither email nor phone provided",
         404: "Visitor not found",
@@ -91,7 +54,6 @@ async def lookup_returning_visitor(
     """Lookup a returning visitor by email and/or phone (kiosk endpoint)."""
     from core.errors import AppException, ErrorCode
 
-    # Validate at least one is provided
     if not email and not phone:
         raise AppException(
             status_code=400,
@@ -99,7 +61,6 @@ async def lookup_returning_visitor(
             message="At least one of email or phone must be provided",
         )
 
-    # Get config to extract tenant_id
     config = await resolve_public_config(checkin_config_id)
     return await lookup_visitor(tenant_id=config.tenant_id, email=email, phone=phone)
 
@@ -107,29 +68,12 @@ async def lookup_returning_visitor(
 @router.post("/{checkin_config_id}/checkins", status_code=status.HTTP_201_CREATED)
 @document_response(
     message="Check-in submitted successfully",
-    description="Submit a new check-in via kiosk (unauthenticated).",
+    description=(
+        "Submit a new check-in via kiosk (unauthenticated). Stays synchronous "
+        "so the visitor receives immediate confirmation + badge context."
+    ),
     summary="Submit check-in",
     status_code=status.HTTP_201_CREATED,
-    success_example={
-        "id": "507f1f77bcf86cd799439012",
-        "tenant_id": "t12345",
-        "visitor_id": "v12345",
-        "checkin_config_id": "c12345",
-        "id_extraction_id": None,
-        "tenant_specific_data": {"department": "Sales"},
-        "purpose": {
-            "purpose": "Meeting",
-            "purpose_details": "Quarterly review",
-            "expected_duration_minutes": 60,
-        },
-        "state": "pending_approval",
-        "verified": False,
-        "approved_by_user_id": None,
-        "approved_at": None,
-        "rejection_reason": None,
-        "date_created": 1710000000,
-        "last_updated": 1710000000,
-    },
     response_codes={
         400: "Validation failed or missing required fields",
         409: "Visitor has pending check-in already",
@@ -139,62 +83,90 @@ async def submit_visitor_checkin(
     checkin_config_id: str,
     payload: CheckinSubmitRequest,
 ):
-    """Submit a check-in via kiosk (unauthenticated endpoint)."""
+    """Submit a check-in via kiosk (unauthenticated endpoint). Remains sync for UX."""
     from services.checkin_service import submit_checkin as submit_checkin_service
 
     return await submit_checkin_service(checkin_config_id, payload)
 
 
-@router.post("", response_model=CheckinConfigOut)
+@router.post("")
 @document_response(
-    message="Check-in configuration created",
-    description="Create a new check-in configuration (super_admin only).",
-    summary="Create check-in config",
-    status_code=status.HTTP_201_CREATED,
+    message="Check-in configuration creation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a check-in config create (super_admin only).",
+    summary="Create check-in config (async)",
+    success_example={
+        "id": "507f1f77bcf86cd799439012",
+        "job_id": "a2c4e6f8-1234-4abc-8def-0123456789ab",
+        "status": "queued",
+    },
     response_codes={
         401: "Unauthorized",
         403: "Forbidden - only super_admin allowed",
-        404: "Tenant not found",
     },
 )
 async def create_checkin_config(
     payload: CheckinConfigCreate,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_system_user_token("super_admin")),
 ):
-    """Create a new check-in configuration (super_admin only)."""
-    return await create_config(payload)
+    data = payload.model_dump(exclude_none=True)
+    if principal.tenant_id:
+        data["tenant_id"] = principal.tenant_id
+    return await enqueue_write(
+        writer_key="checkin_config.create",
+        payload=data,
+        resource_type="checkin_config",
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
-@router.patch("/{checkin_config_id}", response_model=CheckinConfigOut)
+@router.patch("/{checkin_config_id}")
 @document_response(
-    message="Check-in configuration updated",
-    description="Update a check-in configuration (super_admin only).",
-    summary="Update check-in config",
+    message="Check-in configuration update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a check-in config update (super_admin only).",
+    summary="Update check-in config (async)",
+    success_example={
+        "id": "507f1f77bcf86cd799439012",
+        "job_id": "b3d5f7a9-2345-4def-8abc-1234567890bc",
+        "status": "queued",
+    },
     response_codes={
         401: "Unauthorized",
         403: "Forbidden",
-        404: "Config not found",
     },
 )
 async def update_checkin_config(
     checkin_config_id: str,
     payload: CheckinConfigUpdate,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_system_user_token("super_admin")),
 ):
-    """Update a check-in configuration (super_admin only)."""
-    return await update_config(checkin_config_id, payload)
+    data = payload.model_dump(exclude_none=True)
+    data["tenant_id"] = principal.tenant_id or ""
+    return await enqueue_write(
+        writer_key="checkin_config.update",
+        payload=data,
+        resource_type="checkin_config",
+        resource_id=checkin_config_id,
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.get("")
 @document_response(
     message="Check-in configurations retrieved",
-    description="List check-in configurations for tenant (super_admin/dept_admin).",
+    description="First page served from the per-tenant precompute cache.",
     summary="List check-in configs",
     include_meta=True,
-    response_codes={
-        401: "Unauthorized",
-        403: "Forbidden",
-    },
+    response_codes={401: "Unauthorized", 403: "Forbidden"},
 )
 async def list_checkin_configs(
     skip: Annotated[int, Query(ge=0)] = 0,
@@ -202,10 +174,26 @@ async def list_checkin_configs(
     principal: AuthPrincipal = Depends(
         verify_system_user_token("super_admin", "dept_admin")
     ),
-):
-    """List check-in configurations (super_admin/dept_admin)."""
+) -> Any:
     tenant_id = principal.tenant_id or ""
+    if skip == 0 and limit in (20, 100) and tenant_id:
+        cached: List[Any] = await get_or_compute(
+            scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+            resource="checkin_configs.list",
+            ttl=60,
+            loader=lambda: _load_configs_for_tenant(tenant_id),
+        )
+        return cached[:limit], {"total": len(cached), "skip": skip, "limit": limit}
+
     configs, total = await list_configs_for_tenant(
         tenant_id=tenant_id, skip=skip, limit=limit
     )
     return configs, {"total": total, "skip": skip, "limit": limit}
+
+
+async def _load_configs_for_tenant(tenant_id: str) -> List[Any]:
+    configs, _ = await list_configs_for_tenant(tenant_id=tenant_id, skip=0, limit=100)
+    return [
+        c.model_dump(mode="json", by_alias=True) if hasattr(c, "model_dump") else c
+        for c in configs
+    ]

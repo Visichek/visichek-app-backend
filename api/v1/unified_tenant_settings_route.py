@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Any
 
+from fastapi import APIRouter, Depends, Request, status
+
+from core.queue.precompute import PrecomputeScope, get_or_compute
+from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.tenant_settings_schema import TenantSettingsUpdate
 from security.auth import verify_super_admin_token
 from security.principal import AuthPrincipal
-from services.tenant_settings_service import (
-    retrieve_or_create_tenant_settings,
-    update_tenant_settings_by_id,
-)
+from services.tenant_settings_service import retrieve_or_create_tenant_settings
 
 router = APIRouter(prefix="/tenant-settings", tags=["Tenant Settings (Unified)"])
 
@@ -17,24 +18,7 @@ router = APIRouter(prefix="/tenant-settings", tags=["Tenant Settings (Unified)"]
 @router.get("")
 @document_response(
     message="Tenant settings fetched successfully",
-    success_example={
-        "security": {
-            "enforceTotp": False,
-            "passwordMinLength": 8,
-            "sessionTimeoutMinutes": 60,
-            "maxFailedLoginAttempts": 5,
-        },
-        "visitors": {
-            "requireIdScan": False,
-            "requireHostApproval": False,
-            "requireConsent": True,
-            "allowSelfRegistration": True,
-        },
-    },
-    description=(
-        "Return the tenant's settings. Tenant ID is inferred from the super admin's token. "
-        "Auto-creates defaults on first access. Only super_admin can read."
-    ),
+    description="Tenant ID inferred from the super admin's token. Served from the per-tenant precompute cache.",
     summary="Get tenant settings",
     response_codes={
         401: "Unauthorized",
@@ -43,20 +27,34 @@ router = APIRouter(prefix="/tenant-settings", tags=["Tenant Settings (Unified)"]
 )
 async def get_tenant_settings(
     principal: AuthPrincipal = Depends(verify_super_admin_token),
-):
-    """Get tenant settings — tenant ID inferred from token."""
+) -> Any:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_or_create_tenant_settings(tenant_id)
+    return await get_or_compute(
+        scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+        resource="tenant.settings",
+        ttl=60,
+        loader=lambda: _load_tenant_settings(tenant_id),
+    )
+
+
+async def _load_tenant_settings(tenant_id: str) -> Any:
+    if not tenant_id:
+        return None
+    result = await retrieve_or_create_tenant_settings(tenant_id)
+    return result.model_dump(mode="json", by_alias=True) if hasattr(result, "model_dump") else result
 
 
 @router.patch("")
 @document_response(
-    message="Tenant settings updated successfully",
-    description=(
-        "Partial update of tenant settings. Accepts any subset of fields. "
-        "Tenant ID is inferred from the super admin's token. Only super_admin can write."
-    ),
-    summary="Update tenant settings",
+    message="Tenant settings update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a partial tenant settings update — tenant ID inferred from the super admin's token.",
+    summary="Update tenant settings (async)",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "job_id": "b3d5f7a9-2345-4def-8abc-1234567890bc",
+        "status": "queued",
+    },
     response_codes={
         401: "Unauthorized",
         403: "Forbidden - must be super admin",
@@ -65,13 +63,21 @@ async def get_tenant_settings(
 )
 async def update_tenant_settings(
     data: TenantSettingsUpdate,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
-    """Update tenant settings — tenant ID inferred from token."""
     tenant_id = principal.tenant_id or ""
-    return await update_tenant_settings_by_id(
-        tenant_id,
-        data,
+    payload = data.model_dump(exclude_none=True)
+    payload["tenant_id"] = tenant_id
+    payload["_actor_id"] = principal.user_id
+    payload["_actor_role"] = principal.role
+    return await enqueue_write(
+        writer_key="tenant_settings.update",
+        payload=payload,
+        resource_type="tenant_settings",
+        resource_id=tenant_id,
+        tenant_id=tenant_id,
         actor_id=principal.user_id,
         actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
     )

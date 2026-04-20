@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any, List
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.precompute import PrecomputeScope, get_or_compute
+from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.branch_schema import BranchCreate, BranchOut, BranchUpdate
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.branch_service import (
-    add_branch,
-    deactivate_branch,
-    remove_branch,
     retrieve_branch_by_id,
     retrieve_branches_for_tenant,
-    update_branch_by_id,
 )
 
 router = APIRouter(prefix="/branches", tags=["Branches"])
@@ -25,66 +23,43 @@ _super_admin_dep = verify_system_user_token("super_admin")
 
 @router.post("")
 @document_response(
-    message="Branch created successfully",
-    status_code=status.HTTP_201_CREATED,
-    description="Create a new branch for the authenticated user's tenant. Only super_admin can create branches.",
-    summary="Create branch",
+    message="Branch creation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a branch create for the authenticated user's tenant. Cap + duplicate-name checks run inside the writer.",
+    summary="Create branch (async)",
     success_example={
         "id": "507f1f77bcf86cd799439011",
-        "tenant_id": "507f1f77bcf86cd799439010",
-        "name": "Lagos Office",
-        "address": "123 Victoria Island",
-        "city": "Lagos",
-        "state": "Lagos",
-        "country": "Nigeria",
-        "is_headquarters": False,
-        "status": "active",
-        "date_created": 1712548800,
-        "last_updated": 1712548800,
+        "job_id": "a2c4e6f8-1234-4abc-8def-0123456789ab",
+        "status": "queued",
     },
     response_codes={
         401: "Unauthorized - invalid or missing token",
         403: "Forbidden - only super_admin can create branches",
-        409: "Conflict - branch name already exists for this tenant",
-        429: "Too Many Requests - branch limit reached for plan",
-    },
-    error_examples={
-        401: {
-            "success": False,
-            "message": "Invalid or expired token",
-            "code": "AUTH_INVALID_TOKEN",
-        },
-        403: {
-            "success": False,
-            "message": "Token role mismatch",
-            "code": "AUTH_ROLE_MISMATCH",
-        },
-        409: {
-            "success": False,
-            "message": "Branch 'Lagos Office' already exists for this tenant",
-            "code": "VALIDATION_FAILED",
-        },
-        429: {
-            "success": False,
-            "message": "Branch limit reached (3). Upgrade your plan for more branches.",
-            "code": "QUOTA_EXCEEDED",
-        },
     },
 )
 async def create_branch_endpoint(
     payload: BranchCreate,
+    request: Request,
     principal: AuthPrincipal = Depends(_super_admin_dep),
-) -> BranchOut:
-    """Create a new branch. The tenant_id is taken from the authenticated user's token."""
-    # Override tenant_id from token for security (prevent creating branches for other tenants)
-    payload.tenant_id = principal.tenant_id or payload.tenant_id
-    return await add_branch(payload)
+):
+    """Enqueue branch creation. tenant_id is always enforced from the token."""
+    data = payload.model_dump(exclude_none=True)
+    data["tenant_id"] = principal.tenant_id or data.get("tenant_id")
+    return await enqueue_write(
+        writer_key="branch.create",
+        payload=data,
+        resource_type="branch",
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.get("")
 @document_response(
     message="Branches fetched successfully",
-    description="List all branches for the authenticated user's tenant.",
+    description="List all branches for the authenticated user's tenant. First page served from the per-tenant precompute cache.",
     summary="List branches",
     include_meta=True,
     success_example=[
@@ -105,10 +80,24 @@ async def list_branches(
     start: Annotated[int, Query(ge=0)] = 0,
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(_super_admin_dep),
-):
-    """List all branches for the current tenant."""
+) -> Any:
     tenant_id = principal.tenant_id or ""
+    if start == 0 and stop == 100 and tenant_id:
+        return await get_or_compute(
+            scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+            resource="branches.list",
+            ttl=60,
+            loader=lambda: _load_branches_for_tenant(tenant_id),
+        )
     return await retrieve_branches_for_tenant(tenant_id, start=start, stop=stop)
+
+
+async def _load_branches_for_tenant(tenant_id: str) -> List[Any]:
+    branches = await retrieve_branches_for_tenant(tenant_id, start=0, stop=100)
+    return [
+        b.model_dump(mode="json", by_alias=True) if hasattr(b, "model_dump") else b
+        for b in branches
+    ]
 
 
 @router.get("/{branch_id}")
@@ -126,7 +115,6 @@ async def get_branch_endpoint(
     branch_id: str,
     principal: AuthPrincipal = Depends(_super_admin_dep),
 ) -> BranchOut | None:
-    """Get a single branch by ID."""
     branch = await retrieve_branch_by_id(branch_id)
     if branch and branch.tenant_id != principal.tenant_id:
         return None  # Don't leak data across tenants
@@ -135,35 +123,58 @@ async def get_branch_endpoint(
 
 @router.put("/{branch_id}")
 @document_response(
-    message="Branch updated successfully",
-    description="Update an existing branch.",
-    summary="Update branch",
+    message="Branch update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a branch update.",
+    summary="Update branch (async)",
+    success_example={
+        "id": "507f1f77bcf86cd799439011",
+        "job_id": "b3d5f7a9-2345-4def-8abc-1234567890bc",
+        "status": "queued",
+    },
     response_codes={
         401: "Unauthorized",
         403: "Forbidden",
-        404: "Branch not found",
     },
 )
 async def update_branch_endpoint(
     branch_id: str,
     payload: BranchUpdate,
+    request: Request,
     principal: AuthPrincipal = Depends(_super_admin_dep),
-) -> BranchOut | None:
-    """Update a branch."""
-    # Verify branch belongs to tenant
+):
+    # Cross-tenant check still runs synchronously to avoid leaking write errors.
     existing = await retrieve_branch_by_id(branch_id)
     if not existing or existing.tenant_id != principal.tenant_id:
-        return None
-    return await update_branch_by_id(branch_id, payload)
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Branch not found")
+    data = payload.model_dump(exclude_none=True)
+    data["tenant_id"] = principal.tenant_id or ""
+    return await enqueue_write(
+        writer_key="branch.update",
+        payload=data,
+        resource_type="branch",
+        resource_id=branch_id,
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.post("/{branch_id}/deactivate")
 @document_response(
-    message="Branch deactivated successfully",
-    description="Soft-deactivate a branch. Cannot deactivate the last active branch.",
-    summary="Deactivate branch",
+    message="Branch deactivation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue soft-deactivation. Last-active-branch protection runs inside the writer.",
+    summary="Deactivate branch (async)",
+    success_example={
+        "id": "507f1f77bcf86cd799439011",
+        "job_id": "c4e6f8a0-3456-4fab-9bcd-2345678901cd",
+        "status": "queued",
+    },
     response_codes={
-        400: "Cannot deactivate the last active branch",
         401: "Unauthorized",
         403: "Forbidden",
         404: "Branch not found",
@@ -171,22 +182,38 @@ async def update_branch_endpoint(
 )
 async def deactivate_branch_endpoint(
     branch_id: str,
+    request: Request,
     principal: AuthPrincipal = Depends(_super_admin_dep),
-) -> BranchOut | None:
-    """Deactivate a branch (soft-delete)."""
+):
     existing = await retrieve_branch_by_id(branch_id)
     if not existing or existing.tenant_id != principal.tenant_id:
-        return None
-    return await deactivate_branch(branch_id)
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Branch not found")
+    return await enqueue_write(
+        writer_key="branch.deactivate",
+        payload={"tenant_id": principal.tenant_id or ""},
+        resource_type="branch",
+        resource_id=branch_id,
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.delete("/{branch_id}")
 @document_response(
-    message="Branch deleted successfully",
-    description="Permanently delete a branch. Cannot delete the last branch for a tenant.",
-    summary="Delete branch",
+    message="Branch deletion queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue hard delete. Last-branch protection runs inside the writer.",
+    summary="Delete branch (async)",
+    success_example={
+        "id": "507f1f77bcf86cd799439011",
+        "job_id": "d5f7a9b1-4567-4abc-8def-3456789012de",
+        "status": "queued",
+    },
     response_codes={
-        400: "Cannot delete the last branch",
         401: "Unauthorized",
         403: "Forbidden",
         404: "Branch not found",
@@ -194,13 +221,21 @@ async def deactivate_branch_endpoint(
 )
 async def delete_branch_endpoint(
     branch_id: str,
+    request: Request,
     principal: AuthPrincipal = Depends(_super_admin_dep),
-) -> dict:
-    """Hard-delete a branch."""
+):
     existing = await retrieve_branch_by_id(branch_id)
     if not existing or existing.tenant_id != principal.tenant_id:
         from fastapi import HTTPException
 
         raise HTTPException(status_code=404, detail="Branch not found")
-    await remove_branch(branch_id)
-    return {"deleted": True}
+    return await enqueue_write(
+        writer_key="branch.delete",
+        payload={"tenant_id": principal.tenant_id or ""},
+        resource_type="branch",
+        resource_id=branch_id,
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )

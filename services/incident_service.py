@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import List
+from typing import List, Optional
 
 from repositories.incident_log_repo import (
     create_incident_log,
@@ -18,8 +18,12 @@ from schemas.incident_log_schema import (
 )
 
 
-async def add_incident(log_data: IncidentLogCreate) -> IncidentLogOut:
-    return await create_incident_log(log_data)
+async def add_incident(
+    log_data: IncidentLogCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> IncidentLogOut:
+    return await create_incident_log(log_data, preassigned_id=preassigned_id)
 
 
 async def retrieve_incident_by_id(incident_id: str, tenant_id: str) -> IncidentLogOut:

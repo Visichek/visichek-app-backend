@@ -1,3 +1,4 @@
+from bson import ObjectId
 from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
@@ -5,8 +6,14 @@ from typing import List, Optional
 from schemas.system_user_schema import SystemUserCreate, SystemUserUpdate, SystemUserOut
 
 
-async def create_system_user(user_data: SystemUserCreate) -> SystemUserOut:
+async def create_system_user(
+    user_data: SystemUserCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> SystemUserOut:
     user_dict = user_data.model_dump()
+    if preassigned_id:
+        user_dict["_id"] = ObjectId(preassigned_id)
     result = await db.system_users.insert_one(user_dict)
     result = await db.system_users.find_one({"_id": result.inserted_id})
     return SystemUserOut(**result)

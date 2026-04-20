@@ -1,14 +1,14 @@
-from fastapi import APIRouter, Depends, status
-from bson import ObjectId
+from typing import Any, List
+
+from fastapi import APIRouter, Depends, Request, status
+
+from core.queue.precompute import PrecomputeScope, get_or_compute
+from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
+from repositories.retention_policy_repo import get_retention_policies
 from schemas.retention_policy_schema import RetentionPolicyCreate, RetentionPolicyUpdate
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
-from repositories.retention_policy_repo import (
-    create_retention_policy,
-    get_retention_policies,
-    update_retention_policy,
-)
 
 router = APIRouter(prefix="/retention-policies", tags=["Retention Policies"])
 _dpo_roles = verify_system_user_token("super_admin", "dpo")
@@ -16,54 +16,45 @@ _dpo_roles = verify_system_user_token("super_admin", "dpo")
 
 @router.post("")
 @document_response(
-    message="Retention policy created successfully",
-    status_code=status.HTTP_201_CREATED,
-    summary="Create retention policy",
-    description="Create a new data retention policy defining how long data is retained.",
+    message="Retention policy creation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Create retention policy (async)",
+    description="Enqueue a retention policy create.",
     success_example={
         "id": "507f1f77bcf86cd799439011",
-        "tenant_id": "tenant_001",
-        "scope": "visitor_profiles",
-        "retention_days": 365,
-        "action": "anonymise",
-        "date_created": 1712448000,
+        "job_id": "a2c4e6f8-1234-4abc-8def-0123456789ab",
+        "status": "queued",
     },
     response_codes={
         401: "Unauthorized token",
         403: "Insufficient permissions",
         422: "Invalid payload",
     },
-    error_examples={
-        401: {
-            "success": False,
-            "message": "Token validation failed",
-            "code": "AUTH_INVALID_TOKEN",
-        },
-        403: {
-            "success": False,
-            "message": "Insufficient permissions",
-            "code": "AUTH_PERMISSION_DENIED",
-        },
-        422: {
-            "success": False,
-            "message": "Validation error",
-            "code": "VALIDATION_FAILED",
-        },
-    },
 )
 async def create_policy(
-    policy_data: RetentionPolicyCreate, principal: AuthPrincipal = Depends(_dpo_roles)
+    policy_data: RetentionPolicyCreate,
+    request: Request,
+    principal: AuthPrincipal = Depends(_dpo_roles),
 ):
+    payload = policy_data.model_dump(exclude_none=True)
     if principal.tenant_id:
-        policy_data.tenant_id = principal.tenant_id
-    return await create_retention_policy(policy_data)
+        payload["tenant_id"] = principal.tenant_id
+    return await enqueue_write(
+        writer_key="retention_policy.create",
+        payload=payload,
+        resource_type="retention_policy",
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.get("")
 @document_response(
     message="Retention policies fetched successfully",
     summary="List retention policies",
-    description="Retrieve all data retention policies configured for the tenant.",
+    description="Served from the per-tenant precompute cache.",
     success_example=[
         {
             "id": "507f1f77bcf86cd799439011",
@@ -75,81 +66,61 @@ async def create_policy(
         }
     ],
     include_meta=True,
-    response_codes={
-        401: "Unauthorized token",
-        403: "Insufficient permissions",
-        422: "Invalid query",
-    },
-    error_examples={
-        401: {
-            "success": False,
-            "message": "Token validation failed",
-            "code": "AUTH_INVALID_TOKEN",
-        },
-        403: {
-            "success": False,
-            "message": "Insufficient permissions",
-            "code": "AUTH_PERMISSION_DENIED",
-        },
-        422: {
-            "success": False,
-            "message": "Validation error",
-            "code": "VALIDATION_FAILED",
-        },
-    },
+    response_codes={401: "Unauthorized token", 403: "Insufficient permissions"},
 )
-async def list_policies(principal: AuthPrincipal = Depends(_dpo_roles)):
-    return await get_retention_policies({"tenant_id": principal.tenant_id or ""})
+async def list_policies(principal: AuthPrincipal = Depends(_dpo_roles)) -> Any:
+    tenant_id = principal.tenant_id or ""
+    if not tenant_id:
+        return await get_retention_policies({"tenant_id": tenant_id})
+    return await get_or_compute(
+        scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+        resource="retention_policies.list",
+        ttl=60,
+        loader=lambda: _load_policies_for_tenant(tenant_id),
+    )
+
+
+async def _load_policies_for_tenant(tenant_id: str) -> List[Any]:
+    policies = await get_retention_policies({"tenant_id": tenant_id})
+    return [
+        p.model_dump(mode="json", by_alias=True) if hasattr(p, "model_dump") else p
+        for p in policies
+    ]
 
 
 @router.patch("/{policy_id}")
 @document_response(
-    message="Retention policy updated successfully",
-    summary="Update retention policy",
-    description="Modify an existing data retention policy with new retention periods.",
+    message="Retention policy update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Update retention policy (async)",
+    description="Enqueue a partial retention policy update.",
     success_example={
         "id": "507f1f77bcf86cd799439011",
-        "tenant_id": "tenant_001",
-        "scope": "visitor_profiles",
-        "retention_days": 365,
-        "action": "anonymise",
-        "date_created": 1712448000,
+        "job_id": "b3d5f7a9-2345-4def-8abc-1234567890bc",
+        "status": "queued",
     },
     response_codes={
         401: "Unauthorized token",
         403: "Insufficient permissions",
-        404: "Policy not found",
         422: "Invalid payload",
-    },
-    error_examples={
-        401: {
-            "success": False,
-            "message": "Token validation failed",
-            "code": "AUTH_INVALID_TOKEN",
-        },
-        403: {
-            "success": False,
-            "message": "Insufficient permissions",
-            "code": "AUTH_PERMISSION_DENIED",
-        },
-        404: {
-            "success": False,
-            "message": "Retention policy not found",
-            "code": "RESOURCE_NOT_FOUND",
-        },
-        422: {
-            "success": False,
-            "message": "Validation error",
-            "code": "VALIDATION_FAILED",
-        },
     },
 )
 async def update_policy(
     policy_id: str,
     policy_data: RetentionPolicyUpdate,
+    request: Request,
     principal: AuthPrincipal = Depends(_dpo_roles),
 ):
-    return await update_retention_policy(
-        {"_id": ObjectId(policy_id), "tenant_id": principal.tenant_id or ""},
-        policy_data,
+    tenant_id = principal.tenant_id or ""
+    payload = policy_data.model_dump(exclude_none=True)
+    payload["tenant_id"] = tenant_id
+    return await enqueue_write(
+        writer_key="retention_policy.update",
+        payload=payload,
+        resource_type="retention_policy",
+        resource_id=policy_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
     )

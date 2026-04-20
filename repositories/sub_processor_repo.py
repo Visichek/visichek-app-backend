@@ -1,3 +1,4 @@
+from bson import ObjectId
 from pymongo import ReturnDocument
 from core.database import db
 from typing import List, Optional
@@ -8,8 +9,14 @@ from schemas.sub_processor_schema import (
 )
 
 
-async def create_sub_processor(sp_data: SubProcessorCreate) -> SubProcessorOut:
+async def create_sub_processor(
+    sp_data: SubProcessorCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> SubProcessorOut:
     sp_dict = sp_data.model_dump()
+    if preassigned_id:
+        sp_dict["_id"] = ObjectId(preassigned_id)
     result = await db.sub_processors.insert_one(sp_dict)
     result = await db.sub_processors.find_one({"_id": result.inserted_id})
     return SubProcessorOut(**result)

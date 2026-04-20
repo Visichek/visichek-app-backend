@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import List
+from typing import List, Optional
 
 from repositories.tenant_repo import (
     create_tenant,
@@ -103,7 +103,11 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
     }
 
 
-async def add_tenant(tenant_data: TenantCreate) -> TenantOut:
+async def add_tenant(
+    tenant_data: TenantCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> TenantOut:
     existing = await get_tenant(filter_dict={"company_name": tenant_data.company_name})
     if existing:
         raise HTTPException(
@@ -120,7 +124,7 @@ async def add_tenant(tenant_data: TenantCreate) -> TenantOut:
                 detail="Cross-border data transfer requires approval. Set cross_border_approved=true or use hosting within Nigeria.",
             )
 
-    return await create_tenant(tenant_data)
+    return await create_tenant(tenant_data, preassigned_id=preassigned_id)
 
 
 async def retrieve_tenant_by_id(tenant_id: str) -> TenantOut:

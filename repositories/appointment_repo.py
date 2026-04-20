@@ -1,3 +1,4 @@
+from bson import ObjectId
 from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
@@ -9,8 +10,14 @@ from schemas.appointment_schema import (
 )
 
 
-async def create_appointment(appt_data: AppointmentCreate) -> AppointmentOut:
+async def create_appointment(
+    appt_data: AppointmentCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> AppointmentOut:
     appt_dict = appt_data.model_dump()
+    if preassigned_id:
+        appt_dict["_id"] = ObjectId(preassigned_id)
     result = await db.expected_appointments.insert_one(appt_dict)
     result = await db.expected_appointments.find_one({"_id": result.inserted_id})
     return AppointmentOut(**result)

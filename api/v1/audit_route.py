@@ -60,7 +60,20 @@ async def list_audit_logs(
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(_audit_roles),
 ):
-    filter_dict: Dict[str, Any] = {"tenant_id": principal.tenant_id or ""}
+    from core.queue.precompute import PrecomputeScope, get_or_compute
+
+    tenant_id = principal.tenant_id or ""
+    # No filters + first page → precompute cache. Any filter → live DB.
+    unfiltered = not (actor_id or action or target_entity or date_from or date_to)
+    if unfiltered and start == 0 and stop == 100 and tenant_id:
+        return await get_or_compute(
+            scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+            resource="audit.recent",
+            ttl=60,
+            loader=lambda: _load_audit_recent(tenant_id),
+        )
+
+    filter_dict: Dict[str, Any] = {"tenant_id": tenant_id}
     if actor_id:
         filter_dict["actor_id"] = actor_id
     if action:
@@ -78,3 +91,16 @@ async def list_audit_logs(
     logs = await retrieve_audit_logs_with_summary(filter_dict, start=start, stop=stop)
     total = await count_audit_logs(filter_dict)
     return {"items": logs, "total": total}
+
+
+async def _load_audit_recent(tenant_id: str) -> Dict[str, Any]:
+    filter_dict = {"tenant_id": tenant_id}
+    logs = await retrieve_audit_logs_with_summary(filter_dict, start=0, stop=100)
+    total = await count_audit_logs(filter_dict)
+    return {
+        "items": [
+            log.model_dump(mode="json", by_alias=True) if hasattr(log, "model_dump") else log
+            for log in logs
+        ],
+        "total": total,
+    }

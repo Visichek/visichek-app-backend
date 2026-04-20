@@ -1,27 +1,20 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.precompute import PrecomputeScope, get_or_compute
+from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.plan_schema import (
     PlanCreate,
-    PlanUpdate,
     PlanOut,
     PlanStatus,
     PlanTier,
+    PlanUpdate,
 )
-from services.plan_service import (
-    add_plan,
-    retrieve_plan_by_id,
-    retrieve_plans,
-    update_plan_by_id,
-    archive_plan,
-    activate_plan,
-    clone_plan,
-    remove_plan,
-)
+from services.plan_service import retrieve_plan_by_id, retrieve_plans
 from security.account_status_check import check_admin_account_status_and_permissions
 
 router = APIRouter(prefix="/plans", tags=["Plans"])
@@ -29,23 +22,30 @@ router = APIRouter(prefix="/plans", tags=["Plans"])
 
 @router.post("")
 @document_response(
-    message="Plan created successfully",
-    status_code=status.HTTP_201_CREATED,
-    description="Create a new subscription plan (application admin only)",
-    summary="Create plan",
+    message="Plan creation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a plan creation (application admin only).",
+    summary="Create plan (async)",
 )
 async def create_plan_endpoint(
     payload: PlanCreate,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> PlanOut:
-    """Create a new subscription plan. Only application admins can manage plans."""
-    return await add_plan(payload)
+):
+    return await enqueue_write(
+        writer_key="plan.create",
+        payload=payload.model_dump(exclude_none=True),
+        resource_type="plan",
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.get("")
 @document_response(
     message="Plans retrieved successfully",
-    description="List all subscription plans with optional filters",
+    description="Plan catalogue. Unfiltered requests hit the global precompute cache.",
     summary="List plans",
     include_meta=True,
 )
@@ -55,8 +55,16 @@ async def list_plans_endpoint(
     public_only: bool = Query(False),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-) -> list[PlanOut]:
-    """List all plans. Public endpoint for plan catalog; admin sees all."""
+) -> Any:
+    if skip == 0 and limit in (50, 100) and not status_filter and not tier:
+        resource = "plans.public_list" if public_only else "plans.list"
+        cached: List[Any] = await get_or_compute(
+            scope_key=PrecomputeScope.GLOBAL.value,
+            resource=resource,
+            ttl=120,
+            loader=lambda: _load_plans(public_only),
+        )
+        return cached[:limit]
     return await retrieve_plans(
         status_filter=status_filter,
         tier_filter=tier,
@@ -66,87 +74,133 @@ async def list_plans_endpoint(
     )
 
 
+async def _load_plans(public_only: bool) -> List[Any]:
+    plans = await retrieve_plans(public_only=public_only, start=0, stop=100)
+    return [
+        p.model_dump(mode="json", by_alias=True) if hasattr(p, "model_dump") else p
+        for p in plans
+    ]
+
+
 @router.get("/{plan_id}")
 @document_response(
     message="Plan retrieved successfully",
-    description="Get a specific plan by ID",
     summary="Get plan",
 )
 async def get_plan_endpoint(plan_id: str) -> PlanOut | None:
-    """Retrieve a specific plan by ID."""
     return await retrieve_plan_by_id(plan_id)
 
 
 @router.put("/{plan_id}")
 @document_response(
-    message="Plan updated successfully",
-    description="Update a subscription plan (application admin only)",
-    summary="Update plan",
+    message="Plan update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a plan update. Subscribed tenants get a plan-cache refresh on commit.",
+    summary="Update plan (async)",
 )
 async def update_plan_endpoint(
     plan_id: str,
     payload: PlanUpdate,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> PlanOut | None:
-    """Update a plan's configuration. Changes take effect immediately for all subscribers."""
-    return await update_plan_by_id(plan_id, payload)
+):
+    return await enqueue_write(
+        writer_key="plan.update",
+        payload=payload.model_dump(exclude_none=True),
+        resource_type="plan",
+        resource_id=plan_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.post("/{plan_id}/activate")
 @document_response(
-    message="Plan activated successfully",
-    description="Publish a draft plan (application admin only)",
-    summary="Activate plan",
+    message="Plan activation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Activate plan (async)",
 )
 async def activate_plan_endpoint(
     plan_id: str,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> PlanOut:
-    """Activate a draft plan, making it available for subscription."""
-    return await activate_plan(plan_id)
+):
+    return await enqueue_write(
+        writer_key="plan.activate",
+        payload={},
+        resource_type="plan",
+        resource_id=plan_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.post("/{plan_id}/archive")
 @document_response(
-    message="Plan archived successfully",
-    description="Archive a plan (soft delete). Existing subscriptions continue. (Application admin only)",
-    summary="Archive plan",
+    message="Plan archival queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Archive plan (async)",
 )
 async def archive_plan_endpoint(
     plan_id: str,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> PlanOut | None:
-    """Archive a plan. Existing subscriptions remain active but no new subscriptions allowed."""
-    return await archive_plan(plan_id)
+):
+    return await enqueue_write(
+        writer_key="plan.archive",
+        payload={},
+        resource_type="plan",
+        resource_id=plan_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.post("/{source_plan_id}/clone")
 @document_response(
-    message="Plan cloned successfully",
-    status_code=status.HTTP_201_CREATED,
-    description="Clone an existing plan with a new name (application admin only)",
-    summary="Clone plan",
+    message="Plan clone queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a plan clone. A new plan id is assigned by the worker.",
+    summary="Clone plan (async)",
 )
 async def clone_plan_endpoint(
     source_plan_id: str,
+    request: Request,
     new_name: str = Query(...),
     new_display_name: str = Query(...),
     admin=Depends(check_admin_account_status_and_permissions),
-) -> PlanOut:
-    """Clone a plan to create a variant."""
-    return await clone_plan(source_plan_id, new_name, new_display_name)
+):
+    return await enqueue_write(
+        writer_key="plan.clone",
+        payload={"new_name": new_name, "new_display_name": new_display_name},
+        resource_type="plan",
+        resource_id=source_plan_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.delete("/{plan_id}")
 @document_response(
-    message="Plan deleted successfully",
-    description="Permanently delete a draft plan with no subscriptions (application admin only)",
-    summary="Delete plan",
+    message="Plan deletion queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Delete plan (async)",
 )
 async def delete_plan_endpoint(
     plan_id: str,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> dict:
-    """Permanently delete a draft plan. Only works for plans with no subscriptions."""
-    await remove_plan(plan_id)
-    return {"deleted": True}
+):
+    return await enqueue_write(
+        writer_key="plan.delete",
+        payload={},
+        resource_type="plan",
+        resource_id=plan_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )

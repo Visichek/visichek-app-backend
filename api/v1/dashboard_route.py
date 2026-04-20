@@ -1,9 +1,10 @@
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 import io
 
+from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.response_envelope import document_response
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
@@ -58,13 +59,27 @@ _all_tenant_roles = verify_system_user_token(
 async def dashboard_stats(
     department_id: Optional[str] = None,
     principal: AuthPrincipal = Depends(_all_tenant_roles),
-):
+) -> Any:
     tenant_id = principal.tenant_id or ""
+    # Unfiltered, role-agnostic stats hit the precompute cache; filtered
+    # views fall through to the live service.
+    if not department_id and tenant_id:
+        return await get_or_compute(
+            scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+            resource="dashboard.stats",
+            ttl=60,
+            loader=lambda: _load_dashboard_stats(tenant_id),
+        )
     return await get_dashboard_stats(
         tenant_id=tenant_id,
         department_id=department_id,
         role=principal.role,
     )
+
+
+async def _load_dashboard_stats(tenant_id: str) -> Any:
+    result = await get_dashboard_stats(tenant_id=tenant_id)
+    return result.model_dump(mode="json", by_alias=True) if hasattr(result, "model_dump") else result
 
 
 @router.get("/visitors")
@@ -182,13 +197,32 @@ async def dashboard_active_visitors(
     principal: AuthPrincipal = Depends(
         verify_system_user_token("receptionist", "dept_admin", "super_admin")
     ),
-):
+) -> Any:
     from services.visit_session_service import retrieve_active_visitors
 
     tenant_id = principal.tenant_id or ""
+    # Unfiltered active visitors hit the precompute cache (TTL 30s —
+    # this view needs to feel live).
+    if not department_id and tenant_id:
+        return await get_or_compute(
+            scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+            resource="dashboard.visitors_active",
+            ttl=30,
+            loader=lambda: _load_active_visitors(tenant_id),
+        )
     return await retrieve_active_visitors(
         tenant_id=tenant_id, department_id=department_id
     )
+
+
+async def _load_active_visitors(tenant_id: str) -> list:
+    from services.visit_session_service import retrieve_active_visitors
+
+    sessions = await retrieve_active_visitors(tenant_id=tenant_id)
+    return [
+        s.model_dump(mode="json", by_alias=True) if hasattr(s, "model_dump") else s
+        for s in sessions
+    ]
 
 
 @router.get("/export")

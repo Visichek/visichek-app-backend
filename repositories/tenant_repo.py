@@ -1,3 +1,4 @@
+from bson import ObjectId
 from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
@@ -5,8 +6,14 @@ from typing import List, Optional
 from schemas.tenant_schema import TenantCreate, TenantUpdate, TenantOut
 
 
-async def create_tenant(tenant_data: TenantCreate) -> TenantOut:
+async def create_tenant(
+    tenant_data: TenantCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> TenantOut:
     tenant_dict = tenant_data.model_dump()
+    if preassigned_id:
+        tenant_dict["_id"] = ObjectId(preassigned_id)
     result = await db.tenant_companies.insert_one(tenant_dict)
     result = await db.tenant_companies.find_one({"_id": result.inserted_id})
     return TenantOut(**result)

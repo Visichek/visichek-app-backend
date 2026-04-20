@@ -36,8 +36,6 @@ from services.system_user_service import (
     retrieve_system_user_by_id,
     retrieve_system_users,
     toggle_user_mfa,
-    update_system_user_by_id,
-    remove_system_user,
     verify_system_user_otp,
 )
 from services.tenant_service import retrieve_tenant_by_id
@@ -560,7 +558,22 @@ async def list_system_users(
     stop: Annotated[int, Query(gt=0)] = 100,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
+    from core.queue.precompute import PrecomputeScope, get_or_compute
+
     tenant_id = principal.tenant_id or ""
+    if start == 0 and stop == 100 and tenant_id:
+        async def _load() -> list:
+            users = await retrieve_system_users(tenant_id=tenant_id, start=0, stop=100)
+            return [
+                u.model_dump(mode="json", by_alias=True) if hasattr(u, "model_dump") else u
+                for u in users
+            ]
+        return await get_or_compute(
+            scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+            resource="system_users.list",
+            ttl=60,
+            loader=_load,
+        )
     return await retrieve_system_users(tenant_id=tenant_id, start=start, stop=stop)
 
 
@@ -609,11 +622,23 @@ async def list_system_users(
 async def update_system_user_endpoint(
     user_id: str,
     user_data: SystemUserUpdate,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
+    from core.queue.write_pipeline import enqueue_write
+
     tenant_id = principal.tenant_id or ""
-    return await update_system_user_by_id(
-        user_id=user_id, tenant_id=tenant_id, user_data=user_data
+    payload = user_data.model_dump(exclude_none=True)
+    payload["tenant_id"] = tenant_id
+    return await enqueue_write(
+        writer_key="system_user.update",
+        payload=payload,
+        resource_type="system_user",
+        resource_id=user_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
@@ -648,7 +673,19 @@ async def update_system_user_endpoint(
 )
 async def delete_system_user_endpoint(
     user_id: str,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
+    from core.queue.write_pipeline import enqueue_write
+
     tenant_id = principal.tenant_id or ""
-    return await remove_system_user(user_id=user_id, tenant_id=tenant_id)
+    return await enqueue_write(
+        writer_key="system_user.delete",
+        payload={"tenant_id": tenant_id},
+        resource_type="system_user",
+        resource_id=user_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )

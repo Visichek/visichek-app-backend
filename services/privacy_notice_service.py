@@ -1,6 +1,6 @@
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import List
+from typing import List, Optional
 
 from repositories.privacy_notice_repo import (
     create_privacy_notice,
@@ -15,7 +15,11 @@ from schemas.privacy_notice_schema import (
 )
 
 
-async def add_privacy_notice(notice_data: PrivacyNoticeCreate) -> PrivacyNoticeOut:
+async def add_privacy_notice(
+    notice_data: PrivacyNoticeCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> PrivacyNoticeOut:
     # Deactivate any existing active notice for this tenant
     existing_active = await get_active_notice_for_tenant(notice_data.tenant_id)
     if existing_active and notice_data.is_active:
@@ -23,7 +27,7 @@ async def add_privacy_notice(notice_data: PrivacyNoticeCreate) -> PrivacyNoticeO
             {"_id": ObjectId(existing_active.id)},
             PrivacyNoticeUpdate(is_active=False),
         )
-    return await create_privacy_notice(notice_data)
+    return await create_privacy_notice(notice_data, preassigned_id=preassigned_id)
 
 
 async def retrieve_active_notice(tenant_id: str) -> PrivacyNoticeOut:

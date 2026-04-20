@@ -64,7 +64,11 @@ async def _check_email_uniqueness(email: str, role: str, tenant_id: str) -> None
                 )
 
 
-async def add_system_user(user_data: SystemUserCreate) -> SystemUserOut:
+async def add_system_user(
+    user_data: SystemUserCreate,
+    *,
+    preassigned_id: str | None = None,
+) -> SystemUserOut:
     """Create a system user with auto-assigned permissions based on role."""
 
     # Enforce plan cap on total system users for this tenant
@@ -91,7 +95,7 @@ async def add_system_user(user_data: SystemUserCreate) -> SystemUserOut:
     )
     user_data.permissionList = get_default_permissions_for_role(role_str)
 
-    new_user = await create_system_user(user_data)
+    new_user = await create_system_user(user_data, preassigned_id=preassigned_id)
     access_token, refresh_token = await issue_tokens_for_role(
         user_id=new_user.id or "",
         role=new_user.role.value,

@@ -1,6 +1,6 @@
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import List
+from typing import List, Optional
 import time
 
 from repositories.data_subject_request_repo import (
@@ -12,11 +12,15 @@ from repositories.data_subject_request_repo import (
 from schemas.data_subject_request_schema import DSRCreate, DSRUpdate, DSROut
 
 
-async def add_dsr(dsr_data: DSRCreate) -> DSROut:
+async def add_dsr(
+    dsr_data: DSRCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> DSROut:
     # Set SLA deadline to 30 days from now
     if not dsr_data.sla_deadline:
         dsr_data.sla_deadline = int(time.time()) + (30 * 86400)
-    return await create_dsr(dsr_data)
+    return await create_dsr(dsr_data, preassigned_id=preassigned_id)
 
 
 async def retrieve_dsr_by_id(dsr_id: str, tenant_id: str) -> DSROut:

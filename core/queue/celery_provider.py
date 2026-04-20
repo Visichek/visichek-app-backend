@@ -6,6 +6,22 @@ from core.queue.provider import QueueProvider
 from core.queue.types import QueueJobResult, QueueTaskKey
 
 
+def _pick_celery_task_name(task_key: str) -> str:
+    """Choose the celery wrapper task based on the task_key prefix.
+
+    The wrappers are bound to dedicated queues in ``celery_worker.py`` —
+    matching on task_key keeps route code decoupled from queue plumbing.
+    """
+    key = str(task_key)
+    if key == "db.write" or key.startswith("db.write:") or key.startswith("write."):
+        return "celery_worker.run_write_task"
+    if key.startswith("gate."):
+        return "celery_worker.run_gate_task"
+    if key.startswith("precompute."):
+        return "celery_worker.run_precompute_task"
+    return "celery_worker.run_async_task"
+
+
 class CeleryQueueProvider(QueueProvider):
     backend_name = "celery"
 
@@ -15,8 +31,9 @@ class CeleryQueueProvider(QueueProvider):
     def enqueue(
         self, task_key: QueueTaskKey, payload: dict[str, Any]
     ) -> QueueJobResult:
+        wrapper = _pick_celery_task_name(str(task_key))
         result = self._celery_app.send_task(
-            "celery_worker.run_async_task",
+            wrapper,
             args=[str(task_key), payload],
         )
         return QueueJobResult(
@@ -26,8 +43,9 @@ class CeleryQueueProvider(QueueProvider):
     def enqueue_in(
         self, seconds: int, task_key: QueueTaskKey, payload: dict[str, Any]
     ) -> QueueJobResult:
+        wrapper = _pick_celery_task_name(str(task_key))
         result = self._celery_app.send_task(
-            "celery_worker.run_async_task",
+            wrapper,
             args=[str(task_key), payload],
             countdown=max(seconds, 0),
         )

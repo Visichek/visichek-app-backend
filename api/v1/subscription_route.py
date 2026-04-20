@@ -1,26 +1,23 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, Field
 
 from core.errors import auth_permission_denied, auth_role_mismatch
+from core.queue.precompute import PrecomputeScope, get_or_compute
+from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.subscription_schema import (
-    SubscriptionOut,
-    SubscriptionWithDetailsOut,
-    SubscriptionStatus,
     BillingCycle,
+    SubscriptionOut,
+    SubscriptionStatus,
 )
 from services.subscription_service import (
-    subscribe_tenant,
     retrieve_subscription_by_id,
-    retrieve_tenant_active_subscription,
     retrieve_subscriptions_with_details,
-    change_plan,
-    cancel_subscription,
-    update_subscription_overrides,
+    retrieve_tenant_active_subscription,
 )
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_any_token
@@ -69,34 +66,35 @@ class UpdateOverridesRequest(BaseModel):
 
 @router.post("")
 @document_response(
-    message="Subscription created successfully",
-    status_code=status.HTTP_201_CREATED,
-    description="Subscribe a tenant to a plan (application admin only)",
-    summary="Create subscription",
+    message="Subscription creation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Enqueue a subscription create. The real subscription id is returned via "
+        "``GET /v1/jobs/{job_id}`` once the worker commits — the 202 body's ``id`` "
+        "is speculative for subscription writes."
+    ),
+    summary="Create subscription (async)",
 )
 async def create_subscription_endpoint(
     payload: SubscribeTenantRequest,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> SubscriptionOut:
-    """Subscribe a tenant to a plan. Calculates pricing with any discount codes."""
-    return await subscribe_tenant(
+):
+    return await enqueue_write(
+        writer_key="subscription.create",
+        payload=payload.model_dump(exclude_none=True),
+        resource_type="subscription",
         tenant_id=payload.tenant_id,
-        plan_id=payload.plan_id,
-        billing_cycle=payload.billing_cycle,
-        discount_ids=payload.discount_ids,
-        trial_days=payload.trial_days,
-        admin_notes=payload.admin_notes,
-        feature_overrides=payload.feature_overrides,
-        crud_limit_overrides=payload.crud_limit_overrides,
-        retrieval_quota_overrides=payload.retrieval_quota_overrides,
-        tenant_cap_overrides=payload.tenant_cap_overrides,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
 @router.get("")
 @document_response(
     message="Subscriptions retrieved successfully",
-    description="List subscriptions with optional filters (application admin only). Includes full tenant and plan details.",
+    description="Unfiltered first page served from the global precompute cache.",
     summary="List subscriptions",
     include_meta=True,
 )
@@ -106,8 +104,16 @@ async def list_subscriptions_endpoint(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     admin=Depends(check_admin_account_status_and_permissions),
-) -> list[SubscriptionWithDetailsOut]:
-    """List subscriptions enriched with tenant and plan info. Filter by tenantId or status."""
+) -> Any:
+    unfiltered = not tenant_id and not status_filter
+    if unfiltered and skip == 0 and limit in (50, 100):
+        cached: List[Any] = await get_or_compute(
+            scope_key=PrecomputeScope.GLOBAL.value,
+            resource="subscriptions.list",
+            ttl=60,
+            loader=_load_subscriptions,
+        )
+        return cached[:limit]
     return await retrieve_subscriptions_with_details(
         tenant_id=tenant_id,
         status_filter=status_filter,
@@ -116,96 +122,121 @@ async def list_subscriptions_endpoint(
     )
 
 
+async def _load_subscriptions() -> List[Any]:
+    subs = await retrieve_subscriptions_with_details(start=0, stop=100)
+    return [
+        s.model_dump(mode="json", by_alias=True) if hasattr(s, "model_dump") else s
+        for s in subs
+    ]
+
+
 @router.get("/tenant/{tenant_id}/active")
 @document_response(
     message="Active subscription retrieved",
-    description=(
-        "Get a tenant's current active subscription. Application admins can "
-        "read any tenant; tenant super_admins can only read their own tenant."
-    ),
+    description="Served from the per-tenant precompute cache.",
     summary="Get tenant active subscription",
 )
 async def get_tenant_active_subscription_endpoint(
     tenant_id: str,
     principal: AuthPrincipal = Depends(verify_any_token),
-) -> SubscriptionOut | None:
-    """Get the active subscription for a specific tenant."""
+) -> Any:
     if principal.role == "admin":
-        pass  # application admin can read any tenant
+        pass
     elif principal.role == "super_admin":
         if principal.tenant_id != tenant_id:
             raise auth_permission_denied(permission_key="subscription.read")
     else:
         raise auth_role_mismatch(required_role="admin", actual_role=principal.role)
-    return await retrieve_tenant_active_subscription(tenant_id)
+
+    return await get_or_compute(
+        scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+        resource="subscription.active",
+        ttl=60,
+        loader=lambda: _load_active_subscription(tenant_id),
+    )
+
+
+async def _load_active_subscription(tenant_id: str) -> Any:
+    sub = await retrieve_tenant_active_subscription(tenant_id)
+    if not sub:
+        return None
+    return sub.model_dump(mode="json", by_alias=True) if hasattr(sub, "model_dump") else sub
 
 
 @router.get("/{subscription_id}")
 @document_response(
     message="Subscription retrieved successfully",
-    description="Get a specific subscription by ID",
     summary="Get subscription",
 )
 async def get_subscription_endpoint(
     subscription_id: str,
     admin=Depends(check_admin_account_status_and_permissions),
 ) -> SubscriptionOut | None:
-    """Retrieve a specific subscription by ID."""
     return await retrieve_subscription_by_id(subscription_id)
 
 
 @router.post("/change-plan")
 @document_response(
-    message="Plan changed successfully",
-    description="Switch a tenant to a different plan (takes effect immediately)",
-    summary="Change plan",
+    message="Plan change queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Change plan (async)",
 )
 async def change_plan_endpoint(
     payload: ChangePlanRequest,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> SubscriptionOut | None:
-    """Immediately switch a tenant to a different plan."""
-    return await change_plan(
+):
+    return await enqueue_write(
+        writer_key="subscription.change_plan",
+        payload=payload.model_dump(exclude_none=True),
+        resource_type="subscription",
         tenant_id=payload.tenant_id,
-        new_plan_id=payload.new_plan_id,
-        billing_cycle=payload.billing_cycle,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
 @router.post("/cancel")
 @document_response(
-    message="Subscription cancelled successfully",
-    description="Cancel a tenant's subscription",
-    summary="Cancel subscription",
+    message="Cancel subscription queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Cancel subscription (async)",
 )
 async def cancel_subscription_endpoint(
     payload: CancelSubscriptionRequest,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> SubscriptionOut | None:
-    """Cancel a tenant's subscription. Can be immediate or at period end."""
-    return await cancel_subscription(
+):
+    return await enqueue_write(
+        writer_key="subscription.cancel",
+        payload=payload.model_dump(exclude_none=True),
+        resource_type="subscription",
         tenant_id=payload.tenant_id,
-        reason=payload.reason,
-        immediate=payload.immediate,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
 @router.put("/{subscription_id}/overrides")
 @document_response(
-    message="Subscription overrides updated",
-    description="Update tenant-specific overrides on a subscription (application admin only)",
-    summary="Update subscription overrides",
+    message="Subscription override update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Update subscription overrides (async)",
 )
 async def update_overrides_endpoint(
     subscription_id: str,
     payload: UpdateOverridesRequest,
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> SubscriptionOut | None:
-    """Update custom overrides for a tenant's subscription (feature flags, limits, etc.)."""
-    return await update_subscription_overrides(
-        sub_id=subscription_id,
-        feature_overrides=payload.feature_overrides,
-        crud_limit_overrides=payload.crud_limit_overrides,
-        retrieval_quota_overrides=payload.retrieval_quota_overrides,
-        tenant_cap_overrides=payload.tenant_cap_overrides,
+):
+    return await enqueue_write(
+        writer_key="subscription.update_overrides",
+        payload=payload.model_dump(exclude_none=True),
+        resource_type="subscription",
+        resource_id=subscription_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
     )

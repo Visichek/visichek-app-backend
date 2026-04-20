@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bson import ObjectId
 from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
@@ -10,8 +11,14 @@ from schemas.plan_schema import PlanCreate, PlanUpdate, PlanOut
 COLLECTION = "plans"
 
 
-async def create_plan(plan_data: PlanCreate) -> PlanOut:
+async def create_plan(
+    plan_data: PlanCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> PlanOut:
     plan_dict = plan_data.model_dump(mode="json")
+    if preassigned_id:
+        plan_dict["_id"] = ObjectId(preassigned_id)
     result = await db[COLLECTION].insert_one(plan_dict)
     result = await db[COLLECTION].find_one({"_id": result.inserted_id})
     return PlanOut(**result)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bson import ObjectId
 from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
@@ -10,8 +11,14 @@ from schemas.discount_schema import DiscountCreate, DiscountUpdate, DiscountOut
 COLLECTION = "discounts"
 
 
-async def create_discount(discount_data: DiscountCreate) -> DiscountOut:
+async def create_discount(
+    discount_data: DiscountCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> DiscountOut:
     discount_dict = discount_data.model_dump(mode="json")
+    if preassigned_id:
+        discount_dict["_id"] = ObjectId(preassigned_id)
     result = await db[COLLECTION].insert_one(discount_dict)
     result = await db[COLLECTION].find_one({"_id": result.inserted_id})
     return DiscountOut(**result)

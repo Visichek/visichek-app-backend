@@ -1,27 +1,33 @@
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.precompute import PrecomputeScope, get_or_compute
+from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.notification_schema import (
     NotificationPreferencesUpdate,
-    UnreadCountOut,
 )
 from security.auth import verify_any_token
 from security.principal import AuthPrincipal
 from services.notification_service import (
     retrieve_notifications_with_summary,
-    mark_notification_read,
-    mark_all_notifications_read,
     get_unread_count,
-    remove_notification,
     retrieve_or_create_notification_preferences,
-    update_user_notification_preferences,
 )
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
+
+
+def _scope_for_user(principal: AuthPrincipal) -> str:
+    tenant_id = principal.tenant_id or "_"
+    return f"{PrecomputeScope.TENANT.value}:{tenant_id}:{PrecomputeScope.USER.value}:{principal.user_id}"
+
+
+def _user_type(principal: AuthPrincipal) -> str:
+    return "admin" if principal.role == "admin" else "system_user"
 
 
 # ─── Notification List ─────────────────────────────────────────────
@@ -30,18 +36,7 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"])
 @router.get("")
 @document_response(
     message="Notifications fetched successfully",
-    success_example=[
-        {
-            "id": "64f1a2b3c4d5e6f7a8b9c0d1",
-            "title": "Visitor Checked In",
-            "body": "John Doe has checked in.",
-            "type": "info",
-            "read": False,
-            "link": "/app/visitors/abc123",
-            "date_created": 1712500000,
-        }
-    ],
-    description="List notifications for the authenticated user with optional read filter and pagination.",
+    description="Default page served from the per-user precompute cache; filtered reads go live.",
     summary="List notifications",
     include_meta=True,
     response_codes={401: "Unauthorized - invalid or missing token"},
@@ -51,10 +46,17 @@ async def list_notifications(
     limit: Annotated[int, Query(ge=1, le=100, description="Page size")] = 20,
     read: Annotated[Optional[bool], Query(description="Filter by read status")] = None,
     principal: AuthPrincipal = Depends(verify_any_token),
-):
-    """List paginated notifications for the authenticated user, enriched with user/tenant snapshots."""
-    user_type = "admin" if principal.role == "admin" else "system_user"
-    items, total = await retrieve_notifications_with_summary(
+) -> Any:
+    user_type = _user_type(principal)
+    if read is None and skip == 0 and limit == 20:
+        cached = await get_or_compute(
+            scope_key=_scope_for_user(principal),
+            resource="notifications.list",
+            ttl=30,
+            loader=lambda: _load_notifications(principal.user_id, user_type),
+        )
+        return cached.get("items", [])
+    items, _total = await retrieve_notifications_with_summary(
         user_id=principal.user_id,
         user_type=user_type,
         read=read,
@@ -64,6 +66,19 @@ async def list_notifications(
     return items
 
 
+async def _load_notifications(user_id: str, user_type: str) -> dict:
+    items, total = await retrieve_notifications_with_summary(
+        user_id=user_id, user_type=user_type, skip=0, limit=20
+    )
+    return {
+        "items": [
+            i.model_dump(mode="json", by_alias=True) if hasattr(i, "model_dump") else i
+            for i in items
+        ],
+        "total": total,
+    }
+
+
 # ─── Unread Count ──────────────────────────────────────────────────
 
 
@@ -71,17 +86,25 @@ async def list_notifications(
 @document_response(
     message="Unread count fetched successfully",
     success_example={"count": 5},
-    description="Return the number of unread notifications for the topbar badge.",
+    description="Served from the per-user precompute cache (TTL 15s — this is a topbar badge).",
     summary="Get unread notification count",
     response_codes={401: "Unauthorized"},
 )
 async def get_notification_unread_count(
     principal: AuthPrincipal = Depends(verify_any_token),
-):
-    """Get unread notification count for badge display."""
-    user_type = "admin" if principal.role == "admin" else "system_user"
-    count = await get_unread_count(principal.user_id, user_type)
-    return UnreadCountOut(count=count)
+) -> Any:
+    user_type = _user_type(principal)
+    return await get_or_compute(
+        scope_key=_scope_for_user(principal),
+        resource="notifications.unread_count",
+        ttl=15,
+        loader=lambda: _load_unread_count(principal.user_id, user_type),
+    )
+
+
+async def _load_unread_count(user_id: str, user_type: str) -> dict:
+    count = await get_unread_count(user_id=user_id, user_type=user_type)
+    return {"count": count}
 
 
 # ─── Mark Single as Read ──────────────────────────────────────────
@@ -89,21 +112,31 @@ async def get_notification_unread_count(
 
 @router.patch("/{notification_id}/read")
 @document_response(
-    message="Notification marked as read",
-    description="Mark a single notification as read.",
-    summary="Mark notification read",
-    response_codes={
-        401: "Unauthorized",
-        404: "Not found - notification does not exist",
-    },
+    message="Mark-read queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue marking a single notification as read.",
+    summary="Mark notification read (async)",
+    response_codes={401: "Unauthorized"},
 )
 async def mark_single_read(
     notification_id: str,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    """Mark a single notification as read."""
-    user_type = "admin" if principal.role == "admin" else "system_user"
-    return await mark_notification_read(notification_id, principal.user_id, user_type)
+    return await enqueue_write(
+        writer_key="notification.mark_read",
+        payload={
+            "user_id": principal.user_id,
+            "user_type": _user_type(principal),
+            "tenant_id": principal.tenant_id or "",
+        },
+        resource_type="notification",
+        resource_id=notification_id,
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 # ─── Mark All as Read ─────────────────────────────────────────────
@@ -111,19 +144,30 @@ async def mark_single_read(
 
 @router.post("/read-all")
 @document_response(
-    message="All notifications marked as read",
-    success_example={"marked_count": 12},
-    description="Mark all notifications as read for the authenticated user.",
-    summary="Mark all notifications read",
+    message="Mark-all-read queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue marking all notifications as read for the authenticated user.",
+    summary="Mark all notifications read (async)",
     response_codes={401: "Unauthorized"},
 )
 async def mark_all_read_endpoint(
+    request: Request,
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    """Mark all notifications as read."""
-    user_type = "admin" if principal.role == "admin" else "system_user"
-    count = await mark_all_notifications_read(principal.user_id, user_type)
-    return {"marked_count": count}
+    return await enqueue_write(
+        writer_key="notification.mark_all_read",
+        payload={
+            "user_id": principal.user_id,
+            "user_type": _user_type(principal),
+            "tenant_id": principal.tenant_id or "",
+        },
+        resource_type="notification",
+        resource_id=principal.user_id,
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 # ─── Delete Notification ──────────────────────────────────────────
@@ -131,23 +175,31 @@ async def mark_all_read_endpoint(
 
 @router.delete("/{notification_id}")
 @document_response(
-    message="Notification deleted successfully",
-    success_example={"deleted": True},
-    description="Dismiss / delete a single notification.",
-    summary="Delete notification",
-    response_codes={
-        401: "Unauthorized",
-        404: "Not found - notification does not exist",
-    },
+    message="Notification deletion queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a notification dismissal.",
+    summary="Delete notification (async)",
+    response_codes={401: "Unauthorized"},
 )
 async def delete_notification_endpoint(
     notification_id: str,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    """Delete a notification."""
-    user_type = "admin" if principal.role == "admin" else "system_user"
-    await remove_notification(notification_id, principal.user_id, user_type)
-    return {"deleted": True}
+    return await enqueue_write(
+        writer_key="notification.delete",
+        payload={
+            "user_id": principal.user_id,
+            "user_type": _user_type(principal),
+            "tenant_id": principal.tenant_id or "",
+        },
+        resource_type="notification",
+        resource_id=notification_id,
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 # ─── Notification Preferences ─────────────────────────────────────
@@ -156,45 +208,42 @@ async def delete_notification_endpoint(
 @router.get("/preferences")
 @document_response(
     message="Notification preferences fetched successfully",
-    success_example={
-        "email_enabled": True,
-        "email_on_incident": True,
-        "email_on_visitor_check_in": False,
-        "email_on_appointment_reminder": True,
-        "email_on_dsr_received": True,
-        "email_on_subscription_alert": True,
-        "email_on_new_user": False,
-    },
-    description="Return user notification preferences. Creates defaults on first access.",
+    description="Personal preferences — low volume, served live.",
     summary="Get notification preferences",
     response_codes={401: "Unauthorized"},
 )
 async def get_preferences(
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    """Get notification preferences for the authenticated user."""
-    user_type = "admin" if principal.role == "admin" else "system_user"
     return await retrieve_or_create_notification_preferences(
-        principal.user_id, user_type
+        principal.user_id, _user_type(principal)
     )
 
 
 @router.put("/preferences")
 @document_response(
-    message="Notification preferences updated successfully",
-    description="Update notification preferences. Same shape as GET response.",
-    summary="Update notification preferences",
-    response_codes={
-        401: "Unauthorized",
-        422: "Validation error",
-    },
+    message="Notification preferences update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue an update to notification preferences.",
+    summary="Update notification preferences (async)",
+    response_codes={401: "Unauthorized", 422: "Validation error"},
 )
 async def update_preferences(
     data: NotificationPreferencesUpdate,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    """Update notification preferences."""
-    user_type = "admin" if principal.role == "admin" else "system_user"
-    return await update_user_notification_preferences(
-        principal.user_id, user_type, data
+    payload = data.model_dump(exclude_none=True)
+    payload["user_id"] = principal.user_id
+    payload["user_type"] = _user_type(principal)
+    payload["tenant_id"] = principal.tenant_id or ""
+    return await enqueue_write(
+        writer_key="notification.update_preferences",
+        payload=payload,
+        resource_type="notification_preferences",
+        resource_id=principal.user_id,
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
     )

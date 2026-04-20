@@ -124,6 +124,40 @@ async def _resolve_access_token_id(accessToken: str, allow_expired: bool) -> str
         return None
 
 
+def _mark_tenant_active_safe(tenant_id: str | None) -> None:
+    """Signal to the precompute worker that ``tenant_id`` has live traffic.
+
+    Swallows every failure — this is best-effort telemetry, not a security
+    check. Kept inline so get_access_token stays the one chokepoint where
+    we can observe every authenticated request.
+    """
+    if not tenant_id:
+        return
+    try:
+        from core.queue.precompute import mark_tenant_active
+
+        mark_tenant_active(tenant_id)
+    except Exception:
+        pass
+
+
+def _mark_user_active_safe(user_id: str | None, tenant_id: str | None) -> None:
+    """Signal that ``user_id`` has live traffic (for per-user precompute).
+
+    Mirrors :func:`_mark_tenant_active_safe` and is best-effort; failures
+    are silent. Tenant id is recorded alongside the user so the precompute
+    fanout routes the refresh task to the right tenant context.
+    """
+    if not user_id:
+        return
+    try:
+        from core.queue.precompute import mark_user_active
+
+        mark_user_active(user_id, tenant_id)
+    except Exception:
+        pass
+
+
 async def get_access_token(
     accessToken: str, allow_expired: bool = False
 ) -> accessTokenOut | None:
@@ -133,6 +167,8 @@ async def get_access_token(
     if not allow_expired:
         cached = token_cache.get(accessToken)
         if cached is not None:
+            _mark_tenant_active_safe(cached.tenant_id)
+            _mark_user_active_safe(cached.userId, cached.tenant_id)
             return cached
 
     token_id = await _resolve_access_token_id(
@@ -155,6 +191,8 @@ async def get_access_token(
     result = accessTokenOut(**token)
     if not allow_expired:
         token_cache.put(accessToken, result)
+    _mark_tenant_active_safe(result.tenant_id)
+    _mark_user_active_safe(result.userId, result.tenant_id)
     return result
 
 

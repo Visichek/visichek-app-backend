@@ -39,25 +39,34 @@ async def get_usage_summary_endpoint(
 @router.get("/my-usage")
 @document_response(
     message="Usage summary retrieved successfully",
-    description="Get usage summary for the authenticated user's tenant",
+    description="Get usage summary for the authenticated user's tenant — precomputed per tenant.",
     summary="Get my tenant usage",
 )
 async def get_my_usage_endpoint(
     principal: AuthPrincipal = Depends(verify_any_token),
 ) -> TenantUsageSummary | dict:
-    """Get usage summary for the current user's tenant.
-    Available to any authenticated system user.
-    """
+    """Precomputed per-tenant usage summary."""
+    from core.queue.precompute import PrecomputeScope, get_or_compute
+
     tenant_id = principal.tenant_id
     if not tenant_id:
         return {"error": "No tenant associated with your account"}
 
+    return await get_or_compute(
+        scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+        resource="usage.my_usage",
+        ttl=120,
+        loader=lambda: _load_my_usage(tenant_id or ""),
+    )
+
+
+async def _load_my_usage(tenant_id: str) -> TenantUsageSummary | dict:
     plan_data = await resolve_tenant_plan(tenant_id)
     if not plan_data:
         return {"error": "No active subscription for your organization"}
-
-    return await get_tenant_usage_summary(
+    result = await get_tenant_usage_summary(
         tenant_id=tenant_id,
         subscription_id=plan_data.get("subscription_id", ""),
         plan_data=plan_data,
     )
+    return result.model_dump(mode="json", by_alias=True) if hasattr(result, "model_dump") else result  # type: ignore[return-value]

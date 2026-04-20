@@ -29,13 +29,37 @@ async def list_tenant_invoices(
     stop: int = Query(default=20, ge=1, le=100),
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
-    """List invoices for the authenticated super admin's tenant, enriched with tenant + subscription summaries."""
+    """List invoices — first page served from the per-tenant precompute cache."""
+    from core.queue.precompute import PrecomputeScope, get_or_compute
+
+    if start == 0 and stop == 20:
+        cached = await get_or_compute(
+            scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
+            resource="invoices.for_tenant",
+            ttl=60,
+            loader=lambda: _load_invoices_for_tenant(tenant_id),
+        )
+        return {"items": cached.get("items", []), "meta": {"total": cached.get("total", 0), "start": start, "stop": stop}}
+
     invoices, total = await retrieve_invoices_for_tenant_with_summary(
         tenant_id=tenant_id,
         skip=start,
         limit=stop,
     )
     return {"items": invoices, "meta": {"total": total, "start": start, "stop": stop}}
+
+
+async def _load_invoices_for_tenant(tenant_id: str) -> dict:
+    invoices, total = await retrieve_invoices_for_tenant_with_summary(
+        tenant_id=tenant_id, skip=0, limit=20
+    )
+    return {
+        "items": [
+            i.model_dump(mode="json", by_alias=True) if hasattr(i, "model_dump") else i
+            for i in invoices
+        ],
+        "total": total,
+    }
 
 
 @router.get("/admin")
@@ -50,7 +74,18 @@ async def list_all_invoices(
     status_filter: str | None = Query(default=None, alias="status"),
     admin=Depends(check_admin_account_status_and_permissions),
 ):
-    """List all invoices (application admin only), enriched with tenant + subscription summaries."""
+    """List all invoices — unfiltered first page served from the global precompute cache."""
+    from core.queue.precompute import PrecomputeScope, get_or_compute
+
+    if start == 0 and stop == 20 and not tenant_id and not status_filter:
+        cached = await get_or_compute(
+            scope_key=PrecomputeScope.GLOBAL.value,
+            resource="invoices.admin_list",
+            ttl=120,
+            loader=_load_all_invoices,
+        )
+        return {"items": cached.get("items", []), "meta": {"total": cached.get("total", 0), "start": start, "stop": stop}}
+
     invoices, total = await retrieve_all_invoices_with_summary(
         skip=start,
         limit=stop,
@@ -58,6 +93,19 @@ async def list_all_invoices(
         status=status_filter,
     )
     return {"items": invoices, "meta": {"total": total, "start": start, "stop": stop}}
+
+
+async def _load_all_invoices() -> dict:
+    invoices, total = await retrieve_all_invoices_with_summary(
+        skip=0, limit=20, tenant_id=None, status=None
+    )
+    return {
+        "items": [
+            i.model_dump(mode="json", by_alias=True) if hasattr(i, "model_dump") else i
+            for i in invoices
+        ],
+        "total": total,
+    }
 
 
 @router.get("/{invoice_id}")

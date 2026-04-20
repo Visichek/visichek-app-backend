@@ -90,3 +90,127 @@ async def _invalidate_plan_fanout(plan_id: str) -> None:
 
     await invalidate_plan_cache(plan_id)
     logger.info("cache.plan.invalidate_plan_fanout: done plan_id=%s", plan_id)
+
+
+# ---------------------------------------------------------------------------
+# Write pipeline dispatcher
+# ---------------------------------------------------------------------------
+
+
+@task("db.write")
+async def _db_write_dispatcher(
+    writer_key: str, resource_id: str, data: dict[str, Any]
+) -> Any:
+    """Dispatch a queued write to its registered handler.
+
+    The celery task_id is pulled from celery's current_task context so
+    the same row in ``queue_job_log`` that the route created can be
+    transitioned through processing -> succeeded / failed.
+    """
+    from celery import current_task
+
+    from core.queue.write_pipeline import execute_writer
+    from repositories.queue_job_log_repo import (
+        mark_failed,
+        mark_processing,
+        mark_succeeded,
+    )
+
+    request = getattr(current_task, "request", None)
+    task_id = getattr(request, "id", "") if request is not None else ""
+
+    if task_id:
+        try:
+            await mark_processing(task_id)
+        except Exception:
+            logger.warning(
+                "mark_processing failed for task_id=%s", task_id, exc_info=True
+            )
+
+    try:
+        result = await execute_writer(
+            writer_key=writer_key, resource_id=resource_id, data=data
+        )
+    except Exception as exc:
+        if task_id:
+            try:
+                await mark_failed(task_id, f"{type(exc).__name__}: {exc}")
+            except Exception:
+                logger.warning(
+                    "mark_failed logging failed for task_id=%s",
+                    task_id,
+                    exc_info=True,
+                )
+        logger.exception(
+            "db.write failed: writer=%s resource_id=%s", writer_key, resource_id
+        )
+        raise
+
+    if task_id:
+        try:
+            await mark_succeeded(
+                task_id, result if isinstance(result, dict) else None
+            )
+        except Exception:
+            logger.warning(
+                "mark_succeeded logging failed for task_id=%s",
+                task_id,
+                exc_info=True,
+            )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Gate cache refresh
+# ---------------------------------------------------------------------------
+
+
+@task("gate.refresh")
+async def _gate_refresh(user_id: str, role: str) -> None:
+    """Re-run the full account-status + permission check and write the
+    fresh state into Redis under the gate-cache key.
+
+    Enqueued from the hot path whenever a cached gate is served so the
+    next request sees up-to-date state without paying the DB latency.
+    """
+    from core.queue.gate_cache import refresh_gate_state
+
+    await refresh_gate_state(user_id=user_id, role=role)
+
+
+# ---------------------------------------------------------------------------
+# Precompute pipeline
+# ---------------------------------------------------------------------------
+
+
+@task("precompute.tenant_resource")
+async def _precompute_tenant_resource(
+    tenant_id: str, resource: str, user_id: str = ""
+) -> None:
+    """Compute a named GET payload and store it in Redis.
+
+    ``resource`` identifies the precomputed view (e.g. ``departments.list``,
+    ``dashboard.stats``, ``notifications.unread_count``). The scope of the
+    view comes from the registry entry — user-scoped resources receive
+    ``user_id`` from the fanout so a single handler covers all scopes.
+    """
+    from core.queue.precompute import run_precompute
+
+    await run_precompute(
+        tenant_id=tenant_id,
+        resource=resource,
+        user_id=user_id or None,
+    )
+
+
+@task("precompute.fanout_active_tenants")
+async def _precompute_fanout_active_tenants() -> None:
+    """Fan out `precompute.tenant_resource` for every active tenant.
+
+    Scans Redis for live auth-token markers and enqueues a refresh per
+    registered precompute resource. Scheduled on APScheduler.
+    """
+    from core.queue.precompute import fanout_for_active_tenants
+
+    await fanout_for_active_tenants()

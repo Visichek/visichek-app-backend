@@ -24,6 +24,7 @@ from celery_worker import celery_app
 from core.email.manager import EmailManager
 from core.logging_config import configure_logging, get_logger
 from core.payments.manager import PaymentManager
+from core.queue import registrations as _queue_registrations  # noqa: F401
 from core.queue.celery_provider import CeleryQueueProvider
 from core.queue.manager import QueueManager
 from core.response_envelope import (
@@ -344,6 +345,18 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Schedule precompute fanout for active tenants (every 60s). The job
+    # scans Redis for tenants with live auth traffic and enqueues a
+    # refresh per registered precompute resource on the `precompute`
+    # celery queue. See core/queue/precompute.py for registered loaders.
+    scheduler.add_job(
+        "core.queue.precompute:fanout_for_active_tenants",
+        trigger=IntervalTrigger(seconds=60),
+        id="precompute_fanout_active_tenants",
+        name="Precompute Fanout (Active Tenants)",
+        replace_existing=True,
+    )
+
     try:
         yield
     finally:
@@ -651,6 +664,7 @@ from api.v1.visitor_verification_route import (
 from api.v1.checkin_submit_route import router as v1_checkin_submit_route_router
 from api.v1.checkout_route import router as v1_checkout_route_router
 from api.v1.app_payment_route import router as app_payment_route_router
+from api.v1.job_route import router as v1_job_route_router
 
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
@@ -700,6 +714,7 @@ app.include_router(v1_face_crop_route_router, prefix="/v1")
 app.include_router(v1_visitor_verification_route_router, prefix="/v1")
 app.include_router(v1_checkin_submit_route_router, prefix="/v1")
 app.include_router(v1_checkout_route_router, prefix="/v1")
+app.include_router(v1_job_route_router, prefix="/v1")
 # App-mode payment simulator — deliberately NOT under /v1 so the URLs
 # match the checkout_url emitted by AppCheckoutPaymentProvider.
 app.include_router(app_payment_route_router)

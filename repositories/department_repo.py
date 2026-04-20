@@ -1,3 +1,4 @@
+from bson import ObjectId
 from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
@@ -5,8 +6,14 @@ from typing import List, Optional
 from schemas.department_schema import DepartmentCreate, DepartmentUpdate, DepartmentOut
 
 
-async def create_department(department_data: DepartmentCreate) -> DepartmentOut:
+async def create_department(
+    department_data: DepartmentCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> DepartmentOut:
     dept_dict = department_data.model_dump()
+    if preassigned_id:
+        dept_dict["_id"] = ObjectId(preassigned_id)
     result = await db.departments.insert_one(dept_dict)
     result = await db.departments.find_one({"_id": result.inserted_id})
     return DepartmentOut(**result)

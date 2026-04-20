@@ -1,6 +1,6 @@
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import List
+from typing import List, Optional
 
 from repositories.sub_processor_repo import (
     create_sub_processor,
@@ -15,8 +15,12 @@ from schemas.sub_processor_schema import (
 )
 
 
-async def add_sub_processor(sp_data: SubProcessorCreate) -> SubProcessorOut:
-    return await create_sub_processor(sp_data)
+async def add_sub_processor(
+    sp_data: SubProcessorCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> SubProcessorOut:
+    return await create_sub_processor(sp_data, preassigned_id=preassigned_id)
 
 
 async def retrieve_sub_processors(tenant_id: str) -> List[SubProcessorOut]:

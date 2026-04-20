@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from core.errors import resource_not_found
 from repositories.checkin_config_repo import (
     create_checkin_config,
@@ -17,12 +19,16 @@ from schemas.checkin_config_schema import (
 )
 
 
-async def create_config(payload: CheckinConfigCreate) -> CheckinConfigOut:
+async def create_config(
+    payload: CheckinConfigCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> CheckinConfigOut:
     """Create a new check-in configuration."""
     tenant = await get_tenant({"_id": payload.tenant_id})
     if not tenant:
         raise resource_not_found(resource="Tenant", resource_id=payload.tenant_id)
-    return await create_checkin_config(payload)
+    return await create_checkin_config(payload, preassigned_id=preassigned_id)
 
 
 async def resolve_public_config(checkin_config_id: str) -> PublicCheckinConfigOut:

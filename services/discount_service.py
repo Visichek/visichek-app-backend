@@ -22,7 +22,11 @@ from schemas.discount_schema import (
 )
 
 
-async def add_discount(discount_data: DiscountCreate) -> DiscountOut:
+async def add_discount(
+    discount_data: DiscountCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> DiscountOut:
     """Create a new discount code."""
     # Check for duplicate code
     existing = await get_discount({"code": discount_data.code})
@@ -31,7 +35,7 @@ async def add_discount(discount_data: DiscountCreate) -> DiscountOut:
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Discount code '{discount_data.code}' already exists",
         )
-    return await create_discount(discount_data)
+    return await create_discount(discount_data, preassigned_id=preassigned_id)
 
 
 async def retrieve_discount_by_id(discount_id: str) -> Optional[DiscountOut]:

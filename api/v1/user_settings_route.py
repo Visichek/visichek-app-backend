@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request, status
 
+from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.user_settings_schema import UserSettingsUpdate
 from security.auth import verify_any_token
 from security.principal import AuthPrincipal, TENANT_USER_ROLES
-from services.user_settings_service import (
-    retrieve_or_create_settings,
-    update_settings,
-)
+from services.user_settings_service import retrieve_or_create_settings
 
 router = APIRouter(prefix="/user-settings", tags=["User Settings"])
 
@@ -21,24 +19,9 @@ def _user_type(principal: AuthPrincipal) -> str:
 @router.get("")
 @document_response(
     message="User settings fetched successfully",
-    success_example={
-        "language": "en",
-        "timezone": "Africa/Lagos",
-        "dateFormat": "DD/MM/YYYY",
-        "timeFormat": "24h",
-        "emailNotifications": True,
-        "pushNotifications": False,
-        "notifyOnSystemAlert": True,
-        "notifyOnVisitorCheckIn": True,
-        "notifyOnAppointmentReminder": True,
-        "notifyOnIncidentCreated": True,
-        "notifyOnDsrReceived": True,
-        "digestFrequency": "realtime",
-    },
     description=(
-        "Return the authenticated user's personal preferences with server defaults "
-        "for any unset fields. Works for both platform admins and tenant system users. "
-        "Auto-creates defaults on first access — never returns 404."
+        "Return the authenticated user's personal preferences with server defaults. "
+        "Small per-user record — served live from the DB (HttpCache handles repeat reads)."
     ),
     summary="Get user settings",
     response_codes={401: "Unauthorized - invalid or missing token"},
@@ -46,15 +29,20 @@ def _user_type(principal: AuthPrincipal) -> str:
 async def get_user_settings(
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    """Get personal settings for the authenticated user."""
     return await retrieve_or_create_settings(principal.user_id, _user_type(principal))
 
 
 @router.patch("")
 @document_response(
-    message="User settings updated successfully",
-    description="Partial update — only include changed fields. Returns full settings after applying changes.",
-    summary="Update user settings",
+    message="User settings update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a partial user-settings update.",
+    summary="Update user settings (async)",
+    success_example={
+        "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "job_id": "b3d5f7a9-2345-4def-8abc-1234567890bc",
+        "status": "queued",
+    },
     response_codes={
         401: "Unauthorized - invalid or missing token",
         422: "Validation error",
@@ -62,7 +50,19 @@ async def get_user_settings(
 )
 async def update_user_settings(
     data: UserSettingsUpdate,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    """Update personal settings for the authenticated user."""
-    return await update_settings(principal.user_id, _user_type(principal), data)
+    payload = data.model_dump(exclude_none=True)
+    payload["user_id"] = principal.user_id
+    payload["user_type"] = _user_type(principal)
+    return await enqueue_write(
+        writer_key="user_settings.update",
+        payload=payload,
+        resource_type="user_settings",
+        resource_id=principal.user_id,
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )

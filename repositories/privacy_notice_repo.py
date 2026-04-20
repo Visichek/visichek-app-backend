@@ -1,3 +1,4 @@
+from bson import ObjectId
 from pymongo import ReturnDocument
 from core.database import db
 from fastapi import HTTPException, status
@@ -9,8 +10,14 @@ from schemas.privacy_notice_schema import (
 )
 
 
-async def create_privacy_notice(notice_data: PrivacyNoticeCreate) -> PrivacyNoticeOut:
+async def create_privacy_notice(
+    notice_data: PrivacyNoticeCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> PrivacyNoticeOut:
     notice_dict = notice_data.model_dump()
+    if preassigned_id:
+        notice_dict["_id"] = ObjectId(preassigned_id)
     result = await db.privacy_notice_versions.insert_one(notice_dict)
     result = await db.privacy_notice_versions.find_one({"_id": result.inserted_id})
     return PrivacyNoticeOut(**result)

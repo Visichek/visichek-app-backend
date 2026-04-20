@@ -23,7 +23,11 @@ from schemas.plan_schema import (
 from services.audit_service import record_audit_event
 
 
-async def add_plan(plan_data: PlanCreate) -> PlanOut:
+async def add_plan(
+    plan_data: PlanCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> PlanOut:
     """Create a new subscription plan. Only application admins can do this."""
     # Check for duplicate plan name
     existing = await get_plan({"name": plan_data.name})
@@ -32,7 +36,7 @@ async def add_plan(plan_data: PlanCreate) -> PlanOut:
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Plan with name '{plan_data.name}' already exists",
         )
-    plan = await create_plan(plan_data)
+    plan = await create_plan(plan_data, preassigned_id=preassigned_id)
 
     # Record audit event (fire-and-forget)
     try:

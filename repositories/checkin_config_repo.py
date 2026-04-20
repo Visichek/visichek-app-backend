@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from bson import ObjectId
+
 from core.database import db
 from schemas.checkin_config_schema import (
     CheckinConfigCreate,
@@ -14,9 +16,13 @@ COLLECTION = "checkin_configs"
 
 async def create_checkin_config(
     payload: CheckinConfigCreate,
+    *,
+    preassigned_id: Optional[str] = None,
 ) -> CheckinConfigOut:
     """Create a new check-in configuration."""
     config_dict = payload.model_dump()
+    if preassigned_id:
+        config_dict["_id"] = ObjectId(preassigned_id)
     result = await db[COLLECTION].insert_one(config_dict)
     doc = await db[COLLECTION].find_one({"_id": result.inserted_id})
     return CheckinConfigOut(**doc)

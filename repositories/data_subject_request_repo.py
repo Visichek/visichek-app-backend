@@ -1,11 +1,18 @@
+from bson import ObjectId
 from pymongo import ReturnDocument
 from core.database import db
 from typing import List, Optional
 from schemas.data_subject_request_schema import DSRCreate, DSRUpdate, DSROut
 
 
-async def create_dsr(dsr_data: DSRCreate) -> DSROut:
+async def create_dsr(
+    dsr_data: DSRCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> DSROut:
     dsr_dict = dsr_data.model_dump()
+    if preassigned_id:
+        dsr_dict["_id"] = ObjectId(preassigned_id)
     result = await db.data_subject_requests.insert_one(dsr_dict)
     result = await db.data_subject_requests.find_one({"_id": result.inserted_id})
     return DSROut(**result)

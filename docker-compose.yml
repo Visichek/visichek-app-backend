@@ -3,6 +3,25 @@
 #   docker network create visichek-shared   # one-time
 #   docker-compose -f ../docker-compose.shared.yml up -d
 
+x-common-env: &common-env
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/0
+
+x-worker-base: &worker-base
+  build: .
+  env_file:
+    - .env
+  volumes:
+    - .:/app
+  networks:
+    - visichek-shared
+  environment:
+    <<: *common-env
+    CELERY_CUSTOM_WORKER_POOL: celery_aio_pool.pool:AsyncIOPool
+
 services:
   web:
     build: .
@@ -12,11 +31,7 @@ services:
     env_file:
       - .env
     environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      <<: *common-env
     volumes:
       - .:/app
     networks:
@@ -28,22 +43,33 @@ services:
       retries: 3
       start_period: 20s
 
+  # Handles all queued DB mutations (POST/PUT/PATCH/DELETE). The generic
+  # db.write task dispatches to per-entity writer functions and records
+  # every attempt in the queue_job_log audit trail.
+  worker-writes:
+    <<: *worker-base
+    command: celery -A celery_worker worker -l info --pool=custom --concurrency=8 -Q writes -n worker-writes@%h
+
+  # Periodically refreshes per-tenant precomputed GET payloads into Redis
+  # and fans out precompute work for every active tenant discovered via
+  # live access tokens. GET endpoints serve from here first.
+  worker-precompute:
+    <<: *worker-base
+    command: celery -A celery_worker worker -l info --pool=custom --concurrency=4 -Q precompute -n worker-precompute@%h
+
+  # Runs gate.refresh jobs: re-checks account status + permissions + plan
+  # state and updates the gate cache. Triggered by cache hits so the hot
+  # path never blocks on a DB round trip.
+  worker-gates:
+    <<: *worker-base
+    command: celery -A celery_worker worker -l info --pool=custom --concurrency=4 -Q gates -n worker-gates@%h
+
+  # Catch-all for the legacy default celery queue (invoice PDFs, email
+  # dispatch, etc). Kept separate so its load does not starve the hot
+  # write/gate queues.
   worker:
-    build: .
-    command: celery -A celery_worker worker -l info --pool=custom --concurrency=5
-    env_file:
-      - .env
-    environment:
-      - CELERY_CUSTOM_WORKER_POOL=celery_aio_pool.pool:AsyncIOPool
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-    volumes:
-      - .:/app
-    networks:
-      - visichek-shared
+    <<: *worker-base
+    command: celery -A celery_worker worker -l info --pool=custom --concurrency=5 -Q celery -n worker-default@%h
 
 networks:
   visichek-shared:

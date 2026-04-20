@@ -135,7 +135,10 @@ async def create_departments(
             headers=headers,
         )
 
-        if response.status_code == 201:
+        # POST /v1/departments now returns 202 + { id, job_id, status } via the
+        # write pipeline. The id is pre-assigned, so we can stash it immediately
+        # even though persistence happens asynchronously on worker-writes.
+        if response.status_code in (201, 202):
             dept_id = response.json().get("data", {}).get("id")
             department_ids.append(dept_id)
             print(f"✓ Created department: {dept_names[i]} ({dept_id})")

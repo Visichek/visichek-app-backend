@@ -1,6 +1,6 @@
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import List
+from typing import List, Optional
 
 from repositories.appointment_repo import (
     count_appointments,
@@ -19,7 +19,11 @@ from schemas.appointment_schema import (
 from services.plan_limits import enforce_entity_cap, get_month_bounds
 
 
-async def add_appointment(appt_data: AppointmentCreate) -> AppointmentOut:
+async def add_appointment(
+    appt_data: AppointmentCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> AppointmentOut:
     # Enforce plan cap on appointments created this calendar month
     month_start, month_end = get_month_bounds()
     month_count = await count_appointments(
@@ -35,7 +39,7 @@ async def add_appointment(appt_data: AppointmentCreate) -> AppointmentOut:
         friendly_name="Monthly appointment",
     )
 
-    return await create_appointment(appt_data)
+    return await create_appointment(appt_data, preassigned_id=preassigned_id)
 
 
 async def retrieve_appointment_by_id(

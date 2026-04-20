@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from bson import ObjectId
 
 from core.database import db
 from schemas.branch_schema import BranchCreate, BranchOut, BranchUpdate
@@ -9,9 +10,15 @@ from schemas.branch_schema import BranchCreate, BranchOut, BranchUpdate
 COLLECTION = "branches"
 
 
-async def create_branch(schema: BranchCreate) -> BranchOut:
+async def create_branch(
+    schema: BranchCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> BranchOut:
     """Insert a new branch document."""
     data = schema.model_dump()
+    if preassigned_id:
+        data["_id"] = ObjectId(preassigned_id)
     result = await db[COLLECTION].insert_one(data)
     doc = await db[COLLECTION].find_one({"_id": result.inserted_id})
     return BranchOut(**doc)

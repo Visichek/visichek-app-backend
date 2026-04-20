@@ -1,10 +1,17 @@
+from bson import ObjectId
 from core.database import db
-from typing import List
+from typing import List, Optional
 from schemas.data_processing_register_schema import DPRCreate, DPROut
 
 
-async def create_dpr_entry(dpr_data: DPRCreate) -> DPROut:
+async def create_dpr_entry(
+    dpr_data: DPRCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> DPROut:
     dpr_dict = dpr_data.model_dump()
+    if preassigned_id:
+        dpr_dict["_id"] = ObjectId(preassigned_id)
     result = await db.data_processing_register.insert_one(dpr_dict)
     result = await db.data_processing_register.find_one({"_id": result.inserted_id})
     return DPROut(**result)

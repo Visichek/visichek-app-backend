@@ -81,7 +81,9 @@ class VisichekLoadUser(HttpUser):
                 headers=self.headers,
                 name="/v1/tenants/ (create)",
             )
-            if resp.status_code == 201:
+            # POST /v1/tenants now returns 202 + { id, job_id, status: "queued" }
+            # via the write pipeline. 201 kept as a fallback for older endpoints.
+            if resp.status_code in (201, 202):
                 self.tenant_id = resp.json().get("data", {}).get("id")
                 logger.info(f"Created test tenant: {self.tenant_id}")
 
@@ -98,7 +100,9 @@ class VisichekLoadUser(HttpUser):
             headers=self.headers,
             name="/v1/departments/ (create)",
         )
-        if resp.status_code == 201:
+        # POST /v1/departments now returns 202 + { id, job_id, status: "queued" }.
+        # The id is pre-assigned by the write_pipeline so we can use it immediately.
+        if resp.status_code in (201, 202):
             self.department_id = resp.json().get("data", {}).get("id")
             logger.info(f"Created test department: {self.department_id}")
         elif resp.status_code == 200:

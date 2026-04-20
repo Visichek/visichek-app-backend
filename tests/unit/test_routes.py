@@ -91,29 +91,18 @@ class TestTenantRoutes:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_create_tenant_success(self, cleanup_dependency_overrides):
-        """Test successful tenant creation by application admin."""
+        """Tenant writes go through the queue — route returns 202 + job envelope."""
         app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: (
             MOCK_ADMIN_OUT
         )
 
         with patch(
-            "api.v1.tenant_route.add_tenant", new_callable=AsyncMock
-        ) as mock_add:
-            mock_add.return_value = {
+            "api.v1.tenant_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
                 "id": "tenant-001",
-                "company_name": "Acme Corp",
-                "lawful_basis": "legitimate_interest",
-                "notice_display_mode": "passive",
-                "retention_days": 1095,
-                "default_retention_action": "anonymise",
-                "dpo_contact_email": "dpo@acmecorp.com",
-                "privacy_policy_url": "https://acmecorp.com/privacy",
-                "country_of_hosting": "United States",
-                "cross_border_approved": False,
-                "is_active": True,
-                "active_notice_version": "1.0",
-                "date_created": 1712500000,
-                "last_updated": 1712500000,
+                "job_id": "job-tnt-abc",
+                "status": "queued",
             }
 
             async with AsyncClient(
@@ -135,11 +124,14 @@ class TestTenantRoutes:
                     headers={"Authorization": "Bearer token-123"},
                 )
 
-            assert response.status_code == 201
+            assert response.status_code == 202
             data = response.json()
             assert data["success"] is True
-            assert data["message"] == "Tenant created successfully"
             assert data["data"]["id"] == "tenant-001"
+            assert data["data"]["jobId"] == "job-tnt-abc"
+            assert data["data"]["status"] == "queued"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "tenant.create"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -250,19 +242,18 @@ class TestTenantRoutes:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_update_tenant_success(self, cleanup_dependency_overrides):
-        """Test successful tenant update."""
+        """Tenant updates go through the queue — route returns 202 + job envelope."""
         app.dependency_overrides[verify_super_admin_token] = lambda: (
             MOCK_SUPER_ADMIN_PRINCIPAL
         )
 
         with patch(
-            "api.v1.tenant_route.update_tenant_by_id", new_callable=AsyncMock
-        ) as mock_update:
-            mock_update.return_value = {
+            "api.v1.tenant_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
                 "id": "tenant-001",
-                "company_name": "Acme Corp Updated",
-                "is_active": True,
-                "last_updated": 1712600000,
+                "job_id": "job-tnt-upd",
+                "status": "queued",
             }
 
             async with AsyncClient(
@@ -274,10 +265,13 @@ class TestTenantRoutes:
                     headers={"Authorization": "Bearer token-123"},
                 )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert data["success"] is True
-            assert data["data"]["companyName"] == "Acme Corp Updated"
+            assert data["data"]["id"] == "tenant-001"
+            assert data["data"]["jobId"] == "job-tnt-upd"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "tenant.update"
+            assert mock_enqueue.await_args.kwargs["resource_id"] == "tenant-001"
 
 
 class TestDepartmentRoutes:
@@ -286,22 +280,18 @@ class TestDepartmentRoutes:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_create_department_success(self, cleanup_dependency_overrides):
-        """Test successful department creation."""
+        """Writes go through the queue pipeline now — route returns 202 + job envelope."""
         app.dependency_overrides[verify_system_user_token] = lambda: (
             MOCK_SUPER_ADMIN_PRINCIPAL
         )
 
         with patch(
-            "api.v1.department_route.add_department", new_callable=AsyncMock
-        ) as mock_add:
-            mock_add.return_value = {
+            "api.v1.department_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
                 "id": "dept-001",
-                "tenant_id": "tenant-001",
-                "code": "HR-001",
-                "name": "Human Resources",
-                "is_active": True,
-                "created_by": "super-admin-123",
-                "date_created": 1712500000,
+                "job_id": "job-abc-123",
+                "status": "queued",
             }
 
             async with AsyncClient(
@@ -317,10 +307,15 @@ class TestDepartmentRoutes:
                     headers={"Authorization": "Bearer token-123"},
                 )
 
-            assert response.status_code == 201
+            assert response.status_code == 202
             data = response.json()
             assert data["success"] is True
-            assert data["message"] == "Department created successfully"
+            assert data["message"] == "Department creation queued"
+            assert data["data"]["id"] == "dept-001"
+            assert data["data"]["jobId"] == "job-abc-123"
+            assert data["data"]["status"] == "queued"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "department.create"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -392,22 +387,18 @@ class TestDepartmentRoutes:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_update_department_success(self, cleanup_dependency_overrides):
-        """Test successful department update."""
+        """Updates go through the queue pipeline now — route returns 202 + job envelope."""
         app.dependency_overrides[verify_system_user_token] = lambda: (
             MOCK_SUPER_ADMIN_PRINCIPAL
         )
 
         with patch(
-            "api.v1.department_route.update_department_by_id",
-            new_callable=AsyncMock,
-        ) as mock_update:
-            mock_update.return_value = {
+            "api.v1.department_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
                 "id": "dept-001",
-                "tenant_id": "tenant-001",
-                "code": "HR-001",
-                "name": "Human Resources - Updated",
-                "is_active": True,
-                "last_updated": 1712600000,
+                "job_id": "job-upd-456",
+                "status": "queued",
             }
 
             async with AsyncClient(
@@ -419,22 +410,31 @@ class TestDepartmentRoutes:
                     headers={"Authorization": "Bearer token-123"},
                 )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert data["data"]["name"] == "Human Resources - Updated"
+            assert data["data"]["id"] == "dept-001"
+            assert data["data"]["jobId"] == "job-upd-456"
+            assert data["data"]["status"] == "queued"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "department.update"
+            assert mock_enqueue.await_args.kwargs["resource_id"] == "dept-001"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_delete_department_success(self, cleanup_dependency_overrides):
-        """Test successful department deletion."""
+        """Deletes go through the queue pipeline now — route returns 202 + job envelope."""
         app.dependency_overrides[verify_system_user_token] = lambda: (
             MOCK_SUPER_ADMIN_PRINCIPAL
         )
 
         with patch(
-            "api.v1.department_route.remove_department", new_callable=AsyncMock
-        ) as mock_delete:
-            mock_delete.return_value = {"deleted": True}
+            "api.v1.department_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
+                "id": "dept-001",
+                "job_id": "job-del-789",
+                "status": "queued",
+            }
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -444,9 +444,13 @@ class TestDepartmentRoutes:
                     headers={"Authorization": "Bearer token-123"},
                 )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
             assert data["success"] is True
+            assert data["data"]["id"] == "dept-001"
+            assert data["data"]["jobId"] == "job-del-789"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "department.delete"
 
 
 class TestSystemUserRoutes:
@@ -854,21 +858,12 @@ class TestAppointmentRoutes:
         )
 
         with patch(
-            "api.v1.appointment_route.add_appointment", new_callable=AsyncMock
-        ) as mock_add:
-            mock_add.return_value = {
+            "api.v1.appointment_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
                 "id": "appt-001",
-                "tenant_id": "tenant-001",
-                "visitor_profile_id": "visitor-001",
-                "host_id": "user-123",
-                "department_id": "dept-001",
-                "visitor_name_snapshot": "John Doe",
-                "host_name_snapshot": "Jane Smith",
-                "scheduled_datetime": 1712618400,
-                "purpose": "Sales consultation",
-                "status": "scheduled",
-                "created_by": "receptionist-789",
-                "date_created": 1712532000,
+                "job_id": "job-appt-create",
+                "status": "queued",
             }
 
             async with AsyncClient(
@@ -887,10 +882,12 @@ class TestAppointmentRoutes:
                     headers={"Authorization": "Bearer token-789"},
                 )
 
-            assert response.status_code == 201
+            assert response.status_code == 202
             data = response.json()
-            assert data["success"] is True
-            assert data["message"] == "Appointment created successfully"
+            assert data["data"]["id"] == "appt-001"
+            assert data["data"]["jobId"] == "job-appt-create"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "appointment.create"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -971,17 +968,13 @@ class TestAppointmentRoutes:
         )
 
         with patch(
-            "api.v1.appointment_route.update_appointment_by_id",
+            "api.v1.appointment_route.enqueue_write",
             new_callable=AsyncMock,
-        ) as mock_update:
-            mock_update.return_value = {
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
                 "id": "appt-001",
-                "tenant_id": "tenant-001",
-                "visitor_name_snapshot": "John Doe",
-                "scheduled_datetime": 1712704800,
-                "purpose": "Sales consultation",
-                "status": "scheduled",
-                "last_updated": 1712535600,
+                "job_id": "job-appt-upd",
+                "status": "queued",
             }
 
             async with AsyncClient(
@@ -993,9 +986,12 @@ class TestAppointmentRoutes:
                     headers={"Authorization": "Bearer token-789"},
                 )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert data["success"] is True
+            assert data["data"]["jobId"] == "job-appt-upd"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "appointment.update"
+            assert mock_enqueue.await_args.kwargs["resource_id"] == "appt-001"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -1006,14 +1002,12 @@ class TestAppointmentRoutes:
         )
 
         with patch(
-            "api.v1.appointment_route.remove_appointment", new_callable=AsyncMock
-        ) as mock_delete:
-            mock_delete.return_value = {
+            "api.v1.appointment_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
                 "id": "appt-001",
-                "tenant_id": "tenant-001",
-                "visitor_name_snapshot": "John Doe",
-                "scheduled_datetime": 1712618400,
-                "status": "scheduled",
+                "job_id": "job-appt-del",
+                "status": "queued",
             }
 
             async with AsyncClient(
@@ -1024,9 +1018,11 @@ class TestAppointmentRoutes:
                     headers={"Authorization": "Bearer token-456"},
                 )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert data["success"] is True
+            assert data["data"]["jobId"] == "job-appt-del"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "appointment.delete"
 
 
 class TestPrivacyNoticeRoutes:
@@ -1041,18 +1037,12 @@ class TestPrivacyNoticeRoutes:
         )
 
         with patch(
-            "api.v1.privacy_notice_route.add_privacy_notice", new_callable=AsyncMock
-        ) as mock_add:
-            mock_add.return_value = {
+            "api.v1.privacy_notice_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
                 "id": "notice-001",
-                "tenant_id": "tenant-001",
-                "version_code": "v2.1",
-                "title": "Data Processing Notice",
-                "summary": "Information about how we process your personal data",
-                "full_policy_url": "https://example.com/privacy-policy",
-                "effective_from": 1712448000,
-                "is_active": True,
-                "date_created": 1712448000,
+                "job_id": "job-notice-create",
+                "status": "queued",
             }
 
             async with AsyncClient(
@@ -1071,10 +1061,11 @@ class TestPrivacyNoticeRoutes:
                     headers={"Authorization": "Bearer token-123"},
                 )
 
-            assert response.status_code == 201
+            assert response.status_code == 202
             data = response.json()
-            assert data["success"] is True
-            assert data["message"] == "Privacy notice created successfully"
+            assert data["data"]["jobId"] == "job-notice-create"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "privacy_notice.create"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -1153,15 +1144,13 @@ class TestPrivacyNoticeRoutes:
         app.dependency_overrides[verify_system_user_token] = lambda: MOCK_DPO_PRINCIPAL
 
         with patch(
-            "api.v1.privacy_notice_route.update_notice_by_id",
+            "api.v1.privacy_notice_route.enqueue_write",
             new_callable=AsyncMock,
-        ) as mock_update:
-            mock_update.return_value = {
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
                 "id": "notice-001",
-                "tenant_id": "tenant-001",
-                "version_code": "v2.1",
-                "title": "Data Processing Notice - Updated",
-                "is_active": True,
+                "job_id": "job-notice-upd",
+                "status": "queued",
             }
 
             async with AsyncClient(
@@ -1173,9 +1162,11 @@ class TestPrivacyNoticeRoutes:
                     headers={"Authorization": "Bearer token-111"},
                 )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert data["success"] is True
+            assert data["data"]["jobId"] == "job-notice-upd"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "privacy_notice.update"
 
 
 class TestIncidentRoutes:
@@ -1190,19 +1181,12 @@ class TestIncidentRoutes:
         )
 
         with patch(
-            "api.v1.incident_route.add_incident", new_callable=AsyncMock
-        ) as mock_add:
-            mock_add.return_value = {
+            "api.v1.incident_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
                 "id": "incident-001",
-                "tenant_id": "tenant-001",
-                "reported_by": "security-officer-999",
-                "incident_type": "data_breach",
-                "status": "open",
-                "description": "Unauthorized access detected",
-                "risk_level": "high",
-                "ndpc_notified": False,
-                "detection_time": 1712544600,
-                "date_created": 1712544800,
+                "job_id": "job-inc-create",
+                "status": "queued",
             }
 
             async with AsyncClient(
@@ -1221,10 +1205,11 @@ class TestIncidentRoutes:
                     headers={"Authorization": "Bearer token-999"},
                 )
 
-            assert response.status_code == 201
+            assert response.status_code == 202
             data = response.json()
-            assert data["success"] is True
-            assert data["message"] == "Incident created successfully"
+            assert data["data"]["jobId"] == "job-inc-create"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "incident.create"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -1302,16 +1287,12 @@ class TestIncidentRoutes:
         )
 
         with patch(
-            "api.v1.incident_route.update_incident_by_id", new_callable=AsyncMock
-        ) as mock_update:
-            mock_update.return_value = {
+            "api.v1.incident_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
                 "id": "incident-001",
-                "tenant_id": "tenant-001",
-                "incident_type": "data_breach",
-                "status": "reported_to_ndpc",
-                "risk_level": "high",
-                "ndpc_notified": True,
-                "ndpc_notified_at": 1712548400,
+                "job_id": "job-inc-upd",
+                "status": "queued",
             }
 
             async with AsyncClient(
@@ -1327,9 +1308,12 @@ class TestIncidentRoutes:
                     headers={"Authorization": "Bearer token-999"},
                 )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert data["success"] is True
+            assert data["data"]["jobId"] == "job-inc-upd"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "incident.update"
+            assert mock_enqueue.await_args.kwargs["resource_id"] == "incident-001"
 
 
 class TestErrorHandling:

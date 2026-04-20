@@ -25,7 +25,11 @@ from schemas.branch_schema import BranchCreate, BranchOut, BranchUpdate
 from schemas.branch_schema import BranchStatus
 
 
-async def add_branch(branch_data: BranchCreate) -> BranchOut:
+async def add_branch(
+    branch_data: BranchCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> BranchOut:
     """Create a new branch for a tenant, enforcing plan limits."""
     # Check branch cap from tenant's plan
     await _enforce_branch_cap(branch_data.tenant_id)
@@ -43,7 +47,7 @@ async def add_branch(branch_data: BranchCreate) -> BranchOut:
             detail=f"Branch '{branch_data.name}' already exists for this tenant",
         )
 
-    return await create_branch(branch_data)
+    return await create_branch(branch_data, preassigned_id=preassigned_id)
 
 
 async def retrieve_branch_by_id(branch_id: str) -> Optional[BranchOut]:

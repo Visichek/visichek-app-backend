@@ -1,3 +1,4 @@
+from bson import ObjectId
 from pymongo import ReturnDocument
 from core.database import db
 from typing import List, Optional
@@ -10,8 +11,12 @@ from schemas.retention_policy_schema import (
 
 async def create_retention_policy(
     policy_data: RetentionPolicyCreate,
+    *,
+    preassigned_id: Optional[str] = None,
 ) -> RetentionPolicyOut:
     policy_dict = policy_data.model_dump()
+    if preassigned_id:
+        policy_dict["_id"] = ObjectId(preassigned_id)
     result = await db.retention_policies.insert_one(policy_dict)
     result = await db.retention_policies.find_one({"_id": result.inserted_id})
     return RetentionPolicyOut(**result)

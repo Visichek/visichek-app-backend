@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from bson import ObjectId
 from pymongo import ReturnDocument
 from core.database import db
 from typing import List, Optional
@@ -11,8 +12,14 @@ from schemas.incident_log_schema import (
 )
 
 
-async def create_incident_log(log_data: IncidentLogCreate) -> IncidentLogOut:
+async def create_incident_log(
+    log_data: IncidentLogCreate,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> IncidentLogOut:
     log_dict = log_data.model_dump()
+    if preassigned_id:
+        log_dict["_id"] = ObjectId(preassigned_id)
     result = await db.incident_logs.insert_one(log_dict)
     result = await db.incident_logs.find_one({"_id": result.inserted_id})
     return IncidentLogOut(**result)
