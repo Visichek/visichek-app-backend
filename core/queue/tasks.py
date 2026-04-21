@@ -99,16 +99,19 @@ async def _invalidate_plan_fanout(plan_id: str) -> None:
 
 @task("db.write")
 async def _db_write_dispatcher(
-    writer_key: str, resource_id: str, data: dict[str, Any]
+    writer_key: str,
+    resource_id: str,
+    data: dict[str, Any],
+    task_id: str = "",
 ) -> Any:
     """Dispatch a queued write to its registered handler.
 
-    The celery task_id is pulled from celery's current_task context so
-    the same row in ``queue_job_log`` that the route created can be
-    transitioned through processing -> succeeded / failed.
+    ``task_id`` is threaded through from ``enqueue_write`` (which
+    pre-generates it before the celery send) so the same row in
+    ``queue_job_log`` can be transitioned through processing ->
+    succeeded / failed without depending on ``celery.current_task``
+    propagation, which is fragile under ``celery-aio-pool``.
     """
-    from celery import current_task
-
     from core.queue.write_pipeline import execute_writer
     from repositories.queue_job_log_repo import (
         mark_failed,
@@ -116,57 +119,51 @@ async def _db_write_dispatcher(
         mark_succeeded,
     )
 
-    request = getattr(current_task, "request", None)
-    task_id = getattr(request, "id", "") if request is not None else ""
-
-    if task_id:
-        try:
-            await mark_processing(task_id)
-        except Exception:
-            logger.warning(
-                "mark_processing failed for task_id=%s", task_id, exc_info=True
-            )
+    try:
+        await mark_processing(task_id)
+    except Exception:
+        logger.warning(
+            "mark_processing failed for task_id=%s", task_id, exc_info=True
+        )
 
     try:
         result = await execute_writer(
             writer_key=writer_key, resource_id=resource_id, data=data
         )
     except Exception as exc:
-        if task_id:
-            try:
-                await mark_failed(task_id, f"{type(exc).__name__}: {exc}")
-            except Exception:
-                logger.warning(
-                    "mark_failed logging failed for task_id=%s",
-                    task_id,
-                    exc_info=True,
-                )
-            try:
-                from services.notification_service import notify_job_failure
+        try:
+            await mark_failed(task_id, f"{type(exc).__name__}: {exc}")
+        except Exception:
+            logger.warning(
+                "mark_failed logging failed for task_id=%s",
+                task_id,
+                exc_info=True,
+            )
+        try:
+            from services.notification_service import notify_job_failure
 
-                await notify_job_failure(
-                    task_id=task_id, writer_key=writer_key, exception=exc
-                )
-            except Exception:
-                logger.warning(
-                    "job-failure notification failed for task_id=%s",
-                    task_id,
-                    exc_info=True,
-                )
+            await notify_job_failure(
+                task_id=task_id, writer_key=writer_key, exception=exc
+            )
+        except Exception:
+            logger.warning(
+                "job-failure notification failed for task_id=%s",
+                task_id,
+                exc_info=True,
+            )
         logger.exception(
             "db.write failed: writer=%s resource_id=%s", writer_key, resource_id
         )
         raise
 
-    if task_id:
-        try:
-            await mark_succeeded(task_id, result if isinstance(result, dict) else None)
-        except Exception:
-            logger.warning(
-                "mark_succeeded logging failed for task_id=%s",
-                task_id,
-                exc_info=True,
-            )
+    try:
+        await mark_succeeded(task_id, result if isinstance(result, dict) else None)
+    except Exception:
+        logger.warning(
+            "mark_succeeded logging failed for task_id=%s",
+            task_id,
+            exc_info=True,
+        )
 
     return result
 

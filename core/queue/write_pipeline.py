@@ -150,6 +150,7 @@ async def enqueue_write(
         "writer_key": writer_key,
         "resource_id": resource_id,
         "data": payload,
+        "task_id": task_id,
     }
 
     job_result = QueueManager.get_instance().enqueue(

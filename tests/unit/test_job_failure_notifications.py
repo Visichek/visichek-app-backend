@@ -244,9 +244,6 @@ async def test_dispatcher_invokes_notify_on_writer_failure() -> None:
     """Writer exceptions must re-raise AND call notify_job_failure."""
     from core.queue import tasks as tasks_module
 
-    fake_request = type("R", (), {"id": "celery-task-xyz"})()
-    fake_current_task = type("T", (), {"request": fake_request})()
-
     exc = AppException(
         status_code=400,
         code=ErrorCode.VALIDATION_FAILED,
@@ -254,7 +251,6 @@ async def test_dispatcher_invokes_notify_on_writer_failure() -> None:
     )
 
     with (
-        patch("celery.current_task", fake_current_task, create=True),
         patch(
             "core.queue.write_pipeline.execute_writer",
             new=AsyncMock(side_effect=exc),
@@ -281,6 +277,7 @@ async def test_dispatcher_invokes_notify_on_writer_failure() -> None:
                 writer_key="discount.delete",
                 resource_id="disc-1",
                 data={},
+                task_id="celery-task-xyz",
             )
 
     mark_failed_mock.assert_awaited_once()
