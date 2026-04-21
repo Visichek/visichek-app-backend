@@ -94,6 +94,7 @@ class NotificationPreferencesBase(BaseModel):
     email_on_dsr_received: bool = True
     email_on_subscription_alert: bool = True
     email_on_new_user: bool = False
+    email_on_support_case: bool = True
 
 
 class NotificationPreferencesCreate(NotificationPreferencesBase):
@@ -115,6 +116,7 @@ class NotificationPreferencesUpdate(BaseModel):
     email_on_dsr_received: Optional[bool] = None
     email_on_subscription_alert: Optional[bool] = None
     email_on_new_user: Optional[bool] = None
+    email_on_support_case: Optional[bool] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

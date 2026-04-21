@@ -45,6 +45,10 @@ EXEMPT_PATH_PREFIXES = (
     "/v1/subscriptions/",  # Subscription management
     "/v1/discounts/",  # Discount management
     "/v1/usage/",  # Usage reporting
+    # Support cases are a hard product rule (10-open cap), not metered quota.
+    # Tenants must always be able to reach support even on suspended plans.
+    "/v1/support-cases/",
+    "/v1/admins/support-cases/",
 )
 
 # Map HTTP methods to operation types for quota checking

@@ -6,6 +6,17 @@ from typing import Any, List, Optional, cast
 
 from core.redis_cache import cache_db
 
+
+def _resolve_support_tier_value(sub: Any, plan: Any) -> str:
+    """Resolve the effective support tier as a string (plan default, sub override wins)."""
+    override = getattr(sub, "support_tier_override", None)
+    if override is not None:
+        return override.value if hasattr(override, "value") else str(override)
+    tier = getattr(plan, "support_tier", None)
+    if tier is not None:
+        return tier.value if hasattr(tier, "value") else str(tier)
+    return "none"
+
 # Cache TTL in seconds (5 minutes for plan data, good balance of freshness vs performance)
 PLAN_CACHE_TTL = 300
 TENANT_PLAN_PREFIX = "tenant_plan:"
@@ -147,6 +158,8 @@ async def resolve_tenant_plan(tenant_id: str) -> Optional[dict]:
         "priority_support": plan.priority_support,
         "custom_branding": plan.custom_branding,
         "api_access": plan.api_access,
+        # Support tier (plan default, subscription override wins)
+        "support_tier": _resolve_support_tier_value(sub, plan),
         # Billing info
         "effective_price": sub.effective_price,
         "billing_cycle": sub.billing_cycle,
@@ -252,6 +265,11 @@ def _build_resolved_from_raw(sub: dict, plan: dict, tenant_id: str) -> dict:
         "priority_support": plan.get("priority_support"),
         "custom_branding": plan.get("custom_branding"),
         "api_access": plan.get("api_access"),
+        "support_tier": (
+            sub.get("support_tier_override")
+            or plan.get("support_tier")
+            or "none"
+        ),
         "effective_price": sub.get("effective_price"),
         "billing_cycle": sub.get("billing_cycle"),
         "current_period_end": sub.get("current_period_end"),

@@ -46,3 +46,9 @@ from services import discount_writer as _discount_writer  # noqa: F401
 from services import plan_writer as _plan_writer  # noqa: F401
 from services import subscription_writer as _subscription_writer  # noqa: F401
 from services import compliance_writer as _compliance_writer  # noqa: F401
+
+# Cluster 7 — platform support cases (tenant ↔ app-admin threads)
+# Registering the service module is enough to pull in the precompute
+# decorators; the writer module below registers the write handlers.
+from services import support_case_service as _support_case_service  # noqa: F401
+from services import support_case_writer as _support_case_writer  # noqa: F401

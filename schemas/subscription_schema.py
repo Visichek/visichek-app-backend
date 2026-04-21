@@ -45,6 +45,9 @@ class SubscriptionBase(BaseModel):
     retrieval_quota_overrides: Optional[dict] = None  # collection -> {max_reads}
     tenant_cap_overrides: Optional[dict] = None  # field -> value
 
+    # Override for support tier — when set, wins over plan.support_tier
+    support_tier_override: Optional[SupportTier] = None
+
     # Discount IDs applied to this subscription
     applied_discount_ids: List[str] = Field(default_factory=list)
 
@@ -86,6 +89,7 @@ class SubscriptionUpdate(BaseModel):
     crud_limit_overrides: Optional[dict] = None
     retrieval_quota_overrides: Optional[dict] = None
     tenant_cap_overrides: Optional[dict] = None
+    support_tier_override: Optional[SupportTier] = None
     applied_discount_ids: Optional[List[str]] = None
     cancelled_at: Optional[int] = None
     cancellation_reason: Optional[str] = None

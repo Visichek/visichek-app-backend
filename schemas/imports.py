@@ -172,3 +172,50 @@ class BadgeValidationReason(str, Enum):
     EXPIRED = "expired"
     NOT_FOUND = "not_found"
     REVOKED = "revoked"
+
+
+# --- Support Case (platform-support thread between tenant and app admin) ---
+
+
+class SupportCaseStatus(str, Enum):
+    OPEN = "open"
+    ACKNOWLEDGED = "acknowledged"
+    IN_PROGRESS = "in_progress"
+    AWAITING_TENANT = "awaiting_tenant"
+    RESOLVED = "resolved"
+    CLOSED = "closed"
+    REOPENED = "reopened"
+
+
+class SupportCasePriority(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class SupportCaseCategory(str, Enum):
+    BILLING = "billing"
+    TECHNICAL = "technical"
+    ACCOUNT = "account"
+    FEATURE_REQUEST = "feature_request"
+    DATA_PRIVACY = "data_privacy"
+    OTHER = "other"
+
+
+class SupportCaseAuthorType(str, Enum):
+    TENANT = "tenant"
+    ADMIN = "admin"
+    SYSTEM = "system"
+
+
+class SupportTier(str, Enum):
+    """Per-plan support tier — controls admin alerting only.
+
+    Tenants always receive customer emails at every state change regardless
+    of tier. Admins are only paged for plans with STANDARD or PRIORITY.
+    """
+
+    NONE = "none"
+    STANDARD = "standard"
+    PRIORITY = "priority"

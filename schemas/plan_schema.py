@@ -106,6 +106,12 @@ class PlanBase(BaseModel):
     custom_branding: bool = False
     api_access: bool = False
 
+    # Support-case tier — controls admin paging on support threads.
+    # NONE: admins only see the case in the dashboard, no email blast.
+    # STANDARD: admin emails on case-open + SLA breaches.
+    # PRIORITY: admin emails on every event + per-tenant-reply pings.
+    support_tier: SupportTier = SupportTier.NONE
+
     # Whether this plan is visible on the public plan listing
     is_public: bool = True
 
@@ -149,6 +155,7 @@ class PlanUpdate(BaseModel):
     sla_response_hours: Optional[int] = None
     custom_branding: Optional[bool] = None
     api_access: Optional[bool] = None
+    support_tier: Optional[SupportTier] = None
     is_public: Optional[bool] = None
     sort_order: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))

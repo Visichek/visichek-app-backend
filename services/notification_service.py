@@ -512,6 +512,122 @@ def _user_type_for_role(role: Optional[str]) -> Optional[str]:
     return None
 
 
+# --- Support-case notifications ---
+
+
+async def notify_support_case_opened(
+    tenant_id: str,
+    case_id: str,
+    subject: str,
+    support_tier: str,
+) -> None:
+    """Fire-and-forget: notify opener + application admins a new case was opened."""
+    try:
+        from repositories.admin_repo import get_admins
+        from schemas.imports import AccountStatus
+
+        # In-app notification to all active admins regardless of tier.
+        admins = await get_admins(
+            {"account_status": AccountStatus.ACTIVE.value}, start=0, stop=200
+        )
+        for admin in admins:
+            try:
+                await send_notification(
+                    user_id=admin.id or "",
+                    user_type="admin",
+                    title="New Support Case",
+                    body=f"A tenant opened a support case: {subject}",
+                    type="info",
+                    link=f"/app/admin/support-cases/{case_id}",
+                    tenant_id=tenant_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to notify admin %s about new support case",
+                    admin.id,
+                    exc_info=True,
+                )
+    except Exception:
+        logger.warning(
+            "Failed to dispatch support-case-opened notifications", exc_info=True
+        )
+
+
+async def notify_support_case_reply(
+    case_id: str,
+    recipient_user_id: str,
+    recipient_user_type: str,
+    tenant_id: Optional[str] = None,
+) -> None:
+    """Fire-and-forget: tell the counterparty that a reply landed on their case."""
+    if not recipient_user_id:
+        return
+    try:
+        await send_notification(
+            user_id=recipient_user_id,
+            user_type=recipient_user_type,
+            title="New reply on your support case",
+            body="A new message was posted on a support case you're part of.",
+            type="info",
+            link=f"/app/support-cases/{case_id}",
+            tenant_id=tenant_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to send support-case reply notification", exc_info=True
+        )
+
+
+async def notify_support_case_status_change(
+    case_id: str,
+    new_status: str,
+    recipient_user_id: str,
+    recipient_user_type: str,
+    tenant_id: Optional[str] = None,
+) -> None:
+    """Fire-and-forget: tell the opener that case status has changed."""
+    if not recipient_user_id:
+        return
+    try:
+        await send_notification(
+            user_id=recipient_user_id,
+            user_type=recipient_user_type,
+            title="Support case status updated",
+            body=f"Your support case is now '{new_status}'.",
+            type="info",
+            link=f"/app/support-cases/{case_id}",
+            tenant_id=tenant_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to send support-case status notification", exc_info=True
+        )
+
+
+async def notify_support_case_assigned(
+    case_id: str,
+    admin_id: str,
+    tenant_id: Optional[str] = None,
+) -> None:
+    """Fire-and-forget: ping the admin that has just been assigned a case."""
+    if not admin_id:
+        return
+    try:
+        await send_notification(
+            user_id=admin_id,
+            user_type="admin",
+            title="Support case assigned to you",
+            body="You've been assigned a new support case.",
+            type="info",
+            link=f"/app/admin/support-cases/{case_id}",
+            tenant_id=tenant_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to send support-case assigned notification", exc_info=True
+        )
+
+
 async def notify_job_failure(
     task_id: str,
     writer_key: str,

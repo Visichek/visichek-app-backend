@@ -220,6 +220,24 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
     ("checkin_configs", [("tenant_id", ASCENDING)], {}),
     ("badges", [("tenant_id", ASCENDING), ("qr_code_value", ASCENDING)], {}),
     ("id_verification_hashes", [("tenant_id", ASCENDING), ("hash", ASCENDING)], {}),
+    # ── support cases (platform support threads) ─────────────────────
+    (
+        "support_cases",
+        [
+            ("tenant_id", ASCENDING),
+            ("status", ASCENDING),
+            ("last_message_at", DESCENDING),
+        ],
+        {},
+    ),
+    ("support_cases", [("tenant_id", ASCENDING), ("status", ASCENDING)], {}),
+    ("support_cases", [("assigned_admin_id", ASCENDING), ("status", ASCENDING)], {}),
+    ("support_cases", [("status", ASCENDING), ("sla_due_at", ASCENDING)], {}),
+    (
+        "support_case_messages",
+        [("case_id", ASCENDING), ("date_created", ASCENDING)],
+        {},
+    ),
 ]
 
 

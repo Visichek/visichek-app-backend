@@ -357,6 +357,31 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Support-case auto-close: RESOLVED → CLOSED after 7 days of inactivity.
+    scheduler.add_job(
+        "services.support_case_service:auto_close_resolved_cases",
+        trigger=IntervalTrigger(hours=6),
+        id="support_case_auto_close",
+        name="Support Case Auto-Close",
+        replace_existing=True,
+    )
+    # Nudge tenants whose cases sit in AWAITING_TENANT for 48h+ (runs daily).
+    scheduler.add_job(
+        "services.support_case_service:nudge_awaiting_tenant_cases",
+        trigger=IntervalTrigger(hours=12),
+        id="support_case_nudge_awaiting",
+        name="Support Case Awaiting-Tenant Nudge",
+        replace_existing=True,
+    )
+    # Alert admins on SLA breaches for STANDARD/PRIORITY tenants.
+    scheduler.add_job(
+        "services.support_case_service:alert_sla_breaches",
+        trigger=IntervalTrigger(hours=1),
+        id="support_case_sla_breach",
+        name="Support Case SLA Breach Alerts",
+        replace_existing=True,
+    )
+
     try:
         yield
     finally:
@@ -665,6 +690,10 @@ from api.v1.checkin_submit_route import router as v1_checkin_submit_route_router
 from api.v1.checkout_route import router as v1_checkout_route_router
 from api.v1.app_payment_route import router as app_payment_route_router
 from api.v1.job_route import router as v1_job_route_router
+from api.v1.support_case_route import router as v1_support_case_route_router
+from api.v1.admin_support_case_route import (
+    router as v1_admin_support_case_route_router,
+)
 
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
@@ -715,6 +744,8 @@ app.include_router(v1_visitor_verification_route_router, prefix="/v1")
 app.include_router(v1_checkin_submit_route_router, prefix="/v1")
 app.include_router(v1_checkout_route_router, prefix="/v1")
 app.include_router(v1_job_route_router, prefix="/v1")
+app.include_router(v1_support_case_route_router, prefix="/v1")
+app.include_router(v1_admin_support_case_route_router, prefix="/v1")
 # App-mode payment simulator — deliberately NOT under /v1 so the URLs
 # match the checkout_url emitted by AppCheckoutPaymentProvider.
 app.include_router(app_payment_route_router)
