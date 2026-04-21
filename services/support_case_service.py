@@ -57,8 +57,10 @@ from schemas.support_case_schema import (
     SupportCaseCreate,
     SupportCaseMessageCreate,
     SupportCaseMessageOut,
+    SupportCaseMessageWithSummaryOut,
     SupportCaseOut,
     SupportCaseUpdate,
+    SupportCaseWithSummaryOut,
 )
 from services.audit_service import record_audit_event
 
@@ -793,6 +795,48 @@ async def assign_support_case(
 # ---------------------------------------------------------------------------
 
 
+async def _enrich_support_case(case: SupportCaseOut) -> SupportCaseWithSummaryOut:
+    from services.summary_resolver import (
+        resolve_admin_summary,
+        resolve_tenant_summary,
+        resolve_user_summary,
+    )
+
+    tenant_s, opener_s, assigned_s = await asyncio.gather(
+        resolve_tenant_summary(case.tenant_id),
+        resolve_user_summary(
+            case.opened_by,
+            user_type="admin" if case.opened_by_role == "admin" else "system_user",
+        ),
+        resolve_admin_summary(case.assigned_admin_id),
+    )
+    data = case.model_dump(by_alias=False)
+    data["tenant_summary"] = tenant_s
+    data["opened_by_summary"] = opener_s
+    data["assigned_admin_summary"] = assigned_s
+    return SupportCaseWithSummaryOut(**data)
+
+
+async def _enrich_support_case_message(
+    msg: SupportCaseMessageOut,
+) -> SupportCaseMessageWithSummaryOut:
+    from services.summary_resolver import resolve_user_summary
+
+    author_type = (
+        "admin"
+        if msg.author_type is not None
+        and (
+            msg.author_type.value if hasattr(msg.author_type, "value") else str(msg.author_type)
+        )
+        == "admin"
+        else "system_user"
+    )
+    author_s = await resolve_user_summary(msg.author_id, user_type=author_type)
+    data = msg.model_dump(by_alias=False)
+    data["author_summary"] = author_s
+    return SupportCaseMessageWithSummaryOut(**data)
+
+
 async def retrieve_support_case_by_id(
     case_id: str,
     *,
@@ -811,9 +855,13 @@ async def retrieve_support_case_by_id(
     messages = await list_messages_for_case(
         case_id, include_internal=include_internal, start=0, stop=500
     )
+    enriched_case, enriched_messages = await asyncio.gather(
+        _enrich_support_case(case),
+        asyncio.gather(*[_enrich_support_case_message(m) for m in messages]),
+    )
     return {
-        "case": case.model_dump(mode="json", by_alias=True),
-        "messages": [m.model_dump(mode="json", by_alias=True) for m in messages],
+        "case": enriched_case.model_dump(mode="json", by_alias=True),
+        "messages": [m.model_dump(mode="json", by_alias=True) for m in enriched_messages],
     }
 
 
@@ -827,7 +875,7 @@ async def retrieve_support_cases(
     support_tier: Optional[str] = None,
     start: int = 0,
     stop: int = 100,
-) -> List[SupportCaseOut]:
+) -> List[SupportCaseWithSummaryOut]:
     cases = await list_support_cases(
         tenant_id=tenant_id,
         status=status,
@@ -848,8 +896,8 @@ async def retrieve_support_cases(
                 tenant_tiers[tid] = t.value
             if tenant_tiers[tid] == support_tier:
                 filtered.append(c)
-        return filtered
-    return cases
+        cases = filtered
+    return list(await asyncio.gather(*[_enrich_support_case(c) for c in cases]))
 
 
 async def retrieve_messages_for_case(
@@ -858,13 +906,14 @@ async def retrieve_messages_for_case(
     requester_role: str,
     start: int = 0,
     stop: int = 200,
-) -> List[SupportCaseMessageOut]:
-    return await list_messages_for_case(
+) -> List[SupportCaseMessageWithSummaryOut]:
+    messages = await list_messages_for_case(
         case_id,
         include_internal=(requester_role == "admin"),
         start=start,
         stop=stop,
     )
+    return list(await asyncio.gather(*[_enrich_support_case_message(m) for m in messages]))
 
 
 async def retrieve_cases_approaching_sla(
@@ -992,13 +1041,13 @@ async def alert_sla_breaches() -> None:
 
 @register_precompute("support_cases.list", scope=PrecomputeScope.TENANT)
 async def _precompute_support_cases_list(tenant_id: str) -> list:
-    cases = await list_support_cases(tenant_id=tenant_id, start=0, stop=100)
+    cases = await retrieve_support_cases(tenant_id=tenant_id, start=0, stop=100)
     return [c.model_dump(mode="json", by_alias=True) for c in cases]
 
 
 @register_precompute("support_cases.admin_list", scope=PrecomputeScope.GLOBAL)
 async def _precompute_support_cases_admin_list(_: str) -> list:
-    cases = await list_support_cases(start=0, stop=100)
+    cases = await retrieve_support_cases(start=0, stop=100)
     return [c.model_dump(mode="json", by_alias=True) for c in cases]
 
 

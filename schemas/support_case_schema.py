@@ -198,3 +198,24 @@ class SupportCaseAttachmentIntentResponse(BaseModel):
     method: str = "PUT"
     headers: dict = Field(default_factory=dict)
     expires_in: int = 900
+
+
+from schemas.summary_schema import TenantBriefSummary, UserBriefSummary  # noqa: E402
+
+
+class SupportCaseWithSummaryOut(SupportCaseOut):
+    """SupportCaseOut enriched with snapshots of every foreign-key it carries.
+
+    Each summary field mirrors the ID field alongside it so the frontend
+    can render a label/badge without a second round-trip.
+    """
+
+    tenant_summary: Optional[TenantBriefSummary] = None
+    opened_by_summary: Optional[UserBriefSummary] = None
+    assigned_admin_summary: Optional[UserBriefSummary] = None
+
+
+class SupportCaseMessageWithSummaryOut(SupportCaseMessageOut):
+    """SupportCaseMessageOut enriched with an author snapshot."""
+
+    author_summary: Optional[UserBriefSummary] = None

@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 from core.queue.tasks import execute_registered_task
 from core import task as _task_registration  # noqa: F401
 from core.queue import registrations as _queue_registrations  # noqa: F401
+from core.queue.celery_provider import CeleryQueueProvider
+from core.queue.manager import QueueManager
 
 load_dotenv()
 
@@ -25,6 +27,11 @@ celery_app.conf.task_routes = {
     "celery_worker.run_async_task": {"queue": "celery"},
     "celery_worker.test_scheduler": {"queue": "celery"},
 }
+
+# Writers enqueue follow-up precompute tasks via QueueManager. Without this
+# the worker process raises "QueueManager is not configured" the moment any
+# writer tries to refresh a cache after committing a mutation.
+QueueManager.configure(CeleryQueueProvider(celery_app=celery_app))
 
 
 @celery_app.task(name="celery_worker.test_scheduler")
