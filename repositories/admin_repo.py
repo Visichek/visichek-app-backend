@@ -1,4 +1,6 @@
+import re
 from pymongo import ReturnDocument
+from bson import ObjectId
 from core.database import db
 from fastapi import HTTPException, status
 from typing import List, Optional
@@ -89,6 +91,65 @@ async def get_admins(filter_dict: dict = {}, start=0, stop=100) -> List[AdminOut
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while fetching admins: {str(e)}",
+        )
+
+
+async def search_admins(
+    query: str, start: int = 0, stop: int = 50
+) -> List[AdminOut]:
+    """Regex-search admins by full_name or email; exact-match on _id when valid.
+
+    Case-insensitive, substring match. The env-configured primary super admin
+    is included when the query matches its id, email, or display name.
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    escaped = re.escape(q)
+    or_clauses: list[dict] = [
+        {"full_name": {"$regex": escaped, "$options": "i"}},
+        {"email": {"$regex": escaped, "$options": "i"}},
+    ]
+    if ObjectId.is_valid(q):
+        or_clauses.append({"_id": ObjectId(q)})
+
+    try:
+        cursor = (
+            db.admins.find({"$or": or_clauses}).skip(start).limit(max(stop - start, 0))
+        )
+        admin_list: List[AdminOut] = []
+        async for doc in cursor:
+            admin_obj = AdminOut(**doc)
+            admin_obj.password = None  # type: ignore
+            admin_list.append(admin_obj)
+
+        q_lower = q.lower()
+        super_email_lower = (SUPER_ADMIN_EMAIL or "").lower()
+        super_matches = bool(SUPER_ADMIN_EMAIL) and (
+            q == "656f7ac12b9d4f6c9e2b9f7d"
+            or (super_email_lower and q_lower in super_email_lower)
+            or q_lower in "super admin"
+        )
+        if super_matches and not any(
+            a.id == "656f7ac12b9d4f6c9e2b9f7d" for a in admin_list
+        ):
+            admin_list.append(
+                AdminOut(
+                    _id="656f7ac12b9d4f6c9e2b9f7d",
+                    full_name="Super Admin",
+                    email=SUPER_ADMIN_EMAIL,
+                    password=SUPER_ADMIN_HASHED_PASSWORD,
+                    accountStatus=AccountStatus.ACTIVE,
+                    permissionList=_ADMIN_PERMISSIONS,
+                )  # type: ignore
+            )
+
+        return admin_list
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while searching admins: {str(e)}",
         )
 
 

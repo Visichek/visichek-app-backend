@@ -90,3 +90,31 @@ class AdminOut(AdminBase):
         populate_by_name = True
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
+
+
+class AdminSearchResult(BaseModel):
+    """Compact, human-readable admin record for search results.
+
+    Strips password, tokens, and the full permission list — callers
+    only need enough to identify and route to the admin.
+    """
+
+    id: str
+    full_name: str
+    email: EmailStr
+    account_status: AccountStatus
+    mfa_enabled: bool = True
+    date_created: Optional[int] = None
+    last_updated: Optional[int] = None
+
+    @classmethod
+    def from_admin_out(cls, admin: "AdminOut") -> "AdminSearchResult":
+        return cls(
+            id=admin.id or "",
+            full_name=admin.full_name,
+            email=admin.email,
+            account_status=admin.accountStatus,
+            mfa_enabled=admin.mfa_enabled,
+            date_created=admin.date_created,
+            last_updated=admin.last_updated,
+        )

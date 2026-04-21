@@ -11,12 +11,18 @@ from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.errors import AppException, ErrorCode
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
+from core.storage.manager import DocumentStorageManager
+from core.storage.types import DocumentMetadata
+from repositories.support_case_repo import get_support_case_by_id
 from schemas.admin_schema import AdminOut
 from schemas.support_case_schema import (
     SupportCaseAssignRequest,
+    SupportCaseAttachmentIntentRequest,
+    SupportCaseAttachmentIntentResponse,
     SupportCaseMessageRequest,
     SupportCaseTransitionRequest,
 )
@@ -238,6 +244,100 @@ async def admin_transition_support_case(
         resource_type="support_case",
         resource_id=case_id,
         tenant_id=None,
+        actor_id=admin.id,
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Attachments (admin side)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{case_id}/attachments/intent")
+@document_response(
+    message="Upload intent issued",
+    description=(
+        "Returns a presigned upload target for an attachment. The admin "
+        "PUTs the file directly, then calls POST /{case_id}/attachments to "
+        "register it."
+    ),
+    summary="Create a presigned upload intent (admin)",
+)
+async def admin_create_attachment_intent(
+    case_id: str,
+    payload: SupportCaseAttachmentIntentRequest,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+) -> SupportCaseAttachmentIntentResponse:
+    case = await get_support_case_by_id(case_id)
+    if case is None:
+        raise AppException(
+            status_code=404,
+            code=ErrorCode.RESOURCE_NOT_FOUND,
+            message="Support case not found",
+        )
+    try:
+        storage = DocumentStorageManager.get_instance()
+    except Exception:
+        raise AppException(
+            status_code=503,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Document storage is not configured",
+        )
+    metadata = DocumentMetadata(
+        owner_id=admin.id or "",
+        file_name=payload.file_name,
+        mime_type=payload.mime_type or "application/octet-stream",
+        size=payload.size or 0,
+        extra={
+            "tenant_id": case.tenant_id or "",
+            "support_case_id": case_id,
+        },
+    )
+    intent = storage.provider.create_upload_intent(metadata)
+    return SupportCaseAttachmentIntentResponse(
+        upload_url=intent.upload_url,
+        object_key=intent.object_key,
+        method=intent.method,
+        headers=intent.headers or {},
+        expires_in=intent.expires_in,
+    )
+
+
+@router.post("/{case_id}/attachments")
+@document_response(
+    message="Support case attachment queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Register a completed upload. The writer creates a thread entry "
+        "carrying the attachment. Admins may flag the entry as an internal "
+        "note, in which case tenants never see it."
+    ),
+    summary="Register an uploaded attachment (admin, async)",
+)
+async def admin_register_support_case_attachment(
+    case_id: str,
+    payload: SupportCaseMessageRequest,
+    request: Request,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    case = await get_support_case_by_id(case_id)
+    if case is None:
+        raise AppException(
+            status_code=404,
+            code=ErrorCode.RESOURCE_NOT_FOUND,
+            message="Support case not found",
+        )
+    body = payload.model_dump(exclude_none=True)
+    body["case_id"] = case_id
+    body["author_id"] = admin.id or ""
+    body["author_role"] = "admin"
+    return await enqueue_write(
+        writer_key="support_case.attachment.add",
+        payload=body,
+        resource_type="support_case_attachment",
+        tenant_id=case.tenant_id,
         actor_id=admin.id,
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),

@@ -7,7 +7,13 @@ from pydantic import BaseModel
 
 from core.response_envelope import document_response, success_payload
 from core.settings import get_settings
-from schemas.admin_schema import AdminLogin, AdminOut, AdminRefresh, AdminSignupRequest
+from schemas.admin_schema import (
+    AdminLogin,
+    AdminOut,
+    AdminRefresh,
+    AdminSearchResult,
+    AdminSignupRequest,
+)
 from schemas.tenant_schema import TenantBootstrapRequest
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_admin_refresh_token
@@ -24,6 +30,7 @@ from services.admin_service import (
     refresh_admin_tokens_reduce_number_of_logins,
     remove_admin,
     retrieve_admins,
+    search_admins_by_query,
     verify_admin_otp,
 )
 from services.tenant_service import bootstrap_tenant
@@ -109,6 +116,72 @@ async def list_admins(
 ):
     items = await retrieve_admins(start=start, stop=stop)
     return items
+
+
+@router.get("/search")
+@document_response(
+    message="Admin search results",
+    description=(
+        "Search application admins by id, email, or full name. Case-insensitive, "
+        "substring match against email and name; exact match when the query is a "
+        "valid ObjectId. Returns a trimmed view with only the fields needed to "
+        "identify an admin — no passwords, tokens, or permission lists."
+    ),
+    summary="Search admins by id, email, or name",
+    include_meta=True,
+    success_example=[
+        {
+            "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+            "full_name": "John Admin",
+            "email": "admin@example.com",
+            "account_status": "ACTIVE",
+            "mfa_enabled": True,
+            "date_created": 1712500000,
+            "last_updated": 1712500600,
+        }
+    ],
+    response_codes={
+        400: "Bad Request - empty search query",
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+    },
+    error_examples={
+        400: {
+            "success": False,
+            "message": "Search query 'q' must not be empty",
+            "code": "VALIDATION_FAILED",
+        },
+        401: {
+            "success": False,
+            "message": "Invalid or expired token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "You do not have permission to perform this action",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+    },
+)
+async def search_admins_endpoint(
+    q: Annotated[
+        str,
+        Query(
+            min_length=1,
+            description="Search term — matched against admin id, email, or full name.",
+        ),
+    ],
+    start: Annotated[
+        int,
+        Query(ge=0, description="Pagination offset."),
+    ] = 0,
+    stop: Annotated[
+        int,
+        Query(gt=0, le=200, description="Pagination limit (exclusive end index)."),
+    ] = 50,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+) -> list[AdminSearchResult]:
+    return await search_admins_by_query(query=q, start=start, stop=stop)
 
 
 @router.get("/profile")

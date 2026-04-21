@@ -798,9 +798,18 @@ async def assign_support_case(
 async def _enrich_support_case(case: SupportCaseOut) -> SupportCaseWithSummaryOut:
     from services.summary_resolver import (
         resolve_admin_summary,
+        resolve_system_user_summary,
         resolve_tenant_summary,
         resolve_user_summary,
     )
+
+    async def _resolve_assignee(assignee_id: Optional[str]):
+        if not assignee_id:
+            return None
+        summary = await resolve_admin_summary(assignee_id)
+        if summary is not None:
+            return summary
+        return await resolve_system_user_summary(assignee_id)
 
     tenant_s, opener_s, assigned_s = await asyncio.gather(
         resolve_tenant_summary(case.tenant_id),
@@ -808,7 +817,7 @@ async def _enrich_support_case(case: SupportCaseOut) -> SupportCaseWithSummaryOu
             case.opened_by,
             user_type="admin" if case.opened_by_role == "admin" else "system_user",
         ),
-        resolve_admin_summary(case.assigned_admin_id),
+        _resolve_assignee(case.assigned_admin_id),
     )
     data = case.model_dump(by_alias=False)
     data["tenant_summary"] = tenant_s

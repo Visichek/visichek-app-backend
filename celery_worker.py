@@ -3,6 +3,7 @@ import os
 from celery import Celery  # type: ignore[import-untyped]
 from dotenv import load_dotenv
 
+from core.email.manager import EmailManager
 from core.queue.tasks import execute_registered_task
 from core import task as _task_registration  # noqa: F401
 from core.queue import registrations as _queue_registrations  # noqa: F401
@@ -32,6 +33,13 @@ celery_app.conf.task_routes = {
 # the worker process raises "QueueManager is not configured" the moment any
 # writer tries to refresh a cache after committing a mutation.
 QueueManager.configure(CeleryQueueProvider(celery_app=celery_app))
+
+# Mount email templates at worker boot. Without this, the first send_email
+# task lazily builds an EmailManager; if template import fails the
+# exception is swallowed by configure_from_settings' try/except and the
+# singleton is cached template-less, making every subsequent render raise
+# "Available: <none>".
+EmailManager.configure_from_settings()
 
 
 @celery_app.task(name="celery_worker.test_scheduler")

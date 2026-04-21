@@ -6,6 +6,7 @@ from repositories.admin_repo import (
     create_admin,
     get_admin,
     get_admins,
+    search_admins,
     update_admin,
     delete_admin,
 )
@@ -15,6 +16,7 @@ from schemas.admin_schema import (
     AdminOut,
     AdminLogin,
     AdminRefresh,
+    AdminSearchResult,
     AdminSignupRequest,
 )
 from security.hash import check_password
@@ -197,6 +199,18 @@ async def retrieve_admin_by_admin_id(id: str) -> AdminOut:
 
 async def retrieve_admins(start=0, stop=100) -> List[AdminOut]:
     return await get_admins(start=start, stop=stop)
+
+
+async def search_admins_by_query(
+    query: str, start: int = 0, stop: int = 50
+) -> List[AdminSearchResult]:
+    """Search admins by id, email, or full name and return trimmed records."""
+    if not query or not query.strip():
+        raise HTTPException(
+            status_code=400, detail="Search query 'q' must not be empty"
+        )
+    matches = await search_admins(query=query, start=start, stop=stop)
+    return [AdminSearchResult.from_admin_out(admin) for admin in matches]
 
 
 async def update_admin_by_id(
