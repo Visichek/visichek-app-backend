@@ -60,3 +60,24 @@ class QueueJobLogOut(QueueJobLogBase):
         populate_by_name = True
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
+
+
+from schemas.summary_schema import (  # noqa: E402
+    TenantBriefSummary,
+    UserBriefSummary,
+)
+
+
+class QueueJobLogWithSummaryOut(QueueJobLogOut):
+    """QueueJobLogOut enriched with actor, tenant, and resource snapshots.
+
+    ``resource_summary`` is polymorphic — its shape depends on
+    ``resource_type`` (e.g. a ``TenantBriefSummary`` when resource_type is
+    ``"tenant"``, a ``PlanBriefSummary`` when ``"plan"``, etc.). For resource
+    types without a registered resolver the field is ``None`` and the client
+    can fall back to the raw ``resource_id`` / ``resource_type`` fields.
+    """
+
+    tenant_summary: Optional[TenantBriefSummary] = None
+    actor_summary: Optional[UserBriefSummary] = None
+    resource_summary: Optional[dict[str, Any]] = None
