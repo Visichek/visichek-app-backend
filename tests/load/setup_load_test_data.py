@@ -27,7 +27,7 @@ async def create_tenant(client: httpx.AsyncClient, super_admin_headers: dict) ->
     }
 
     response = await client.post(
-        f"{BASE_URL}/v1/tenants/",
+        f"{BASE_URL}/v1/tenants",
         json=tenant_data,
         headers=super_admin_headers,
     )
@@ -130,7 +130,7 @@ async def create_departments(
         }
 
         response = await client.post(
-            f"{BASE_URL}/v1/departments/",
+            f"{BASE_URL}/v1/departments",
             json=dept_data,
             headers=headers,
         )

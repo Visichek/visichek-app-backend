@@ -67,7 +67,9 @@ This script will:
 - Create sample appointments
 - Print credentials and IDs for use in load tests
 
-> **Writes are async.** POST `/v1/departments/`, `/v1/visitors`, etc. return `202 Accepted` with a pre-assigned `id`. The setup script already accepts `201 or 202`. If downstream reads look empty immediately after seeding, give `worker-writes` a few seconds to drain before starting Locust.
+> **Writes are async.** POST `/v1/departments`, `/v1/visitors`, etc. return `202 Accepted` with a pre-assigned `id`. The setup script already accepts `201 or 202`. If downstream reads look empty immediately after seeding, give `worker-writes` a few seconds to drain before starting Locust.
+>
+> **No trailing slashes.** FastAPI responds with `307 Temporary Redirect` when you hit a route with a trailing slash that isn't registered that way, and `httpx.AsyncClient` does not follow redirects by default — so `POST /v1/tenants/` silently fails. All URLs in the setup script and locustfiles are already in their canonical no-trailing-slash form; keep it that way if you add new calls.
 
 Sample output:
 ```
