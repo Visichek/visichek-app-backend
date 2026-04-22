@@ -54,16 +54,94 @@ async def submit_verified_checkin(
     Either way, the visitor's `verified` flag propagates to the Checkin and the
     check-in is created in PENDING_APPROVAL with the usual notification.
     """
-    from repositories.visitor_repo import find_visitor_by_email_or_phone_any
-    from schemas.visitor_schema import VisitorCreate
-
-    # 1. Resolve config
     config = await get_checkin_config({"_id": checkin_config_id, "active": True})
     if not config:
         raise resource_not_found(
             resource="CheckinConfig", resource_id=checkin_config_id
         )
-    tenant_id = config.tenant_id
+    return await _submit_verified_checkin_core(
+        tenant_id=config.tenant_id,
+        checkin_config_id=checkin_config_id,
+        required_field_keys={f.key for f in config.required_fields},
+        email=email,
+        phone=phone,
+        bio_data=bio_data,
+        tenant_specific_data=tenant_specific_data,
+        purpose=purpose,
+        id_file_bytes=id_file_bytes,
+        id_file_mime=id_file_mime,
+        id_type=id_type,
+    )
+
+
+async def submit_verified_checkin_for_tenant(
+    *,
+    tenant_id: str,
+    email: str,
+    phone: str,
+    bio_data: dict,
+    tenant_specific_data: dict,
+    purpose: CheckinPurpose,
+    id_file_bytes: Optional[bytes] = None,
+    id_file_mime: Optional[str] = None,
+    id_type: Optional[IDType] = None,
+) -> CheckinOut:
+    """Tenant-scoped submit. Resolves the tenant's active config, or falls back
+    to the default required-field set when the tenant hasn't configured one yet.
+
+    Used by the public kiosk endpoint ``POST /public/tenants/{tenant_id}/submit``
+    so the kiosk can submit against the tenant even when the super_admin has
+    not yet customized the check-in form.
+    """
+    from repositories.tenant_repo import get_tenant
+    from repositories.checkin_config_repo import (
+        get_active_checkin_config_for_tenant,
+    )
+    from services.checkin_config_service import DEFAULT_REQUIRED_FIELDS
+
+    tenant = await get_tenant({"_id": tenant_id})
+    if not tenant:
+        raise resource_not_found(resource="Tenant", resource_id=tenant_id)
+
+    config = await get_active_checkin_config_for_tenant(tenant_id)
+    if config is not None:
+        checkin_config_id = config.id or ""
+        required_field_keys = {f.key for f in config.required_fields}
+    else:
+        checkin_config_id = ""
+        required_field_keys = {f.key for f in DEFAULT_REQUIRED_FIELDS}
+
+    return await _submit_verified_checkin_core(
+        tenant_id=tenant_id,
+        checkin_config_id=checkin_config_id,
+        required_field_keys=required_field_keys,
+        email=email,
+        phone=phone,
+        bio_data=bio_data,
+        tenant_specific_data=tenant_specific_data,
+        purpose=purpose,
+        id_file_bytes=id_file_bytes,
+        id_file_mime=id_file_mime,
+        id_type=id_type,
+    )
+
+
+async def _submit_verified_checkin_core(
+    *,
+    tenant_id: str,
+    checkin_config_id: str,
+    required_field_keys: set[str],
+    email: str,
+    phone: str,
+    bio_data: dict,
+    tenant_specific_data: dict,
+    purpose: CheckinPurpose,
+    id_file_bytes: Optional[bytes] = None,
+    id_file_mime: Optional[str] = None,
+    id_type: Optional[IDType] = None,
+) -> CheckinOut:
+    from repositories.visitor_repo import find_visitor_by_email_or_phone_any
+    from schemas.visitor_schema import VisitorCreate
 
     if not email or not phone:
         raise AppException(
@@ -151,7 +229,6 @@ async def submit_verified_checkin(
 
     # 3. Validate required fields against combined data
     available_keys = set(merged_bio_data.keys()) | set(tenant_specific_data.keys())
-    required_field_keys = {f.key for f in config.required_fields}
     missing_fields = required_field_keys - available_keys
     if missing_fields:
         raise AppException(

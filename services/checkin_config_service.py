@@ -22,7 +22,7 @@ from schemas.checkin_config_schema import (
 from schemas.imports import CheckinFieldCategory
 
 
-_DEFAULT_REQUIRED_FIELDS: list[CheckinFieldDef] = [
+DEFAULT_REQUIRED_FIELDS: list[CheckinFieldDef] = [
     CheckinFieldDef(
         key="full_name",
         label="Full Name",
@@ -137,7 +137,7 @@ async def resolve_public_config_by_tenant(tenant_id: str) -> PublicCheckinConfig
             logo_url=logo_url,
             id_upload_enabled=True,
             allow_returning_visitor_lookup=True,
-            required_fields=list(_DEFAULT_REQUIRED_FIELDS),
+            required_fields=list(DEFAULT_REQUIRED_FIELDS),
         )
 
     return PublicCheckinConfigOut(

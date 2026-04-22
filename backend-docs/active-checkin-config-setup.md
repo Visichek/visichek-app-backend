@@ -5,7 +5,7 @@ The **check-in configuration** controls what fields the visitor-facing kiosk / p
 This doc covers:
 - Who can create / update the config (role requirements).
 - The endpoints to call.
-- The tenant-scoped public endpoint `GET /v1/public/tenants/{tenant_id}/active-checkin-config` (used by the kiosk) and its **default-fallback** behavior when no config has been created yet.
+- The tenant-scoped public endpoints `GET /v1/public/tenants/{tenant_id}/active-checkin-config` (used by the kiosk to fetch the form definition) and `POST /v1/public/tenants/{tenant_id}/submit` (used by the kiosk to submit a check-in), and their **default-fallback** behavior when no config has been created yet.
 - How the frontend should render the response.
 
 Companion docs: [frontend-checkin-workflow.md](frontend-checkin-workflow.md) (full visitor check-in flow), [registration-qr-workflow.md](registration-qr-workflow.md) (registration QR flow).
@@ -21,6 +21,8 @@ Companion docs: [frontend-checkin-workflow.md](frontend-checkin-workflow.md) (fu
 | `GET /v1/checkin-configs` (list for current tenant) | `super_admin`, `dept_admin` |
 | `GET /v1/checkin-configs/{checkin_config_id}` (read by config id) | Unauthenticated (kiosk-facing) |
 | `GET /v1/public/tenants/{tenant_id}/active-checkin-config` (read active by tenant) | Unauthenticated (kiosk / registration form) |
+| `POST /v1/public/tenants/{tenant_id}/submit` (submit a check-in by tenant) | Unauthenticated (kiosk) |
+| `POST /v1/checkin-configs/{checkin_config_id}/submit` (submit a check-in by config id) | Unauthenticated (kiosk) |
 
 **Short version:** Only a Tenant Super Admin can create or edit the check-in config. Department admins can view the list. The two public read endpoints require no auth — they are what the kiosk / public registration form call.
 
@@ -78,6 +80,72 @@ The only 404 from this endpoint is when the **tenant itself** does not exist:
 ```json
 { "success": false, "code": "RESOURCE_NOT_FOUND", "message": "Tenant not found" }
 ```
+
+---
+
+## 3a. Submitting a check-in (kiosk)
+
+The kiosk has two equivalent submit paths, both unauthenticated and both accepting the same `multipart/form-data` body:
+
+| Endpoint | Use when |
+|----------|----------|
+| `POST /v1/public/tenants/{tenant_id}/submit` | **Preferred.** The kiosk only knows the `tenant_id` (e.g. after reading it from a scanned QR deep link or the public registration URL). Server resolves the tenant's active config, or falls back to the default required-field set when none exists. |
+| `POST /v1/checkin-configs/{checkin_config_id}/submit` | The kiosk already has a specific `checkin_config_id` (e.g. a per-location kiosk hardcoded against one config). |
+
+Both call the same underlying logic — use whichever fits the kiosk's deployment model.
+
+### Request — multipart/form-data
+
+```
+POST /v1/public/tenants/{tenant_id}/submit
+Content-Type: multipart/form-data
+```
+
+| Form field | Required | Type | Notes |
+|------------|----------|------|-------|
+| `email` | yes | string | Visitor email |
+| `phone` | yes | string | E.164 preferred |
+| `purpose` | yes | string (JSON) | JSON-encoded `CheckinPurpose` — `{ "purpose": "...", "purpose_details": "...", "expected_duration_minutes": 30 }` |
+| `bio_data` | no (default `{}`) | string (JSON) | Free-form bio fields keyed by `CheckinFieldDef.key` for `category === "bio"`. Must include any `required: true` bio keys. |
+| `tenant_specific_data` | no (default `{}`) | string (JSON) | Free-form visit-specific fields keyed by `CheckinFieldDef.key` for `category === "tenant_specific"`. Must include any `required: true` tenant_specific keys. |
+| `id_type` | no | enum | One of the `IDType` values. Required when `id_file` is uploaded. |
+| `id_file` | no | file | ID document image (JPEG/PNG). When present, OCR + face verification run server-side and the visitor record is marked `verified=true`. |
+
+### Success — 201
+
+```json
+{
+  "success": true,
+  "message": "Check-in submitted",
+  "data": {
+    "id": "507f1f77bcf86cd799439013",
+    "tenant_id": "t123",
+    "visitor_id": "v456",
+    "checkin_config_id": "",
+    "state": "pending_approval",
+    "verified": true,
+    "tenant_specific_data": { "purpose_text": "Q2 review" },
+    "purpose": { "purpose": "meeting" },
+    "date_created": 1712000000,
+    "last_updated": 1712000000
+  }
+}
+```
+
+`checkin_config_id === ""` on the response means the submit landed in default-mode (the tenant hasn't customized their config yet). This is a diagnostic signal — downstream reports that group check-ins by config id should treat `""` as "default config".
+
+### Error codes
+
+| Status | Meaning |
+|--------|---------|
+| 400 | Missing `email`/`phone`, malformed JSON in a form field, or a required field (per config / defaults) is missing from `bio_data` + `tenant_specific_data`. |
+| 404 | Tenant not found. |
+| 409 | Visitor already has a pending check-in. |
+| 422 | ID verification failed — either retry with a clearer image or resubmit without `id_file` / `id_type` to fall back to manual entry. |
+
+### Validation against the default field set
+
+When no config exists for the tenant, the server validates `bio_data | tenant_specific_data` against the default required-field keys: `full_name`, `email`, `phone`, `purpose`. (`company` is in defaults but not required.) The kiosk should already be rendering these fields from the `GET .../active-checkin-config` response, so this is transparent to the caller.
 
 ---
 
@@ -218,6 +286,7 @@ Show the returned `job_id` as a small "Saving…" indicator; poll `/v1/jobs/{job
 ## 9. Common mistakes
 
 - **Calling `/v1/checkin-configs/{checkin_config_id}` before the tenant has a config.** That endpoint 404s by design (it's keyed by config id). For first-load / defaults, call `/v1/public/tenants/{tenant_id}/active-checkin-config` instead.
+- **Submitting against `/v1/checkin-configs/{checkin_config_id}/submit` when you only have a tenant_id.** Use `/v1/public/tenants/{tenant_id}/submit` — it resolves the active config (or defaults) server-side.
 - **Treating the empty `checkin_config_id` as an error.** It's the default-mode signal. Render the default form and prompt the super_admin to customize.
 - **Sending `tenant_id` in the POST body.** It's taken from the auth token — any value sent is overridden server-side.
 - **Expecting `PATCH` to merge `required_fields`.** It replaces the array wholesale. Read the current list first, modify it, then PATCH the full array back.

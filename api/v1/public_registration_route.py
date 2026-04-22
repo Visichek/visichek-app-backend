@@ -1,12 +1,19 @@
-from fastapi import APIRouter, File, UploadFile, status
+import json
+from typing import Optional
 
+from fastapi import APIRouter, File, Form, UploadFile, status
+
+from core.errors import AppException, ErrorCode
 from core.response_envelope import document_response
+from schemas.checkin_schema import CheckinOut, CheckinPurpose
+from schemas.imports import IDType
 from schemas.public_registration_schema import (
     PublicFinalizeRequest,
     PublicRegistrationRequest,
     PublicReturningVisitorLookupRequest,
 )
 from services.checkin_config_service import resolve_public_config_by_tenant
+from services.checkin_service import submit_verified_checkin_for_tenant
 from services.public_registration_service import (
     checkout_visitor_public,
     finalize_public_registration,
@@ -100,6 +107,95 @@ async def get_privacy_notice_public_endpoint(tenant_id: str):
 )
 async def public_checkout_endpoint(badge_qr_token: str):
     return await checkout_visitor_public(badge_qr_token=badge_qr_token)
+
+
+def _parse_json_dict(raw: str, field_name: str) -> dict:
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message=f"{field_name} must be a valid JSON object",
+        ) from exc
+    if not isinstance(value, dict):
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message=f"{field_name} must be a JSON object",
+        )
+    return value
+
+
+@router.post("/tenants/{tenant_id}/submit", status_code=status.HTTP_201_CREATED)
+@document_response(
+    message="Check-in submitted",
+    status_code=status.HTTP_201_CREATED,
+    description=(
+        "Public kiosk submit endpoint keyed by tenant_id. Resolves the tenant's "
+        "active check-in configuration server-side; falls back to the default "
+        "required-field set when the tenant has not configured one. Same "
+        "multipart contract as POST /checkin-configs/{checkin_config_id}/submit: "
+        "if `id_file` is uploaded, OCR + face verification run and the visitor "
+        "is marked verified. 422 on verification failure — retry with a clearer "
+        "ID or resubmit without the file."
+    ),
+    summary="Submit check-in by tenant (optional ID verification)",
+    response_codes={
+        400: "Missing/invalid fields or malformed JSON in a form field",
+        404: "Tenant not found",
+        409: "Visitor has a pending check-in already",
+        422: "ID verification failed — retry with clearer ID or submit without file",
+    },
+)
+async def submit_checkin_for_tenant_endpoint(
+    tenant_id: str,
+    email: str = Form(...),
+    phone: str = Form(...),
+    purpose: str = Form(..., description="JSON object"),
+    bio_data: str = Form("{}", description="JSON object — fields from the ID"),
+    tenant_specific_data: str = Form("{}", description="JSON object"),
+    id_type: Optional[IDType] = Form(None),
+    id_file: Optional[UploadFile] = File(None),
+) -> CheckinOut:
+    bio_dict = _parse_json_dict(bio_data, "bio_data")
+    tsd_dict = _parse_json_dict(tenant_specific_data, "tenant_specific_data")
+    purpose_dict = _parse_json_dict(purpose, "purpose")
+
+    try:
+        purpose_obj = CheckinPurpose(**purpose_dict)
+    except Exception as exc:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message=f"purpose is invalid: {exc}",
+        ) from exc
+
+    file_bytes: Optional[bytes] = None
+    file_mime: Optional[str] = None
+    if id_file is not None:
+        file_bytes = await id_file.read()
+        if not file_bytes:
+            raise AppException(
+                status_code=400,
+                code=ErrorCode.VALIDATION_FAILED,
+                message="id_file is empty",
+            )
+        file_mime = id_file.content_type or "application/octet-stream"
+
+    return await submit_verified_checkin_for_tenant(
+        tenant_id=tenant_id,
+        email=email,
+        phone=phone,
+        bio_data=bio_dict,
+        tenant_specific_data=tsd_dict,
+        purpose=purpose_obj,
+        id_file_bytes=file_bytes,
+        id_file_mime=file_mime,
+        id_type=id_type,
+    )
 
 
 @router.get("/tenants/{tenant_id}/active-checkin-config")
