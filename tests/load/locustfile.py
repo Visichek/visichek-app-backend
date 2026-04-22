@@ -5,6 +5,7 @@ import random
 import time
 from typing import Any, Optional
 from locust import HttpUser, task, between, events, tag
+from locust.exception import StopUser
 import logging
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,39 @@ def _otp_challenge_id(data: dict) -> Optional[str]:
     if not (data.get("otp_required") or data.get("otpRequired")):
         return None
     return _pick(data, "otp_challenge_id", "otpChallengeId")
+
+
+def _safe_random_password(prefix: str = "LoadTest") -> str:
+    """Generate a random password guaranteed to pass validate_password_strength().
+
+    Rules enforced by security/password_policy.py:
+      - 8..128 chars, at least one upper/lower/digit/special
+      - Not in the common-passwords list
+      - No 4+ ascending/descending sequential chars (``1234``, ``abcd``)
+      - No 4+ repeated chars (``aaaa``, ``1111``)
+
+    The old ``LoadPass_{rand}!`` shape would periodically embed runs like
+    "1234" or "9999" and fail, surfacing as 422 on bootstrap. Pick each
+    digit independently and re-sample on any sequential/repeated run.
+    """
+    import string
+
+    alphabet = string.digits
+    while True:
+        digits = "".join(random.choice(alphabet) for _ in range(6))
+        # 4+ repeated run (e.g. "1111")
+        if any(digits[i] == digits[i + 1] == digits[i + 2] == digits[i + 3] for i in range(len(digits) - 3)):
+            continue
+        # 4+ ascending or descending run
+        def _is_seq(chunk: str) -> bool:
+            a, b, c, d = (ord(x) for x in chunk)
+            return (b - a, c - b, d - c) in ((1, 1, 1), (-1, -1, -1))
+        if any(_is_seq(digits[i : i + 4]) for i in range(len(digits) - 3)):
+            continue
+        break
+    # prefix is PascalCase so we satisfy upper+lower, digits satisfy digit,
+    # and the trailing "!_" satisfies special (two of them for safety).
+    return f"{prefix}{digits}!_"
 
 
 def _verify_otp(
@@ -74,8 +108,15 @@ def login_and_resolve_data(
         headers=INCLUDE_TOKENS_HEADERS,
     )
     if login_resp.status_code != 200:
+        # Log the full response so the user can see WHY a 422 happened.
+        # FastAPI surfaces pydantic errors under data.details.errors and
+        # HTTPException details under data.details. Truncate only defensively.
         logger.error(
-            f"Login failed at {login_url}: {login_resp.status_code} - {login_resp.text[:200]}"
+            "Login failed at %s [email=%s] status=%s body=%s",
+            login_url,
+            email,
+            login_resp.status_code,
+            login_resp.text[:600],
         )
         return None
 
@@ -91,13 +132,21 @@ def login_and_resolve_data(
         )
         if otp_resp.status_code != 200:
             logger.error(
-                f"OTP verify failed at {verify_url}: {otp_resp.status_code} - {otp_resp.text[:200]}"
+                "OTP verify failed at %s status=%s body=%s",
+                verify_url,
+                otp_resp.status_code,
+                otp_resp.text[:600],
             )
             return None
         data = otp_resp.json().get("data", {}) or {}
 
     if not _pick(data, "access_token", "accessToken"):
-        logger.error(f"No access token in response from {login_url}")
+        logger.error(
+            "No access token in response from %s — ensure the server accepts "
+            "the X-Auth-Include-Tokens header (responses otherwise scrub the "
+            "token to null and only set an httpOnly cookie).",
+            login_url,
+        )
         return None
     return data
 
@@ -133,7 +182,7 @@ class VisichekLoadUser(HttpUser):
         """Initialize user session: authenticate, create tenant/department."""
         logger.info("Initializing load test user")
 
-        email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.test")
+        email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.com")
         password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
 
         auth_data = login_and_resolve_data(
@@ -146,7 +195,14 @@ class VisichekLoadUser(HttpUser):
             verify_name="/v1/system-users/verify-otp",
         )
         if auth_data is None:
-            raise Exception("Failed to login (see previous log lines)")
+            # Stop this user cleanly instead of bubbling a generic Exception
+            # — the generic raise shows up in Locust's "exceptions" tab and
+            # masks the real 4xx body, which we've already logged.
+            logger.warning(
+                "VisichekLoadUser login failed — stopping this user. "
+                "Seed the super_admin with tests/load/setup_load_test_data.py."
+            )
+            raise StopUser()
 
         access_token = access_token_of(auth_data)
         self.headers = {"Authorization": f"Bearer {access_token}"}
@@ -164,7 +220,7 @@ class VisichekLoadUser(HttpUser):
                 "notice_display_mode": "passive",
                 "retention_days": 30,
                 "default_retention_action": "anonymise",
-                "dpo_contact_email": "dpo@loadtest.local",
+                "dpo_contact_email": "dpo@loadtest.com",
                 "privacy_policy_url": "https://example.com/privacy",
                 "country_of_hosting": "United States",
             }
@@ -290,7 +346,7 @@ class VisichekLoadUser(HttpUser):
             name="/v1/visitors/check-in",
         )
 
-        if response.status_code == 201:
+        if response.status_code in (200, 201, 202):
             session_data = response.json().get("data", {})
             session_id = session_data.get("id")
             badge_token = session_data.get("badge_qr_token")
@@ -419,13 +475,12 @@ class VisichekLoadUser(HttpUser):
             "tenant_id": self.tenant_id,
             "department_id": self.department_id,
             "host_id": self.user_id,
-            "visitor_name": f"Guest {random.randint(100, 999)}",
-            "visitor_email": f"guest{random.randint(1000, 9999)}@example.com",
-            "visitor_phone": f"+234{random.randint(8000000000, 8099999999)}",
-            "appointment_date": future_time,
+            "visitor_name_snapshot": f"Guest {random.randint(100, 999)}",
+            "scheduled_datetime": future_time,
             "purpose": random.choice(
                 ["Meeting", "Interview", "Consultation", "Review"]
             ),
+            "status": "scheduled",
         }
 
         response = self.client.post(
@@ -435,7 +490,7 @@ class VisichekLoadUser(HttpUser):
             name="/v1/appointments",
         )
 
-        if response.status_code != 201:
+        if response.status_code not in (200, 201, 202):
             logger.warning(f"Create appointment failed: {response.status_code}")
 
     @task(2)
@@ -484,7 +539,7 @@ class ComplianceLoadUser(HttpUser):
         self._incident_ids: list[str] = []
 
     def on_start(self) -> None:
-        email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.test")
+        email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.com")
         password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
 
         data = login_and_resolve_data(
@@ -497,7 +552,13 @@ class ComplianceLoadUser(HttpUser):
             verify_name="/v1/system-users/verify-otp (compliance)",
         )
         if data is None:
-            raise Exception("Compliance user login failed (see previous log lines)")
+            # Stopping the user avoids every task firing unauthenticated
+            # against `/v1/compliance/*` and inflating the failure counter.
+            logger.warning(
+                "Compliance user login failed — stopping this user. "
+                "Seed the super_admin with tests/load/setup_load_test_data.py."
+            )
+            raise StopUser()
 
         self.headers = {"Authorization": f"Bearer {access_token_of(data)}"}
         self.tenant_id = tenant_id_of(data)
@@ -536,7 +597,7 @@ class ComplianceLoadUser(HttpUser):
                 ]
             ),
             "lawful_basis": random.choice(["consent", "legitimate_interest"]),
-            "retention_period": random.choice([90, 180, 365, 730]),
+            "retention_period": str(random.choice([90, 180, 365, 730])),
             "crosses_borders": random.choice([True, False]),
         }
         self.client.post(
@@ -731,7 +792,7 @@ class AdminLoadUser(HttpUser):
         self._doc_ids: list[str] = []
 
     def on_start(self) -> None:
-        email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.test")
+        email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.com")
         password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
 
         data = login_and_resolve_data(
@@ -744,7 +805,11 @@ class AdminLoadUser(HttpUser):
             verify_name="/v1/system-users/verify-otp (admin)",
         )
         if data is None:
-            raise Exception("Admin user login failed (see previous log lines)")
+            logger.warning(
+                "Admin user login failed — stopping this user. "
+                "Seed the super_admin with tests/load/setup_load_test_data.py."
+            )
+            raise StopUser()
 
         self.headers = {"Authorization": f"Bearer {access_token_of(data)}"}
         self.tenant_id = tenant_id_of(data)
@@ -949,18 +1014,28 @@ class BootstrapLoadUser(HttpUser):
 
         ts = int(time.time())
         rand = random.randint(1000, 99999)
+        # `LoadPass_{rand}!` used to embed random digits that would hit the
+        # password-policy sequential/repeated-run checks (e.g. 1234, 5678,
+        # 9999). TenantBootstrapRequest runs validate_password_strength()
+        # inside an @model_validator, so a failing password surfaces as a
+        # 422 on the whole bootstrap. Generate a guaranteed-valid password
+        # once per call instead.
+        password = _safe_random_password("LoadPass")
         payload = {
             "company_name": f"LoadTest Corp {ts}_{rand}",
             "lawful_basis": random.choice(["consent", "legitimate_interest"]),
             "notice_display_mode": random.choice(["passive", "active_consent"]),
             "retention_days": random.choice([365, 730, 1095]),
-            "dpo_contact_email": f"dpo_{rand}@loadtest.local",
+            "dpo_contact_email": f"dpo_{rand}@loadtest.com",
             "country_of_hosting": random.choice(
                 ["Nigeria", "United States", "United Kingdom"]
             ),
+            # Non-Nigeria hosting triggers a 400 in tenant_service unless the
+            # caller explicitly opts in. Always approve for the load test.
+            "cross_border_approved": True,
             "admin_full_name": f"SA {rand}",
-            "admin_email": f"sa_{ts}_{rand}@loadtest.local",
-            "admin_password": f"LoadPass_{rand}!",
+            "admin_email": f"sa_{ts}_{rand}@loadtest.com",
+            "admin_password": password,
         }
 
         resp = self.client.post(
@@ -969,7 +1044,7 @@ class BootstrapLoadUser(HttpUser):
             headers=self.headers,
             name="/v1/admins/tenants/bootstrap",
         )
-        if resp.status_code in (200, 201):
+        if resp.status_code in (200, 201, 202):
             data = resp.json().get("data", {})
             tenant = data.get("tenant") or {}
             super_admin = data.get("super_admin") or data.get("superAdmin") or {}
@@ -978,12 +1053,14 @@ class BootstrapLoadUser(HttpUser):
                     "tenant_id": tenant.get("id"),
                     "sa_token": _pick(super_admin, "access_token", "accessToken"),
                     "sa_email": payload["admin_email"],
-                    "sa_password": payload["admin_password"],
+                    "sa_password": password,
                 }
             )
             logger.debug(f"Bootstrapped tenant: {payload['company_name']}")
         else:
-            logger.warning(f"Bootstrap failed: {resp.status_code}")
+            logger.warning(
+                f"Bootstrap failed: {resp.status_code} - {resp.text[:300]}"
+            )
 
     @task(3)
     @tag("bootstrap", "login")
@@ -1073,16 +1150,26 @@ class BillingLoadUser(HttpUser):
             login_name="/v1/admins/login (billing)",
             verify_name="/v1/admins/verify-otp (billing)",
         )
-        if admin_data is not None:
-            self.admin_headers = {
-                "Authorization": f"Bearer {access_token_of(admin_data)}"
-            }
-            logger.info("Authenticated as application admin for billing")
-        else:
-            logger.warning("Admin billing auth failed")
+        if admin_data is None:
+            # Every billing task either needs admin_headers (plan CRUD,
+            # discounts, reports) or self.headers (invoices, subscriptions).
+            # Without admin auth most requests are 401/403 noise that masks
+            # the actual billing throughput we're trying to measure.
+            logger.warning(
+                "Admin billing auth failed — stopping this user. "
+                "Check LOAD_TEST_ADMIN_EMAIL / LOAD_TEST_ADMIN_PASSWORD."
+            )
+            raise StopUser()
 
-        # Also get super_admin/tenant auth if needed
-        email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.test")
+        self.admin_headers = {
+            "Authorization": f"Bearer {access_token_of(admin_data)}"
+        }
+        logger.info("Authenticated as application admin for billing")
+
+        # Also try to get super_admin/tenant auth for tenant-scoped reads
+        # (invoices/subscriptions). Non-fatal — tasks already guard on
+        # ``self.headers`` being empty.
+        email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.com")
         password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
 
         user_data = login_and_resolve_data(
@@ -1134,7 +1221,7 @@ class BillingLoadUser(HttpUser):
             headers=self.admin_headers,
             name="/v1/plans/ (create)",
         )
-        if resp.status_code == 201:
+        if resp.status_code in (200, 201, 202):
             plan_id = resp.json().get("data", {}).get("id")
             if plan_id:
                 self.plan_ids.append(plan_id)
@@ -1205,7 +1292,7 @@ class BillingLoadUser(HttpUser):
             headers=self.admin_headers,
             name="/v1/subscriptions/ (create)",
         )
-        if resp.status_code == 201:
+        if resp.status_code in (200, 201, 202):
             sub_id = resp.json().get("data", {}).get("id")
             if sub_id:
                 self.subscription_ids.append(sub_id)
@@ -1321,13 +1408,21 @@ class BillingLoadUser(HttpUser):
         if not self.admin_headers:
             return
         ts = int(time.time())
+        # DiscountCreate validates value against discount_type:
+        #   - percentage: 0 <= value <= 100
+        #   - fixed:      value >= 0
+        # Previously the locustfile picked type and value independently, which
+        # routinely produced {type: "percentage", value: 1000} → 422.
+        discount_type = random.choice(["percentage", "fixed"])
+        if discount_type == "percentage":
+            value: float = random.choice([5.0, 10.0, 25.0, 50.0])
+        else:
+            value = random.choice([100.0, 500.0, 1000.0])
         payload = {
-            "code": f"LOAD-{ts}-{random.randint(100, 999)}",
+            "code": f"LOAD_{ts}_{random.randint(100, 999)}",
             "name": f"Load Test Discount {ts}",
-            "discount_type": random.choice(["percentage", "fixed"]),
-            "value": random.choice([5.0, 10.0, 25.0, 50.0])
-            if random.random() > 0.5
-            else random.choice([100, 500, 1000]),
+            "discount_type": discount_type,
+            "value": value,
             "scope": "global",
             "max_redemptions": random.choice([10, 50, 100, 500]),
         }
@@ -1337,7 +1432,7 @@ class BillingLoadUser(HttpUser):
             headers=self.admin_headers,
             name="/v1/discounts/ (create)",
         )
-        if resp.status_code == 201:
+        if resp.status_code in (200, 201, 202):
             disc_id = resp.json().get("data", {}).get("id")
             if disc_id:
                 self.discount_ids.append(disc_id)
@@ -1352,11 +1447,14 @@ class BillingLoadUser(HttpUser):
             return
         now = int(time.time())
         start = now - 2592000  # 30 days ago
+        # Route lives under /v1/admins/dashboard/billing (application-admin
+        # scoped). The query params are `start_date` / `end_date` — earlier
+        # iterations used `/v1/billing/summary` + `start`/`end`, which 404d.
         self.client.get(
-            "/v1/billing/summary",
-            params={"start": start, "end": now},
+            "/v1/admins/dashboard/billing",
+            params={"start_date": start, "end_date": now},
             headers=self.admin_headers,
-            name="/v1/billing/summary (report)",
+            name="/v1/admins/dashboard/billing (report)",
         )
 
     @task(1)
@@ -1366,9 +1464,9 @@ class BillingLoadUser(HttpUser):
         if not self.admin_headers:
             return
         self.client.get(
-            "/v1/billing/discrepancies",
+            "/v1/admins/dashboard/billing/discrepancies",
             headers=self.admin_headers,
-            name="/v1/billing/discrepancies (detect)",
+            name="/v1/admins/dashboard/billing/discrepancies (detect)",
         )
 
     # --- Health Checks ---

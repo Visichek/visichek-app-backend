@@ -117,7 +117,7 @@ class PlanAdminUser(HttpUser):
             headers=self.auth_headers,
             name="/v1/plans [POST]",
         )
-        if resp.status_code == 201:
+        if resp.status_code in (200, 201, 202):
             plan_id = resp.json()["data"]["id"]
             self.created_plan_ids.append(plan_id)
 
@@ -164,7 +164,7 @@ class PlanAdminUser(HttpUser):
             headers=self.auth_headers,
             name="/v1/discounts [POST]",
         )
-        if resp.status_code == 201:
+        if resp.status_code in (200, 201, 202):
             self.created_discount_ids.append(resp.json()["data"]["id"])
 
     @task(6)
@@ -220,7 +220,7 @@ class SubscriptionUser(HttpUser):
             headers=self.auth_headers,
             name="/v1/plans [POST lifecycle]",
         )
-        if plan_resp.status_code != 201:
+        if plan_resp.status_code not in (200, 201, 202):
             return
         plan_id = plan_resp.json()["data"]["id"]
 
@@ -230,13 +230,13 @@ class SubscriptionUser(HttpUser):
             json={
                 "company_name": f"Load Corp {ts}",
                 "admin_full_name": "Load SA",
-                "admin_email": f"load_sa_{ts}@test.test",
+                "admin_email": f"load_sa_{ts}@loadtest.com",
                 "admin_password": "LoadTest123!",
             },
             headers=self.auth_headers,
             name="/v1/admins/tenants/bootstrap [POST lifecycle]",
         )
-        if tenant_resp.status_code != 201:
+        if tenant_resp.status_code not in (200, 201, 202):
             return
         tenant_id = tenant_resp.json()["data"]["tenant"]["id"]
 
@@ -247,7 +247,7 @@ class SubscriptionUser(HttpUser):
             headers=self.auth_headers,
             name="/v1/subscriptions [POST lifecycle]",
         )
-        if sub_resp.status_code != 201:
+        if sub_resp.status_code not in (200, 201, 202):
             return
 
         # Cancel

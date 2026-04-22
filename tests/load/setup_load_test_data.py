@@ -149,7 +149,7 @@ async def bootstrap_tenant(
         "notice_display_mode": "passive",
         "retention_days": 30,
         "default_retention_action": "anonymise",
-        "dpo_contact_email": "dpo@loadtest.local",
+        "dpo_contact_email": "dpo@loadtest.com",
         "privacy_policy_url": "https://example.com/privacy",
         "country_of_hosting": "United States",
         "cross_border_approved": True,
@@ -619,10 +619,10 @@ async def main():
         # Step 3: Create system users (receptionist, dept_admin) in the tenant
         print("\nStep 3: Creating system users...")
         receptionist_email = os.getenv(
-            "LOAD_TEST_RECEPTIONIST_EMAIL", "loadtest_receptionist@visichek.test"
+            "LOAD_TEST_RECEPTIONIST_EMAIL", "loadtest_receptionist@visichek.com"
         )
         dept_admin_email = os.getenv(
-            "LOAD_TEST_DEPT_ADMIN_EMAIL", "loadtest_dept_admin@visichek.test"
+            "LOAD_TEST_DEPT_ADMIN_EMAIL", "loadtest_dept_admin@visichek.com"
         )
 
         try:
