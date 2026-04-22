@@ -17,6 +17,7 @@ def _resolve_support_tier_value(sub: Any, plan: Any) -> str:
         return tier.value if hasattr(tier, "value") else str(tier)
     return "none"
 
+
 # Cache TTL in seconds (5 minutes for plan data, good balance of freshness vs performance)
 PLAN_CACHE_TTL = 300
 TENANT_PLAN_PREFIX = "tenant_plan:"
@@ -266,9 +267,7 @@ def _build_resolved_from_raw(sub: dict, plan: dict, tenant_id: str) -> dict:
         "custom_branding": plan.get("custom_branding"),
         "api_access": plan.get("api_access"),
         "support_tier": (
-            sub.get("support_tier_override")
-            or plan.get("support_tier")
-            or "none"
+            sub.get("support_tier_override") or plan.get("support_tier") or "none"
         ),
         "effective_price": sub.get("effective_price"),
         "billing_cycle": sub.get("billing_cycle"),

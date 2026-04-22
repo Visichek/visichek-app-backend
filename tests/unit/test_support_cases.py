@@ -122,17 +122,13 @@ class TestStateMachine:
         from core.errors import AppException
 
         with pytest.raises(AppException):
-            support_case_service._validate_transition(
-                "open", "acknowledged", "tenant"
-            )
+            support_case_service._validate_transition("open", "acknowledged", "tenant")
 
     def test_tenant_can_close_resolved(self):
         support_case_service._validate_transition("resolved", "closed", "tenant")
 
     def test_tenant_can_reopen_resolved(self):
-        support_case_service._validate_transition(
-            "resolved", "reopened", "tenant"
-        )
+        support_case_service._validate_transition("resolved", "reopened", "tenant")
 
     def test_closed_is_terminal(self):
         from core.errors import AppException
@@ -270,9 +266,7 @@ class TestEmailTierDispatch:
             )
 
         # Count admin emails queued.
-        return sum(
-            1 for t in queued if t == "support_case.opened.admin"
-        )
+        return sum(1 for t in queued if t == "support_case.opened.admin")
 
     @pytest.mark.asyncio
     async def test_none_tier_no_admin_email(self):
@@ -347,8 +341,8 @@ def cleanup_overrides():
 class TestSupportCaseRoutes:
     @pytest.mark.asyncio
     async def test_open_case_returns_202(self, cleanup_overrides):
-        app.dependency_overrides[verify_system_user_token] = (
-            lambda: MOCK_TENANT_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_TENANT_PRINCIPAL
         )
 
         with (
@@ -387,8 +381,8 @@ class TestSupportCaseRoutes:
 
     @pytest.mark.asyncio
     async def test_open_case_429_when_cap_hit(self, cleanup_overrides):
-        app.dependency_overrides[verify_system_user_token] = (
-            lambda: MOCK_TENANT_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_TENANT_PRINCIPAL
         )
         with patch(
             "api.v1.support_case_route.count_open_cases_for_tenant",
@@ -412,8 +406,8 @@ class TestSupportCaseRoutes:
 
     @pytest.mark.asyncio
     async def test_close_case_returns_202(self, cleanup_overrides):
-        app.dependency_overrides[verify_system_user_token] = (
-            lambda: MOCK_TENANT_PRINCIPAL
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_TENANT_PRINCIPAL
         )
         with (
             patch(
@@ -438,7 +432,5 @@ class TestSupportCaseRoutes:
                     headers={"Authorization": "Bearer t"},
                 )
         assert resp.status_code == 202
-        assert (
-            mock_enq.await_args.kwargs["writer_key"] == "support_case.transition"
-        )
+        assert mock_enq.await_args.kwargs["writer_key"] == "support_case.transition"
         assert mock_enq.await_args.kwargs["payload"]["status"] == "closed"

@@ -18,7 +18,7 @@ def render_html(context: dict[str, Any]) -> str:
     c = _common(context)
     return (
         f"<h2>We need your input</h2>"
-        f"<p>Your support case <strong>\"{c['case_subject']}\"</strong> is "
+        f'<p>Your support case <strong>"{c["case_subject"]}"</strong> is '
         f"awaiting your reply. Please add the information we requested so "
         f"we can keep making progress.</p>"
         f"<p><a href='{c['link']}'>Reply to the case</a></p>"
@@ -28,6 +28,6 @@ def render_html(context: dict[str, Any]) -> str:
 def render_text(context: dict[str, Any]) -> str:
     c = _common(context)
     return (
-        f"Your support case \"{c['case_subject']}\" is awaiting your reply.\n"
+        f'Your support case "{c["case_subject"]}" is awaiting your reply.\n'
         f"Please add the information we requested.\n\nReply: {c['link']}"
     )

@@ -66,7 +66,8 @@ class SupportCaseCreate(SupportCaseBase):
     def _compute_sla(self):
         if self.sla_due_at is None:
             window = SLA_WINDOWS_SECONDS.get(
-                self.priority.value, SLA_WINDOWS_SECONDS[SupportCasePriority.MEDIUM.value]
+                self.priority.value,
+                SLA_WINDOWS_SECONDS[SupportCasePriority.MEDIUM.value],
             )
             self.sla_due_at = self.date_created + window
         return self

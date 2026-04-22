@@ -19,7 +19,7 @@ def render_html(context: dict[str, Any]) -> str:
     return (
         f"<h2>Your case has been resolved</h2>"
         f"<p>{c['actor_name']} has marked your case "
-        f"<strong>\"{c['case_subject']}\"</strong> as resolved.</p>"
+        f'<strong>"{c["case_subject"]}"</strong> as resolved.</p>'
         f"<p>If the fix worked, you don't have to do anything — we'll auto-close "
         f"the case in 7 days. If something still isn't right, open the case "
         f"and click <em>Reopen</em>.</p>"
@@ -30,7 +30,7 @@ def render_html(context: dict[str, Any]) -> str:
 def render_text(context: dict[str, Any]) -> str:
     c = _common(context)
     return (
-        f"{c['actor_name']} has marked your case \"{c['case_subject']}\" as "
+        f'{c["actor_name"]} has marked your case "{c["case_subject"]}" as '
         f"resolved.\n\nIf the fix worked, no action needed — it'll auto-close "
         f"in 7 days. Otherwise, reopen it from: {c['link']}"
     )

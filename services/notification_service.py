@@ -573,9 +573,7 @@ async def notify_support_case_reply(
             tenant_id=tenant_id,
         )
     except Exception:
-        logger.warning(
-            "Failed to send support-case reply notification", exc_info=True
-        )
+        logger.warning("Failed to send support-case reply notification", exc_info=True)
 
 
 async def notify_support_case_status_change(
@@ -599,9 +597,7 @@ async def notify_support_case_status_change(
             tenant_id=tenant_id,
         )
     except Exception:
-        logger.warning(
-            "Failed to send support-case status notification", exc_info=True
-        )
+        logger.warning("Failed to send support-case status notification", exc_info=True)
 
 
 async def notify_support_case_assigned(

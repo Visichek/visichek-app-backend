@@ -29,6 +29,6 @@ def render_html(context: dict[str, Any]) -> str:
 def render_text(context: dict[str, Any]) -> str:
     c = _common(context)
     return (
-        f"{c['company_name']} posted on case \"{c['case_subject']}\".\n\n"
+        f'{c["company_name"]} posted on case "{c["case_subject"]}".\n\n'
         f"Preview: {c['preview']}\n\nOpen: {c['link']}"
     )

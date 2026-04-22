@@ -40,8 +40,7 @@ def _job_log(
 
 def test_format_action_known_verb() -> None:
     assert (
-        _format_action_from_writer_key("discount.delete")
-        == "Couldn't delete discount"
+        _format_action_from_writer_key("discount.delete") == "Couldn't delete discount"
     )
 
 
@@ -154,9 +153,7 @@ async def test_notify_job_failure_maps_tenant_role_to_system_user() -> None:
     with (
         patch(
             "repositories.queue_job_log_repo.get_job_log_by_task_id",
-            new=AsyncMock(
-                return_value=_job_log(actor_role="super_admin")
-            ),
+            new=AsyncMock(return_value=_job_log(actor_role="super_admin")),
         ),
         patch(
             "services.notification_service.send_notification",

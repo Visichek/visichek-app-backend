@@ -32,9 +32,7 @@ class QueueManager:
         payload: dict[str, Any],
         task_id: str | None = None,
     ) -> QueueJobResult:
-        return self._provider.enqueue(
-            QueueTaskKey(task_key), payload, task_id=task_id
-        )
+        return self._provider.enqueue(QueueTaskKey(task_key), payload, task_id=task_id)
 
     def enqueue_in(
         self,

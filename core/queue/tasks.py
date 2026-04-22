@@ -122,9 +122,7 @@ async def _db_write_dispatcher(
     try:
         await mark_processing(task_id)
     except Exception:
-        logger.warning(
-            "mark_processing failed for task_id=%s", task_id, exc_info=True
-        )
+        logger.warning("mark_processing failed for task_id=%s", task_id, exc_info=True)
 
     try:
         result = await execute_writer(

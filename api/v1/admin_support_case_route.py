@@ -165,9 +165,7 @@ async def admin_reply_on_support_case(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ):
     # Validate the case exists.
-    await retrieve_support_case_by_id(
-        case_id, tenant_id=None, requester_role="admin"
-    )
+    await retrieve_support_case_by_id(case_id, tenant_id=None, requester_role="admin")
     body = payload.model_dump(exclude_none=True)
     body["case_id"] = case_id
     body["author_id"] = admin.id or ""
@@ -199,9 +197,7 @@ async def admin_assign_support_case(
     request: Request,
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ):
-    await retrieve_support_case_by_id(
-        case_id, tenant_id=None, requester_role="admin"
-    )
+    await retrieve_support_case_by_id(case_id, tenant_id=None, requester_role="admin")
     return await enqueue_write(
         writer_key="support_case.assign",
         payload={
@@ -231,9 +227,7 @@ async def admin_transition_support_case(
     request: Request,
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ):
-    await retrieve_support_case_by_id(
-        case_id, tenant_id=None, requester_role="admin"
-    )
+    await retrieve_support_case_by_id(case_id, tenant_id=None, requester_role="admin")
     return await enqueue_write(
         writer_key="support_case.transition",
         payload={

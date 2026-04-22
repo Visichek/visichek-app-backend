@@ -23,7 +23,7 @@ def render_html(context: dict[str, Any]) -> str:
         f"<h2>We've received your support case</h2>"
         f"<p>Hi {c['company_name']},</p>"
         f"<p>Thanks for reaching out. Our team has received your support case "
-        f"<strong>\"{c['case_subject']}\"</strong> (priority: {c['case_priority']}).</p>"
+        f'<strong>"{c["case_subject"]}"</strong> (priority: {c["case_priority"]}).</p>'
         f"<p>Here's a preview of what you sent:</p>"
         f"<blockquote>{c['preview']}</blockquote>"
         f"<p>You can follow progress here: <a href='{c['link']}'>{c['link']}</a></p>"
@@ -34,7 +34,7 @@ def render_html(context: dict[str, Any]) -> str:
 def render_text(context: dict[str, Any]) -> str:
     c = _common(context)
     return (
-        f"We've received your support case \"{c['case_subject']}\" "
+        f'We\'ve received your support case "{c["case_subject"]}" '
         f"(priority: {c['case_priority']}).\n\n"
         f"Preview: {c['preview']}\n\n"
         f"Follow progress: {c['link']}\n"

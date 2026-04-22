@@ -20,7 +20,7 @@ def render_html(context: dict[str, Any]) -> str:
     return (
         f"<h2>A new reply on your support case</h2>"
         f"<p>{c['actor_name']} replied to your case "
-        f"<strong>\"{c['case_subject']}\"</strong>.</p>"
+        f'<strong>"{c["case_subject"]}"</strong>.</p>'
         f"<blockquote>{c['preview']}</blockquote>"
         f"<p><a href='{c['link']}'>Open the full thread</a></p>"
     )
@@ -29,6 +29,6 @@ def render_html(context: dict[str, Any]) -> str:
 def render_text(context: dict[str, Any]) -> str:
     c = _common(context)
     return (
-        f"{c['actor_name']} replied to your case \"{c['case_subject']}\".\n\n"
+        f'{c["actor_name"]} replied to your case "{c["case_subject"]}".\n\n'
         f"Preview: {c['preview']}\n\nOpen the thread: {c['link']}"
     )

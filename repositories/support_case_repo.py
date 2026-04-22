@@ -50,7 +50,9 @@ async def list_support_cases(
     priority: Optional[str] = None,
     category: Optional[str] = None,
     assigned_admin_id: Optional[str] = None,
-    support_tier: Optional[str] = None,  # reserved for admin list join (not queried here)
+    support_tier: Optional[
+        str
+    ] = None,  # reserved for admin list join (not queried here)
     start: int = 0,
     stop: int = 100,
 ) -> List[SupportCaseOut]:

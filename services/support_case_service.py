@@ -85,8 +85,12 @@ ADMIN_REPLY_THROTTLE_SECONDS = 60
 
 _ALLOWED_TRANSITIONS: dict[tuple[str, str], set[str]] = {
     (SupportCaseStatus.OPEN.value, SupportCaseStatus.ACKNOWLEDGED.value): {"admin"},
-    (SupportCaseStatus.ACKNOWLEDGED.value, SupportCaseStatus.IN_PROGRESS.value): {"admin"},
-    (SupportCaseStatus.IN_PROGRESS.value, SupportCaseStatus.AWAITING_TENANT.value): {"admin"},
+    (SupportCaseStatus.ACKNOWLEDGED.value, SupportCaseStatus.IN_PROGRESS.value): {
+        "admin"
+    },
+    (SupportCaseStatus.IN_PROGRESS.value, SupportCaseStatus.AWAITING_TENANT.value): {
+        "admin"
+    },
     (SupportCaseStatus.AWAITING_TENANT.value, SupportCaseStatus.IN_PROGRESS.value): {
         "admin",
         "tenant",
@@ -239,9 +243,7 @@ def _throttle_admin_reply_email(case_id: str) -> bool:
     """
     key = f"support_case:email_throttle:{case_id}:tenant"
     try:
-        acquired = cache_db.set(
-            key, "1", nx=True, ex=ADMIN_REPLY_THROTTLE_SECONDS
-        )
+        acquired = cache_db.set(key, "1", nx=True, ex=ADMIN_REPLY_THROTTLE_SECONDS)
         return bool(acquired)
     except Exception:
         return True  # when Redis is flaky, err towards delivery
@@ -348,9 +350,7 @@ async def _enforce_open_case_cap(tenant_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _validate_transition(
-    current: str, target: str, actor_type: str
-) -> None:
+def _validate_transition(current: str, target: str, actor_type: str) -> None:
     if current == target:
         raise AppException(
             status_code=400,
@@ -661,9 +661,7 @@ async def transition_support_case(
     support_tier = await _resolve_support_tier(tenant_id)
     company_name = await _resolve_tenant_company_name(tenant_id)
     opener_email = await _resolve_tenant_opener_email(updated)
-    ctx = _case_context(
-        updated, company_name=company_name, support_tier=support_tier
-    )
+    ctx = _case_context(updated, company_name=company_name, support_tier=support_tier)
 
     # Tenant emails — always
     tenant_template = {
@@ -683,9 +681,7 @@ async def transition_support_case(
             SupportCaseStatus.CLOSED,
         ):
             # Re-use the generic assigned template since these are admin-side pings.
-            await _queue_email(
-                admin_email, "support_case.assigned.admin", ctx
-            )
+            await _queue_email(admin_email, "support_case.assigned.admin", ctx)
 
     # In-app
     try:
@@ -835,7 +831,9 @@ async def _enrich_support_case_message(
         "admin"
         if msg.author_type is not None
         and (
-            msg.author_type.value if hasattr(msg.author_type, "value") else str(msg.author_type)
+            msg.author_type.value
+            if hasattr(msg.author_type, "value")
+            else str(msg.author_type)
         )
         == "admin"
         else "system_user"
@@ -870,7 +868,9 @@ async def retrieve_support_case_by_id(
     )
     return {
         "case": enriched_case.model_dump(mode="json", by_alias=True),
-        "messages": [m.model_dump(mode="json", by_alias=True) for m in enriched_messages],
+        "messages": [
+            m.model_dump(mode="json", by_alias=True) for m in enriched_messages
+        ],
     }
 
 
@@ -922,7 +922,9 @@ async def retrieve_messages_for_case(
         start=start,
         stop=stop,
     )
-    return list(await asyncio.gather(*[_enrich_support_case_message(m) for m in messages]))
+    return list(
+        await asyncio.gather(*[_enrich_support_case_message(m) for m in messages])
+    )
 
 
 async def retrieve_cases_approaching_sla(
@@ -1029,9 +1031,7 @@ async def alert_sla_breaches() -> None:
         if support_tier == SupportTier.NONE:
             continue
         company_name = await _resolve_tenant_company_name(tenant_id)
-        ctx = _case_context(
-            case, company_name=company_name, support_tier=support_tier
-        )
+        ctx = _case_context(case, company_name=company_name, support_tier=support_tier)
         recipients: List[str] = []
         if case.assigned_admin_id:
             email = await _resolve_admin_email(case.assigned_admin_id)

@@ -94,9 +94,7 @@ async def get_admins(filter_dict: dict = {}, start=0, stop=100) -> List[AdminOut
         )
 
 
-async def search_admins(
-    query: str, start: int = 0, stop: int = 50
-) -> List[AdminOut]:
+async def search_admins(query: str, start: int = 0, stop: int = 50) -> List[AdminOut]:
     """Regex-search admins by full_name or email; exact-match on _id when valid.
 
     Case-insensitive, substring match. The env-configured primary super admin
