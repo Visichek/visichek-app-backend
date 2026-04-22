@@ -10,13 +10,55 @@ from typing import Optional
 import httpx
 
 BASE_URL = os.getenv("LOAD_TEST_HOST", "http://localhost:8000")
+# Dev backends hardcode the OTP to "123456" so all 2FA flows are scriptable.
+# Override via env var if the target env uses a different fixed code.
+DEV_OTP_CODE = os.getenv("LOAD_TEST_OTP_CODE", "123456")
 INCLUDE_TOKENS = {"X-Auth-Include-Tokens": "true"}
+
+
+def _pick(data: dict, *keys: str) -> Optional[str]:
+    """Return the first present value for any of the given keys.
+
+    The CaseConversionMiddleware emits camelCase by default (``accessToken``,
+    ``tenantId``, ``otpChallengeId``), so every response reader needs to accept
+    both forms. Pass snake_case first, camelCase second, by convention.
+    """
+    for key in keys:
+        value = data.get(key)
+        if value:
+            return value
+    return None
+
+
+def _otp_challenge_id(data: dict) -> Optional[str]:
+    if not (data.get("otp_required") or data.get("otpRequired")):
+        return None
+    return _pick(data, "otp_challenge_id", "otpChallengeId")
+
+
+async def _complete_otp_challenge(
+    client: httpx.AsyncClient,
+    *,
+    verify_url: str,
+    challenge_id: str,
+) -> dict:
+    """POST /verify-otp with the dev OTP and return the JSON data block."""
+    resp = await client.post(
+        verify_url,
+        json={"otp_challenge_id": challenge_id, "otp_code": DEV_OTP_CODE},
+        headers=INCLUDE_TOKENS,
+    )
+    if resp.status_code != 200:
+        raise Exception(
+            f"OTP verification failed: {resp.status_code} - {resp.text}"
+        )
+    return resp.json().get("data", {}) or {}
 
 
 async def login_admin(
     client: httpx.AsyncClient, email: str, password: str
 ) -> dict:
-    """Log in as application admin. Raises on failure."""
+    """Log in as application admin, handling the 2FA challenge if required."""
     resp = await client.post(
         f"{BASE_URL}/v1/admins/login",
         json={"email": email, "password": password},
@@ -26,7 +68,19 @@ async def login_admin(
         raise Exception(f"Admin login failed: {resp.status_code} - {resp.text}")
 
     data = resp.json().get("data", {}) or {}
-    token = data.get("access_token")
+
+    # Step 2 of 2FA: if the server issued an OTP challenge, complete it
+    # with the fixed dev code. The verify-otp response shape matches the
+    # no-2FA login response (AdminOut + tokens).
+    challenge_id = _otp_challenge_id(data)
+    if challenge_id:
+        data = await _complete_otp_challenge(
+            client,
+            verify_url=f"{BASE_URL}/v1/admins/verify-otp",
+            challenge_id=challenge_id,
+        )
+
+    token = _pick(data, "access_token", "accessToken")
     if not token:
         raise Exception(
             "Admin login returned no access_token — check X-Auth-Include-Tokens support"
@@ -41,7 +95,7 @@ async def login_admin(
 async def login_system_user(
     client: httpx.AsyncClient, email: str, password: str
 ) -> Optional[dict]:
-    """Log in as system user (super_admin, receptionist, etc.). Returns None on failure."""
+    """Log in as system user (super_admin, receptionist, etc.), handling 2FA."""
     resp = await client.post(
         f"{BASE_URL}/v1/system-users/login",
         json={"email": email, "password": password},
@@ -51,13 +105,25 @@ async def login_system_user(
         return None
 
     data = resp.json().get("data", {}) or {}
-    token = data.get("access_token")
+
+    challenge_id = _otp_challenge_id(data)
+    if challenge_id:
+        try:
+            data = await _complete_otp_challenge(
+                client,
+                verify_url=f"{BASE_URL}/v1/system-users/verify-otp",
+                challenge_id=challenge_id,
+            )
+        except Exception:
+            return None
+
+    token = _pick(data, "access_token", "accessToken")
     if not token:
         return None
     return {
         "access_token": token,
         "user_id": data.get("id"),
-        "tenant_id": data.get("tenant_id"),
+        "tenant_id": _pick(data, "tenant_id", "tenantId"),
         "headers": {"Authorization": f"Bearer {token}"},
     }
 
@@ -104,12 +170,12 @@ async def bootstrap_tenant(
 
     data = resp.json().get("data", {}) or {}
     tenant = data.get("tenant") or {}
-    super_admin = data.get("super_admin") or {}
+    super_admin = data.get("super_admin") or data.get("superAdmin") or {}
     return {
         "tenant_id": tenant.get("id"),
         "super_admin_id": super_admin.get("id"),
-        "access_token": super_admin.get("access_token"),
-        "refresh_token": super_admin.get("refresh_token"),
+        "access_token": _pick(super_admin, "access_token", "accessToken"),
+        "refresh_token": _pick(super_admin, "refresh_token", "refreshToken"),
     }
 
 
@@ -348,11 +414,12 @@ async def main():
         super_admin_password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
 
         # Creds for the application admin that bootstraps the tenant.
+        # Defaults match the seeded dev superadmin (see seed.py / SUPER_ADMIN_EMAIL).
         admin_email = os.getenv(
-            "LOAD_TEST_ADMIN_EMAIL", "loadtest_admin@visichek.test"
+            "LOAD_TEST_ADMIN_EMAIL", "superadmin@visicheck.com"
         )
         admin_password = os.getenv(
-            "LOAD_TEST_ADMIN_PASSWORD", "LoadTestAdmin@123"
+            "LOAD_TEST_ADMIN_PASSWORD", "@ViViVheck123!"
         )
 
         # Step 1: Try super_admin login first — if it works, the tenant was
