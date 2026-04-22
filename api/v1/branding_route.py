@@ -51,8 +51,6 @@ async def get_public_tenant_branding(tenant_id: str) -> Any:
 
 async def _load_public_branding(tenant_id: str) -> Any:
     branding = await retrieve_public_branding_by_tenant(tenant_id)
-    if not branding:
-        return None
     return branding.model_dump(mode="json", by_alias=True)
 
 
@@ -80,8 +78,6 @@ async def get_tenant_branding(
 
 async def _load_full_branding(tenant_id: str) -> Any:
     branding = await retrieve_branding_by_tenant(tenant_id)
-    if not branding:
-        return None
     return branding.model_dump(mode="json", by_alias=True)
 
 

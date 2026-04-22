@@ -6,6 +6,7 @@ from schemas.public_registration_schema import (
     PublicRegistrationRequest,
     PublicReturningVisitorLookupRequest,
 )
+from services.checkin_config_service import resolve_public_config_by_tenant
 from services.public_registration_service import (
     checkout_visitor_public,
     finalize_public_registration,
@@ -99,6 +100,41 @@ async def get_privacy_notice_public_endpoint(tenant_id: str):
 )
 async def public_checkout_endpoint(badge_qr_token: str):
     return await checkout_visitor_public(badge_qr_token=badge_qr_token)
+
+
+@router.get("/tenants/{tenant_id}/active-checkin-config")
+@document_response(
+    message="Active check-in configuration retrieved",
+    description=(
+        "Return the tenant's active check-in configuration. If the tenant has "
+        "not configured one yet, a default config is returned (bio fields + "
+        "purpose, ID upload and returning-visitor lookup enabled) so the "
+        "public kiosk / registration UI can still render a usable form. "
+        "`checkin_config_id` is an empty string in the default case — use that "
+        "as a signal that the tenant has not customized their config."
+    ),
+    summary="Get active check-in config for tenant (public)",
+    success_example={
+        "checkin_config_id": "507f1f77bcf86cd799439012",
+        "tenant_id": "t123",
+        "tenant_name": "Acme Corp",
+        "logo_url": "https://cdn.example.com/tenants/acme/logo.png",
+        "id_upload_enabled": True,
+        "allow_returning_visitor_lookup": True,
+        "required_fields": [
+            {
+                "key": "full_name",
+                "label": "Full Name",
+                "type": "text",
+                "required": True,
+                "category": "bio",
+            }
+        ],
+    },
+    response_codes={404: "Tenant not found"},
+)
+async def get_active_checkin_config_for_tenant_endpoint(tenant_id: str):
+    return await resolve_public_config_by_tenant(tenant_id=tenant_id)
 
 
 @router.get("/register/{tenant_id}/appointment/{appointment_id}")

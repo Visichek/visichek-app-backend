@@ -9,7 +9,7 @@ resolution.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
@@ -63,16 +63,12 @@ async def _branding_delete(resource_id: str, data: dict[str, Any]) -> dict[str, 
 
 
 @register_precompute("branding.full", scope=PrecomputeScope.TENANT)
-async def _precompute_branding_full(tenant_id: str) -> Optional[dict[str, Any]]:
+async def _precompute_branding_full(tenant_id: str) -> dict[str, Any]:
     branding = await retrieve_branding_by_tenant(tenant_id)
-    if not branding:
-        return None
     return branding.model_dump(mode="json", by_alias=True)
 
 
 @register_precompute("branding.public", scope=PrecomputeScope.TENANT)
-async def _precompute_branding_public(tenant_id: str) -> Optional[dict[str, Any]]:
+async def _precompute_branding_public(tenant_id: str) -> dict[str, Any]:
     branding = await retrieve_public_branding_by_tenant(tenant_id)
-    if not branding:
-        return None
     return branding.model_dump(mode="json", by_alias=True)

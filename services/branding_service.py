@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import Optional
 
 from repositories.branding_repo import (
     create_branding,
@@ -111,20 +110,21 @@ async def upsert_branding(tenant_id: str, branding_data: BrandingUpdate) -> Bran
 
 async def retrieve_public_branding_by_tenant(
     tenant_id: str,
-) -> Optional[BrandingPublicOut]:
+) -> BrandingPublicOut:
     """Get public-facing branding for a tenant (login screen, unauthenticated).
 
     Returns only the fields needed for UI rendering — no internal object keys,
-    no badge-specific colors, no timestamps.
+    no badge-specific colors, no timestamps. If the tenant has not configured
+    branding, returns a default BrandingPublicOut with just the tenant_id so
+    the frontend always has a stable shape to render against.
     """
     if not ObjectId.is_valid(tenant_id):
         raise HTTPException(status_code=400, detail="Invalid tenant ID format")
 
     branding = await get_branding({"tenant_id": tenant_id})
     if not branding:
-        return None
+        return BrandingPublicOut(tenant_id=tenant_id)
 
-    # Resolve presigned URLs for logo and favicon
     branding = await _resolve_logo_urls(branding)
 
     return BrandingPublicOut(
@@ -138,14 +138,19 @@ async def retrieve_public_branding_by_tenant(
     )
 
 
-async def retrieve_branding_by_tenant(tenant_id: str) -> Optional[BrandingOut]:
-    """Get the branding config for a tenant. Returns None if not set."""
+async def retrieve_branding_by_tenant(tenant_id: str) -> BrandingOut:
+    """Get the branding config for a tenant.
+
+    Returns a default BrandingOut with just the tenant_id when no record
+    exists, so callers always get a renderable payload. Schema-level
+    defaults (e.g. badge_logo_position) are applied by Pydantic.
+    """
     if not ObjectId.is_valid(tenant_id):
         raise HTTPException(status_code=400, detail="Invalid tenant ID format")
 
     branding = await get_branding({"tenant_id": tenant_id})
     if not branding:
-        return None
+        return BrandingOut(tenant_id=tenant_id)
 
     return await _resolve_logo_urls(branding)
 

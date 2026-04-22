@@ -36,6 +36,21 @@ async def get_checkin_config(filter_dict: dict) -> Optional[CheckinConfigOut]:
     return CheckinConfigOut(**doc)
 
 
+async def get_active_checkin_config_for_tenant(
+    tenant_id: str,
+) -> Optional[CheckinConfigOut]:
+    """Return the most recently updated active config for a tenant, or None."""
+    cursor = (
+        db[COLLECTION]
+        .find({"tenant_id": tenant_id, "active": True})
+        .sort("last_updated", -1)
+        .limit(1)
+    )
+    async for doc in cursor:
+        return CheckinConfigOut(**doc)
+    return None
+
+
 async def get_checkin_configs(
     filter_dict: dict = {}, skip: int = 0, limit: int = 20
 ) -> list[CheckinConfigOut]:
