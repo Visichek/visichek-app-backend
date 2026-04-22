@@ -165,6 +165,14 @@ async def submit_checkin_for_tenant_endpoint(
     tenant_specific_data: str = Form("{}", description="JSON object"),
     id_type: Optional[IDType] = Form(None),
     id_file: Optional[UploadFile] = File(None),
+    visitor_lat: Optional[float] = Form(
+        None,
+        description="Visitor latitude — required when tenant has geofencing enabled",
+    ),
+    visitor_lng: Optional[float] = Form(
+        None,
+        description="Visitor longitude — required when tenant has geofencing enabled",
+    ),
 ) -> CheckinOut:
     bio_dict = _parse_json_dict(bio_data, "bio_data")
     tsd_dict = _parse_json_dict(tenant_specific_data, "tenant_specific_data")
@@ -201,6 +209,8 @@ async def submit_checkin_for_tenant_endpoint(
         id_file_bytes=file_bytes,
         id_file_mime=file_mime,
         id_type=id_type,
+        visitor_lat=visitor_lat,
+        visitor_lng=visitor_lng,
     )
 
 
@@ -337,6 +347,8 @@ async def submit_checkin_for_returning_visitor_endpoint(
         visitor_id=request.visitor_id,
         purpose=request.purpose,
         tenant_specific_data=request.tenant_specific_data,
+        visitor_lat=request.visitor_lat,
+        visitor_lng=request.visitor_lng,
     )
 
 

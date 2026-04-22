@@ -208,6 +208,7 @@ def verify_system_user_token(*allowed_roles: str):
                 required_role=",".join(allowed_roles),
                 actual_role=principal.role,
             )
+        await _capture_location(request, principal)
         return principal
 
     _VERIFY_SYSTEM_USER_TOKEN_CACHE[key] = _verifier
@@ -227,7 +228,30 @@ async def verify_any_system_user_token(
             required_role="system_user",
             actual_role=principal.role,
         )
+    await _capture_location(request, principal)
     return principal
+
+
+async def _capture_location(request: Request, principal: AuthPrincipal) -> None:
+    """Piggyback location capture on system-user auth.
+
+    Kept as a thin wrapper that imports lazily so a failure here never
+    touches auth resolution. The actual enqueue lives in
+    :mod:`security.account_status_check` to avoid pulling the queue
+    pipeline into every auth module at import time.
+    """
+    try:
+        from security.account_status_check import capture_user_location_from_request
+
+        await capture_user_location_from_request(
+            request,
+            user_id=principal.user_id,
+            tenant_id=principal.tenant_id,
+            role=principal.role,
+        )
+    except Exception:
+        # Auth path must never fail because location capture failed.
+        pass
 
 
 async def verify_super_admin_token(

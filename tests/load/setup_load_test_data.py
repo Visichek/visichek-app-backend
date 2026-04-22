@@ -296,8 +296,10 @@ async def main():
     async with httpx.AsyncClient(timeout=30) as client:
         # Step 1: Try to login as super_admin first (for initial setup)
         # If it fails, we'll try to create one
-        super_admin_email = "loadtest_super_admin@visichek.test"
-        super_admin_password = "LoadTest@123"
+        super_admin_email = os.getenv(
+            "LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.com"
+        )
+        super_admin_password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
 
         print("Step 1: Setting up super admin authentication...")
         try:

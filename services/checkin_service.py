@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 from typing import Any, Optional
 
 from core.errors import AppException, ErrorCode, resource_not_found
+from core.geofencing import check_visitor_within_geofence
 from repositories.checkin_repo import (
     create_checkin,
     get_active_pending_for_visitor,
@@ -28,6 +30,78 @@ from schemas.checkin_schema import (
 )
 from schemas.imports import IDType
 from schemas.summary_schema import VisitorBriefSummary
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _enforce_tenant_geofence(
+    *,
+    tenant_id: str,
+    visitor_lat: Optional[float],
+    visitor_lng: Optional[float],
+) -> None:
+    """Reject the check-in if the visitor is outside the tenant's geofence.
+
+    Loads the tenant's settings via the upsert helper (so tenants that have
+    never saved settings still get the default-disabled behaviour), then
+    delegates the decision to :func:`core.geofencing.check_visitor_within_geofence`.
+    Short-circuits cheaply when geofencing is disabled so this helper is safe
+    to call from every submit path.
+    """
+    from services.tenant_settings_service import retrieve_or_create_tenant_settings
+
+    try:
+        settings = await retrieve_or_create_tenant_settings(tenant_id)
+    except Exception:
+        logger.warning(
+            "geofencing: failed to load tenant settings tenant_id=%s — allowing",
+            tenant_id,
+            exc_info=True,
+        )
+        return
+
+    if not getattr(settings, "geofencing_enabled", False):
+        return
+
+    result = check_visitor_within_geofence(
+        tenant_settings=settings,
+        visitor_lat=visitor_lat,
+        visitor_lng=visitor_lng,
+    )
+    if result.allowed:
+        return
+
+    message_map = {
+        "missing_visitor_location": (
+            "This location requires geofence verification. Please enable "
+            "location access in your browser and retry."
+        ),
+        "outside_reference_point": (
+            "You appear to be outside the check-in zone. Please move closer "
+            "to the reception area and retry."
+        ),
+        "outside_approver_radius": (
+            "No approver is currently in range to verify your check-in. "
+            "Please ask reception to retry on your behalf."
+        ),
+        "no_active_approvers": (
+            "No approver is currently on-site to verify your check-in. "
+            "Please contact your host or try again shortly."
+        ),
+        "tenant_misconfigured": (
+            "This tenant has geofencing enabled but no reference point "
+            "configured. Ask the super admin to set a reference location."
+        ),
+    }
+    raise AppException(
+        status_code=403,
+        code=ErrorCode.GEOFENCE_VIOLATION,
+        message=message_map.get(
+            result.reason or "", "Geofence verification failed"
+        ),
+        details={"reason": result.reason, **(result.details or {})},
+    )
 
 
 def _visitor_to_brief(visitor: Any) -> VisitorBriefSummary:
@@ -228,6 +302,8 @@ async def submit_verified_checkin(
     id_file_bytes: Optional[bytes] = None,
     id_file_mime: Optional[str] = None,
     id_type: Optional[IDType] = None,
+    visitor_lat: Optional[float] = None,
+    visitor_lng: Optional[float] = None,
 ) -> CheckinOut:
     """Single-step check-in that optionally runs ID verification.
 
@@ -260,6 +336,8 @@ async def submit_verified_checkin(
         id_file_bytes=id_file_bytes,
         id_file_mime=id_file_mime,
         id_type=id_type,
+        visitor_lat=visitor_lat,
+        visitor_lng=visitor_lng,
     )
 
 
@@ -269,6 +347,8 @@ async def submit_returning_visitor_checkin_by_id(
     visitor_id: str,
     purpose: CheckinPurpose,
     tenant_specific_data: dict,
+    visitor_lat: Optional[float] = None,
+    visitor_lng: Optional[float] = None,
 ) -> CheckinOut:
     """Submit a check-in for an already-known visitor using their visitor_id.
 
@@ -308,6 +388,12 @@ async def submit_returning_visitor_checkin_by_id(
     visitor = await get_visitor({"_id": visitor_id, "tenant_id": tenant_id})
     if visitor is None:
         raise resource_not_found(resource="Visitor", resource_id=visitor_id)
+
+    await _enforce_tenant_geofence(
+        tenant_id=tenant_id,
+        visitor_lat=visitor_lat,
+        visitor_lng=visitor_lng,
+    )
 
     config = await get_active_checkin_config_for_tenant(tenant_id)
     if config is not None:
@@ -408,6 +494,8 @@ async def submit_verified_checkin_for_tenant(
     id_file_bytes: Optional[bytes] = None,
     id_file_mime: Optional[str] = None,
     id_type: Optional[IDType] = None,
+    visitor_lat: Optional[float] = None,
+    visitor_lng: Optional[float] = None,
 ) -> CheckinOut:
     """Tenant-scoped submit. Resolves the tenant's active config, or falls back
     to the default required-field set when the tenant hasn't configured one yet.
@@ -450,6 +538,8 @@ async def submit_verified_checkin_for_tenant(
         id_file_bytes=id_file_bytes,
         id_file_mime=id_file_mime,
         id_type=id_type,
+        visitor_lat=visitor_lat,
+        visitor_lng=visitor_lng,
     )
 
 
@@ -466,6 +556,8 @@ async def _submit_verified_checkin_core(
     id_file_bytes: Optional[bytes] = None,
     id_file_mime: Optional[str] = None,
     id_type: Optional[IDType] = None,
+    visitor_lat: Optional[float] = None,
+    visitor_lng: Optional[float] = None,
 ) -> CheckinOut:
     from repositories.visitor_repo import find_visitor_by_email_or_phone_any
     from schemas.visitor_schema import VisitorCreate
@@ -483,6 +575,12 @@ async def _submit_verified_checkin_core(
             code=ErrorCode.VALIDATION_FAILED,
             message="id_type is required when an ID file is uploaded",
         )
+
+    await _enforce_tenant_geofence(
+        tenant_id=tenant_id,
+        visitor_lat=visitor_lat,
+        visitor_lng=visitor_lng,
+    )
 
     # 2. Resolve visitor — with or without verification
     id_extraction_id: Optional[str] = None

@@ -63,6 +63,16 @@ class TenantSettingsBase(BaseModel):
     # within this window. 0 disables the shortcut (every visit re-verifies).
     id_reverification_days: int = 30
 
+    # Geofencing — see backend-docs/geofencing.md.
+    # When enabled, visitor submits must include lat/lng and be within
+    # ``geofencing_radius_meters`` of either the tenant's fixed
+    # ``geofencing_reference_lat/lng`` (if configured) or any approver who
+    # has reported a location in the last 10 minutes.
+    geofencing_enabled: bool = False
+    geofencing_radius_meters: int = 50
+    geofencing_reference_lat: Optional[float] = None
+    geofencing_reference_lng: Optional[float] = None
+
     # Data Retention
     visitor_data_retention_days: int = 365
     audit_log_retention_days: int = 730
@@ -95,6 +105,20 @@ class TenantSettingsBase(BaseModel):
             raise ValueError(
                 "visitor_badge_expiry_hours is required when badge expiry is set to 'hours'"
             )
+        if self.geofencing_radius_meters < 5 or self.geofencing_radius_meters > 5000:
+            raise ValueError(
+                "geofencing_radius_meters must be between 5 and 5000"
+            )
+        has_lat = self.geofencing_reference_lat is not None
+        has_lng = self.geofencing_reference_lng is not None
+        if has_lat != has_lng:
+            raise ValueError(
+                "geofencing_reference_lat and geofencing_reference_lng must be set together"
+            )
+        if has_lat and not (-90 <= (self.geofencing_reference_lat or 0) <= 90):
+            raise ValueError("geofencing_reference_lat must be between -90 and 90")
+        if has_lng and not (-180 <= (self.geofencing_reference_lng or 0) <= 180):
+            raise ValueError("geofencing_reference_lng must be between -180 and 180")
         return self
 
 
@@ -139,6 +163,10 @@ class TenantSettingsUpdate(BaseModel):
     allow_self_registration: Optional[bool] = None
     self_registration_fields: Optional[List[str]] = None
     id_reverification_days: Optional[int] = None
+    geofencing_enabled: Optional[bool] = None
+    geofencing_radius_meters: Optional[int] = None
+    geofencing_reference_lat: Optional[float] = None
+    geofencing_reference_lng: Optional[float] = None
 
     # Data Retention
     visitor_data_retention_days: Optional[int] = None
@@ -166,6 +194,21 @@ class TenantSettingsUpdate(BaseModel):
                 raise ValueError("password_min_length must be at least 8")
             if self.password_min_length > 128:
                 raise ValueError("password_min_length must be at most 128")
+        if self.geofencing_radius_meters is not None:
+            if self.geofencing_radius_meters < 5 or self.geofencing_radius_meters > 5000:
+                raise ValueError(
+                    "geofencing_radius_meters must be between 5 and 5000"
+                )
+        has_lat = self.geofencing_reference_lat is not None
+        has_lng = self.geofencing_reference_lng is not None
+        if has_lat != has_lng:
+            raise ValueError(
+                "geofencing_reference_lat and geofencing_reference_lng must be set together"
+            )
+        if has_lat and not (-90 <= (self.geofencing_reference_lat or 0) <= 90):
+            raise ValueError("geofencing_reference_lat must be between -90 and 90")
+        if has_lng and not (-180 <= (self.geofencing_reference_lng or 0) <= 180):
+            raise ValueError("geofencing_reference_lng must be between -180 and 180")
         return self
 
 

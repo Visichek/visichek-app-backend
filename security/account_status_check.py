@@ -6,7 +6,9 @@ from typing import Any, Optional
 from fastapi import Depends, Request, status
 
 from core.errors import AppException, ErrorCode, auth_permission_denied
+from core.geofencing import LOCATION_HEADER, parse_location_header
 from core.queue.gate_cache import resolve_gate
+from core.queue.write_pipeline import enqueue_write
 from schemas.admin_schema import AdminOut
 from schemas.imports import AccountStatus, PermissionList
 from schemas.user_schema import UserOut
@@ -132,6 +134,51 @@ def _permission_context(request: Request) -> tuple[str, str, str]:
     return endpoint_name, request_method, permission_key
 
 
+async def capture_user_location_from_request(
+    request: Request,
+    *,
+    user_id: str,
+    tenant_id: Optional[str],
+    role: str,
+) -> None:
+    """Fire-and-forget: enqueue ``user_location.update`` for this caller.
+
+    Called from every gate check so the ingestion path piggybacks on
+    authenticated requests — no separate endpoint needed. Silently skipped
+    when the client did not provide an ``X-User-Location`` header so
+    users without GPS permission never break the approval queue.
+    """
+    try:
+        raw = request.headers.get(LOCATION_HEADER)
+        coords = parse_location_header(raw)
+        if coords is None:
+            return
+        payload: dict[str, Any] = {
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "role": role,
+            "lat": coords["lat"],
+            "lng": coords["lng"],
+        }
+        if "accuracy_m" in coords:
+            payload["accuracy_m"] = coords["accuracy_m"]
+        await enqueue_write(
+            writer_key="user_location.update",
+            payload=payload,
+            resource_type="user_location",
+            resource_id=user_id,
+            tenant_id=tenant_id,
+            actor_id=user_id,
+            actor_role=role,
+        )
+    except Exception:
+        logger.warning(
+            "capture_user_location_from_request failed user_id=%s",
+            user_id,
+            exc_info=True,
+        )
+
+
 async def check_admin_account_status_and_permissions(
     request: Request,
     principal: AuthPrincipal = Depends(verify_admin_token),
@@ -157,6 +204,13 @@ async def check_admin_account_status_and_permissions(
             code=ErrorCode.AUTH_ACCOUNT_INACTIVE,
             message="Admin account is not active",
         )
+
+    await capture_user_location_from_request(
+        request,
+        user_id=principal.user_id,
+        tenant_id=None,
+        role="admin",
+    )
 
     # Application admins are platform operators with full access —
     # skip fine-grained endpoint permission checks.
@@ -196,6 +250,13 @@ async def check_user_account_status_and_permissions(
         request_method=request_method,
     ):
         raise auth_permission_denied(permission_key)
+
+    await capture_user_location_from_request(
+        request,
+        user_id=principal.user_id,
+        tenant_id=None,
+        role="user",
+    )
 
     return user
 

@@ -152,8 +152,14 @@ class PublicReturningVisitorSubmitRequest(BaseModel):
     active check-in config declares required fields in the
     ``tenant_specific`` category. If the config has no required
     tenant-specific fields the frontend can submit this with an empty
-    object (or omit it)."""
+    object (or omit it).
+
+    ``visitor_lat`` / ``visitor_lng`` are required when the tenant has
+    geofencing enabled — see ``backend-docs/geofencing.md``."""
 
     visitor_id: str
     purpose: CheckinPurpose
     tenant_specific_data: dict = {}
+    visitor_lat: Optional[float] = None
+    visitor_lng: Optional[float] = None
+    visitor_location_accuracy_m: Optional[float] = None
