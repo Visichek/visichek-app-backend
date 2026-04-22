@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from limits import parse as parse_rate
 from limits.storage import RedisStorage
 from limits.strategies import FixedWindowRateLimiter
 from pymongo import MongoClient
@@ -141,6 +142,10 @@ RATE_LIMITS = build_role_rate_limits(
     os.getenv("ROLE_RATE_LIMITS"),
     fallback_csv=ROLE_RATE_LIMITS_DEFAULT,
 )
+
+if settings.env.lower() == "development":
+    dev_rule = parse_rate("100000/second")
+    RATE_LIMITS = {role: dev_rule for role in RATE_LIMITS}
 
 storage = RedisStorage(settings.redis_url)
 limiter = FixedWindowRateLimiter(storage)
@@ -602,7 +607,7 @@ async def health_check():
     if aps_heartbeat:
         if isinstance(aps_heartbeat, bytes):
             aps_heartbeat = aps_heartbeat.decode("utf-8")
-        age = time.time() - float(aps_heartbeat)
+        age = time.time() - float(aps_heartbeat) # type: ignore
         services["apscheduler"] = {
             "status": "healthy" if age <= 30 else "degraded",
             "latency_ms": 0,

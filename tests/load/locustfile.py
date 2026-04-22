@@ -9,6 +9,106 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Dev backends hardcode the OTP to "123456" so 2FA flows are scriptable.
+DEV_OTP_CODE = os.getenv("LOAD_TEST_OTP_CODE", "123456")
+# Opt into tokens in the JSON body — without this, login responses scrub
+# access_token / refresh_token to null and scripts only get httpOnly cookies.
+INCLUDE_TOKENS_HEADERS = {"X-Auth-Include-Tokens": "true"}
+
+
+def _pick(data: dict, *keys: str) -> Optional[Any]:
+    """Return the first present value for any of the given keys.
+
+    Login responses pass through CaseConversionMiddleware and come back as
+    camelCase (``accessToken``, ``tenantId``, ``otpChallengeId``) by default.
+    Call this with snake_case first, camelCase second.
+    """
+    for key in keys:
+        value = data.get(key)
+        if value:
+            return value
+    return None
+
+
+def _otp_challenge_id(data: dict) -> Optional[str]:
+    if not (data.get("otp_required") or data.get("otpRequired")):
+        return None
+    return _pick(data, "otp_challenge_id", "otpChallengeId")
+
+
+def _verify_otp(
+    client,
+    *,
+    verify_url: str,
+    challenge_id: str,
+    name: Optional[str] = None,
+):
+    """POST the dev OTP to the verify endpoint. Returns the raw response."""
+    return client.post(
+        verify_url,
+        json={"otp_challenge_id": challenge_id, "otp_code": DEV_OTP_CODE},
+        name=name or verify_url,
+        headers=INCLUDE_TOKENS_HEADERS,
+    )
+
+
+def login_and_resolve_data(
+    client,
+    *,
+    login_url: str,
+    verify_url: str,
+    email: str,
+    password: str,
+    login_name: Optional[str] = None,
+    verify_name: Optional[str] = None,
+) -> Optional[dict]:
+    """Perform login + OTP verification if needed. Returns the auth ``data`` dict.
+
+    Returns ``None`` on any failure — the caller decides whether to raise or
+    warn. Reads ``accessToken`` / ``access_token`` transparently via _pick.
+    """
+    login_resp = client.post(
+        login_url,
+        json={"email": email, "password": password},
+        name=login_name or login_url,
+        headers=INCLUDE_TOKENS_HEADERS,
+    )
+    if login_resp.status_code != 200:
+        logger.error(
+            f"Login failed at {login_url}: {login_resp.status_code} - {login_resp.text[:200]}"
+        )
+        return None
+
+    data = login_resp.json().get("data", {}) or {}
+
+    challenge_id = _otp_challenge_id(data)
+    if challenge_id:
+        otp_resp = _verify_otp(
+            client,
+            verify_url=verify_url,
+            challenge_id=challenge_id,
+            name=verify_name,
+        )
+        if otp_resp.status_code != 200:
+            logger.error(
+                f"OTP verify failed at {verify_url}: {otp_resp.status_code} - {otp_resp.text[:200]}"
+            )
+            return None
+        data = otp_resp.json().get("data", {}) or {}
+
+    if not _pick(data, "access_token", "accessToken"):
+        logger.error(f"No access token in response from {login_url}")
+        return None
+    return data
+
+
+def access_token_of(data: dict) -> Optional[str]:
+    return _pick(data, "access_token", "accessToken")
+
+
+def tenant_id_of(data: dict) -> Optional[str]:
+    return _pick(data, "tenant_id", "tenantId")
+
 
 class VisichekLoadUser(HttpUser):
     """
@@ -36,30 +136,22 @@ class VisichekLoadUser(HttpUser):
         email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.test")
         password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
 
-        login_payload = {
-            "email": email,
-            "password": password,
-        }
-
-        response = self.client.post(
-            "/v1/system-users/login",
-            json=login_payload,
-            name="/v1/system-users/login",
-            headers={"X-Auth-Include-Tokens": "true"},
+        auth_data = login_and_resolve_data(
+            self.client,
+            login_url="/v1/system-users/login",
+            verify_url="/v1/system-users/verify-otp",
+            email=email,
+            password=password,
+            login_name="/v1/system-users/login",
+            verify_name="/v1/system-users/verify-otp",
         )
+        if auth_data is None:
+            raise Exception("Failed to login (see previous log lines)")
 
-        if response.status_code != 200:
-            logger.error(f"Login failed: {response.status_code} - {response.text}")
-            raise Exception(f"Failed to login: {response.text}")
-
-        auth_data = response.json().get("data", {})
-        access_token = auth_data.get("access_token")
-        if not access_token:
-            raise Exception("No access token in login response")
-
+        access_token = access_token_of(auth_data)
         self.headers = {"Authorization": f"Bearer {access_token}"}
         self.system_user_id = auth_data.get("id")
-        self.tenant_id = auth_data.get("tenant_id")
+        self.tenant_id = tenant_id_of(auth_data)
         self.user_id = auth_data.get("id")
 
         logger.info(f"Logged in as {email}, tenant_id={self.tenant_id}")
@@ -395,18 +487,20 @@ class ComplianceLoadUser(HttpUser):
         email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.test")
         password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
 
-        resp = self.client.post(
-            "/v1/system-users/login",
-            json={"email": email, "password": password},
-            name="/v1/system-users/login (compliance)",
-            headers={"X-Auth-Include-Tokens": "true"},
+        data = login_and_resolve_data(
+            self.client,
+            login_url="/v1/system-users/login",
+            verify_url="/v1/system-users/verify-otp",
+            email=email,
+            password=password,
+            login_name="/v1/system-users/login (compliance)",
+            verify_name="/v1/system-users/verify-otp (compliance)",
         )
-        if resp.status_code != 200:
-            raise Exception(f"Compliance user login failed: {resp.text}")
+        if data is None:
+            raise Exception("Compliance user login failed (see previous log lines)")
 
-        data = resp.json().get("data", {})
-        self.headers = {"Authorization": f"Bearer {data['access_token']}"}
-        self.tenant_id = data.get("tenant_id")
+        self.headers = {"Authorization": f"Bearer {access_token_of(data)}"}
+        self.tenant_id = tenant_id_of(data)
         self.user_id = data.get("id")
 
     # --- DPR ---
@@ -640,18 +734,20 @@ class AdminLoadUser(HttpUser):
         email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.test")
         password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
 
-        resp = self.client.post(
-            "/v1/system-users/login",
-            json={"email": email, "password": password},
-            name="/v1/system-users/login (admin)",
-            headers={"X-Auth-Include-Tokens": "true"},
+        data = login_and_resolve_data(
+            self.client,
+            login_url="/v1/system-users/login",
+            verify_url="/v1/system-users/verify-otp",
+            email=email,
+            password=password,
+            login_name="/v1/system-users/login (admin)",
+            verify_name="/v1/system-users/verify-otp (admin)",
         )
-        if resp.status_code != 200:
-            raise Exception(f"Admin user login failed: {resp.text}")
+        if data is None:
+            raise Exception("Admin user login failed (see previous log lines)")
 
-        data = resp.json().get("data", {})
-        self.headers = {"Authorization": f"Bearer {data['access_token']}"}
-        self.tenant_id = data.get("tenant_id")
+        self.headers = {"Authorization": f"Bearer {access_token_of(data)}"}
+        self.tenant_id = tenant_id_of(data)
         self.user_id = data.get("id")
 
     # --- Super Admin ---
@@ -825,24 +921,24 @@ class BootstrapLoadUser(HttpUser):
 
     def on_start(self) -> None:
         """Authenticate as application admin."""
-        email = os.getenv("LOAD_TEST_ADMIN_EMAIL", "loadtest_admin@visichek.test")
-        password = os.getenv("LOAD_TEST_ADMIN_PASSWORD", "LoadTestAdmin@123")
+        email = os.getenv("LOAD_TEST_ADMIN_EMAIL", "superadmin@visicheck.com")
+        password = os.getenv("LOAD_TEST_ADMIN_PASSWORD", "@ViViVheck123!")
 
-        resp = self.client.post(
-            "/v1/admins/login",
-            json={"email": email, "password": password},
-            name="/v1/admins/login (bootstrap)",
-            headers={"X-Auth-Include-Tokens": "true"},
+        data = login_and_resolve_data(
+            self.client,
+            login_url="/v1/admins/login",
+            verify_url="/v1/admins/verify-otp",
+            email=email,
+            password=password,
+            login_name="/v1/admins/login (bootstrap)",
+            verify_name="/v1/admins/verify-otp (bootstrap)",
         )
-        if resp.status_code != 200:
-            logger.warning(
-                f"Admin login failed ({resp.status_code}), bootstrap tasks will be skipped"
-            )
+        if data is None:
+            logger.warning("Admin bootstrap login failed — bootstrap tasks will be skipped")
             self.headers = {}
             return
 
-        data = resp.json().get("data", {})
-        self.headers = {"Authorization": f"Bearer {data['access_token']}"}
+        self.headers = {"Authorization": f"Bearer {access_token_of(data)}"}
 
     @task(5)
     @tag("bootstrap")
@@ -875,10 +971,12 @@ class BootstrapLoadUser(HttpUser):
         )
         if resp.status_code in (200, 201):
             data = resp.json().get("data", {})
+            tenant = data.get("tenant") or {}
+            super_admin = data.get("super_admin") or data.get("superAdmin") or {}
             self._bootstrapped_tenants.append(
                 {
-                    "tenant_id": data.get("tenant", {}).get("id"),
-                    "sa_token": data.get("super_admin", {}).get("access_token"),
+                    "tenant_id": tenant.get("id"),
+                    "sa_token": _pick(super_admin, "access_token", "accessToken"),
                     "sa_email": payload["admin_email"],
                     "sa_password": payload["admin_password"],
                 }
@@ -895,17 +993,17 @@ class BootstrapLoadUser(HttpUser):
             return
 
         tenant_info = random.choice(self._bootstrapped_tenants)
-        resp = self.client.post(
-            "/v1/system-users/login",
-            json={
-                "email": tenant_info["sa_email"],
-                "password": tenant_info["sa_password"],
-            },
-            name="/v1/system-users/login (bootstrapped SA)",
-            headers={"X-Auth-Include-Tokens": "true"},
+        data = login_and_resolve_data(
+            self.client,
+            login_url="/v1/system-users/login",
+            verify_url="/v1/system-users/verify-otp",
+            email=tenant_info["sa_email"],
+            password=tenant_info["sa_password"],
+            login_name="/v1/system-users/login (bootstrapped SA)",
+            verify_name="/v1/system-users/verify-otp (bootstrapped SA)",
         )
-        if resp.status_code != 200:
-            logger.warning(f"Bootstrapped SA login failed: {resp.status_code}")
+        if data is None:
+            logger.warning("Bootstrapped SA login failed")
 
     @task(2)
     @tag("bootstrap", "tenant")
@@ -963,41 +1061,42 @@ class BillingLoadUser(HttpUser):
 
     def on_start(self) -> None:
         """Authenticate as application admin for billing operations."""
-        # Try admin first (for plan/billing management)
-        admin_email = os.getenv("LOAD_TEST_ADMIN_EMAIL", "loadtest_admin@visichek.test")
-        admin_password = os.getenv("LOAD_TEST_ADMIN_PASSWORD", "LoadTestAdmin@123")
+        admin_email = os.getenv("LOAD_TEST_ADMIN_EMAIL", "superadmin@visicheck.com")
+        admin_password = os.getenv("LOAD_TEST_ADMIN_PASSWORD", "@ViViVheck123!")
 
-        admin_resp = self.client.post(
-            "/v1/admins/login",
-            json={"email": admin_email, "password": admin_password},
-            name="/v1/admins/login (billing)",
-            headers={"X-Auth-Include-Tokens": "true"},
+        admin_data = login_and_resolve_data(
+            self.client,
+            login_url="/v1/admins/login",
+            verify_url="/v1/admins/verify-otp",
+            email=admin_email,
+            password=admin_password,
+            login_name="/v1/admins/login (billing)",
+            verify_name="/v1/admins/verify-otp (billing)",
         )
-
-        if admin_resp.status_code == 200:
-            admin_data = admin_resp.json().get("data", {})
+        if admin_data is not None:
             self.admin_headers = {
-                "Authorization": f"Bearer {admin_data.get('access_token')}"
+                "Authorization": f"Bearer {access_token_of(admin_data)}"
             }
             logger.info("Authenticated as application admin for billing")
         else:
-            logger.warning(f"Admin billing auth failed: {admin_resp.status_code}")
+            logger.warning("Admin billing auth failed")
 
         # Also get super_admin/tenant auth if needed
         email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.test")
         password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
 
-        user_resp = self.client.post(
-            "/v1/system-users/login",
-            json={"email": email, "password": password},
-            name="/v1/system-users/login (billing)",
-            headers={"X-Auth-Include-Tokens": "true"},
+        user_data = login_and_resolve_data(
+            self.client,
+            login_url="/v1/system-users/login",
+            verify_url="/v1/system-users/verify-otp",
+            email=email,
+            password=password,
+            login_name="/v1/system-users/login (billing)",
+            verify_name="/v1/system-users/verify-otp (billing)",
         )
-
-        if user_resp.status_code == 200:
-            user_data = user_resp.json().get("data", {})
-            self.headers = {"Authorization": f"Bearer {user_data.get('access_token')}"}
-            self.tenant_id = user_data.get("tenant_id")
+        if user_data is not None:
+            self.headers = {"Authorization": f"Bearer {access_token_of(user_data)}"}
+            self.tenant_id = tenant_id_of(user_data)
 
     # --- Plans (Application Admin) ---
 

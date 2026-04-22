@@ -8,9 +8,64 @@ Run with:
 
 from __future__ import annotations
 
+import logging
+import os
 import time
+from typing import Any, Optional
 
 from locust import HttpUser, between, task
+
+logger = logging.getLogger(__name__)
+
+DEV_OTP_CODE = os.getenv("LOAD_TEST_OTP_CODE", "123456")
+INCLUDE_TOKENS_HEADERS = {"X-Auth-Include-Tokens": "true"}
+
+
+def _pick(data: dict, *keys: str) -> Optional[Any]:
+    for key in keys:
+        value = data.get(key)
+        if value:
+            return value
+    return None
+
+
+def _otp_challenge_id(data: dict) -> Optional[str]:
+    if not (data.get("otp_required") or data.get("otpRequired")):
+        return None
+    return _pick(data, "otp_challenge_id", "otpChallengeId")
+
+
+def admin_login_with_otp(client, email: str, password: str) -> Optional[str]:
+    """Log in as application admin, handle 2FA, return the access token.
+
+    Returns ``None`` on any failure. Reads ``accessToken`` / ``access_token``
+    transparently to tolerate the CaseConversionMiddleware.
+    """
+    resp = client.post(
+        "/v1/admins/login",
+        json={"email": email, "password": password},
+        headers=INCLUDE_TOKENS_HEADERS,
+    )
+    if resp.status_code != 200:
+        logger.warning(f"Admin login failed: {resp.status_code} - {resp.text[:200]}")
+        return None
+
+    data = resp.json().get("data", {}) or {}
+    challenge_id = _otp_challenge_id(data)
+    if challenge_id:
+        otp_resp = client.post(
+            "/v1/admins/verify-otp",
+            json={"otp_challenge_id": challenge_id, "otp_code": DEV_OTP_CODE},
+            headers=INCLUDE_TOKENS_HEADERS,
+        )
+        if otp_resp.status_code != 200:
+            logger.warning(
+                f"Admin OTP verify failed: {otp_resp.status_code} - {otp_resp.text[:200]}"
+            )
+            return None
+        data = otp_resp.json().get("data", {}) or {}
+
+    return _pick(data, "access_token", "accessToken")
 
 
 class PlanAdminUser(HttpUser):
@@ -24,17 +79,10 @@ class PlanAdminUser(HttpUser):
     created_discount_ids: list[str] = []
 
     def on_start(self):
-        """Login as admin."""
-        resp = self.client.post(
-            "/v1/admins/login",
-            json={
-                "email": "admin@test.com",
-                "password": "AdminPass123!",
-            },
-            headers={"X-Auth-Include-Tokens": "true"},
-        )
-        if resp.status_code == 200:
-            self.admin_token = resp.json()["data"]["access_token"]
+        """Login as admin (handling 2FA)."""
+        email = os.getenv("LOAD_TEST_ADMIN_EMAIL", "superadmin@visicheck.com")
+        password = os.getenv("LOAD_TEST_ADMIN_PASSWORD", "@ViViVheck123!")
+        self.admin_token = admin_login_with_otp(self.client, email, password)
         self.created_plan_ids = []
         self.created_discount_ids = []
 
@@ -137,16 +185,9 @@ class SubscriptionUser(HttpUser):
     admin_token: str | None = None
 
     def on_start(self):
-        resp = self.client.post(
-            "/v1/admins/login",
-            json={
-                "email": "admin@test.com",
-                "password": "AdminPass123!",
-            },
-            headers={"X-Auth-Include-Tokens": "true"},
-        )
-        if resp.status_code == 200:
-            self.admin_token = resp.json()["data"]["access_token"]
+        email = os.getenv("LOAD_TEST_ADMIN_EMAIL", "superadmin@visicheck.com")
+        password = os.getenv("LOAD_TEST_ADMIN_PASSWORD", "@ViViVheck123!")
+        self.admin_token = admin_login_with_otp(self.client, email, password)
 
     @property
     def auth_headers(self) -> dict:
