@@ -45,6 +45,7 @@ class VisichekLoadUser(HttpUser):
             "/v1/system-users/login",
             json=login_payload,
             name="/v1/system-users/login",
+            headers={"X-Auth-Include-Tokens": "true"},
         )
 
         if response.status_code != 200:
@@ -398,6 +399,7 @@ class ComplianceLoadUser(HttpUser):
             "/v1/system-users/login",
             json={"email": email, "password": password},
             name="/v1/system-users/login (compliance)",
+            headers={"X-Auth-Include-Tokens": "true"},
         )
         if resp.status_code != 200:
             raise Exception(f"Compliance user login failed: {resp.text}")
@@ -642,6 +644,7 @@ class AdminLoadUser(HttpUser):
             "/v1/system-users/login",
             json={"email": email, "password": password},
             name="/v1/system-users/login (admin)",
+            headers={"X-Auth-Include-Tokens": "true"},
         )
         if resp.status_code != 200:
             raise Exception(f"Admin user login failed: {resp.text}")
@@ -829,6 +832,7 @@ class BootstrapLoadUser(HttpUser):
             "/v1/admins/login",
             json={"email": email, "password": password},
             name="/v1/admins/login (bootstrap)",
+            headers={"X-Auth-Include-Tokens": "true"},
         )
         if resp.status_code != 200:
             logger.warning(
@@ -898,6 +902,7 @@ class BootstrapLoadUser(HttpUser):
                 "password": tenant_info["sa_password"],
             },
             name="/v1/system-users/login (bootstrapped SA)",
+            headers={"X-Auth-Include-Tokens": "true"},
         )
         if resp.status_code != 200:
             logger.warning(f"Bootstrapped SA login failed: {resp.status_code}")
@@ -966,6 +971,7 @@ class BillingLoadUser(HttpUser):
             "/v1/admins/login",
             json={"email": admin_email, "password": admin_password},
             name="/v1/admins/login (billing)",
+            headers={"X-Auth-Include-Tokens": "true"},
         )
 
         if admin_resp.status_code == 200:
@@ -985,6 +991,7 @@ class BillingLoadUser(HttpUser):
             "/v1/system-users/login",
             json={"email": email, "password": password},
             name="/v1/system-users/login (billing)",
+            headers={"X-Auth-Include-Tokens": "true"},
         )
 
         if user_resp.status_code == 200:

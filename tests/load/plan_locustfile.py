@@ -31,6 +31,7 @@ class PlanAdminUser(HttpUser):
                 "email": "admin@test.com",
                 "password": "AdminPass123!",
             },
+            headers={"X-Auth-Include-Tokens": "true"},
         )
         if resp.status_code == 200:
             self.admin_token = resp.json()["data"]["access_token"]
@@ -142,6 +143,7 @@ class SubscriptionUser(HttpUser):
                 "email": "admin@test.com",
                 "password": "AdminPass123!",
             },
+            headers={"X-Auth-Include-Tokens": "true"},
         )
         if resp.status_code == 200:
             self.admin_token = resp.json()["data"]["access_token"]

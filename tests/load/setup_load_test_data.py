@@ -10,12 +10,75 @@ from typing import Optional
 import httpx
 
 BASE_URL = os.getenv("LOAD_TEST_HOST", "http://localhost:8000")
+INCLUDE_TOKENS = {"X-Auth-Include-Tokens": "true"}
 
 
-async def create_tenant(client: httpx.AsyncClient, super_admin_headers: dict) -> str:
-    """Create a test tenant."""
-    tenant_data = {
-        "company_name": f"Load Test Org {int(time.time())}",
+async def login_admin(
+    client: httpx.AsyncClient, email: str, password: str
+) -> dict:
+    """Log in as application admin. Raises on failure."""
+    resp = await client.post(
+        f"{BASE_URL}/v1/admins/login",
+        json={"email": email, "password": password},
+        headers=INCLUDE_TOKENS,
+    )
+    if resp.status_code != 200:
+        raise Exception(f"Admin login failed: {resp.status_code} - {resp.text}")
+
+    data = resp.json().get("data", {}) or {}
+    token = data.get("access_token")
+    if not token:
+        raise Exception(
+            "Admin login returned no access_token — check X-Auth-Include-Tokens support"
+        )
+    return {
+        "access_token": token,
+        "admin_id": data.get("id"),
+        "headers": {"Authorization": f"Bearer {token}"},
+    }
+
+
+async def login_system_user(
+    client: httpx.AsyncClient, email: str, password: str
+) -> Optional[dict]:
+    """Log in as system user (super_admin, receptionist, etc.). Returns None on failure."""
+    resp = await client.post(
+        f"{BASE_URL}/v1/system-users/login",
+        json={"email": email, "password": password},
+        headers=INCLUDE_TOKENS,
+    )
+    if resp.status_code != 200:
+        return None
+
+    data = resp.json().get("data", {}) or {}
+    token = data.get("access_token")
+    if not token:
+        return None
+    return {
+        "access_token": token,
+        "user_id": data.get("id"),
+        "tenant_id": data.get("tenant_id"),
+        "headers": {"Authorization": f"Bearer {token}"},
+    }
+
+
+async def bootstrap_tenant(
+    client: httpx.AsyncClient,
+    admin_headers: dict,
+    *,
+    company_name: str,
+    admin_full_name: str,
+    admin_email: str,
+    admin_password: str,
+) -> dict:
+    """Bootstrap tenant + first super_admin atomically.
+
+    Returns a dict with ``tenant_id``, ``super_admin_id``, and the super_admin's
+    ``access_token`` / ``refresh_token`` — the bootstrap response embeds them
+    directly, so no second login is required on the happy path.
+    """
+    payload = {
+        "company_name": company_name,
         "lawful_basis": "legitimate_interest",
         "notice_display_mode": "passive",
         "retention_days": 30,
@@ -23,90 +86,75 @@ async def create_tenant(client: httpx.AsyncClient, super_admin_headers: dict) ->
         "dpo_contact_email": "dpo@loadtest.local",
         "privacy_policy_url": "https://example.com/privacy",
         "country_of_hosting": "United States",
-        "cross_border_approved": False,
+        "cross_border_approved": True,
+        "admin_full_name": admin_full_name,
+        "admin_email": admin_email,
+        "admin_password": admin_password,
     }
 
-    response = await client.post(
-        f"{BASE_URL}/v1/tenants",
-        json=tenant_data,
-        headers=super_admin_headers,
+    resp = await client.post(
+        f"{BASE_URL}/v1/admins/tenants/bootstrap",
+        json=payload,
+        headers=admin_headers,
     )
-
-    if response.status_code == 201:
-        tenant_id = response.json().get("data", {}).get("id")
-        print(f"✓ Created tenant: {tenant_id}")
-        return tenant_id
-    else:
+    if resp.status_code not in (200, 201):
         raise Exception(
-            f"Failed to create tenant: {response.status_code} - {response.text}"
+            f"Bootstrap failed: {resp.status_code} - {resp.text}"
         )
+
+    data = resp.json().get("data", {}) or {}
+    tenant = data.get("tenant") or {}
+    super_admin = data.get("super_admin") or {}
+    return {
+        "tenant_id": tenant.get("id"),
+        "super_admin_id": super_admin.get("id"),
+        "access_token": super_admin.get("access_token"),
+        "refresh_token": super_admin.get("refresh_token"),
+    }
 
 
 async def create_system_user(
     client: httpx.AsyncClient,
     super_admin_headers: dict,
-    tenant_id: str,
     email: str,
     full_name: str,
     role: str,
     department_id: Optional[str] = None,
 ) -> dict:
-    """Create a system user."""
-    user_data = {
-        "tenant_id": tenant_id,
-        "department_id": department_id,
+    """Invite a system user via super_admin token. `tenant_id` is inferred from the token."""
+    payload: dict = {
         "full_name": full_name,
         "email": email,
-        "password_hash": "LoadTest@123",
+        "password": "LoadTest@123",
         "role": role,
-        "account_status": "ACTIVE",
-        "is_active": True,
     }
+    if department_id:
+        payload["department_id"] = department_id
 
     response = await client.post(
         f"{BASE_URL}/v1/system-users/signup",
-        json=user_data,
+        json=payload,
         headers=super_admin_headers,
     )
 
-    if response.status_code == 201:
+    if response.status_code in (200, 201):
         user = response.json().get("data", {})
         print(f"✓ Created {role} user: {email} ({user.get('id')})")
         return user
-    else:
-        print(f"  Note: User {email} may already exist ({response.status_code})")
-        return {}
 
-
-async def login_user(client: httpx.AsyncClient, email: str, password: str) -> dict:
-    """Login and get tokens."""
-    login_data = {"email": email, "password": password}
-
-    response = await client.post(
-        f"{BASE_URL}/v1/system-users/login",
-        json=login_data,
+    print(
+        f"  Note: User {email} not created ({response.status_code}) — may already exist"
     )
-
-    if response.status_code == 200:
-        auth_data = response.json().get("data", {})
-        access_token = auth_data.get("access_token")
-        return {
-            "access_token": access_token,
-            "user_id": auth_data.get("id"),
-            "headers": {"Authorization": f"Bearer {access_token}"},
-        }
-    else:
-        raise Exception(f"Login failed: {response.status_code} - {response.text}")
+    return {}
 
 
 async def create_departments(
     client: httpx.AsyncClient,
     headers: dict,
     tenant_id: str,
-    created_by: str,
     count: int = 5,
 ) -> list[str]:
-    """Create test departments."""
+    """Create test departments via the write pipeline. Returns pre-assigned IDs."""
     dept_names = [
         "Reception",
         "Sales",
@@ -120,7 +168,7 @@ async def create_departments(
         "IT",
     ]
 
-    department_ids = []
+    department_ids: list[str] = []
     for i in range(min(count, len(dept_names))):
         dept_data = {
             "tenant_id": tenant_id,
@@ -135,7 +183,7 @@ async def create_departments(
             headers=headers,
         )
 
-        # POST /v1/departments now returns 202 + { id, job_id, status } via the
+        # POST /v1/departments returns 202 + { id, job_id, status } via the
         # write pipeline. The id is pre-assigned, so we can stash it immediately
         # even though persistence happens asynchronously on worker-writes.
         if response.status_code in (201, 202):
@@ -144,7 +192,7 @@ async def create_departments(
             print(f"✓ Created department: {dept_names[i]} ({dept_id})")
         else:
             print(
-                f"  Failed to create department {dept_names[i]}: {response.status_code}"
+                f"  Failed to create department {dept_names[i]}: {response.status_code} - {response.text[:200]}"
             )
 
     return department_ids
@@ -208,10 +256,9 @@ async def create_visitor_profile(
         headers=headers,
     )
 
-    if response.status_code == 201:
+    if response.status_code in (200, 201, 202):
         return response.json().get("data", {}).get("id")
-    else:
-        return None
+    return None
 
 
 async def create_visitor_profiles(
@@ -223,7 +270,7 @@ async def create_visitor_profiles(
     """Create multiple visitor profiles in parallel."""
     tasks = [create_visitor_profile(client, headers, tenant_id) for _ in range(count)]
 
-    visitor_ids = []
+    visitor_ids: list[str] = []
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for i, result in enumerate(results):
         if isinstance(result, str):
@@ -244,10 +291,10 @@ async def create_appointments(
     count: int = 10,
 ) -> list[str]:
     """Create sample appointments."""
-    appointment_ids = []
+    appointment_ids: list[str] = []
     purposes = ["Meeting", "Interview", "Consultation", "Review", "Training"]
 
-    for i in range(count):
+    for _ in range(count):
         future_time = int(time.time()) + random.randint(3600, 604800)
         appointment_data = {
             "tenant_id": tenant_id,
@@ -265,7 +312,7 @@ async def create_appointments(
             headers=headers,
         )
 
-        if response.status_code == 201:
+        if response.status_code in (200, 201, 202):
             apt_id = response.json().get("data", {}).get("id")
             appointment_ids.append(apt_id)
 
@@ -294,47 +341,91 @@ async def main():
             sys.exit(1)
 
     async with httpx.AsyncClient(timeout=30) as client:
-        # Step 1: Try to login as super_admin first (for initial setup)
-        # If it fails, we'll try to create one
+        # Creds for the load-test super_admin the locustfile will log in as.
         super_admin_email = os.getenv(
             "LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.com"
         )
         super_admin_password = os.getenv("LOAD_TEST_PASSWORD", "LoadTest@123")
 
-        print("Step 1: Setting up super admin authentication...")
-        try:
-            auth_result = await login_user(
-                client, super_admin_email, super_admin_password
-            )
-            super_admin_headers = auth_result["headers"]
-            super_admin_id = auth_result["user_id"]
-            print("✓ Logged in as existing super admin")
-        except Exception as e:
+        # Creds for the application admin that bootstraps the tenant.
+        admin_email = os.getenv(
+            "LOAD_TEST_ADMIN_EMAIL", "loadtest_admin@visichek.test"
+        )
+        admin_password = os.getenv(
+            "LOAD_TEST_ADMIN_PASSWORD", "LoadTestAdmin@123"
+        )
+
+        # Step 1: Try super_admin login first — if it works, the tenant was
+        # already bootstrapped in a previous run and we can skip to data creation.
+        print("Step 1: Checking for existing super admin...")
+        sa_auth = await login_system_user(
+            client, super_admin_email, super_admin_password
+        )
+
+        if sa_auth:
+            super_admin_headers = sa_auth["headers"]
+            super_admin_id = sa_auth["user_id"]
+            tenant_id = sa_auth["tenant_id"]
+            print(f"✓ Existing super admin found — tenant_id={tenant_id}")
+        else:
             print(
-                "✗ Super admin login failed, will attempt to create via default admin"
+                "  No existing super admin — will bootstrap a fresh tenant as application admin"
             )
-            print("  Note: This requires an existing super admin in the system")
-            print(f"  Error: {e}")
-            sys.exit(1)
 
-        # Step 2: Create or get tenant
-        print("\nStep 2: Creating test tenant...")
-        try:
-            tenant_id = await create_tenant(client, super_admin_headers)
-        except Exception as e:
-            print(f"✗ Failed to create tenant: {e}")
-            sys.exit(1)
+            # Step 2a: Log in as application admin
+            print("\nStep 2a: Logging in as application admin...")
+            try:
+                admin_auth = await login_admin(client, admin_email, admin_password)
+            except Exception as e:
+                print(f"✗ Admin login failed: {e}")
+                print(
+                    "  Ensure an application admin exists with "
+                    f"LOAD_TEST_ADMIN_EMAIL={admin_email} / "
+                    "LOAD_TEST_ADMIN_PASSWORD=... or seed one via the admin signup flow."
+                )
+                sys.exit(1)
+            print(f"✓ Logged in as application admin ({admin_email})")
 
-        # Step 3: Create system users (receptionist, dept_admin)
+            # Step 2b: Bootstrap tenant + first super_admin atomically
+            print("\nStep 2b: Bootstrapping tenant + super admin...")
+            company_name = f"Load Test Org {int(time.time())}"
+            try:
+                boot = await bootstrap_tenant(
+                    client,
+                    admin_auth["headers"],
+                    company_name=company_name,
+                    admin_full_name="Load Test Super Admin",
+                    admin_email=super_admin_email,
+                    admin_password=super_admin_password,
+                )
+            except Exception as e:
+                print(f"✗ Bootstrap failed: {e}")
+                sys.exit(1)
+
+            tenant_id = boot["tenant_id"]
+            super_admin_id = boot["super_admin_id"]
+            sa_token = boot["access_token"]
+            if not tenant_id or not sa_token:
+                print(
+                    "✗ Bootstrap succeeded but response was missing tenant_id / access_token"
+                )
+                sys.exit(1)
+            super_admin_headers = {"Authorization": f"Bearer {sa_token}"}
+            print(f"✓ Bootstrapped tenant={tenant_id}, super_admin={super_admin_id}")
+
+        # Step 3: Create system users (receptionist, dept_admin) in the tenant
         print("\nStep 3: Creating system users...")
-        receptionist_email = "loadtest_receptionist@visichek.test"
-        dept_admin_email = "loadtest_dept_admin@visichek.test"
+        receptionist_email = os.getenv(
+            "LOAD_TEST_RECEPTIONIST_EMAIL", "loadtest_receptionist@visichek.test"
+        )
+        dept_admin_email = os.getenv(
+            "LOAD_TEST_DEPT_ADMIN_EMAIL", "loadtest_dept_admin@visichek.test"
+        )
 
         try:
             await create_system_user(
                 client,
                 super_admin_headers,
-                tenant_id,
                 receptionist_email,
                 "Load Test Receptionist",
                 "receptionist",
@@ -342,7 +433,6 @@ async def main():
             await create_system_user(
                 client,
                 super_admin_headers,
-                tenant_id,
                 dept_admin_email,
                 "Load Test Department Admin",
                 "dept_admin",
@@ -350,14 +440,13 @@ async def main():
         except Exception as e:
             print(f"Warning: Failed to create some users: {e}")
 
-        # Step 4: Create departments
+        # Step 4: Create departments (async write pipeline — pre-assigned IDs)
         print("\nStep 4: Creating test departments...")
         try:
             department_ids = await create_departments(
                 client,
                 super_admin_headers,
                 tenant_id,
-                super_admin_id,
                 count=5,
             )
             if not department_ids:
@@ -410,6 +499,10 @@ async def main():
         print(f"  Email: {super_admin_email}")
         print(f"  Password: {super_admin_password}")
 
+        print("\nApplication Admin (for bootstrap tasks):")
+        print(f"  Email: {admin_email}")
+        print(f"  Password: {admin_password}")
+
         print("\nOther Users Created:")
         print(f"  Receptionist: {receptionist_email}")
         print(f"  Dept Admin: {dept_admin_email}")
@@ -418,6 +511,8 @@ async def main():
         print("  cd tests/load")
         print(f"  export LOAD_TEST_EMAIL={super_admin_email}")
         print(f"  export LOAD_TEST_PASSWORD={super_admin_password}")
+        print(f"  export LOAD_TEST_ADMIN_EMAIL={admin_email}")
+        print(f"  export LOAD_TEST_ADMIN_PASSWORD={admin_password}")
         print(f"  locust -f locustfile.py --host={BASE_URL}")
 
         print("\n" + "=" * 60 + "\n")
