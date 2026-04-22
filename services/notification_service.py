@@ -315,6 +315,28 @@ async def notify_new_user_added(
 # --- Check-In Notifications ---
 
 
+# Roles that can approve / reject check-ins — must match the auth deps on
+# the checkin routes. When these change, update the route too.
+_CHECKIN_APPROVER_ROLES = ("receptionist", "super_admin", "dept_admin")
+
+
+async def _get_active_checkin_approvers(tenant_id: str) -> list:
+    """Return every active system user who can approve check-ins for the
+    tenant. Tenants frequently have only a super_admin (no receptionist
+    role configured), so targeting ``role="receptionist"`` alone would drop
+    the notification on the floor."""
+    from repositories.system_user_repo import get_system_users
+    from schemas.imports import AccountStatus
+
+    return await get_system_users(
+        {
+            "tenant_id": tenant_id,
+            "role": {"$in": list(_CHECKIN_APPROVER_ROLES)},
+            "account_status": AccountStatus.ACTIVE.value,
+        }
+    )
+
+
 async def notify_checkin_pending_approval(
     tenant_id: str,
     checkin_id: str,
@@ -323,20 +345,14 @@ async def notify_checkin_pending_approval(
     purpose: str,
     host_employee_id: Optional[str] = None,
 ) -> None:
-    """Fire-and-forget: notify receptionists about pending check-in."""
+    """Fire-and-forget: notify every active approver (receptionist,
+    super_admin, dept_admin) about a pending check-in."""
     try:
-        from repositories.system_user_repo import get_system_users
-
-        # Get all receptionists for the tenant
-        receptionists = await get_system_users(
-            {"tenant_id": tenant_id, "role": "receptionist"}
-        )
-
-        # Send to each receptionist
-        for receptionist in receptionists:
+        approvers = await _get_active_checkin_approvers(tenant_id)
+        for user in approvers:
             try:
                 await send_notification(
-                    user_id=receptionist.id or "",
+                    user_id=user.id or "",
                     user_type="system_user",
                     title="Pending Check-In Approval",
                     body=f"{visitor_name} ({purpose}) is awaiting approval.",
@@ -346,7 +362,7 @@ async def notify_checkin_pending_approval(
                 )
             except Exception:
                 logger.warning(
-                    f"Failed to notify receptionist {receptionist.id}", exc_info=True
+                    f"Failed to notify approver {user.id}", exc_info=True
                 )
     except Exception:
         logger.warning(
@@ -362,19 +378,14 @@ async def notify_checkin_approved(
     approved_by_user_id: str,
     host_employee_id: Optional[str] = None,
 ) -> None:
-    """Fire-and-forget: notify about approved check-in and badge issuance."""
+    """Fire-and-forget: notify every active approver about an approved
+    check-in and badge issuance."""
     try:
-        from repositories.system_user_repo import get_system_users
-
-        # Get all receptionists for the tenant
-        receptionists = await get_system_users(
-            {"tenant_id": tenant_id, "role": "receptionist"}
-        )
-
-        for receptionist in receptionists:
+        approvers = await _get_active_checkin_approvers(tenant_id)
+        for user in approvers:
             try:
                 await send_notification(
-                    user_id=receptionist.id or "",
+                    user_id=user.id or "",
                     user_type="system_user",
                     title="Check-In Approved",
                     body=f"Badge issued for {visitor_name}. Badge ID: {badge_id}",
@@ -384,7 +395,7 @@ async def notify_checkin_approved(
                 )
             except Exception:
                 logger.warning(
-                    f"Failed to notify receptionist {receptionist.id}", exc_info=True
+                    f"Failed to notify approver {user.id}", exc_info=True
                 )
     except Exception:
         logger.warning("Failed to send check-in approved notification", exc_info=True)
@@ -398,19 +409,14 @@ async def notify_checkin_rejected(
     reason: str,
     host_employee_id: Optional[str] = None,
 ) -> None:
-    """Fire-and-forget: notify about rejected check-in."""
+    """Fire-and-forget: notify every active approver about a rejected
+    check-in."""
     try:
-        from repositories.system_user_repo import get_system_users
-
-        # Get all receptionists for the tenant
-        receptionists = await get_system_users(
-            {"tenant_id": tenant_id, "role": "receptionist"}
-        )
-
-        for receptionist in receptionists:
+        approvers = await _get_active_checkin_approvers(tenant_id)
+        for user in approvers:
             try:
                 await send_notification(
-                    user_id=receptionist.id or "",
+                    user_id=user.id or "",
                     user_type="system_user",
                     title="Check-In Rejected",
                     body=f"Check-in for {visitor_name} was rejected. Reason: {reason}",
@@ -420,7 +426,7 @@ async def notify_checkin_rejected(
                 )
             except Exception:
                 logger.warning(
-                    f"Failed to notify receptionist {receptionist.id}", exc_info=True
+                    f"Failed to notify approver {user.id}", exc_info=True
                 )
     except Exception:
         logger.warning("Failed to send check-in rejected notification", exc_info=True)

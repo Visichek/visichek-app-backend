@@ -84,6 +84,26 @@ async def find_visitor_by_email_or_phone_any(
     return VisitorOut(**doc)
 
 
+async def get_visitors_by_ids(
+    tenant_id: str, visitor_ids: list[str]
+) -> list[VisitorOut]:
+    """Batch-fetch visitors by id, within a tenant. Skips ids that aren't
+    valid ObjectIds. Returned order is not guaranteed — callers should index
+    by ``visitor.id`` when mapping back."""
+    if not visitor_ids:
+        return []
+    oids = [ObjectId(v) for v in visitor_ids if ObjectId.is_valid(v)]
+    if not oids:
+        return []
+    cursor = db[COLLECTION].find(
+        {"_id": {"$in": oids}, "tenant_id": tenant_id}
+    )
+    items: list[VisitorOut] = []
+    async for doc in cursor:
+        items.append(VisitorOut(**doc))
+    return items
+
+
 async def list_visitors_for_tenant(
     tenant_id: str, skip: int = 0, limit: int = 50
 ) -> list[VisitorOut]:

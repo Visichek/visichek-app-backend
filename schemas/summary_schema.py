@@ -63,6 +63,26 @@ class VisitorProfileBriefSummary(BaseModel):
     company: Optional[str] = None
 
 
+class VisitorBriefSummary(BaseModel):
+    """Snapshot of a ``visitors`` collection record embedded on a check-in
+    payload so the receptionist / approver can cross-check the visitor's
+    identity and spot data-entry errors (spelling, wrong number) without a
+    second request.
+
+    This intentionally mirrors only the fields needed for the approval UI:
+    who the visitor claims to be, how to reach them, whether they've been
+    ID-verified, and the portrait captured during verification."""
+
+    id: str
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    company: Optional[str] = None
+    verified: bool = False
+    verification_method: Optional[str] = None
+    portrait_url: Optional[str] = None
+
+
 class AppointmentBriefSummary(BaseModel):
     id: str
     purpose: Optional[str] = None

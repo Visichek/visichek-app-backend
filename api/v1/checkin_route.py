@@ -13,14 +13,17 @@ from services.checkin_service import (
     list_checkins_analytics,
     list_checkins_for_tenant,
 )
-from schemas.checkin_schema import CheckinConfirmRequest, CheckinOut
+from schemas.checkin_schema import (
+    CheckinConfirmRequest,
+    CheckinWithVisitorOut,
+)
 
 router = APIRouter(tags=["Check-Ins"])
 
 
 @router.get(
     "/tenants/{tenant_id}/checkins",
-    response_model=list[CheckinOut],
+    response_model=list[CheckinWithVisitorOut],
 )
 @document_response(
     message="Check-ins retrieved",
@@ -56,7 +59,7 @@ async def list_pending_checkins(
 
 @router.get(
     "/checkins/{checkin_id}",
-    response_model=CheckinOut,
+    response_model=CheckinWithVisitorOut,
 )
 @document_response(
     message="Check-in detail retrieved",

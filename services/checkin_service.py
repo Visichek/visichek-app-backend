@@ -24,8 +24,60 @@ from schemas.checkin_schema import (
     CheckinState,
     CheckinSubmitRequest,
     CheckinUpdate,
+    CheckinWithVisitorOut,
 )
 from schemas.imports import IDType
+from schemas.summary_schema import VisitorBriefSummary
+
+
+def _visitor_to_brief(visitor: Any) -> VisitorBriefSummary:
+    bio = visitor.bio_data or {}
+    return VisitorBriefSummary(
+        id=visitor.id or "",
+        full_name=visitor.full_name,
+        email=visitor.email,
+        phone=visitor.phone,
+        company=bio.get("company") or bio.get("organization"),
+        verified=bool(visitor.verified),
+        verification_method=(
+            visitor.verification_method.value
+            if visitor.verification_method is not None
+            else None
+        ),
+        portrait_url=visitor.portrait_url,
+    )
+
+
+async def _enrich_checkins_with_visitors(
+    tenant_id: str, checkins: list[CheckinOut]
+) -> list[CheckinWithVisitorOut]:
+    """Embed a ``VisitorBriefSummary`` on each check-in. Uses a single
+    batched ``$in`` query instead of N lookups, so the approval queue
+    endpoint stays cheap as it grows.
+
+    The receptionist UI needs the visitor's name + contact to confirm
+    identity, cross-check spelling, and verify that ID-verification
+    actually ran — it cannot render a useful approval row from just
+    ``visitor_id``.
+    """
+    if not checkins:
+        return []
+    from repositories.visitor_repo import get_visitors_by_ids
+
+    visitor_ids = list({c.visitor_id for c in checkins if c.visitor_id})
+    visitors = await get_visitors_by_ids(tenant_id=tenant_id, visitor_ids=visitor_ids)
+    by_id = {v.id: v for v in visitors if v.id}
+
+    enriched: list[CheckinWithVisitorOut] = []
+    for c in checkins:
+        visitor = by_id.get(c.visitor_id)
+        enriched.append(
+            CheckinWithVisitorOut(
+                **c.model_dump(by_alias=True),
+                visitor=_visitor_to_brief(visitor) if visitor is not None else None,
+            )
+        )
+    return enriched
 
 
 async def _collect_returning_visitor_fallback(
@@ -690,23 +742,31 @@ async def submit_checkin(
 
 async def list_checkins_for_tenant(
     tenant_id: str, state: Optional[str] = None, skip: int = 0, limit: int = 20
-) -> tuple[list[CheckinOut], int]:
-    """List check-ins for a tenant with optional state filter."""
+) -> tuple[list[CheckinWithVisitorOut], int]:
+    """List check-ins for a tenant with optional state filter. Each row is
+    enriched with a ``VisitorBriefSummary`` so the approval UI can show who
+    the visitor is without a second request."""
     filter_dict = {"tenant_id": tenant_id}
     if state:
         filter_dict["state"] = state
 
     checkins = await get_checkins(filter_dict, skip=skip, limit=limit)
     total = await count_checkins(filter_dict)
-    return checkins, total
+    enriched = await _enrich_checkins_with_visitors(tenant_id, checkins)
+    return enriched, total
 
 
-async def get_checkin_detail(tenant_id: str, checkin_id: str) -> CheckinOut:
-    """Get check-in detail with tenant validation."""
+async def get_checkin_detail(
+    tenant_id: str, checkin_id: str
+) -> CheckinWithVisitorOut:
+    """Get check-in detail with tenant validation. Enriched with the
+    visitor snapshot so the approver sees the visitor's name + contact +
+    verification state."""
     checkin = await get_checkin({"_id": checkin_id, "tenant_id": tenant_id})
     if not checkin:
         raise resource_not_found(resource="Checkin", resource_id=checkin_id)
-    return checkin
+    enriched = await _enrich_checkins_with_visitors(tenant_id, [checkin])
+    return enriched[0]
 
 
 async def confirm_checkin(
@@ -840,8 +900,10 @@ async def list_checkins_analytics(
     to_ts: Optional[int] = None,
     skip: int = 0,
     limit: int = 20,
-) -> tuple[list[CheckinOut], int]:
-    """List check-ins for analytics with date range filtering."""
+) -> tuple[list[CheckinWithVisitorOut], int]:
+    """List check-ins for analytics with date range filtering. Enriched
+    with visitor snapshots so the analytics screens can render visitor
+    details without a second batch lookup."""
     filter_dict: dict[str, Any] = {"tenant_id": tenant_id}
     if state:
         filter_dict["state"] = state
@@ -858,4 +920,5 @@ async def list_checkins_analytics(
 
     checkins = await get_checkins(filter_dict, skip=skip, limit=limit)
     total = await count_checkins(filter_dict)
-    return checkins, total
+    enriched = await _enrich_checkins_with_visitors(tenant_id, checkins)
+    return enriched, total

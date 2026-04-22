@@ -18,6 +18,12 @@
    and is the only path for new visitors and for flows that need an ID
    re-upload. **Do not delete it.**
 6. All PII edits stay on the authenticated receptionist / super_admin side.
+7. `GET /v1/tenants/{tenant_id}/checkins` and friends now embed a
+   `visitor` snapshot on every row so the approver can confirm identity
+   and spot spelling mistakes without a second request.
+8. Pending-approval / approved / rejected notifications now reach
+   `super_admin` and `dept_admin` too — previously only `receptionist`
+   was targeted, so tenants without that role got nothing.
 
 ## The 500 that was reported
 
@@ -278,6 +284,128 @@ Both `visitors` and `visitor_profiles` are written on every public submit
 (either route). They are intentionally separate so the existing
 visitor-profile analytics / retention flows continue to work unchanged.
 
+## Enriched check-in list for the approver UI
+
+### What changed
+
+`GET /v1/tenants/{tenant_id}/checkins`, `GET /v1/checkins/{checkin_id}`,
+and `GET /v1/tenants/{tenant_id}/checkins/analytics` now return
+`CheckinWithVisitorOut` instead of `CheckinOut`. Every row carries an
+embedded `visitor` object with the fields the receptionist actually needs
+to approve or reject a pending visit — name, contact info, verification
+status, and the portrait (if the visitor went through ID verification).
+
+Before, the response was just `{ ..., "visitorId": "..." }`, which forced
+the UI to either call `/v1/visitor-profiles/{id}` per row (N+1) or render
+an approval screen with no way to confirm who the visitor claims to be.
+Neither was acceptable — an approver who can't see the visitor's name
+can't catch spelling mistakes or prevent identity swaps.
+
+The enrichment uses a single batched `$in` query against the `visitors`
+collection, so the approval queue stays cheap as it grows.
+
+### New response shape
+
+```json
+{
+  "success": true,
+  "message": "Check-ins retrieved",
+  "data": [
+    {
+      "tenantId": "69e35ec9c27723b4b442bcb1",
+      "visitorId": "69e8aebf654851f33188f768",
+      "checkinConfigId": "",
+      "idExtractionId": null,
+      "tenantSpecificData": { "purpose": "Maintenance" },
+      "purpose": {
+        "purpose": "Maintenance of software",
+        "purposeDetails": null,
+        "expectedDurationMinutes": null
+      },
+      "state": "pending_approval",
+      "verified": false,
+      "approvedByUserId": null,
+      "approvedAt": null,
+      "rejectionReason": null,
+      "id": "69e8be6cf21691c10478b491",
+      "dateCreated": 1776860780,
+      "lastUpdated": 1776860780,
+      "visitor": {
+        "id": "69e8aebf654851f33188f768",
+        "fullName": "Jane Doe",
+        "email": "jane@example.com",
+        "phone": "+15551234567",
+        "company": "Acme Corp",
+        "verified": false,
+        "verificationMethod": null,
+        "portraitUrl": null
+      }
+    }
+  ],
+  "meta": { "total": 1, "skip": 0, "limit": 20, "state": "pending_approval" }
+}
+```
+
+`visitor` is `null` only if the referenced visitor record was hard-deleted
+or the id is invalid. The row is still returned so the approver can reject
+the stale pending entry.
+
+### Approver UX — what to do with this
+
+- Render the visitor's `fullName`, `email`, `phone`, and `company` on the
+  approval row. These are the fields the approver cross-checks against the
+  physical visitor at the desk.
+- Show `verified` as a badge ("ID-verified" vs "Manual entry"). If
+  `verified: true`, also show the `portraitUrl` thumbnail so the approver
+  can eyeball the match before approving.
+- If the approver spots a typo / wrong field, **don't** offer an edit in
+  the approval modal itself. Route them to the visitor-profile edit
+  endpoints instead:
+  - `GET /v1/visitor-profiles/{visitor_profile_id}`
+  - `PATCH /v1/visitor-profiles/{visitor_profile_id}`
+
+  Both require a `receptionist`, `super_admin`, or `dept_admin` token.
+  Keep this separation — the approval flow shouldn't silently mutate
+  stored PII.
+
+## Notifications now reach all approver roles
+
+### What was broken
+
+`notify_checkin_pending_approval`, `notify_checkin_approved`, and
+`notify_checkin_rejected` all queried the `system_users` collection with
+`role="receptionist"`. A tenant that only has a `super_admin` (which is
+the common shape of a freshly-bootstrapped tenant — see the incident
+traceback on the sample tenant) had zero notifications created because
+no document matched.
+
+### What changed
+
+All three notification functions now dispatch to every active approver:
+
+```python
+{
+  "tenant_id": tenant_id,
+  "role": {"$in": ["receptionist", "super_admin", "dept_admin"]},
+  "account_status": "active"
+}
+```
+
+The role list deliberately mirrors the auth dependencies on the
+corresponding check-in routes
+(`verify_system_user_token("receptionist", "super_admin", "dept_admin")`).
+If the route auth list changes, `_CHECKIN_APPROVER_ROLES` in
+`services/notification_service.py` must be updated to match.
+
+### UX note
+
+An approver may now receive a notification for every pending check-in
+even if their team is large. The existing `/v1/notifications/preferences`
+endpoint lets a user opt out of specific notification channels — surface
+that control prominently on the approver's settings page if volume
+becomes an issue. Do **not** silently drop notifications for any approver
+role server-side; that's how we got here.
+
 ## Frontend changes required
 
 ### 1. Stop treating submit 500s as a backend outage
@@ -333,7 +461,16 @@ submission) instead.
 ## Files changed
 
 - `repositories/visitor_repo.py` — `_coerce_id_filter` for `get_visitor` +
-  `update_visitor`.
+  `update_visitor`; new `get_visitors_by_ids` batch getter used by the
+  check-in list enricher.
+- `schemas/summary_schema.py` — new `VisitorBriefSummary`.
+- `schemas/checkin_schema.py` — new `CheckinWithVisitorOut` with embedded
+  `visitor` snapshot.
+- `api/v1/checkin_route.py` — returns `CheckinWithVisitorOut` (list +
+  detail + analytics).
+- `services/notification_service.py` — check-in notifications now dispatch
+  to all active approver roles (receptionist / super_admin / dept_admin)
+  via a shared `_get_active_checkin_approvers` helper.
 - `services/checkin_service.py` —
   `_collect_returning_visitor_fallback` (fills missing BIO fields from
   stored data on the legacy `/submit` route),

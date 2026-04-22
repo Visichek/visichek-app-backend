@@ -77,3 +77,18 @@ class CheckinListItem(BaseModel):
     purpose: str
     host_employee_id: Optional[str] = None
     created_at: int
+
+
+from schemas.summary_schema import VisitorBriefSummary  # noqa: E402
+
+
+class CheckinWithVisitorOut(CheckinOut):
+    """``CheckinOut`` with an embedded visitor snapshot so the approver UI
+    can render the visitor's name, contact info, and verification state
+    without issuing a second request per row.
+
+    ``visitor`` is ``None`` only if the referenced visitor was deleted or
+    the id is invalid — in which case the row is surfaced anyway so the
+    approver can still see the pending state and reject it."""
+
+    visitor: Optional[VisitorBriefSummary] = None
