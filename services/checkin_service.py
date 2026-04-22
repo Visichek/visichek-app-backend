@@ -93,13 +93,17 @@ async def submit_verified_checkin_for_tenant(
     so the kiosk can submit against the tenant even when the super_admin has
     not yet customized the check-in form.
     """
+    from bson import ObjectId
+
     from repositories.tenant_repo import get_tenant
     from repositories.checkin_config_repo import (
         get_active_checkin_config_for_tenant,
     )
     from services.checkin_config_service import DEFAULT_REQUIRED_FIELDS
 
-    tenant = await get_tenant({"_id": tenant_id})
+    if not ObjectId.is_valid(tenant_id):
+        raise resource_not_found(resource="Tenant", resource_id=tenant_id)
+    tenant = await get_tenant({"_id": ObjectId(tenant_id)})
     if not tenant:
         raise resource_not_found(resource="Tenant", resource_id=tenant_id)
 

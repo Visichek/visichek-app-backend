@@ -154,7 +154,12 @@ async def _db_write_dispatcher(
         logger.exception(
             "db.write failed: writer=%s resource_id=%s", writer_key, resource_id
         )
-        raise
+        # FastAPI's HTTPException (and some other service-layer exceptions)
+        # are not picklable by celery's result backend, producing noisy
+        # UnpickleableExceptionWrapper tracebacks. The job_log row is
+        # already marked FAILED above with the original type+message, so
+        # surface a plain RuntimeError to celery for a clean traceback.
+        raise RuntimeError(f"{type(exc).__name__}: {exc}") from exc
 
     try:
         await mark_succeeded(task_id, result if isinstance(result, dict) else None)

@@ -701,6 +701,12 @@ app.include_router(v1_payments_route_router, prefix="/v1")
 app.include_router(v1_user_route_router, prefix="/v1")
 app.include_router(v1_tenant_route_router, prefix="/v1")
 app.include_router(v1_department_route_router, prefix="/v1")
+# NB: system_user_settings_route MUST be included before system_user_route.
+# system_user_route registers PATCH/DELETE "/{user_id}" which would otherwise
+# shadow the static PATCH /settings, PATCH /preferences, DELETE /sessions
+# paths defined in system_user_settings_route (both routers share the
+# /system-users prefix, and FastAPI resolves routes in registration order).
+app.include_router(v1_system_user_settings_route_router, prefix="/v1")
 app.include_router(v1_system_user_route_router, prefix="/v1")
 app.include_router(v1_visitor_route_router, prefix="/v1")
 app.include_router(v1_visitor_profile_route_router, prefix="/v1")
@@ -726,7 +732,8 @@ app.include_router(v1_public_registration_route_router, prefix="/v1")
 app.include_router(v1_public_rights_route_router, prefix="/v1")
 app.include_router(v1_notification_route_router, prefix="/v1")
 app.include_router(v1_admin_settings_route_router, prefix="/v1")
-app.include_router(v1_system_user_settings_route_router, prefix="/v1")
+# v1_system_user_settings_route_router is included earlier (before system_user_route)
+# to avoid PATCH/DELETE "/{user_id}" shadowing its static paths.
 app.include_router(v1_tenant_settings_route_router, prefix="/v1")
 app.include_router(v1_user_settings_route_router, prefix="/v1")
 app.include_router(v1_session_management_route_router, prefix="/v1")

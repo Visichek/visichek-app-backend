@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from bson import ObjectId
+
 from core.errors import resource_not_found
 from repositories.checkin_config_repo import (
     create_checkin_config,
@@ -82,7 +84,9 @@ async def create_config(
     preassigned_id: Optional[str] = None,
 ) -> CheckinConfigOut:
     """Create a new check-in configuration."""
-    tenant = await get_tenant({"_id": payload.tenant_id})
+    if not ObjectId.is_valid(payload.tenant_id):
+        raise resource_not_found(resource="Tenant", resource_id=payload.tenant_id)
+    tenant = await get_tenant({"_id": ObjectId(payload.tenant_id)})
     if not tenant:
         raise resource_not_found(resource="Tenant", resource_id=payload.tenant_id)
     return await create_checkin_config(payload, preassigned_id=preassigned_id)
@@ -99,7 +103,9 @@ async def resolve_public_config(checkin_config_id: str) -> PublicCheckinConfigOu
             resource="CheckinConfig", resource_id=checkin_config_id
         )
 
-    tenant = await get_tenant({"_id": config.tenant_id})
+    if not ObjectId.is_valid(config.tenant_id):
+        raise resource_not_found(resource="Tenant", resource_id=config.tenant_id)
+    tenant = await get_tenant({"_id": ObjectId(config.tenant_id)})
     if not tenant:
         raise resource_not_found(resource="Tenant", resource_id=config.tenant_id)
 
@@ -122,7 +128,9 @@ async def resolve_public_config_by_tenant(tenant_id: str) -> PublicCheckinConfig
     Falls back to a default config when the tenant hasn't configured one yet
     so the public kiosk/registration UI can still render a usable form.
     """
-    tenant = await get_tenant({"_id": tenant_id})
+    if not ObjectId.is_valid(tenant_id):
+        raise resource_not_found(resource="Tenant", resource_id=tenant_id)
+    tenant = await get_tenant({"_id": ObjectId(tenant_id)})
     if not tenant:
         raise resource_not_found(resource="Tenant", resource_id=tenant_id)
 
