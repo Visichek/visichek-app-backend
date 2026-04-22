@@ -179,6 +179,134 @@ async def bootstrap_tenant(
     }
 
 
+async def _get_active_subscription(
+    client: httpx.AsyncClient, admin_headers: dict, tenant_id: str
+) -> Optional[dict]:
+    """Return the tenant's active subscription dict, or None."""
+    resp = await client.get(
+        f"{BASE_URL}/v1/subscriptions/tenant/{tenant_id}/active",
+        headers=admin_headers,
+    )
+    if resp.status_code != 200:
+        return None
+    body = resp.json().get("data")
+    return body if isinstance(body, dict) and body.get("id") else None
+
+
+async def _pick_active_plan_id(
+    client: httpx.AsyncClient, admin_headers: dict
+) -> Optional[str]:
+    """Return the id of the first ACTIVE plan, preferring the cheapest tier."""
+    resp = await client.get(
+        f"{BASE_URL}/v1/plans?status=active&limit=50",
+        headers=admin_headers,
+    )
+    if resp.status_code != 200:
+        return None
+    plans = resp.json().get("data") or []
+    if not isinstance(plans, list) or not plans:
+        return None
+
+    # Prefer a plan whose status is explicitly ACTIVE (the filter should handle
+    # this, but older server responses sometimes leak archived plans through).
+    tier_order = {"free": 0, "starter": 1, "professional": 2, "enterprise": 3}
+    active = [
+        p for p in plans
+        if isinstance(p, dict)
+        and (p.get("status") or "").lower() == "active"
+    ]
+    candidates = active or [p for p in plans if isinstance(p, dict)]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda p: tier_order.get((p.get("tier") or "").lower(), 99))
+    return candidates[0].get("id")
+
+
+async def _wait_for_job(
+    client: httpx.AsyncClient,
+    headers: dict,
+    job_id: str,
+    *,
+    timeout_s: float = 20.0,
+    poll_interval_s: float = 0.5,
+) -> dict:
+    """Poll /v1/jobs/{job_id} until the worker finishes or we time out."""
+    deadline = time.monotonic() + timeout_s
+    last_status = "unknown"
+    while time.monotonic() < deadline:
+        resp = await client.get(
+            f"{BASE_URL}/v1/jobs/{job_id}",
+            headers=headers,
+        )
+        if resp.status_code == 200:
+            job = resp.json().get("data") or {}
+            last_status = job.get("status") or last_status
+            if last_status in ("succeeded", "failed"):
+                return job
+        await asyncio.sleep(poll_interval_s)
+    return {"status": last_status, "error": "timeout"}
+
+
+async def ensure_tenant_subscription(
+    client: httpx.AsyncClient, admin_headers: dict, tenant_id: str
+) -> Optional[str]:
+    """Make sure the tenant has an active subscription.
+
+    Looks up the tenant's active subscription first; if none, picks the
+    cheapest active plan and enqueues ``subscription.create`` with a 30-day
+    trial, then polls the job endpoint until the worker commits. Returns the
+    resolved subscription id (or None if the job timed out).
+    """
+    existing = await _get_active_subscription(client, admin_headers, tenant_id)
+    if existing:
+        plan_id = existing.get("plan_id") or existing.get("planId")
+        print(f"✓ Tenant already has an active subscription (plan_id={plan_id})")
+        return existing.get("id")
+
+    plan_id = await _pick_active_plan_id(client, admin_headers)
+    if not plan_id:
+        print(
+            "✗ No active plans available — seed at least one plan before running setup"
+        )
+        return None
+
+    payload = {
+        "tenant_id": tenant_id,
+        "plan_id": plan_id,
+        "billing_cycle": "monthly",
+        "trial_days": 30,
+        "admin_notes": "Load test setup — auto-provisioned",
+    }
+    resp = await client.post(
+        f"{BASE_URL}/v1/subscriptions",
+        json=payload,
+        headers=admin_headers,
+    )
+    if resp.status_code not in (200, 201, 202):
+        print(
+            f"✗ Failed to enqueue subscription: {resp.status_code} - {resp.text[:200]}"
+        )
+        return None
+
+    data = resp.json().get("data") or {}
+    job_id = _pick(data, "job_id", "jobId")
+    if not job_id:
+        print("  Subscription enqueued but no job_id returned — continuing anyway")
+        return data.get("id")
+
+    job = await _wait_for_job(client, admin_headers, job_id)
+    if job.get("status") != "succeeded":
+        print(
+            f"✗ Subscription job did not succeed: status={job.get('status')} error={job.get('error')}"
+        )
+        return None
+
+    # The writer assigns its own id; prefer the one recorded in the job log.
+    subscription_id = (job.get("resource_id") or job.get("resourceId") or data.get("id"))
+    print(f"✓ Subscribed tenant to plan {plan_id} (subscription_id={subscription_id})")
+    return subscription_id
+
+
 async def create_system_user(
     client: httpx.AsyncClient,
     super_admin_headers: dict,
@@ -422,9 +550,25 @@ async def main():
             "LOAD_TEST_ADMIN_PASSWORD", "@ViViVheck123!"
         )
 
-        # Step 1: Try super_admin login first — if it works, the tenant was
-        # already bootstrapped in a previous run and we can skip to data creation.
-        print("Step 1: Checking for existing super admin...")
+        # Step 1: Log in as application admin — needed in every branch because
+        # the subscription provisioning step below requires admin auth.
+        print("Step 1: Logging in as application admin...")
+        try:
+            admin_auth = await login_admin(client, admin_email, admin_password)
+        except Exception as e:
+            print(f"✗ Admin login failed: {e}")
+            print(
+                "  Ensure an application admin exists with "
+                f"LOAD_TEST_ADMIN_EMAIL={admin_email} / "
+                "LOAD_TEST_ADMIN_PASSWORD=... or seed one via the admin signup flow."
+            )
+            sys.exit(1)
+        admin_headers = admin_auth["headers"]
+        print(f"✓ Logged in as application admin ({admin_email})")
+
+        # Step 2: Resolve the tenant + super_admin — reuse an existing one if
+        # the super_admin creds already exist, otherwise bootstrap a fresh tenant.
+        print("\nStep 2: Resolving super admin + tenant...")
         sa_auth = await login_system_user(
             client, super_admin_email, super_admin_password
         )
@@ -435,31 +579,12 @@ async def main():
             tenant_id = sa_auth["tenant_id"]
             print(f"✓ Existing super admin found — tenant_id={tenant_id}")
         else:
-            print(
-                "  No existing super admin — will bootstrap a fresh tenant as application admin"
-            )
-
-            # Step 2a: Log in as application admin
-            print("\nStep 2a: Logging in as application admin...")
-            try:
-                admin_auth = await login_admin(client, admin_email, admin_password)
-            except Exception as e:
-                print(f"✗ Admin login failed: {e}")
-                print(
-                    "  Ensure an application admin exists with "
-                    f"LOAD_TEST_ADMIN_EMAIL={admin_email} / "
-                    "LOAD_TEST_ADMIN_PASSWORD=... or seed one via the admin signup flow."
-                )
-                sys.exit(1)
-            print(f"✓ Logged in as application admin ({admin_email})")
-
-            # Step 2b: Bootstrap tenant + first super_admin atomically
-            print("\nStep 2b: Bootstrapping tenant + super admin...")
+            print("  No existing super admin — bootstrapping a fresh tenant...")
             company_name = f"Load Test Org {int(time.time())}"
             try:
                 boot = await bootstrap_tenant(
                     client,
-                    admin_auth["headers"],
+                    admin_headers,
                     company_name=company_name,
                     admin_full_name="Load Test Super Admin",
                     admin_email=super_admin_email,
@@ -479,6 +604,17 @@ async def main():
                 sys.exit(1)
             super_admin_headers = {"Authorization": f"Bearer {sa_token}"}
             print(f"✓ Bootstrapped tenant={tenant_id}, super_admin={super_admin_id}")
+
+        # Step 2b: Make sure the tenant has an active subscription. Without one
+        # the PlanEnforcementMiddleware returns 402 on every tenant-scoped write,
+        # which is what breaks system-user / department / visitor creation.
+        print("\nStep 2b: Ensuring tenant has an active subscription...")
+        subscription_id = await ensure_tenant_subscription(
+            client, admin_headers, tenant_id
+        )
+        if not subscription_id:
+            print("✗ Could not provision a subscription — aborting")
+            sys.exit(1)
 
         # Step 3: Create system users (receptionist, dept_admin) in the tenant
         print("\nStep 3: Creating system users...")
