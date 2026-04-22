@@ -2,10 +2,27 @@ from __future__ import annotations
 
 from typing import Optional
 
+from bson import ObjectId
+
 from core.database import db
 from schemas.visitor_schema import VisitorCreate, VisitorOut, VisitorUpdate
 
 COLLECTION = "visitors"
+
+
+def _coerce_id_filter(filter_dict: dict) -> dict:
+    """Return a copy of ``filter_dict`` with ``_id`` coerced to ObjectId when it
+    was passed as a hex string. Visitor _ids are stored as ObjectId in MongoDB
+    but ``VisitorOut`` exposes them as strings, so callers passing ``visitor.id``
+    back into a query would otherwise match nothing."""
+    if "_id" not in filter_dict:
+        return filter_dict
+    raw = filter_dict["_id"]
+    if isinstance(raw, str) and ObjectId.is_valid(raw):
+        coerced = dict(filter_dict)
+        coerced["_id"] = ObjectId(raw)
+        return coerced
+    return filter_dict
 
 
 async def create_visitor(payload: VisitorCreate) -> VisitorOut:
@@ -18,7 +35,7 @@ async def create_visitor(payload: VisitorCreate) -> VisitorOut:
 
 async def get_visitor(filter_dict: dict) -> Optional[VisitorOut]:
     """Fetch a single visitor."""
-    doc = await db[COLLECTION].find_one(filter_dict)
+    doc = await db[COLLECTION].find_one(_coerce_id_filter(filter_dict))
     if doc is None:
         return None
     return VisitorOut(**doc)
@@ -88,7 +105,7 @@ async def update_visitor(visitor_id: str, data: VisitorUpdate) -> VisitorOut:
     """Update a visitor."""
     update_dict = data.model_dump(exclude_unset=True)
     result = await db[COLLECTION].find_one_and_update(
-        {"_id": visitor_id},
+        _coerce_id_filter({"_id": visitor_id}),
         {"$set": update_dict},
         return_document=True,
     )

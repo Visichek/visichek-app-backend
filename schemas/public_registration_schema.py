@@ -4,6 +4,8 @@ from typing import Optional
 
 from pydantic import BaseModel, EmailStr
 
+from schemas.checkin_schema import CheckinPurpose
+
 
 class PublicRegistrationRequest(BaseModel):
     # full_name is optional when `profile_id` is supplied (returning visitor
@@ -105,3 +107,53 @@ class PublicReturningVisitorLookupOut(BaseModel):
 class PublicFinalizeRequest(BaseModel):
     session_id: str
     receptionist_code: str
+
+
+class PublicVisitorStatusRequest(BaseModel):
+    """Lookup body for the public visitor-status endpoint. At least one of
+    ``email`` or ``phone`` must be supplied."""
+
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+
+
+class PublicVisitorStatusOut(BaseModel):
+    """Non-PII recognition payload for a returning visitor.
+
+    Intentionally minimal — no name, email, phone, company, id_type, or
+    profile_id is returned. The endpoint confirms whether the tenant has seen
+    this visitor before and exposes the counters needed to drive the kiosk
+    UX ("welcome back", skip ID re-scan).
+
+    ``visitor_id`` is the only identifier returned. It is the id of the
+    ``visitors`` collection record (not the profile id) and is required to
+    drive the id-based returning-visitor submit endpoint. It is null when a
+    profile matched but no ``visitors`` record exists yet — in that case the
+    frontend must fall back to the email/phone-based submit.
+
+    All PII stays server-side; edits are reserved for authenticated
+    receptionist / super_admin endpoints."""
+
+    found: bool
+    visitor_id: Optional[str] = None
+    total_visits: Optional[int] = None
+    last_visit_ago_days: Optional[int] = None
+    id_verified_recently: bool = False
+
+
+class PublicReturningVisitorSubmitRequest(BaseModel):
+    """Minimal submit body for a recognised returning visitor.
+
+    Use when ``visitor_id`` is already known (returned by
+    ``/visitor-status``). Email, phone, and bio_data are intentionally
+    omitted — they are loaded from the stored visitor record server-side.
+
+    ``tenant_specific_data`` only has to be supplied when the tenant's
+    active check-in config declares required fields in the
+    ``tenant_specific`` category. If the config has no required
+    tenant-specific fields the frontend can submit this with an empty
+    object (or omit it)."""
+
+    visitor_id: str
+    purpose: CheckinPurpose
+    tenant_specific_data: dict = {}

@@ -36,6 +36,8 @@ from schemas.public_registration_schema import (
     PublicReturningVisitorLookupOut,
     PublicReturningVisitorLookupRequest,
     PublicTenantInfoOut,
+    PublicVisitorStatusOut,
+    PublicVisitorStatusRequest,
 )
 from schemas.imports import (
     VisitStatus,
@@ -428,6 +430,73 @@ async def lookup_returning_visitor(
         profile_id=profile.id,
         full_name_masked=_mask_name(profile.full_name),
         company=profile.company,
+        last_visit_ago_days=last_visit_ago_days,
+        id_verified_recently=id_verified_recently,
+    )
+
+
+async def check_returning_visitor_status(
+    tenant_id: str,
+    request: PublicVisitorStatusRequest,
+) -> PublicVisitorStatusOut:
+    """Public recognition endpoint. Looks up a VisitorProfile by phone OR
+    email within the tenant and returns a non-PII status payload the kiosk
+    uses to drive the "welcome back, skip the details" UX.
+
+    By design this endpoint returns **no** PII — not even a masked name or a
+    profile id. The raw fields stay server-side; the submit endpoint
+    re-resolves the profile via the email/phone the visitor supplies and
+    fills in any required fields that weren't re-typed. Edits to the stored
+    PII are reserved for authenticated receptionist endpoints.
+
+    Phone match wins over email when both are supplied (matches the upsert
+    order used by ``_upsert_visitor_profile_from_submit``)."""
+    if not ObjectId.is_valid(tenant_id):
+        raise HTTPException(status_code=400, detail="Invalid tenant ID")
+    if not request.phone and not request.email:
+        raise HTTPException(status_code=400, detail="phone or email is required")
+
+    profile = None
+    if request.phone:
+        profile = await get_visitor_profile_by_phone(
+            tenant_id=tenant_id, phone=request.phone
+        )
+    if not profile and request.email:
+        profile = await get_visitor_profile_by_email(
+            tenant_id=tenant_id, email=request.email
+        )
+
+    if not profile:
+        return PublicVisitorStatusOut(found=False)
+
+    last_visit_ago_days = None
+    if profile.last_visit_date:
+        last_visit_ago_days = max(
+            (int(time.time()) - profile.last_visit_date) // 86400, 0
+        )
+
+    id_verified_recently = False
+    settings = await get_tenant_settings({"tenant_id": tenant_id})
+    window_days = getattr(settings, "id_reverification_days", 30) if settings else 30
+    if window_days and window_days > 0 and profile.last_verification_date:
+        cutoff = int(time.time()) - (window_days * 86400)
+        id_verified_recently = profile.last_verification_date >= cutoff
+
+    # Resolve the matching ``visitors`` record so the frontend can drive the
+    # visitor_id-based submit endpoint. A profile can exist without a visitor
+    # record for tenants that went through the older self-registration flow
+    # — in that case we return null and the frontend falls back to the
+    # email/phone-based submit.
+    from repositories.visitor_repo import find_visitor_by_email_or_phone_any
+
+    visitor = await find_visitor_by_email_or_phone_any(
+        tenant_id=tenant_id, email=request.email, phone=request.phone
+    )
+
+    return PublicVisitorStatusOut(
+        found=True,
+        visitor_id=(visitor.id if visitor else None),
+        total_visits=profile.total_visits or 0,
         last_visit_ago_days=last_visit_ago_days,
         id_verified_recently=id_verified_recently,
     )

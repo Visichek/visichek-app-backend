@@ -28,6 +28,143 @@ from schemas.checkin_schema import (
 from schemas.imports import IDType
 
 
+async def _collect_returning_visitor_fallback(
+    *,
+    tenant_id: str,
+    visitor: Any,
+    email: Optional[str],
+    phone: Optional[str],
+) -> dict:
+    """Build a ``merged_bio_data`` fallback for a returning visitor.
+
+    Looks at the resolved ``visitor`` record and the matching ``VisitorProfile``
+    (if one exists) and returns a dict of fields that the kiosk didn't re-send
+    but that we already know. The caller merges the submitted bio_data over
+    this, so submitted values always win. This keeps the "welcome back, just
+    fill purpose" UX viable even when the tenant's config requires fields like
+    ``full_name`` or ``company``.
+    """
+    fallback: dict[str, Any] = {}
+
+    if visitor is not None:
+        if visitor.bio_data:
+            fallback.update({k: v for k, v in visitor.bio_data.items() if v})
+        if visitor.full_name and visitor.full_name != "Unknown":
+            fallback["full_name"] = visitor.full_name
+
+    from repositories.visitor_profile_repo import (
+        get_visitor_profile_by_email,
+        get_visitor_profile_by_phone,
+    )
+
+    profile = None
+    if phone:
+        profile = await get_visitor_profile_by_phone(
+            tenant_id=tenant_id, phone=phone
+        )
+    if profile is None and email:
+        profile = await get_visitor_profile_by_email(
+            tenant_id=tenant_id, email=email
+        )
+
+    if profile is not None:
+        if profile.full_name and "full_name" not in fallback:
+            fallback["full_name"] = profile.full_name
+        if profile.company and "company" not in fallback:
+            fallback["company"] = profile.company
+        if profile.id_type and "id_type" not in fallback:
+            fallback["id_type"] = profile.id_type
+        if profile.id_number and "id_number" not in fallback:
+            fallback["id_number"] = profile.id_number
+
+    return fallback
+
+
+async def _upsert_visitor_profile_from_submit(
+    *,
+    tenant_id: str,
+    email: Optional[str],
+    phone: Optional[str],
+    full_name: str,
+    company: Optional[str],
+    portrait_url: Optional[str],
+    verified: bool,
+    id_type: Optional[str],
+) -> None:
+    """Upsert a VisitorProfile row tied to the submitting visitor.
+
+    The profile is the authoritative record of "has this person visited us
+    before" for the public prefill lookup. Keyed on phone first, then email —
+    whichever the visitor supplied is used to find an existing profile; a new
+    one is created if neither matches. Visit count is incremented on every
+    successful submit so the profile reflects true visit frequency.
+
+    Fire-and-forget at the caller — any exception here is logged but never
+    blocks the check-in.
+    """
+    from bson import ObjectId
+
+    from repositories.visitor_profile_repo import (
+        get_visitor_profile_by_email,
+        get_visitor_profile_by_phone,
+        increment_visitor_profile_visits,
+        update_visitor_profile,
+    )
+    from schemas.visitor_profile_schema import VisitorProfileUpdate
+    from services.visitor_profile_service import get_or_create_visitor_profile
+
+    profile = None
+    if phone:
+        profile = await get_visitor_profile_by_phone(
+            tenant_id=tenant_id, phone=phone
+        )
+    if profile is None and email:
+        profile = await get_visitor_profile_by_email(
+            tenant_id=tenant_id, email=email
+        )
+
+    if profile is None:
+        profile = await get_or_create_visitor_profile(
+            tenant_id=tenant_id,
+            phone=phone,
+            email=email,
+            full_name=full_name,
+            company=company,
+            photo_object_key=portrait_url,
+        )
+
+    if profile is None or not profile.id or not ObjectId.is_valid(profile.id):
+        return
+
+    # Merge any missing fields into the existing profile so future submissions
+    # can lookup via either channel. Never overwrite an existing value with
+    # None — we only fill in gaps.
+    update_fields: dict[str, Any] = {}
+    if phone and not profile.phone:
+        update_fields["phone"] = phone
+    if email and not profile.email_address:
+        update_fields["email_address"] = email
+    if full_name and full_name != "Unknown" and profile.full_name != full_name:
+        update_fields["full_name"] = full_name
+    if company and not profile.company:
+        update_fields["company"] = company
+    if portrait_url and not profile.photo_object_key:
+        update_fields["photo_object_key"] = portrait_url
+    if verified:
+        update_fields["last_verification_date"] = int(time.time())
+        if id_type:
+            update_fields["verification_method"] = id_type
+            update_fields["id_type"] = id_type
+
+    if update_fields:
+        await update_visitor_profile(
+            {"_id": ObjectId(profile.id), "tenant_id": tenant_id},
+            VisitorProfileUpdate(**update_fields),
+        )
+
+    await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
+
+
 async def submit_verified_checkin(
     *,
     checkin_config_id: str,
@@ -72,6 +209,140 @@ async def submit_verified_checkin(
         id_file_mime=id_file_mime,
         id_type=id_type,
     )
+
+
+async def submit_returning_visitor_checkin_by_id(
+    *,
+    tenant_id: str,
+    visitor_id: str,
+    purpose: CheckinPurpose,
+    tenant_specific_data: dict,
+) -> CheckinOut:
+    """Submit a check-in for an already-known visitor using their visitor_id.
+
+    This is the companion to the ``/visitor-status`` lookup. The frontend
+    looks up the visitor (no PII returned), gets back the ``visitor_id``,
+    and then submits with only:
+      - ``purpose`` (always required)
+      - ``tenant_specific_data`` — required if the tenant's active check-in
+        config has required fields in the ``TENANT_SPECIFIC`` category
+
+    BIO-category required fields (name, email, phone, company) are satisfied
+    from the stored visitor record — the frontend never re-sends them.
+
+    This endpoint is the right call whenever ``/visitor-status`` returns a
+    non-null ``visitor_id``. If ``visitor_id`` was null, use the
+    email/phone-based ``submit_verified_checkin_for_tenant`` instead.
+    """
+    from bson import ObjectId
+
+    from repositories.checkin_config_repo import (
+        get_active_checkin_config_for_tenant,
+    )
+    from repositories.tenant_repo import get_tenant
+    from repositories.visitor_repo import get_visitor
+    from schemas.imports import CheckinFieldCategory
+    from services.checkin_config_service import DEFAULT_REQUIRED_FIELDS
+
+    if not ObjectId.is_valid(tenant_id):
+        raise resource_not_found(resource="Tenant", resource_id=tenant_id)
+    tenant = await get_tenant({"_id": ObjectId(tenant_id)})
+    if not tenant:
+        raise resource_not_found(resource="Tenant", resource_id=tenant_id)
+
+    if not ObjectId.is_valid(visitor_id):
+        raise resource_not_found(resource="Visitor", resource_id=visitor_id)
+
+    visitor = await get_visitor({"_id": visitor_id, "tenant_id": tenant_id})
+    if visitor is None:
+        raise resource_not_found(resource="Visitor", resource_id=visitor_id)
+
+    config = await get_active_checkin_config_for_tenant(tenant_id)
+    if config is not None:
+        checkin_config_id = config.id or ""
+        required_fields = list(config.required_fields)
+    else:
+        checkin_config_id = ""
+        required_fields = list(DEFAULT_REQUIRED_FIELDS)
+
+    # Only TENANT_SPECIFIC required fields must be re-sent on every visit.
+    # BIO fields are already on the visitor record.
+    required_tenant_specific_keys = {
+        f.key
+        for f in required_fields
+        if f.required and f.category == CheckinFieldCategory.TENANT_SPECIFIC
+    }
+    missing_fields = required_tenant_specific_keys - set(tenant_specific_data.keys())
+    if missing_fields:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Missing required tenant-specific fields",
+            details={"missing_fields": list(missing_fields)},
+        )
+
+    # Reject a second pending check-in for the same visitor.
+    existing_pending = await get_active_pending_for_visitor(tenant_id, visitor_id)
+    if existing_pending:
+        raise AppException(
+            status_code=409,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Visitor has a pending check-in already",
+            details={"existing_checkin_id": existing_pending.id},
+        )
+
+    create_data = CheckinCreate(
+        tenant_id=tenant_id,
+        visitor_id=visitor_id,
+        checkin_config_id=checkin_config_id,
+        id_extraction_id=None,
+        tenant_specific_data=tenant_specific_data,
+        purpose=purpose,
+        state=CheckinState.PENDING_APPROVAL,
+        verified=visitor.verified,
+    )
+    checkin = await create_checkin(create_data)
+
+    # Keep the VisitorProfile visit counter in sync (fire-and-forget).
+    try:
+        await _upsert_visitor_profile_from_submit(
+            tenant_id=tenant_id,
+            email=visitor.email,
+            phone=visitor.phone,
+            full_name=visitor.full_name,
+            company=(visitor.bio_data or {}).get("company")
+            or (visitor.bio_data or {}).get("organization"),
+            portrait_url=visitor.portrait_url,
+            verified=visitor.verified,
+            id_type=(
+                visitor.verification_method.value
+                if visitor.verification_method is not None
+                else None
+            ),
+        )
+    except Exception as e:
+        import logging
+
+        logging.warning(f"Failed to upsert visitor profile from returning submit: {e}")
+
+    # Fire notification (fire-and-forget).
+    try:
+        from services.notification_service import notify_checkin_pending_approval
+
+        await notify_checkin_pending_approval(
+            tenant_id=tenant_id,
+            checkin_id=checkin.id or "",
+            visitor_name=visitor.full_name,
+            verified=visitor.verified,
+            purpose=purpose.purpose,
+            host_employee_id="",
+        )
+    except Exception as e:
+        import logging
+
+        logging.warning(f"Failed to send returning-visitor checkin notification: {e}")
+
+    return checkin
 
 
 async def submit_verified_checkin_for_tenant(
@@ -230,6 +501,36 @@ async def _submit_verified_checkin_core(
             )
 
     visitor_id = visitor.id or ""
+
+    # 2b. Backfill merged_bio_data from the resolved visitor (and any matching
+    # VisitorProfile) so a returning visitor who submits only purpose + phone
+    # +email still passes required-field validation. Submitted values always
+    # win — stored values only fill in gaps.
+    stored_fallback = await _collect_returning_visitor_fallback(
+        tenant_id=tenant_id,
+        visitor=visitor,
+        email=email,
+        phone=phone,
+    )
+    merged_bio_data = {**stored_fallback, **merged_bio_data}
+
+    # 2c. Upsert a VisitorProfile keyed on email OR phone so repeat submissions
+    # are linked to the same profile for visit-history tracking.
+    try:
+        await _upsert_visitor_profile_from_submit(
+            tenant_id=tenant_id,
+            email=email,
+            phone=phone,
+            full_name=str(merged_bio_data.get("full_name") or visitor.full_name),
+            company=merged_bio_data.get("company") or merged_bio_data.get("organization"),
+            portrait_url=visitor.portrait_url,
+            verified=visitor.verified,
+            id_type=(id_type.value if id_type is not None else None),
+        )
+    except Exception as e:
+        import logging
+
+        logging.warning(f"Failed to upsert visitor profile from submit: {e}")
 
     # 3. Validate required fields against combined data
     available_keys = set(merged_bio_data.keys()) | set(tenant_specific_data.keys())

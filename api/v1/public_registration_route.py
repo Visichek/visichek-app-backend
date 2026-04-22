@@ -11,10 +11,16 @@ from schemas.public_registration_schema import (
     PublicFinalizeRequest,
     PublicRegistrationRequest,
     PublicReturningVisitorLookupRequest,
+    PublicReturningVisitorSubmitRequest,
+    PublicVisitorStatusRequest,
 )
 from services.checkin_config_service import resolve_public_config_by_tenant
-from services.checkin_service import submit_verified_checkin_for_tenant
+from services.checkin_service import (
+    submit_returning_visitor_checkin_by_id,
+    submit_verified_checkin_for_tenant,
+)
 from services.public_registration_service import (
+    check_returning_visitor_status,
     checkout_visitor_public,
     finalize_public_registration,
     get_public_privacy_notice,
@@ -293,6 +299,77 @@ async def public_ocr_scan_endpoint(tenant_id: str, file: UploadFile = File(...))
         image_bytes=image_bytes,
         mime_type=file.content_type or "image/jpeg",
     )
+
+
+@router.post(
+    "/tenants/{tenant_id}/submit-by-visitor-id",
+    status_code=status.HTTP_201_CREATED,
+)
+@document_response(
+    message="Check-in submitted",
+    status_code=status.HTTP_201_CREATED,
+    description=(
+        "Returning-visitor submit endpoint keyed on a known ``visitor_id`` "
+        "(obtained from ``POST /v1/public/tenants/{tenant_id}/visitor-status``). "
+        "No email, phone, or bio_data is required — the backend loads the "
+        "visitor's stored profile and uses it to satisfy the config's "
+        "``BIO``-category required fields. The frontend only has to re-supply "
+        "``purpose`` plus any required ``TENANT_SPECIFIC`` fields "
+        "(``tenant_specific_data``). If the tenant's active config has no "
+        "required tenant-specific fields, ``tenant_specific_data`` may be an "
+        "empty object. ID re-upload is not supported on this endpoint — if "
+        "the visitor needs re-verification, fall back to the "
+        "email/phone-based ``/submit`` route."
+    ),
+    summary="Submit check-in for a known returning visitor (by visitor_id)",
+    response_codes={
+        400: "Missing required tenant-specific fields, or invalid ids",
+        404: "Tenant or visitor not found",
+        409: "Visitor has a pending check-in already",
+    },
+)
+async def submit_checkin_for_returning_visitor_endpoint(
+    tenant_id: str,
+    request: PublicReturningVisitorSubmitRequest,
+) -> CheckinOut:
+    return await submit_returning_visitor_checkin_by_id(
+        tenant_id=tenant_id,
+        visitor_id=request.visitor_id,
+        purpose=request.purpose,
+        tenant_specific_data=request.tenant_specific_data,
+    )
+
+
+@router.post("/tenants/{tenant_id}/visitor-status")
+@document_response(
+    message="Visitor recognition status retrieved",
+    description=(
+        "Public recognition endpoint keyed on phone OR email within a tenant. "
+        "Returns only a non-PII recognition payload — whether the tenant has "
+        "seen this visitor before plus visit counters and the id-verification "
+        "recency flag. No name, email, phone, company, id_type, or profile_id "
+        "is returned. The kiosk uses this to drive a 'welcome back, just tell "
+        "us your purpose' UX; the submit endpoint re-resolves the profile "
+        "server-side and fills in any required fields the visitor did not "
+        "re-type. Edits to stored PII are reserved for authenticated "
+        "receptionist / super_admin endpoints. Unauthenticated — subject to "
+        "the anonymous rate limit."
+    ),
+    summary="Public visitor recognition status (no PII)",
+    success_example={
+        "found": True,
+        "total_visits": 5,
+        "last_visit_ago_days": 12,
+        "id_verified_recently": True,
+    },
+    response_codes={
+        400: "phone or email is required, or invalid tenant id",
+    },
+)
+async def check_returning_visitor_status_public_endpoint(
+    tenant_id: str, request: PublicVisitorStatusRequest
+):
+    return await check_returning_visitor_status(tenant_id=tenant_id, request=request)
 
 
 @router.post("/register/{tenant_id}/lookup")
