@@ -39,7 +39,7 @@ async def seed():
     print("Seeding VisiChek database...")
 
     # 1. Create default tenant
-    existing_tenant = await get_tenant({"name": "VisiChek Demo Company"})
+    existing_tenant = await get_tenant({"company_name": "VisiChek Demo Company"})
     if existing_tenant:
         assert existing_tenant.id is not None
         tenant_id = existing_tenant.id
