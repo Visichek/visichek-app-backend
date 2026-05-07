@@ -102,6 +102,17 @@ async def submit_onboarding(
     except Exception:
         pass
 
+    from services.notification_service import (
+        notify_onboarding_submission_received,
+    )
+
+    await notify_onboarding_submission_received(
+        submission_id=submission.id or "",
+        organization_name=submission.organization_name,
+        full_name=submission.full_name,
+        email=submission.email,
+    )
+
     return submission
 
 

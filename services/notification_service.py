@@ -618,6 +618,45 @@ async def notify_support_case_opened(
         )
 
 
+async def notify_onboarding_submission_received(
+    submission_id: str,
+    organization_name: Optional[str],
+    full_name: Optional[str],
+    email: Optional[str],
+) -> None:
+    """Fire-and-forget: notify every active application admin that a new
+    self-onboarding submission has landed and needs review."""
+    try:
+        from repositories.admin_repo import get_admins
+        from schemas.imports import AccountStatus
+
+        admins = await get_admins(
+            {"account_status": AccountStatus.ACTIVE.value}, start=0, stop=200
+        )
+        org_label = organization_name or full_name or email or "an applicant"
+        for admin in admins:
+            try:
+                await send_notification(
+                    user_id=admin.id or "",
+                    user_type="admin",
+                    title="New Onboarding Submission",
+                    body=f"{org_label} submitted a self-onboarding request.",
+                    type="info",
+                    link=f"/app/admin/onboarding/{submission_id}",
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to notify admin %s about new onboarding submission",
+                    admin.id,
+                    exc_info=True,
+                )
+    except Exception:
+        logger.warning(
+            "Failed to dispatch onboarding-submission-received notifications",
+            exc_info=True,
+        )
+
+
 async def notify_support_case_reply(
     case_id: str,
     recipient_user_id: str,

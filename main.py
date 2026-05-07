@@ -707,6 +707,11 @@ app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
 app.include_router(v1_payments_route_router, prefix="/v1")
 app.include_router(v1_user_route_router, prefix="/v1")
+# NB: admin_onboarding_route MUST be included before tenant_route.
+# tenant_route registers GET "/{tenant_id}" which would otherwise shadow
+# the static GET /tenants/onboarding paths defined in admin_onboarding_route
+# (both share the /tenants prefix, and FastAPI resolves in registration order).
+app.include_router(v1_admin_onboarding_route_router, prefix="/v1")
 app.include_router(v1_tenant_route_router, prefix="/v1")
 app.include_router(v1_department_route_router, prefix="/v1")
 # NB: system_user_settings_route MUST be included before system_user_route.
@@ -762,7 +767,8 @@ app.include_router(v1_job_route_router, prefix="/v1")
 app.include_router(v1_support_case_route_router, prefix="/v1")
 app.include_router(v1_admin_support_case_route_router, prefix="/v1")
 app.include_router(v1_onboarding_route_router, prefix="/v1")
-app.include_router(v1_admin_onboarding_route_router, prefix="/v1")
+# v1_admin_onboarding_route_router is included earlier (before tenant_route)
+# to avoid GET "/{tenant_id}" shadowing /tenants/onboarding.
 # App-mode payment simulator — deliberately NOT under /v1 so the URLs
 # match the checkout_url emitted by AppCheckoutPaymentProvider.
 app.include_router(app_payment_route_router)
