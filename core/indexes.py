@@ -238,6 +238,32 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
         [("case_id", ASCENDING), ("date_created", ASCENDING)],
         {},
     ),
+    # ── self-onboarding (public marketing-site lead capture) ─────────
+    (
+        "onboarding_submissions",
+        [("submitted_at", DESCENDING)],
+        {},
+    ),
+    (
+        "onboarding_submissions",
+        [("status", ASCENDING), ("submitted_at", DESCENDING)],
+        {},
+    ),
+    (
+        "onboarding_submissions",
+        [("email", ASCENDING)],
+        {"sparse": True},
+    ),
+    (
+        "onboarding_submissions",
+        [("super_admin_user_id", ASCENDING)],
+        {"sparse": True},
+    ),
+    (
+        "onboarding_submissions",
+        [("tenant_id", ASCENDING)],
+        {"sparse": True},
+    ),
 ]
 
 

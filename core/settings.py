@@ -79,6 +79,12 @@ class Settings:
     app_base_url: str = ""
     # Default TTL (seconds) for a checkout session before it expires
     checkout_session_ttl_seconds: int = 24 * 60 * 60
+    # Cloudflare Turnstile secret key for verifying self-onboarding submissions.
+    # When unset, Turnstile verification is skipped (development convenience).
+    turnstile_secret_key: str | None = None
+    turnstile_verify_url: str = (
+        "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+    )
 
     @property
     def is_production(self) -> bool:
@@ -166,6 +172,11 @@ def get_settings() -> Settings:
         app_base_url=os.getenv("APP_BASE_URL", "").strip(),
         checkout_session_ttl_seconds=int(
             os.getenv("CHECKOUT_SESSION_TTL_SECONDS", str(24 * 60 * 60))
+        ),
+        turnstile_secret_key=os.getenv("TURNSTILE_SECRET_KEY") or None,
+        turnstile_verify_url=os.getenv(
+            "TURNSTILE_VERIFY_URL",
+            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
         ),
     )
     return settings

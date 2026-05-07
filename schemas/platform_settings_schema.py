@@ -49,6 +49,10 @@ class PlatformSettingsBase(BaseModel):
     signups_enabled: bool = True
     public_api_enabled: bool = True
     beta_features_enabled: bool = False
+    # Self-Onboarding (public marketing-site form). When False the public
+    # POST /v1/onboarding/submissions endpoint returns 403 self_onboarding_disabled.
+    # The endpoint itself remains mounted regardless.
+    self_onboarding_enabled: bool = True
 
     # Rate Limiting Defaults
     global_rate_limit_per_minute: int = 80
@@ -96,6 +100,7 @@ class PlatformSettingsUpdate(BaseModel):
     signups_enabled: Optional[bool] = None
     public_api_enabled: Optional[bool] = None
     beta_features_enabled: Optional[bool] = None
+    self_onboarding_enabled: Optional[bool] = None
 
     # Rate Limiting Defaults
     global_rate_limit_per_minute: Optional[int] = None

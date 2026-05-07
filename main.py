@@ -699,6 +699,8 @@ from api.v1.support_case_route import router as v1_support_case_route_router
 from api.v1.admin_support_case_route import (
     router as v1_admin_support_case_route_router,
 )
+from api.v1.onboarding_route import router as v1_onboarding_route_router
+from api.v1.admin_onboarding_route import router as v1_admin_onboarding_route_router
 
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
@@ -758,6 +760,8 @@ app.include_router(v1_checkout_route_router, prefix="/v1")
 app.include_router(v1_job_route_router, prefix="/v1")
 app.include_router(v1_support_case_route_router, prefix="/v1")
 app.include_router(v1_admin_support_case_route_router, prefix="/v1")
+app.include_router(v1_onboarding_route_router, prefix="/v1")
+app.include_router(v1_admin_onboarding_route_router, prefix="/v1")
 # App-mode payment simulator — deliberately NOT under /v1 so the URLs
 # match the checkout_url emitted by AppCheckoutPaymentProvider.
 app.include_router(app_payment_route_router)

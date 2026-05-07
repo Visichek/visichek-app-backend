@@ -219,3 +219,22 @@ class SupportTier(str, Enum):
     NONE = "none"
     STANDARD = "standard"
     PRIORITY = "priority"
+
+
+# --- Self-Onboarding (public marketing-site lead form) ---
+
+
+class OnboardingStatus(str, Enum):
+    """Lifecycle of a marketing-site onboarding submission."""
+
+    NEW = "new"
+    REJECTED = "rejected"
+    # Admin accepted in full — tenant + super_admin created, no missing data.
+    ACCEPTED = "accepted"
+    # Admin accepted partially — tenant + super_admin created but the tenant
+    # owes some additional info via /v1/onboarding/me/complete before they can
+    # use the platform fully.
+    PARTIAL_ACCEPTED = "partial_accepted"
+    # Tenant filled in the requested missing fields — terminal happy path.
+    COMPLETED = "completed"
+    ARCHIVED = "archived"

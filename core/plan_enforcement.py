@@ -49,6 +49,11 @@ EXEMPT_PATH_PREFIXES = (
     # Tenants must always be able to reach support even on suspended plans.
     "/v1/support-cases/",
     "/v1/admins/support-cases/",
+    # Self-onboarding lead-capture (unauthenticated submission + tenant
+    # self-completion path post-acceptance). Admin management endpoints
+    # under /v1/tenants/onboarding are already covered by the admin role
+    # short-circuit in the middleware.
+    "/v1/onboarding/",
 )
 
 # Map HTTP methods to operation types for quota checking

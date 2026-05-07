@@ -21,6 +21,7 @@ from core.response_envelope import document_response
 from repositories.queue_job_log_repo import (
     get_job_log_by_id,
     get_job_log_by_task_id,
+    list_job_logs_for_actor,
     list_job_logs_for_tenant,
 )
 from schemas.queue_job_log_schema import QueueJobLogOut
@@ -276,8 +277,15 @@ async def list_recent_jobs(
     stop: int = 50,
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    tenant_id = principal.tenant_id or ""
-    if not tenant_id:
-        return []
-    logs = await list_job_logs_for_tenant(tenant_id, start=start, stop=stop)
+    # Tenant users: scoped to their tenant. Application admins / users have
+    # no tenant_id, so fall back to jobs they personally enqueued — otherwise
+    # admin callers always see an empty list even when they have queued work.
+    if principal.tenant_id:
+        logs = await list_job_logs_for_tenant(
+            principal.tenant_id, start=start, stop=stop
+        )
+    else:
+        logs = await list_job_logs_for_actor(
+            principal.user_id, start=start, stop=stop
+        )
     return list(await asyncio.gather(*[_enrich_log(log) for log in logs]))

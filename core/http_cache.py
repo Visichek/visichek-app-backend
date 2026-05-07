@@ -29,6 +29,14 @@ _BYPASS_PREFIXES = (
     "/openapi.json",
 )
 
+# Path segments that always bypass caching. ``/v1/jobs`` reflects state from
+# every queued write across the system, but the middleware only invalidates
+# entries whose first path segment matches the write's URL — so a POST to
+# ``/v1/notifications/...`` never touches a cached ``/v1/jobs`` entry. Serving
+# stale (often empty) job lists for up to 60s is worse than the per-request
+# DB lookup, so opt the resource out of caching entirely.
+_BYPASS_RESOURCE_SEGMENTS = frozenset({"v1-jobs"})
+
 # Substrings that mark a path as auth-related (never cacheable).
 _BYPASS_SUBSTRINGS = (
     "/login",
@@ -203,6 +211,9 @@ class HttpCacheMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         resource = _resource_segment(path)
+
+        if resource in _BYPASS_RESOURCE_SEGMENTS:
+            return await call_next(request)
 
         if is_cacheable:
             return await self._handle_get(

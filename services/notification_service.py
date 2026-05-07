@@ -315,26 +315,77 @@ async def notify_new_user_added(
 # --- Check-In Notifications ---
 
 
-# Roles that can approve / reject check-ins — must match the auth deps on
-# the checkin routes. When these change, update the route too.
-_CHECKIN_APPROVER_ROLES = ("receptionist", "super_admin", "dept_admin")
+# Tenant-wide roles whose users should see every pending check-in regardless
+# of department. ``dept_admin`` is scoped to a single department and is
+# handled separately so we only notify the dept_admin who actually owns the
+# host's department.
+_TENANT_WIDE_APPROVER_ROLES = ("receptionist", "super_admin")
 
 
-async def _get_active_checkin_approvers(tenant_id: str) -> list:
-    """Return every active system user who can approve check-ins for the
-    tenant. Tenants frequently have only a super_admin (no receptionist
-    role configured), so targeting ``role="receptionist"`` alone would drop
-    the notification on the floor."""
+async def _resolve_host_department_id(host_employee_id: Optional[str]) -> Optional[str]:
+    """Look up the host system_user and return their ``department_id``.
+
+    Returns ``None`` when no host is supplied, the id is malformed, the host
+    can't be found, or the host has no department on file.
+    """
+    if not host_employee_id:
+        return None
+    if not ObjectId.is_valid(host_employee_id):
+        return None
+    from repositories.system_user_repo import get_system_user
+
+    try:
+        host = await get_system_user({"_id": ObjectId(host_employee_id)})
+    except Exception:
+        return None
+    if host is None:
+        return None
+    return getattr(host, "department_id", None)
+
+
+async def _get_active_checkin_approvers(
+    tenant_id: str, host_employee_id: Optional[str] = None
+) -> list:
+    """Return every active system user who should be notified about a
+    check-in for the tenant.
+
+    ``receptionist`` and ``super_admin`` are tenant-wide and always
+    included. ``dept_admin`` is scoped to a single department, so we only
+    include dept_admins whose ``department_id`` matches the host's
+    department. When the host or their department can't be resolved we
+    fall back to including every active dept_admin — better to over-notify
+    than to silently drop the alert when the host link is missing.
+    """
     from repositories.system_user_repo import get_system_users
     from schemas.imports import AccountStatus
 
-    return await get_system_users(
-        {
-            "tenant_id": tenant_id,
-            "role": {"$in": list(_CHECKIN_APPROVER_ROLES)},
-            "account_status": AccountStatus.ACTIVE.value,
-        }
-    )
+    host_department_id = await _resolve_host_department_id(host_employee_id)
+
+    tenant_wide_filter: dict = {
+        "tenant_id": tenant_id,
+        "role": {"$in": list(_TENANT_WIDE_APPROVER_ROLES)},
+        "account_status": AccountStatus.ACTIVE.value,
+    }
+    dept_admin_filter: dict = {
+        "tenant_id": tenant_id,
+        "role": "dept_admin",
+        "account_status": AccountStatus.ACTIVE.value,
+    }
+    if host_department_id:
+        dept_admin_filter["department_id"] = host_department_id
+
+    tenant_wide = await get_system_users(tenant_wide_filter)
+    dept_admins = await get_system_users(dept_admin_filter)
+
+    seen: set[str] = set()
+    out: list = []
+    for user in list(tenant_wide) + list(dept_admins):
+        uid = user.id or ""
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        out.append(user)
+    return out
 
 
 async def notify_checkin_pending_approval(
@@ -346,9 +397,12 @@ async def notify_checkin_pending_approval(
     host_employee_id: Optional[str] = None,
 ) -> None:
     """Fire-and-forget: notify every active approver (receptionist,
-    super_admin, dept_admin) about a pending check-in."""
+    super_admin, plus the dept_admin who owns the host's department)
+    about a pending check-in."""
     try:
-        approvers = await _get_active_checkin_approvers(tenant_id)
+        approvers = await _get_active_checkin_approvers(
+            tenant_id, host_employee_id=host_employee_id
+        )
         for user in approvers:
             try:
                 await send_notification(
@@ -379,9 +433,12 @@ async def notify_checkin_approved(
     host_employee_id: Optional[str] = None,
 ) -> None:
     """Fire-and-forget: notify every active approver about an approved
-    check-in and badge issuance."""
+    check-in and badge issuance. dept_admins outside the host's
+    department are excluded."""
     try:
-        approvers = await _get_active_checkin_approvers(tenant_id)
+        approvers = await _get_active_checkin_approvers(
+            tenant_id, host_employee_id=host_employee_id
+        )
         for user in approvers:
             try:
                 await send_notification(
@@ -410,9 +467,11 @@ async def notify_checkin_rejected(
     host_employee_id: Optional[str] = None,
 ) -> None:
     """Fire-and-forget: notify every active approver about a rejected
-    check-in."""
+    check-in. dept_admins outside the host's department are excluded."""
     try:
-        approvers = await _get_active_checkin_approvers(tenant_id)
+        approvers = await _get_active_checkin_approvers(
+            tenant_id, host_employee_id=host_employee_id
+        )
         for user in approvers:
             try:
                 await send_notification(

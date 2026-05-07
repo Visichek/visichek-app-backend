@@ -108,3 +108,16 @@ async def list_job_logs_for_tenant(
         .limit(stop - start)
     )
     return [QueueJobLogOut(**doc) async for doc in cursor]
+
+
+async def list_job_logs_for_actor(
+    actor_id: str, start: int = 0, stop: int = 100
+) -> list[QueueJobLogOut]:
+    cursor = (
+        db[COLLECTION]
+        .find({"actor_id": actor_id})
+        .sort("date_created", -1)
+        .skip(start)
+        .limit(stop - start)
+    )
+    return [QueueJobLogOut(**doc) async for doc in cursor]
