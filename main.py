@@ -424,6 +424,7 @@ _cors_origins = list(settings.cors_origins) if settings.cors_origins else []
 _default_origins = [
     "http://localhost:3000",
     "https://visichek.app",
+    "https://www.visichek.app",
     "https://client.visichek.app",
     "https://visichek-app.vercel.app",
 ]
