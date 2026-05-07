@@ -48,6 +48,10 @@ async def create_appointment_endpoint(
     if principal.tenant_id:
         payload["tenant_id"] = principal.tenant_id
     payload["created_by"] = principal.user_id
+    request_id = getattr(request.state, "request_id", None)
+    payload["_actor_id"] = principal.user_id
+    payload["_actor_role"] = principal.role
+    payload["_request_id"] = request_id
     return await enqueue_write(
         writer_key="appointment.create",
         payload=payload,
@@ -55,7 +59,7 @@ async def create_appointment_endpoint(
         tenant_id=principal.tenant_id,
         actor_id=principal.user_id,
         actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
+        request_id=request_id,
     )
 
 
@@ -147,8 +151,12 @@ async def update_appointment_endpoint(
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
     tenant_id = principal.tenant_id or ""
-    payload = appt_data.model_dump(exclude_none=True)
+    payload = appt_data.model_dump(mode="json", exclude_none=True)
     payload["tenant_id"] = tenant_id
+    request_id = getattr(request.state, "request_id", None)
+    payload["_actor_id"] = principal.user_id
+    payload["_actor_role"] = principal.role
+    payload["_request_id"] = request_id
     return await enqueue_write(
         writer_key="appointment.update",
         payload=payload,
@@ -157,7 +165,7 @@ async def update_appointment_endpoint(
         tenant_id=tenant_id,
         actor_id=principal.user_id,
         actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
+        request_id=request_id,
     )
 
 
@@ -185,13 +193,20 @@ async def delete_appointment_endpoint(
     ),
 ):
     tenant_id = principal.tenant_id or ""
+    request_id = getattr(request.state, "request_id", None)
+    payload = {
+        "tenant_id": tenant_id,
+        "_actor_id": principal.user_id,
+        "_actor_role": principal.role,
+        "_request_id": request_id,
+    }
     return await enqueue_write(
         writer_key="appointment.delete",
-        payload={"tenant_id": tenant_id},
+        payload=payload,
         resource_type="appointment",
         resource_id=appointment_id,
         tenant_id=tenant_id,
         actor_id=principal.user_id,
         actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
+        request_id=request_id,
     )

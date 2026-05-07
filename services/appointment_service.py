@@ -1,6 +1,7 @@
+import time
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from repositories.appointment_repo import (
     count_appointments,
@@ -107,11 +108,65 @@ async def retrieve_appointment_by_id_with_summary(
     return await _enrich_appointment(appt)
 
 
-async def update_appointment_by_id(
-    appointment_id: str, tenant_id: str, appt_data: AppointmentUpdate
-) -> AppointmentOut:
+_AUDITABLE_UPDATE_FIELDS = (
+    "visitor_profile_id",
+    "status",
+    "scheduled_datetime",
+    "purpose",
+)
+
+
+def _diff_appointment(
+    before: AppointmentOut, after: AppointmentOut
+) -> Dict[str, Dict[str, Any]]:
+    """Return a {field: {before, after}} diff for audit-log details."""
+    changes: Dict[str, Dict[str, Any]] = {}
+    for field in _AUDITABLE_UPDATE_FIELDS:
+        old_val: Any = getattr(before, field, None)
+        new_val: Any = getattr(after, field, None)
+        if old_val != new_val:
+            changes[field] = {
+                "before": getattr(old_val, "value", old_val),
+                "after": getattr(new_val, "value", new_val),
+            }
+    return changes
+
+
+async def update_appointment_by_id_with_diff(
+    appointment_id: str,
+    tenant_id: str,
+    appt_data: AppointmentUpdate,
+) -> Tuple[AppointmentOut, AppointmentOut, Dict[str, Dict[str, Any]]]:
+    """Apply a partial update and return ``(before, after, changes)``.
+
+    Rejects updates to appointments whose scheduled time is already in the
+    past, and rejects rescheduling to a past datetime. Used by the writer
+    to produce audit-log diffs without re-fetching the document.
+    """
     if not ObjectId.is_valid(appointment_id):
         raise HTTPException(status_code=400, detail="Invalid appointment ID format")
+
+    existing = await get_appointment(
+        {"_id": ObjectId(appointment_id), "tenant_id": tenant_id}
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    now_ts = int(time.time())
+    if existing.scheduled_datetime is not None and existing.scheduled_datetime < now_ts:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot update an appointment whose scheduled date has already passed",
+        )
+    if (
+        appt_data.scheduled_datetime is not None
+        and appt_data.scheduled_datetime < now_ts
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot reschedule an appointment to a past datetime",
+        )
+
     result = await update_appointment(
         {"_id": ObjectId(appointment_id), "tenant_id": tenant_id}, appt_data
     )
@@ -119,7 +174,18 @@ async def update_appointment_by_id(
         raise HTTPException(
             status_code=404, detail="Appointment not found or update failed"
         )
-    return result
+    return existing, result, _diff_appointment(existing, result)
+
+
+async def update_appointment_by_id(
+    appointment_id: str, tenant_id: str, appt_data: AppointmentUpdate
+) -> AppointmentOut:
+    _, after, _ = await update_appointment_by_id_with_diff(
+        appointment_id=appointment_id,
+        tenant_id=tenant_id,
+        appt_data=appt_data,
+    )
+    return after
 
 
 async def remove_appointment(appointment_id: str, tenant_id: str):

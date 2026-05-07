@@ -97,6 +97,43 @@ async def _invalidate_plan_fanout(plan_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Writer keys whose handler (or the service it delegates to) already records
+# its own audit event. Listed here so the auto-audit step below skips them
+# and we don't get duplicate entries in /v1/audit-logs.
+_AUTO_AUDIT_SKIP: frozenset[str] = frozenset(
+    {
+        # appointment_writer self-audits
+        "appointment.create",
+        "appointment.update",
+        "appointment.delete",
+        # system_user_service self-audits these specific operations
+        "system_user.invite",
+        "system_user.delete",
+        # branding_service self-audits
+        "branding.upsert",
+        "branding.delete",
+        # subscription_service self-audits
+        "subscription.create",
+        "subscription.change_plan",
+        "subscription.cancel",
+        "subscription.update_overrides",
+        # plan_service self-audits these specific operations
+        "plan.create",
+        "plan.archive",
+        "plan.activate",
+        "plan.delete",
+        # support_case_service self-audits
+        "support_case.create",
+        "support_case.message.add",
+        "support_case.transition",
+        "support_case.assign",
+        "support_case.attachment.add",
+        # tenant_settings_service self-audits
+        "tenant_settings.update",
+    }
+)
+
+
 @task("db.write")
 async def _db_write_dispatcher(
     writer_key: str,
@@ -176,6 +213,19 @@ async def _db_write_dispatcher(
             exc_info=True,
         )
 
+    # Auto-record an audit event for every successful queued write so the
+    # tenant audit log isn't empty just because a writer / service forgot
+    # to call record_audit_event. Skipped for writers in _AUTO_AUDIT_SKIP
+    # which already self-audit (avoids duplicate entries).
+    if writer_key not in _AUTO_AUDIT_SKIP:
+        await _auto_record_audit_for_write(
+            writer_key=writer_key,
+            task_id=task_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            result=result,
+        )
+
     # Drop the per-id cache again post-commit. The eager delete in
     # enqueue_write covers the gap before this point; this second drop
     # handles the rare case where a concurrent GET re-populated the
@@ -184,6 +234,59 @@ async def _db_write_dispatcher(
         invalidate_entity(resource_type, resource_id)
 
     return result
+
+
+async def _auto_record_audit_for_write(
+    *,
+    writer_key: str,
+    task_id: str,
+    resource_type: str,
+    resource_id: str,
+    result: Any,
+) -> None:
+    """Record an audit event using actor info from queue_job_log.
+
+    Reads the row inserted by ``enqueue_write`` to recover the actor /
+    tenant / request context that the route originally captured, then
+    fires off ``record_audit_event``. Failures are swallowed — a missing
+    audit row should never fail the write itself.
+    """
+    if not task_id:
+        return
+    try:
+        from repositories.queue_job_log_repo import get_job_log_by_task_id
+        from services.audit_service import record_audit_event
+
+        job_log = await get_job_log_by_task_id(task_id)
+        if job_log is None or not job_log.actor_id:
+            return
+
+        # Prefer the writer's reported id (real, post-commit) over the
+        # speculative pre-assigned one in queue_job_log. Some writers
+        # like subscription.create assign their own ids server-side.
+        effective_resource_id = resource_id
+        if isinstance(result, dict):
+            res_id = result.get("id")
+            if isinstance(res_id, str) and res_id:
+                effective_resource_id = res_id
+
+        await record_audit_event(
+            actor_id=job_log.actor_id,
+            actor_role=job_log.actor_role or "system_user",
+            action=writer_key,
+            resource_type=resource_type or job_log.resource_type or "",
+            resource_id=effective_resource_id or job_log.resource_id or "",
+            tenant_id=job_log.tenant_id,
+            details={"task_id": task_id},
+            request_id=job_log.request_id,
+        )
+    except Exception:
+        logger.warning(
+            "auto-audit failed for task_id=%s writer=%s",
+            task_id,
+            writer_key,
+            exc_info=True,
+        )
 
 
 # ---------------------------------------------------------------------------

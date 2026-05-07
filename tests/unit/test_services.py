@@ -696,28 +696,69 @@ class TestAppointmentService:
 
         assert exc_info.value.status_code == 404
 
+    @patch("services.appointment_service.get_appointment")
     @patch("services.appointment_service.update_appointment")
-    async def test_update_appointment_success(self, mock_update):
+    async def test_update_appointment_success(self, mock_update, mock_get):
         """Test updating an appointment."""
+        import time as _time
+
         from services.appointment_service import update_appointment_by_id
 
         tenant_id = str(ObjectId())
         appt_id = str(ObjectId())
+        future_ts = int(_time.time()) + 3600
         update_data = AppointmentUpdate(status=AppointmentStatus.FULFILLED)
-        updated_appt = AppointmentOut(
+        existing_appt = AppointmentOut(
             id=appt_id,
             tenant_id=tenant_id,
             host_id=str(ObjectId()),
             department_id=str(ObjectId()),
-            scheduled_datetime=1700000000,
+            scheduled_datetime=future_ts,
+            status=AppointmentStatus.SCHEDULED,
+        )
+        updated_appt = AppointmentOut(
+            id=appt_id,
+            tenant_id=tenant_id,
+            host_id=existing_appt.host_id,
+            department_id=existing_appt.department_id,
+            scheduled_datetime=future_ts,
             status=AppointmentStatus.FULFILLED,
         )
 
+        mock_get.return_value = existing_appt
         mock_update.return_value = updated_appt
 
         result = await update_appointment_by_id(appt_id, tenant_id, update_data)
 
         assert result.status == AppointmentStatus.FULFILLED
+
+    @patch("services.appointment_service.get_appointment")
+    async def test_update_appointment_rejects_past_scheduled_date(self, mock_get):
+        """Updates to appointments whose scheduled datetime has passed are rejected."""
+        import time as _time
+
+        from services.appointment_service import update_appointment_by_id
+
+        tenant_id = str(ObjectId())
+        appt_id = str(ObjectId())
+        past_ts = int(_time.time()) - 3600
+        existing_appt = AppointmentOut(
+            id=appt_id,
+            tenant_id=tenant_id,
+            host_id=str(ObjectId()),
+            department_id=str(ObjectId()),
+            scheduled_datetime=past_ts,
+            status=AppointmentStatus.SCHEDULED,
+        )
+        mock_get.return_value = existing_appt
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_appointment_by_id(
+                appt_id,
+                tenant_id,
+                AppointmentUpdate(status=AppointmentStatus.FULFILLED),
+            )
+        assert exc_info.value.status_code == 400
 
 
 # ============================================================================
