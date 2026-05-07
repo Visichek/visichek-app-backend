@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.response_envelope import document_response
 from schemas.usage_schema import TenantUsageSummary
 from services.usage_service import get_tenant_usage_summary
@@ -23,12 +24,19 @@ router = APIRouter(prefix="/usage", tags=["Usage & Quotas"])
 async def get_usage_summary_endpoint(
     tenant_id: str,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> TenantUsageSummary | dict:
+):
     """Get comprehensive usage summary for a tenant showing current usage vs plan limits."""
+    return await get_or_compute_entity(
+        entity_type="tenant_usage",
+        entity_id=tenant_id,
+        loader=lambda: _load_admin_usage(tenant_id),
+    )
+
+
+async def _load_admin_usage(tenant_id: str) -> TenantUsageSummary | dict:
     plan_data = await resolve_tenant_plan(tenant_id)
     if not plan_data:
         return {"error": "No active subscription for this tenant"}
-
     return await get_tenant_usage_summary(
         tenant_id=tenant_id,
         subscription_id=plan_data.get("subscription_id", ""),

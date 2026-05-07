@@ -186,6 +186,70 @@ class TestPlanService:
             await activate_plan("507f1f77bcf86cd799439011")
         assert exc_info.value.status_code == 404
 
+    @patch("services.plan_service.update_plan_by_id", new_callable=AsyncMock)
+    @patch("services.plan_service.retrieve_plan_by_id", new_callable=AsyncMock)
+    async def test_activate_plan_persists_active_status(
+        self, mock_retrieve, mock_update
+    ):
+        """Happy path: update returns ACTIVE and verification re-read confirms it."""
+        draft_plan = _make_plan_out(status=PlanStatus.DRAFT.value)
+        active_plan = _make_plan_out(status=PlanStatus.ACTIVE.value)
+        # First retrieve (pre-check) returns DRAFT, second retrieve (verification) returns ACTIVE.
+        mock_retrieve.side_effect = [draft_plan, active_plan]
+        mock_update.return_value = active_plan
+
+        from services.plan_service import activate_plan
+
+        result = await activate_plan("507f1f77bcf86cd799439011")
+        assert result.status == PlanStatus.ACTIVE
+        assert mock_retrieve.await_count == 2
+        mock_update.assert_awaited_once()
+
+    @patch("services.plan_service.update_plan_by_id", new_callable=AsyncMock)
+    @patch("services.plan_service.retrieve_plan_by_id", new_callable=AsyncMock)
+    async def test_activate_plan_raises_when_update_returns_stale_status(
+        self, mock_retrieve, mock_update
+    ):
+        """Silent failure: update returned a doc but its status is still DRAFT.
+
+        This must raise so the queued-write dispatcher records the job as
+        FAILED and ``notify_job_failure`` notifies the actor admin instead
+        of telling them the activation succeeded.
+        """
+        draft_plan = _make_plan_out(status=PlanStatus.DRAFT.value)
+        mock_retrieve.return_value = draft_plan
+        mock_update.return_value = draft_plan  # status didn't change
+
+        from services.plan_service import activate_plan
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await activate_plan("507f1f77bcf86cd799439011")
+        assert exc_info.value.status_code == 500
+        assert "did not persist" in str(exc_info.value.detail).lower()
+
+    @patch("services.plan_service.update_plan_by_id", new_callable=AsyncMock)
+    @patch("services.plan_service.retrieve_plan_by_id", new_callable=AsyncMock)
+    async def test_activate_plan_raises_when_reread_disagrees(
+        self, mock_retrieve, mock_update
+    ):
+        """Verification re-read shows DRAFT despite update reporting ACTIVE.
+
+        Covers the read-after-write race / concurrent overwrite case.
+        """
+        draft_plan = _make_plan_out(status=PlanStatus.DRAFT.value)
+        active_plan = _make_plan_out(status=PlanStatus.ACTIVE.value)
+        # Pre-check: DRAFT. Verification: still DRAFT (regression on re-read).
+        mock_retrieve.side_effect = [draft_plan, draft_plan]
+        mock_update.return_value = active_plan
+
+        from services.plan_service import activate_plan
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await activate_plan("507f1f77bcf86cd799439011")
+        assert exc_info.value.status_code == 500
+
     @patch("services.plan_service.get_plan", new_callable=AsyncMock)
     @patch("services.plan_service.retrieve_plan_by_id", new_callable=AsyncMock)
     @patch("services.plan_service.create_plan", new_callable=AsyncMock)

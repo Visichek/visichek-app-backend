@@ -2,19 +2,21 @@ from typing import Annotated, Any, List
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.department_schema import (
     DepartmentCreate,
     DepartmentUpdate,
-    DepartmentWithSummaryOut,
 )
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.department_service import (
     retrieve_department_by_id_with_summary,
     retrieve_departments_with_summary,
+    validate_department_create,
+    validate_department_update,
 )
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
@@ -44,14 +46,22 @@ async def create_department_endpoint(
     request: Request,
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
+    tenant_id = principal.tenant_id or ""
+    # Sync gate: reject duplicates / cap violations up-front so the client
+    # gets a 4xx instead of a 202 followed by a failed-job notification.
+    await validate_department_create(
+        tenant_id=tenant_id,
+        name=dept_data.name,
+        code=dept_data.code,
+    )
     payload = dept_data.model_dump(exclude_none=True)
-    payload["tenant_id"] = principal.tenant_id
+    payload["tenant_id"] = tenant_id
     payload["created_by"] = principal.user_id
     return await enqueue_write(
         writer_key="department.create",
         payload=payload,
         resource_type="department",
-        tenant_id=principal.tenant_id,
+        tenant_id=tenant_id,
         actor_id=principal.user_id,
         actor_role=principal.role,
         request_id=getattr(request.state, "request_id", None),
@@ -137,10 +147,14 @@ async def _load_departments_for_tenant(tenant_id: str) -> List[Any]:
 async def get_department_endpoint(
     department_id: str,
     principal: AuthPrincipal = Depends(_admin_roles),
-) -> DepartmentWithSummaryOut:
+) -> Any:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_department_by_id_with_summary(
-        department_id=department_id, tenant_id=tenant_id
+    return await get_or_compute_entity(
+        entity_type="department",
+        entity_id=department_id,
+        loader=lambda: retrieve_department_by_id_with_summary(
+            department_id=department_id, tenant_id=tenant_id
+        ),
     )
 
 
@@ -168,6 +182,14 @@ async def update_department_endpoint(
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
     tenant_id = principal.tenant_id or ""
+    # Sync gate: reject duplicates up-front so the client gets a 4xx
+    # instead of a 202 followed by a failed-job notification.
+    await validate_department_update(
+        department_id=department_id,
+        tenant_id=tenant_id,
+        name=dept_data.name,
+        code=dept_data.code,
+    )
     payload = dept_data.model_dump(exclude_none=True)
     payload["tenant_id"] = tenant_id
     return await enqueue_write(

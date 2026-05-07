@@ -258,15 +258,13 @@ def audit_log_factory() -> Callable[..., AuditLogCreate]:
         defaults: dict = {
             "tenant_id": str(ObjectId()),
             "actor_id": str(ObjectId()),
-            "actor_name_snapshot": "Admin User",
-            "user_session_id": str(ObjectId()),
+            "actor_role": "super_admin",
             "action": "visitor_checked_in",
-            "target_entity": "visit_session",
-            "target_id": str(ObjectId()),
-            "ip": "192.168.1.100",
-            "device_signature": "Device-XYZ",
-            "reason": "Standard check-in procedure",
-            "occurred_at": now,
+            "resource_type": "visit_session",
+            "resource_id": str(ObjectId()),
+            "details": {"reason": "Standard check-in procedure"},
+            "request_id": "req-abc-123",
+            "timestamp": now,
         }
         defaults.update(kwargs)
         return AuditLogCreate(**defaults)

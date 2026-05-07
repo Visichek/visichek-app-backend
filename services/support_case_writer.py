@@ -27,7 +27,10 @@ from services.support_case_service import (
 logger = logging.getLogger(__name__)
 
 
-@write_handler("support_case.create")
+@write_handler(
+    "support_case.create",
+    invalidates=["support_cases.list", "support_cases.admin_list"],
+)
 async def _support_case_create(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -49,7 +52,10 @@ async def _support_case_create(
     }
 
 
-@write_handler("support_case.message.add")
+@write_handler(
+    "support_case.message.add",
+    invalidates=["support_cases.list", "support_cases.admin_list"],
+)
 async def _support_case_message_add(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -70,7 +76,10 @@ async def _support_case_message_add(
     }
 
 
-@write_handler("support_case.transition")
+@write_handler(
+    "support_case.transition",
+    invalidates=["support_cases.list", "support_cases.admin_list"],
+)
 async def _support_case_transition(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -86,7 +95,10 @@ async def _support_case_transition(
     }
 
 
-@write_handler("support_case.assign")
+@write_handler(
+    "support_case.assign",
+    invalidates=["support_cases.list", "support_cases.admin_list"],
+)
 async def _support_case_assign(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -102,7 +114,10 @@ async def _support_case_assign(
     }
 
 
-@write_handler("support_case.attachment.add")
+@write_handler(
+    "support_case.attachment.add",
+    invalidates=["support_cases.list", "support_cases.admin_list"],
+)
 async def _support_case_attachment_add(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:

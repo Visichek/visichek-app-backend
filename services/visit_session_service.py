@@ -12,6 +12,8 @@ from repositories.visit_session_repo import (
     create_visit_session,
     get_visit_session,
     get_active_visitors,
+    get_awaiting_checkout_sessions,
+    count_awaiting_checkout_sessions,
     update_visit_session,
     get_visit_sessions,
 )
@@ -495,6 +497,34 @@ async def check_out_visitor(
 
 async def retrieve_active_visitors(tenant_id: str, department_id: Optional[str] = None):
     return await get_active_visitors(tenant_id=tenant_id, department_id=department_id)
+
+
+async def retrieve_visitors_awaiting_checkout(
+    tenant_id: str,
+    department_id: Optional[str] = None,
+    start: int = 0,
+    stop: int = 50,
+) -> tuple[list[VisitSessionWithSummaryOut], int]:
+    """Paginated list of currently checked-in visitors (status=checked_in) for
+    the manual-checkout selector UI. Each row is enriched with the standard
+    summaries (visitor profile, host, department, receptionist) so the
+    receptionist can identify who they're checking out without follow-up calls.
+    """
+    import asyncio
+
+    sessions = await get_awaiting_checkout_sessions(
+        tenant_id=tenant_id,
+        department_id=department_id,
+        start=start,
+        stop=stop,
+    )
+    total = await count_awaiting_checkout_sessions(
+        tenant_id=tenant_id, department_id=department_id
+    )
+    enriched = list(
+        await asyncio.gather(*[_enrich_visit_session(s) for s in sessions])
+    )
+    return enriched, total
 
 
 async def retrieve_visit_session_by_id(

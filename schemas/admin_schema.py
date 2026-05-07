@@ -3,7 +3,7 @@ from pydantic import Field
 import time
 from security.hash import hash_password
 from typing import Optional
-from pydantic import BaseModel, EmailStr, model_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 
 
 class AdminBase(BaseModel):
@@ -20,6 +20,13 @@ class AdminBase(BaseModel):
 class AdminLogin(BaseModel):
     email: EmailStr
     password: str | bytes
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def strip_password_whitespace(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
 
 class AdminRefresh(BaseModel):

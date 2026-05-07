@@ -1,10 +1,13 @@
+import asyncio
+
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import List
+from typing import Any, List
 
 from repositories.system_user_repo import (
     count_system_users,
     create_system_user,
+    get_raw_system_users_by_email,
     get_system_user,
     get_system_users,
     update_system_user,
@@ -153,62 +156,25 @@ async def add_system_user_from_invite(
     return await add_system_user(create_data)
 
 
-async def authenticate_system_user(
-    login_data: SystemUserLogin, tenant_id: str | None = None
-) -> SystemUserOut:
-    """Authenticate a system user. If tenant_id is provided, scope the lookup to that tenant."""
-    from security.password_policy import (
-        check_login_lockout,
-        record_failed_login,
-        clear_failed_logins,
+async def _issue_login_tokens(user: SystemUserOut) -> SystemUserOut:
+    """Mint access + refresh tokens for an authenticated user."""
+    access_token, refresh_token = await issue_tokens_for_role(
+        user_id=user.id or "",
+        role=user.role.value,
+        tenant_id=user.tenant_id,
     )
+    user.access_token = access_token
+    user.refresh_token = refresh_token
+    return user
 
-    # Check lockout before anything else
-    lockout = await check_login_lockout(login_data.email)
-    if lockout:
-        minutes = lockout["remaining_seconds"] // 60
-        raise HTTPException(
-            status_code=429,
-            detail=f"Account temporarily locked due to too many failed login attempts. Try again in {minutes} minute(s).",
-        )
 
-    # Build filter — optionally scoped to tenant
-    filter_dict: dict = {"email": login_data.email}
-    if tenant_id:
-        filter_dict["tenant_id"] = tenant_id
+async def _continue_login_for_user(user: SystemUserOut) -> Any:
+    """Run the post-credential-verification branch: 2FA challenge or token issuance.
 
-    user = await get_system_user(filter_dict)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid login credentials")
-
-    # Retrieve the raw document to get the hashed password
-    from core.database import db
-
-    raw_filter: dict = {"email": login_data.email}
-    if tenant_id:
-        raw_filter["tenant_id"] = tenant_id
-    raw = await db.system_users.find_one(raw_filter)
-    if not raw or not check_password(
-        password=login_data.password, hashed=raw["password_hash"]
-    ):
-        lockout_status = await record_failed_login(login_data.email)
-        if lockout_status.get("locked"):
-            raise HTTPException(
-                status_code=429,
-                detail="Too many failed login attempts. Account is temporarily locked for 15 minutes.",
-            )
-        remaining = lockout_status.get("attempts_remaining", "?")
-        raise HTTPException(
-            status_code=401,
-            detail=f"Invalid login credentials. {remaining} attempt(s) remaining before lockout.",
-        )
-
-    if user.account_status.value != "ACTIVE":
-        raise HTTPException(status_code=403, detail="Account is not active")
-
-    await clear_failed_logins(login_data.email)
-
-    # 2FA check
+    Used by both the single-match Stage-1 path and the Stage-2 ``select-tenant``
+    endpoint. Returns either a SystemUserOut (with tokens) or an
+    ``otp_required`` dict.
+    """
     from services.otp_service import is_mfa_required, create_otp_challenge
 
     if await is_mfa_required("system_user", user.id):  # type: ignore
@@ -218,16 +184,166 @@ async def authenticate_system_user(
             role=user.role.value,
             tenant_id=user.tenant_id,
         )
-        return {"otp_required": True, "otp_challenge_id": challenge_id}  # type: ignore[return-value]
+        return {"otp_required": True, "otp_challenge_id": challenge_id}
 
-    access_token, refresh_token = await issue_tokens_for_role(
-        user_id=user.id or "",
-        role=user.role.value,
-        tenant_id=user.tenant_id,
+    return await _issue_login_tokens(user)
+
+
+async def _build_tenant_options(users: list[SystemUserOut]) -> list[dict]:
+    """Resolve tenant company_name for each candidate user, in parallel."""
+    from services.tenant_service import retrieve_tenant_by_id
+
+    async def _resolve(user: SystemUserOut) -> dict:
+        company_name: str | None = None
+        try:
+            tenant = await retrieve_tenant_by_id(user.tenant_id)
+            company_name = tenant.company_name
+        except Exception:
+            pass
+        role_str = user.role.value if hasattr(user.role, "value") else user.role
+        return {
+            "tenant_id": user.tenant_id,
+            "company_name": company_name,
+            "role": role_str,
+            "full_name": user.full_name,
+            "mfa_enabled": bool(getattr(user, "mfa_enabled", False)),
+        }
+
+    return await asyncio.gather(*(_resolve(u) for u in users))
+
+
+async def authenticate_system_user(
+    login_data: SystemUserLogin, tenant_id: str | None = None
+) -> Any:
+    """Authenticate a system user.
+
+    Resolution rules:
+
+    * If ``tenant_id`` is provided (tenant-scoped login URL), lookup is scoped
+      to that tenant — only one record can match. Behaves like the legacy flow.
+    * Otherwise, every ``system_users`` record sharing the email is considered.
+      Password is verified against each. Among ACTIVE records that match:
+
+      - 0 -> 401 (with email-keyed lockout counter)
+      - 1 -> standard 2FA / token-issuance flow
+      - 2+ -> tenant-selection challenge (Stage 1 of 2-step login)
+
+    Returns one of:
+
+    * ``SystemUserOut`` with tokens (login completed)
+    * ``{"otp_required": True, "otp_challenge_id": ...}``
+    * ``{"tenant_selection_required": True, "selection_token": ..., "tenants": [...]}``
+    """
+    from security.password_policy import (
+        check_login_lockout,
+        record_failed_login,
+        clear_failed_logins,
     )
-    user.access_token = access_token
-    user.refresh_token = refresh_token
-    return user
+    from core.database import db
+
+    # Lockout is keyed by email so it applies regardless of how many tenants
+    # share the address. An attacker can't rotate tenants to bypass it.
+    lockout = await check_login_lockout(login_data.email)
+    if lockout:
+        minutes = lockout["remaining_seconds"] // 60
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Account temporarily locked due to too many failed login attempts. "
+                f"Try again in {minutes} minute(s)."
+            ),
+        )
+
+    # Tenant-scoped login keeps the single-record path for backward compat.
+    if tenant_id:
+        raw_records = [
+            r
+            async for r in db.system_users.find(
+                {"email": login_data.email, "tenant_id": tenant_id}
+            )
+        ]
+    else:
+        raw_records = await get_raw_system_users_by_email(login_data.email)
+
+    # Verify password against every record. A user might use different
+    # passwords for different tenants; we cannot short-circuit.
+    matched_raw: list[dict] = [
+        r
+        for r in raw_records
+        if r.get("password_hash")
+        and check_password(password=login_data.password, hashed=r["password_hash"])
+    ]
+
+    if not matched_raw:
+        lockout_status = await record_failed_login(login_data.email)
+        if lockout_status.get("locked"):
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Too many failed login attempts. "
+                    "Account is temporarily locked for 15 minutes."
+                ),
+            )
+        remaining = lockout_status.get("attempts_remaining", "?")
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                f"Invalid login credentials. {remaining} attempt(s) "
+                "remaining before lockout."
+            ),
+        )
+
+    # Filter to active accounts. Inactive records are silently dropped so we
+    # don't leak whether a tenant has a disabled match for this email.
+    active_users: list[SystemUserOut] = []
+    for raw in matched_raw:
+        user = SystemUserOut(**raw)
+        if user.account_status.value == "ACTIVE":
+            active_users.append(user)
+
+    if not active_users:
+        raise HTTPException(status_code=403, detail="Account is not active")
+
+    await clear_failed_logins(login_data.email)
+
+    # Multi-tenant: issue a selection challenge.
+    if len(active_users) > 1:
+        from services.tenant_selection_service import create_tenant_selection_challenge
+
+        candidate_ids = [u.id or "" for u in active_users]
+        selection_token = await create_tenant_selection_challenge(
+            email=login_data.email,
+            candidate_user_ids=candidate_ids,
+        )
+        tenants = await _build_tenant_options(active_users)
+        return {
+            "tenant_selection_required": True,
+            "selection_token": selection_token,
+            "tenants": tenants,
+        }
+
+    # Exactly one match — proceed straight through to 2FA / tokens.
+    return await _continue_login_for_user(active_users[0])
+
+
+async def complete_login_after_tenant_selection(
+    selection_token: str, tenant_id: str
+) -> Any:
+    """Stage 2 of multi-tenant login.
+
+    Validates and consumes the selection token, resolves the chosen
+    ``system_users`` record, and runs the same post-credential-verification
+    branch as a single-match Stage-1 login (2FA challenge or token issuance).
+    """
+    from services.tenant_selection_service import consume_tenant_selection_challenge
+
+    user_id = await consume_tenant_selection_challenge(selection_token, tenant_id)
+    user = await get_system_user({"_id": ObjectId(user_id)})
+    if not user:
+        raise HTTPException(status_code=401, detail="Selected user not found")
+    if user.account_status.value != "ACTIVE":
+        raise HTTPException(status_code=403, detail="Account is not active")
+    return await _continue_login_for_user(user)
 
 
 async def authenticate_super_admin_global(login_data: SystemUserLogin) -> dict:
@@ -244,11 +360,24 @@ async def authenticate_super_admin_global(login_data: SystemUserLogin) -> dict:
     the tenant itself (visitors, departments, branding, etc.).
     """
     # Authenticate without tenant scoping — super_admin email is globally unique
-    user = await authenticate_system_user(login_data=login_data)
+    result = await authenticate_system_user(login_data=login_data)
 
     # If 2FA is required, bubble the OTP challenge up to the route
-    if isinstance(user, dict) and user.get("otp_required"):
-        return user
+    if isinstance(result, dict) and result.get("otp_required"):
+        return result
+
+    # Super_admin emails are globally unique, so the tenant-selection branch
+    # should never fire for them. Defensively reject it if it ever does.
+    if isinstance(result, dict) and result.get("tenant_selection_required"):
+        raise HTTPException(
+            status_code=409,
+            detail="Super admin emails must be globally unique; multiple matches found",
+        )
+
+    if not isinstance(result, SystemUserOut):
+        raise HTTPException(status_code=500, detail="Unexpected authentication state")
+
+    user = result
 
     # Only super_admins get this enriched response
     role_str = user.role.value if hasattr(user.role, "value") else user.role

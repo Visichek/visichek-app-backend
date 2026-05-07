@@ -12,6 +12,7 @@ from typing import Annotated, Any, Optional
 from fastapi import APIRouter, Depends, Query, Request, status
 
 from core.errors import AppException, ErrorCode
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
@@ -123,8 +124,15 @@ async def admin_get_support_case(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> Any:
     _ = admin
-    return await retrieve_support_case_by_id(
-        case_id, tenant_id=None, requester_role="admin"
+    # Safe to share cache here — admin always sees the unredacted view.
+    # Tenant-scope reads use a different entity_type so internal notes
+    # never leak across roles.
+    return await get_or_compute_entity(
+        entity_type="support_case_admin",
+        entity_id=case_id,
+        loader=lambda: retrieve_support_case_by_id(
+            case_id, tenant_id=None, requester_role="admin"
+        ),
     )
 
 

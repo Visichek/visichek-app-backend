@@ -17,7 +17,10 @@ from schemas.system_user_schema import (
     SystemUserUpdate,
     SystemUserOut,
     SystemUserLogin,
+    SystemUserTenantLogin,
 )
+from schemas.admin_schema import AdminLogin
+from schemas.user_schema import UserLogin
 from schemas.visitor_profile_schema import (
     VisitorProfileCreate,
     VisitorProfileUpdate,
@@ -835,49 +838,60 @@ class TestPrivacyNoticeSchema:
 @pytest.mark.unit
 class TestAuditLogSchema:
     def test_audit_log_create_required_fields(self):
-        """Test AuditLogCreate with required fields."""
+        """AuditLogCreate accepts the audit_trail document shape."""
         payload = AuditLogCreate(
-            tenant_id="tenant123", actor_id="user456", action="USER_LOGIN"
+            actor_id="user456",
+            actor_role="admin",
+            action="USER_LOGIN",
+            resource_type="user",
+            resource_id="user456",
         )
-        assert payload.tenant_id == "tenant123"
         assert payload.actor_id == "user456"
+        assert payload.actor_role == "admin"
         assert payload.action == "USER_LOGIN"
-        assert payload.actor_name_snapshot is None
-        assert isinstance(payload.occurred_at, int)
+        assert payload.resource_type == "user"
+        assert payload.resource_id == "user456"
+        assert payload.tenant_id is None
+        assert payload.details == {}
+        assert isinstance(payload.timestamp, int)
 
     def test_audit_log_create_with_optional_fields(self):
-        """Test AuditLogCreate with optional fields."""
+        """AuditLogCreate carries tenant_id, details, request_id when provided."""
         now = int(time.time())
         payload = AuditLogCreate(
             tenant_id="tenant123",
             actor_id="user456",
-            actor_name_snapshot="John Doe",
+            actor_role="super_admin",
             action="VISITOR_CHECKED_IN",
-            target_entity="VisitSession",
-            target_id="session789",
-            ip="192.168.1.1",
-            device_signature="device_sig_123",
-            reason="Scheduled visit",
-            occurred_at=now,
+            resource_type="visit_session",
+            resource_id="session789",
+            details={"ip": "192.168.1.1", "reason": "Scheduled visit"},
+            request_id="req-xyz",
+            timestamp=now,
         )
-        assert payload.actor_name_snapshot == "John Doe"
-        assert payload.target_entity == "VisitSession"
-        assert payload.ip == "192.168.1.1"
-        assert payload.reason == "Scheduled visit"
+        assert payload.tenant_id == "tenant123"
+        assert payload.details["ip"] == "192.168.1.1"
+        assert payload.request_id == "req-xyz"
+        assert payload.timestamp == now
 
     def test_audit_log_out_objectid_conversion(self):
-        """Test AuditLogOut converts ObjectId."""
+        """AuditLogOut converts ObjectId to string."""
         oid = ObjectId()
         now = int(time.time())
         data = {
             "_id": oid,
             "tenant_id": "tenant123",
             "actor_id": "user456",
+            "actor_role": "admin",
             "action": "USER_LOGIN",
-            "occurred_at": now,
+            "resource_type": "user",
+            "resource_id": "user456",
+            "timestamp": now,
         }
         out = AuditLogOut(**data)
         assert out.id == str(oid)
+        assert out.actor_role == "admin"
+        assert out.resource_type == "user"
 
 
 # ============================================================================
@@ -1448,3 +1462,52 @@ class TestTenantBootstrapSchema:
                 admin_email="jane@example.com",
                 admin_password="Pass123!",
             )
+
+
+# ============================================================================
+# LOGIN PASSWORD WHITESPACE STRIPPING TESTS
+# ============================================================================
+
+
+@pytest.mark.unit
+class TestLoginPasswordWhitespaceStripping:
+    """Login schemas must strip leading/trailing whitespace from the password
+    field. Pasted passwords frequently carry stray spaces or newlines that the
+    user never intended to type — those should not silently break authentication.
+    """
+
+    def test_admin_login_strips_leading_and_trailing_whitespace(self):
+        payload = AdminLogin(email="admin@example.com", password="  MyP@ssw0rd!  ")
+        assert payload.password == "MyP@ssw0rd!"
+
+    def test_admin_login_strips_tabs_and_newlines(self):
+        payload = AdminLogin(email="admin@example.com", password="\tMyP@ssw0rd!\n")
+        assert payload.password == "MyP@ssw0rd!"
+
+    def test_admin_login_preserves_internal_whitespace(self):
+        payload = AdminLogin(email="admin@example.com", password="  My P@ss w0rd!  ")
+        assert payload.password == "My P@ss w0rd!"
+
+    def test_admin_login_no_op_when_no_whitespace(self):
+        payload = AdminLogin(email="admin@example.com", password="MyP@ssw0rd!")
+        assert payload.password == "MyP@ssw0rd!"
+
+    def test_system_user_login_strips_whitespace(self):
+        payload = SystemUserLogin(
+            email="user@example.com", password="  Str0ng#Pass!  "
+        )
+        assert payload.password == "Str0ng#Pass!"
+
+    def test_system_user_tenant_login_strips_whitespace(self):
+        payload = SystemUserTenantLogin(
+            email="user@example.com", password="\n Str0ng#Pass! \t"
+        )
+        assert payload.password == "Str0ng#Pass!"
+
+    def test_user_login_strips_whitespace(self):
+        payload = UserLogin(email="user@example.com", password=" Str0ng#Pass! ")
+        assert payload.password == "Str0ng#Pass!"
+
+    def test_user_login_preserves_internal_whitespace(self):
+        payload = UserLogin(email="user@example.com", password=" pass with spaces ")
+        assert payload.password == "pass with spaces"

@@ -39,7 +39,7 @@ def _enqueue_refresh(tenant_id: str) -> None:
         )
 
 
-@write_handler("tenant_settings.update")
+@write_handler("tenant_settings.update", invalidates=["tenant.settings"])
 async def _tenant_settings_update(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:

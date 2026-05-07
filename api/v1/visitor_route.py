@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import io
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.response_envelope import document_response
 from schemas.visit_session_schema import (
     CheckInRequest,
@@ -21,6 +22,7 @@ from services.visit_session_service import (
     retrieve_active_visitors,
     retrieve_visit_session_by_id_with_summary,
     retrieve_visit_sessions_with_summary,
+    retrieve_visitors_awaiting_checkout,
     confirm_check_in,
     deny_visitor,
     retrieve_pending_sessions,
@@ -281,6 +283,41 @@ async def list_active_visitors(
     )
 
 
+@router.get("/awaiting-checkout")
+@document_response(
+    message="Visitors awaiting checkout fetched successfully",
+    description=(
+        "Paginated list of visitors who are currently checked-in and have NOT "
+        "yet been checked out (status=checked_in). Designed for the manual "
+        "checkout selector UI: the receptionist picks an entry from this list "
+        "and then submits the matching session_id to POST /v1/visitors/check-out. "
+        "Each row is enriched with visitor / host / department summaries so the "
+        "list can be rendered without follow-up requests. Sorted by check-in "
+        "time descending (most recent first)."
+    ),
+    summary="List visitors awaiting checkout (manual selector)",
+    include_meta=True,
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+    },
+)
+async def list_visitors_awaiting_checkout(
+    department_id: Optional[str] = None,
+    start: Annotated[int, Query(ge=0)] = 0,
+    stop: Annotated[int, Query(gt=0, le=200)] = 50,
+    principal: AuthPrincipal = Depends(_checkin_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    items, total = await retrieve_visitors_awaiting_checkout(
+        tenant_id=tenant_id,
+        department_id=department_id,
+        start=start,
+        stop=stop,
+    )
+    return items, {"total": total, "start": start, "stop": stop}
+
+
 @router.get("/sessions")
 @document_response(
     message="Visit sessions fetched successfully",
@@ -429,10 +466,14 @@ async def list_pending_sessions(
 async def get_visit_session_endpoint(
     session_id: str,
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
-) -> VisitSessionWithSummaryOut:
+):
     tenant_id = principal.tenant_id or ""
-    return await retrieve_visit_session_by_id_with_summary(
-        session_id=session_id, tenant_id=tenant_id
+    return await get_or_compute_entity(
+        entity_type="visit_session",
+        entity_id=session_id,
+        loader=lambda: retrieve_visit_session_by_id_with_summary(
+            session_id=session_id, tenant_id=tenant_id
+        ),
     )
 
 

@@ -38,7 +38,15 @@ def _enqueue_refresh(tenant_id: str) -> None:
             )
 
 
-@write_handler("incident.create")
+@write_handler(
+    "incident.create",
+    invalidates=[
+        "incidents.list",
+        "incidents.approaching_deadline",
+        # status / counts also reflected on tenant dashboard rollups
+        "dashboard.stats",
+    ],
+)
 async def _incident_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     log = IncidentLogCreate(**data)
     result = await add_incident(log_data=log, preassigned_id=resource_id)
@@ -50,7 +58,15 @@ async def _incident_create(resource_id: str, data: dict[str, Any]) -> dict[str, 
     }
 
 
-@write_handler("incident.update")
+@write_handler(
+    "incident.update",
+    invalidates=[
+        "incidents.list",
+        "incidents.approaching_deadline",
+        # status / counts also reflected on tenant dashboard rollups
+        "dashboard.stats",
+    ],
+)
 async def _incident_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
     upd = IncidentLogUpdate(**data)

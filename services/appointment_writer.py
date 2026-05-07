@@ -35,7 +35,12 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
         )
 
 
-@write_handler("appointment.create")
+@write_handler("appointment.create", invalidates=[
+        "appointments.list",
+        # appointment_summary referenced from active visit lists / dashboard
+        "dashboard.visitors_active",
+        "dashboard.visitors_page1",
+    ])
 async def _appointment_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     appt = AppointmentCreate(**data)
     result = await add_appointment(appt_data=appt, preassigned_id=resource_id)
@@ -47,7 +52,12 @@ async def _appointment_create(resource_id: str, data: dict[str, Any]) -> dict[st
     }
 
 
-@write_handler("appointment.update")
+@write_handler("appointment.update", invalidates=[
+        "appointments.list",
+        # appointment_summary referenced from active visit lists / dashboard
+        "dashboard.visitors_active",
+        "dashboard.visitors_page1",
+    ])
 async def _appointment_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
     upd = AppointmentUpdate(**data)
@@ -58,7 +68,12 @@ async def _appointment_update(resource_id: str, data: dict[str, Any]) -> dict[st
     return {"id": result.id, "status": result.status}
 
 
-@write_handler("appointment.delete")
+@write_handler("appointment.delete", invalidates=[
+        "appointments.list",
+        # appointment_summary referenced from active visit lists / dashboard
+        "dashboard.visitors_active",
+        "dashboard.visitors_page1",
+    ])
 async def _appointment_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.get("tenant_id", "") or ""
     await remove_appointment(appointment_id=resource_id, tenant_id=tenant_id)

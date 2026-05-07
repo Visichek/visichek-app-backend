@@ -34,7 +34,7 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
         )
 
 
-@write_handler("compliance.register_dpr")
+@write_handler("compliance.register_dpr", invalidates=["compliance.register"])
 async def _compliance_register_dpr(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:

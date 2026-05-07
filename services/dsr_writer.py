@@ -32,7 +32,7 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
         )
 
 
-@write_handler("dsr.create")
+@write_handler("dsr.create", invalidates=["dsr.list"])
 async def _dsr_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     dsr = DSRCreate(**data)
     result = await add_dsr(dsr_data=dsr, preassigned_id=resource_id)
@@ -45,7 +45,7 @@ async def _dsr_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@write_handler("dsr.update")
+@write_handler("dsr.update", invalidates=["dsr.list"])
 async def _dsr_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
     upd = DSRUpdate(**data)

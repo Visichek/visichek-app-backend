@@ -62,7 +62,10 @@ def _enqueue_user_refresh(user_id: str, tenant_id: str) -> None:
             )
 
 
-@write_handler("notification.mark_read")
+@write_handler(
+    "notification.mark_read",
+    invalidates=["notifications.list", "notifications.unread_count"],
+)
 async def _notification_mark_read(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -76,7 +79,10 @@ async def _notification_mark_read(
     return {"id": result.id, "read": result.read}
 
 
-@write_handler("notification.mark_all_read")
+@write_handler(
+    "notification.mark_all_read",
+    invalidates=["notifications.list", "notifications.unread_count"],
+)
 async def _notification_mark_all_read(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -88,7 +94,10 @@ async def _notification_mark_all_read(
     return {"user_id": user_id, "marked_count": count}
 
 
-@write_handler("notification.delete")
+@write_handler(
+    "notification.delete",
+    invalidates=["notifications.list", "notifications.unread_count"],
+)
 async def _notification_delete(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:

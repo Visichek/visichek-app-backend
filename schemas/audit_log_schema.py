@@ -1,41 +1,51 @@
-from schemas.imports import *
-from pydantic import Field
+from __future__ import annotations
+
 import time
+from typing import Any, Dict, Optional
+
+from pydantic import Field, model_validator
+
+from schemas.imports import BaseModel, ObjectId
 
 
 class AuditLogCreate(BaseModel):
-    tenant_id: str
+    """Document shape written to the ``audit_trail`` collection.
+
+    Fields mirror what ``services.audit_service.record_audit_event`` constructs:
+    actor identity, action verb, the polymorphic resource pair
+    (``resource_type`` + ``resource_id``), tenant scope, free-form details,
+    and request correlation.
+    """
+
     actor_id: str
-    actor_name_snapshot: Optional[str] = None
-    user_session_id: Optional[str] = None
+    actor_role: str
     action: str
-    target_entity: Optional[str] = None
-    target_id: Optional[str] = None
-    ip: Optional[str] = None
-    device_signature: Optional[str] = None
-    reason: Optional[str] = None
-    occurred_at: int = Field(default_factory=lambda: int(time.time()))
+    resource_type: str
+    resource_id: str
+    tenant_id: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+    request_id: Optional[str] = None
+    timestamp: int = Field(default_factory=lambda: int(time.time()))
 
 
 class AuditLogOut(BaseModel):
     id: Optional[str] = Field(default=None, alias="_id")
-    tenant_id: str
     actor_id: str
-    actor_name_snapshot: Optional[str] = None
-    user_session_id: Optional[str] = None
+    actor_role: str
     action: str
-    target_entity: Optional[str] = None
-    target_id: Optional[str] = None
-    ip: Optional[str] = None
-    device_signature: Optional[str] = None
-    reason: Optional[str] = None
-    occurred_at: Optional[int] = None
+    resource_type: str
+    resource_id: str
+    tenant_id: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+    request_id: Optional[str] = None
+    timestamp: Optional[int] = None
 
     @model_validator(mode="before")
     @classmethod
     def convert_objectid(cls, values):
-        if "_id" in values and isinstance(values["_id"], ObjectId):
-            values["_id"] = str(values["_id"])
+        if isinstance(values, dict) and "_id" in values:
+            if isinstance(values["_id"], ObjectId):
+                values["_id"] = str(values["_id"])
         return values
 
     class Config:
@@ -44,16 +54,46 @@ class AuditLogOut(BaseModel):
         json_encoders = {ObjectId: str}
 
 
-from schemas.summary_schema import TenantBriefSummary, UserBriefSummary  # noqa: E402
+from schemas.summary_schema import (  # noqa: E402
+    AppointmentBriefSummary,
+    BranchBriefSummary,
+    DepartmentBriefSummary,
+    InvoiceBriefSummary,
+    PlanBriefSummary,
+    SubscriptionBriefSummary,
+    TenantBriefSummary,
+    UserBriefSummary,
+    VisitorProfileBriefSummary,
+    VisitSessionBriefSummary,
+)
+
+
+# Discriminated union for ``resource_summary``: the concrete shape depends on
+# ``resource_type`` recorded on the audit row. Listing the variants explicitly
+# gives the OpenAPI schema something useful to render and lets the frontend
+# switch on the embedded ``id``+``resource_type`` pair without follow-up calls.
+ResourceSummary = (
+    TenantBriefSummary
+    | UserBriefSummary
+    | PlanBriefSummary
+    | SubscriptionBriefSummary
+    | DepartmentBriefSummary
+    | BranchBriefSummary
+    | AppointmentBriefSummary
+    | VisitorProfileBriefSummary
+    | VisitSessionBriefSummary
+    | InvoiceBriefSummary
+)
 
 
 class AuditLogWithSummaryOut(AuditLogOut):
-    """AuditLogOut enriched with the actor and tenant snapshots.
+    """``AuditLogOut`` enriched with snapshots for every external id.
 
-    ``target_id`` is intentionally left un-enriched because it can refer to
-    any kind of entity (visitor, department, plan, etc.) and the type lookup
-    is best handled by the frontend with the existing ``target_entity`` hint.
+    The frontend renders audit rows without follow-up requests: ``actor_id``,
+    ``tenant_id`` and the polymorphic ``resource_id`` each carry a brief
+    summary so names, statuses, and identifying metadata are present inline.
     """
 
     tenant_summary: Optional[TenantBriefSummary] = None
     actor_summary: Optional[UserBriefSummary] = None
+    resource_summary: Optional[ResourceSummary] = None

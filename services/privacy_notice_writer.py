@@ -38,7 +38,10 @@ def _enqueue_refresh(tenant_id: str) -> None:
             )
 
 
-@write_handler("privacy_notice.create")
+@write_handler(
+    "privacy_notice.create",
+    invalidates=["privacy_notices.list", "privacy_notice.active"],
+)
 async def _privacy_notice_create(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -52,7 +55,10 @@ async def _privacy_notice_create(
     }
 
 
-@write_handler("privacy_notice.update")
+@write_handler(
+    "privacy_notice.update",
+    invalidates=["privacy_notices.list", "privacy_notice.active"],
+)
 async def _privacy_notice_update(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:

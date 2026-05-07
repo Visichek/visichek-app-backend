@@ -3,6 +3,7 @@ from typing import Annotated, Any, List
 from fastapi import APIRouter, Depends, Query, Request, status
 
 from core.errors import auth_permission_denied, auth_role_mismatch
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
@@ -107,7 +108,11 @@ async def get_tenant_endpoint(
             raise auth_permission_denied(permission_key="tenant.read")
     else:
         raise auth_role_mismatch(required_role="admin", actual_role=principal.role)
-    return await retrieve_tenant_by_id_with_summary(tenant_id=tenant_id)
+    return await get_or_compute_entity(
+        entity_type="tenant",
+        entity_id=tenant_id,
+        loader=lambda: retrieve_tenant_by_id_with_summary(tenant_id=tenant_id),
+    )
 
 
 @router.patch("/{tenant_id}")

@@ -4,12 +4,12 @@ from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.plan_schema import (
     PlanCreate,
-    PlanOut,
     PlanStatus,
     PlanTier,
     PlanUpdate,
@@ -87,8 +87,12 @@ async def _load_plans(public_only: bool) -> List[Any]:
     message="Plan retrieved successfully",
     summary="Get plan",
 )
-async def get_plan_endpoint(plan_id: str) -> PlanOut | None:
-    return await retrieve_plan_by_id(plan_id)
+async def get_plan_endpoint(plan_id: str) -> Any:
+    return await get_or_compute_entity(
+        entity_type="plan",
+        entity_id=plan_id,
+        loader=lambda: retrieve_plan_by_id(plan_id),
+    )
 
 
 @router.put("/{plan_id}")

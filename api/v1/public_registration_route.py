@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, File, Form, UploadFile, status
 
 from core.errors import AppException, ErrorCode
+from core.queue.entity_cache import get_or_compute_entity
 from core.response_envelope import document_response
 from schemas.checkin_schema import CheckinOut, CheckinPurpose
 from schemas.imports import IDType
@@ -69,7 +70,11 @@ async def public_register_endpoint(tenant_id: str, request: PublicRegistrationRe
     ],
 )
 async def list_tenant_departments_public_endpoint(tenant_id: str):
-    return await list_public_departments(tenant_id=tenant_id)
+    return await get_or_compute_entity(
+        entity_type="public_tenant_departments",
+        entity_id=tenant_id,
+        loader=lambda: list_public_departments(tenant_id=tenant_id),
+    )
 
 
 @router.get("/register/{tenant_id}/info")
@@ -80,7 +85,11 @@ async def list_tenant_departments_public_endpoint(tenant_id: str):
     success_example={"tenant_id": "t123", "company_name": "Acme Corp"},
 )
 async def get_tenant_info_public_endpoint(tenant_id: str):
-    return await get_public_tenant_info(tenant_id=tenant_id)
+    return await get_or_compute_entity(
+        entity_type="public_tenant_info",
+        entity_id=tenant_id,
+        loader=lambda: get_public_tenant_info(tenant_id=tenant_id),
+    )
 
 
 @router.get("/register/{tenant_id}/privacy-notice")
@@ -96,7 +105,11 @@ async def get_tenant_info_public_endpoint(tenant_id: str):
     },
 )
 async def get_privacy_notice_public_endpoint(tenant_id: str):
-    return await get_public_privacy_notice(tenant_id=tenant_id)
+    return await get_or_compute_entity(
+        entity_type="public_privacy_notice",
+        entity_id=tenant_id,
+        loader=lambda: get_public_privacy_notice(tenant_id=tenant_id),
+    )
 
 
 @router.post("/checkout")

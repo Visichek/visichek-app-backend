@@ -6,12 +6,12 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, Field
 
 from core.errors import auth_permission_denied, auth_role_mismatch
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.subscription_schema import (
     BillingCycle,
-    SubscriptionOut,
     SubscriptionStatus,
 )
 from services.subscription_service import (
@@ -175,8 +175,12 @@ async def _load_active_subscription(tenant_id: str) -> Any:
 async def get_subscription_endpoint(
     subscription_id: str,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> SubscriptionOut | None:
-    return await retrieve_subscription_by_id(subscription_id)
+) -> Any:
+    return await get_or_compute_entity(
+        entity_type="subscription",
+        entity_id=subscription_id,
+        loader=lambda: retrieve_subscription_by_id(subscription_id),
+    )
 
 
 @router.post("/change-plan")

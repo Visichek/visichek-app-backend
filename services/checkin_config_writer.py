@@ -38,7 +38,7 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
         )
 
 
-@write_handler("checkin_config.create")
+@write_handler("checkin_config.create", invalidates=["checkin_configs.list"])
 async def _checkin_config_create(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -48,7 +48,7 @@ async def _checkin_config_create(
     return {"id": result.id, "tenant_id": result.tenant_id}
 
 
-@write_handler("checkin_config.update")
+@write_handler("checkin_config.update", invalidates=["checkin_configs.list"])
 async def _checkin_config_update(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:

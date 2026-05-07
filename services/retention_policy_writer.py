@@ -39,7 +39,7 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
         )
 
 
-@write_handler("retention_policy.create")
+@write_handler("retention_policy.create", invalidates=["retention_policies.list"])
 async def _retention_policy_create(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -49,7 +49,7 @@ async def _retention_policy_create(
     return {"id": result.id, "tenant_id": result.tenant_id, "scope": result.scope}
 
 
-@write_handler("retention_policy.update")
+@write_handler("retention_policy.update", invalidates=["retention_policies.list"])
 async def _retention_policy_update(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:

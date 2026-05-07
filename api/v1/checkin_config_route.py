@@ -4,6 +4,7 @@ from typing import Annotated, Any, List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
@@ -33,7 +34,11 @@ router = APIRouter(prefix="/checkin-configs", tags=["Check-In Configs"])
 )
 async def get_public_checkin_config(checkin_config_id: str):
     """Get public check-in configuration (unauthenticated endpoint for kiosk)."""
-    return await resolve_public_config(checkin_config_id)
+    return await get_or_compute_entity(
+        entity_type="checkin_config",
+        entity_id=checkin_config_id,
+        loader=lambda: resolve_public_config(checkin_config_id),
+    )
 
 
 @router.get("/{checkin_config_id}/visitors/lookup")

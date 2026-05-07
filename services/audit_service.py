@@ -1,49 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from bson import ObjectId
 
 from core.background_tasks import fire_and_forget
 from core.database import db
-from repositories.audit_log_repo import create_audit_log, get_audit_logs
-from schemas.audit_log_schema import AuditLogCreate, AuditLogOut, AuditLogWithSummaryOut
+from repositories.audit_log_repo import get_audit_logs
+from schemas.audit_log_schema import AuditLogOut, AuditLogWithSummaryOut
 
 logger = logging.getLogger(__name__)
 
 AUDIT_TRAIL_COLLECTION = "audit_trail"
-
-
-async def log_action(
-    tenant_id: str,
-    actor_id: str,
-    action: str,
-    actor_name_snapshot: str | None = None,
-    target_entity: str | None = None,
-    target_id: str | None = None,
-    ip: str | None = None,
-    device_signature: str | None = None,
-    reason: str | None = None,
-) -> None:
-    """Record an admin/system action in the immutable audit log."""
-    try:
-        await create_audit_log(
-            AuditLogCreate(
-                tenant_id=tenant_id,
-                actor_id=actor_id,
-                actor_name_snapshot=actor_name_snapshot,
-                action=action,
-                target_entity=target_entity,
-                target_id=target_id,
-                ip=ip,
-                device_signature=device_signature,
-                reason=reason,
-            )
-        )
-    except Exception as e:
-        logger.error(f"Failed to write audit log: {e}")
 
 
 async def _insert_audit_event(event_doc: Dict[str, Any]) -> Optional[str]:
@@ -72,15 +43,12 @@ async def record_audit_event(
 ) -> Optional[str]:
     """Record an admin/system action to the audit trail collection.
 
-    The ``async`` signature is preserved for call-site compatibility, but the
-    actual Mongo insert is scheduled on the event loop as a background task
-    and this coroutine returns immediately. Every existing caller wraps this
-    in ``try/except: pass`` and never inspects the return value, so firing
-    the write asynchronously removes 5–30 ms of per-request overhead without
-    any observable behaviour change.
-
-    On process shutdown the lifespan drains pending background tasks so the
-    trail isn't silently truncated on graceful reload.
+    The Mongo insert is scheduled on the event loop as a background task and
+    this coroutine returns immediately. Existing callers wrap this in
+    ``try/except: pass`` and never inspect the return value, so firing the
+    write asynchronously removes 5–30 ms of per-request overhead. The
+    lifespan drains pending background tasks on shutdown so the trail isn't
+    truncated on graceful reload.
     """
     event_doc = {
         "actor_id": actor_id,
@@ -98,33 +66,21 @@ async def record_audit_event(
 
 
 async def get_audit_trail(
-    filter_dict: Dict[str, Any],
+    filter_dict: Optional[Dict[str, Any]] = None,
     skip: int = 0,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """Retrieve audit trail events with optional filtering.
-
-    Args:
-        filter_dict: MongoDB filter criteria
-        skip: Number of records to skip (offset)
-        limit: Maximum number of records to return
-
-    Returns:
-        List of audit event documents (dicts)
-    """
+    """Retrieve raw audit-trail documents (dicts) with optional filtering."""
     try:
-        if filter_dict is None:
-            filter_dict = {}
         cursor = (
             db[AUDIT_TRAIL_COLLECTION]
-            .find(filter_dict)
-            .sort("timestamp", -1)  # Most recent first
+            .find(filter_dict or {})
+            .sort("timestamp", -1)
             .skip(skip)
             .limit(limit)
         )
-        events = []
+        events: List[Dict[str, Any]] = []
         async for doc in cursor:
-            # Convert ObjectId to string for JSON serialization
             if "_id" in doc and isinstance(doc["_id"], ObjectId):
                 doc["_id"] = str(doc["_id"])
             events.append(doc)
@@ -139,11 +95,8 @@ async def get_audit_trail_for_tenant(
     skip: int = 0,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """Retrieve audit trail events for a specific tenant."""
     return await get_audit_trail(
-        filter_dict={"tenant_id": tenant_id},
-        skip=skip,
-        limit=limit,
+        filter_dict={"tenant_id": tenant_id}, skip=skip, limit=limit
     )
 
 
@@ -153,7 +106,6 @@ async def get_audit_trail_for_resource(
     skip: int = 0,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """Retrieve audit trail events for a specific resource."""
     return await get_audit_trail(
         filter_dict={"resource_type": resource_type, "resource_id": resource_id},
         skip=skip,
@@ -161,18 +113,72 @@ async def get_audit_trail_for_resource(
     )
 
 
+# ---------------------------------------------------------------------------
+# Summary-enriched retrieval
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_resource_summary(
+    resource_type: Optional[str], resource_id: Optional[str]
+) -> Any:
+    """Dispatch to the right summary resolver based on ``resource_type``.
+
+    Audit rows record any kind of entity (subscription, plan, tenant,
+    visitor, …) so we look up the resolver by type. Missing types and
+    failed lookups quietly return ``None`` — enrichment is best-effort.
+    """
+    if not resource_type or not resource_id:
+        return None
+
+    from services import summary_resolver as sr
+
+    dispatch: Dict[str, Callable[[str], Awaitable[Any]]] = {
+        "tenant": sr.resolve_tenant_summary,
+        "plan": sr.resolve_plan_summary,
+        "subscription": sr.resolve_subscription_summary,
+        "department": sr.resolve_department_summary,
+        "branch": sr.resolve_branch_summary,
+        "appointment": sr.resolve_appointment_summary,
+        "visitor_profile": sr.resolve_visitor_profile_summary,
+        "visit_session": sr.resolve_visit_session_summary,
+        "invoice": sr.resolve_invoice_summary,
+        "system_user": sr.resolve_system_user_summary,
+        "admin": sr.resolve_admin_summary,
+        "user": sr.resolve_user_summary,
+    }
+
+    resolver = dispatch.get(resource_type)
+    if resolver is None:
+        return None
+    try:
+        return await resolver(resource_id)
+    except Exception:
+        return None
+
+
+def _user_type_from_role(actor_role: Optional[str]) -> Optional[str]:
+    if not actor_role:
+        return None
+    if actor_role == "admin":
+        return "admin"
+    return "system_user"
+
+
 async def _enrich_audit_log(log: AuditLogOut) -> AuditLogWithSummaryOut:
-    """Build a summary-enriched view of a single audit log entry."""
-    import asyncio
+    """Attach actor / tenant / resource summaries so the frontend never
+    has to round-trip a second request to render an audit row."""
     from services.summary_resolver import resolve_tenant_summary, resolve_user_summary
 
-    tenant_summary, actor_summary = await asyncio.gather(
+    actor_user_type = _user_type_from_role(log.actor_role)
+    tenant_summary, actor_summary, resource_summary = await asyncio.gather(
         resolve_tenant_summary(log.tenant_id),
-        resolve_user_summary(log.actor_id),
+        resolve_user_summary(log.actor_id, user_type=actor_user_type),
+        _resolve_resource_summary(log.resource_type, log.resource_id),
     )
     data = log.model_dump(by_alias=False)
     data["tenant_summary"] = tenant_summary
     data["actor_summary"] = actor_summary
+    data["resource_summary"] = resource_summary
     return AuditLogWithSummaryOut(**data)
 
 
@@ -181,8 +187,8 @@ async def retrieve_audit_logs_with_summary(
     start: int = 0,
     stop: int = 100,
 ) -> List[AuditLogWithSummaryOut]:
-    """Retrieve audit logs with actor + tenant summaries embedded."""
-    import asyncio
-
+    """Retrieve audit logs with actor + tenant + resource summaries embedded."""
     logs = await get_audit_logs(filter_dict, start=start, stop=stop)
+    if not logs:
+        return []
     return list(await asyncio.gather(*[_enrich_audit_log(log) for log in logs]))

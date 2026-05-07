@@ -1,5 +1,5 @@
 from schemas.imports import *
-from pydantic import Field
+from pydantic import Field, field_validator
 import time
 from security.hash import hash_password
 
@@ -34,6 +34,13 @@ class SystemUserTenantLogin(BaseModel):
 
     email: EmailStr
     password: str
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def strip_password_whitespace(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
 
 class SystemUserCreate(SystemUserBase):
@@ -71,6 +78,13 @@ class SystemUserUpdate(BaseModel):
 class SystemUserLogin(BaseModel):
     email: EmailStr
     password: str
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def strip_password_whitespace(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
 
 class SystemUserOut(SystemUserBase):
@@ -118,3 +132,28 @@ class SystemUserProfileOut(SystemUserOut):
     """SystemUserOut enriched with tenant context for frontend rendering."""
 
     tenant: Optional[TenantProfileSummary] = None
+
+
+class TenantOption(BaseModel):
+    """One tenant the user can pick from when their email matches multiple."""
+
+    tenant_id: str
+    company_name: Optional[str] = None
+    role: SystemUserRole
+    full_name: str
+    mfa_enabled: bool = False
+
+
+class TenantSelectionResponse(BaseModel):
+    """Stage 1 response when an email matches more than one tenant."""
+
+    tenant_selection_required: bool = True
+    selection_token: str
+    tenants: list[TenantOption]
+
+
+class TenantSelectionRequest(BaseModel):
+    """Stage 2 request — user picks which tenant to log into."""
+
+    selection_token: str
+    tenant_id: str

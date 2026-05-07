@@ -20,6 +20,7 @@ from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, Query, status
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.response_envelope import document_response
 from schemas.admin_schema import AdminOut
 from schemas.imports import OnboardingStatus
@@ -86,8 +87,12 @@ async def list_submissions_endpoint(
 async def get_submission_endpoint(
     submission_id: str,
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-) -> OnboardingSubmissionOut:
-    return await retrieve_onboarding_submission(submission_id)
+) -> Any:
+    return await get_or_compute_entity(
+        entity_type="onboarding_submission",
+        entity_id=submission_id,
+        loader=lambda: retrieve_onboarding_submission(submission_id),
+    )
 
 
 @router.post("/{submission_id}/accept")

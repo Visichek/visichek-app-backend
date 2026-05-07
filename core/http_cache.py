@@ -10,6 +10,7 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+from core.queue.precompute import is_scope_dirty
 from core.redis_cache import cache_db
 from core.settings import get_settings
 from repositories.tokens_repo import get_access_token_allow_expired
@@ -235,6 +236,15 @@ class HttpCacheMiddleware(BaseHTTPMiddleware):
         skip_cache: bool,
     ) -> Response:
         key = _build_key(scope, resource, request)
+
+        # A write enqueued in the last few seconds for this scope (or a
+        # global write affecting everyone) means cached responses may be
+        # stale. Bypass the read AND the write so we don't lock in
+        # pre-commit state for ttl_seconds while the worker catches up.
+        if is_scope_dirty(scope):
+            response = await call_next(request)
+            response.headers["X-Cache"] = "BYPASS"
+            return response
 
         if not skip_cache:
             cached = self._safe_get(key)

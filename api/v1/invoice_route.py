@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.response_envelope import document_response
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_super_admin_token
@@ -121,7 +122,11 @@ async def get_invoice_detail(
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
     """Get a specific invoice by ID, enriched with tenant + subscription summaries."""
-    return await retrieve_invoice_by_id_with_summary(invoice_id)
+    return await get_or_compute_entity(
+        entity_type="invoice",
+        entity_id=invoice_id,
+        loader=lambda: retrieve_invoice_by_id_with_summary(invoice_id),
+    )
 
 
 @router.get("/{invoice_id}/pdf")

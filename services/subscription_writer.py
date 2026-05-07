@@ -49,7 +49,15 @@ def _enqueue_refresh(tenant_id: str) -> None:
             )
 
 
-@write_handler("subscription.create")
+@write_handler(
+    "subscription.create",
+    invalidates=[
+        "subscriptions.list",
+        "subscription.active",
+        # subscription_summary embedded on tenant + invoice views
+        "tenants.list",
+    ],
+)
 async def _subscription_create(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -77,7 +85,15 @@ async def _subscription_create(
     }
 
 
-@write_handler("subscription.change_plan")
+@write_handler(
+    "subscription.change_plan",
+    invalidates=[
+        "subscriptions.list",
+        "subscription.active",
+        # subscription_summary embedded on tenant + invoice views
+        "tenants.list",
+    ],
+)
 async def _subscription_change_plan(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -94,7 +110,15 @@ async def _subscription_change_plan(
     }
 
 
-@write_handler("subscription.cancel")
+@write_handler(
+    "subscription.cancel",
+    invalidates=[
+        "subscriptions.list",
+        "subscription.active",
+        # subscription_summary embedded on tenant + invoice views
+        "tenants.list",
+    ],
+)
 async def _subscription_cancel(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -113,7 +137,15 @@ async def _subscription_cancel(
     }
 
 
-@write_handler("subscription.update_overrides")
+@write_handler(
+    "subscription.update_overrides",
+    invalidates=[
+        "subscriptions.list",
+        "subscription.active",
+        # subscription_summary embedded on tenant + invoice views
+        "tenants.list",
+    ],
+)
 async def _subscription_update_overrides(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:

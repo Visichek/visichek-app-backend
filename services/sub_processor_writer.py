@@ -35,7 +35,7 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
         )
 
 
-@write_handler("sub_processor.create")
+@write_handler("sub_processor.create", invalidates=["sub_processors.list"])
 async def _sub_processor_create(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -45,7 +45,7 @@ async def _sub_processor_create(
     return {"id": result.id, "tenant_id": result.tenant_id, "provider": result.provider}
 
 
-@write_handler("sub_processor.update")
+@write_handler("sub_processor.update", invalidates=["sub_processors.list"])
 async def _sub_processor_update(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -58,7 +58,7 @@ async def _sub_processor_update(
     return {"id": result.id, "provider": result.provider}
 
 
-@write_handler("sub_processor.delete")
+@write_handler("sub_processor.delete", invalidates=["sub_processors.list"])
 async def _sub_processor_delete(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:

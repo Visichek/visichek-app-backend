@@ -34,7 +34,13 @@ def _enqueue_list_refresh() -> None:
         logger.warning("tenant_writer: refresh enqueue failed", exc_info=True)
 
 
-@write_handler("tenant.create")
+@write_handler("tenant.create", invalidates=[
+        "tenants.list",
+        # tenant_summary embedded on global subscription / invoice / audit views
+        "subscriptions.list",
+        "invoices.admin_list",
+        "audit.admin_recent",
+    ])
 async def _tenant_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant = TenantCreate(**data)
     result = await add_tenant(tenant_data=tenant, preassigned_id=resource_id)
@@ -42,7 +48,13 @@ async def _tenant_create(resource_id: str, data: dict[str, Any]) -> dict[str, An
     return {"id": result.id, "company_name": result.company_name}
 
 
-@write_handler("tenant.update")
+@write_handler("tenant.update", invalidates=[
+        "tenants.list",
+        # tenant_summary embedded on global subscription / invoice / audit views
+        "subscriptions.list",
+        "invoices.admin_list",
+        "audit.admin_recent",
+    ])
 async def _tenant_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     upd = TenantUpdate(**data)
     result = await update_tenant_by_id(tenant_id=resource_id, tenant_data=upd)

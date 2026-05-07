@@ -1,5 +1,5 @@
 from schemas.imports import *
-from pydantic import Field
+from pydantic import Field, field_validator
 import time
 from security.hash import hash_password
 
@@ -31,6 +31,13 @@ class UserLogin(BaseModel):
 
     email: EmailStr
     password: str
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def strip_password_whitespace(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
 
 class UserRefresh(BaseModel):

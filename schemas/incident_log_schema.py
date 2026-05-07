@@ -29,6 +29,30 @@ class IncidentLogCreate(IncidentLogBase):
         return self
 
 
+class IncidentLogCreateRequest(BaseModel):
+    """Public-facing input for incident creation.
+
+    `tenant_id` and `reported_by` are not part of the request body — the
+    route fills them in from the auth token before queuing the write.
+    `incident_type` accepts `type` as an alias for frontend ergonomics.
+    """
+
+    incident_type: IncidentType = Field(alias="type")
+    status: IncidentStatus = IncidentStatus.OPEN
+    description: str
+    risk_level: Optional[str] = None
+    data_affected: Optional[str] = None
+    mitigation_steps: Optional[str] = None
+    ndpc_notified: bool = False
+    ndpc_notified_at: Optional[int] = None
+    detection_time: Optional[int] = None
+    notification_deadline: Optional[int] = None
+    notification_sent_at: Optional[int] = None
+
+    class Config:
+        populate_by_name = True
+
+
 class IncidentLogUpdate(BaseModel):
     status: Optional[IncidentStatus] = None
     description: Optional[str] = None

@@ -325,47 +325,42 @@ class TestSystemUserService:
     @patch("security.password_policy.clear_failed_logins", new_callable=AsyncMock)
     @patch("services.system_user_service.issue_tokens_for_role")
     @patch("services.system_user_service.check_password")
-    @patch("services.system_user_service.get_system_user")
+    @patch("services.system_user_service.get_raw_system_users_by_email")
     async def test_authenticate_system_user_success(
         self,
-        mock_get,
+        mock_get_raw,
         mock_check_pwd,
         mock_tokens,
         mock_clear,
         mock_record,
         mock_lockout,
     ):
-        """Test authenticating a system user with correct credentials."""
+        """Single-tenant match: returns SystemUserOut with tokens."""
         from services.system_user_service import authenticate_system_user
 
         user_id = str(ObjectId())
         login_data = SystemUserLogin(email="john@acme.com", password="password123")
-        user = SystemUserOut(
-            id=user_id,
-            tenant_id="tenant123",
-            full_name="John",
-            email="john@acme.com",
-            role=SystemUserRole.RECEPTIONIST,
-            account_status=AccountStatus.ACTIVE,
-        )
 
-        mock_get.return_value = user
+        mock_get_raw.return_value = [
+            {
+                "_id": ObjectId(user_id),
+                "tenant_id": "tenant123",
+                "full_name": "John",
+                "email": "john@acme.com",
+                "role": SystemUserRole.RECEPTIONIST.value,
+                "account_status": AccountStatus.ACTIVE.value,
+                "password_hash": "hashed_password",
+            }
+        ]
         mock_check_pwd.return_value = True
         mock_tokens.return_value = ("access_token_123", "refresh_token_456")
 
-        with patch("core.database.db") as mock_db:
-            mock_db.system_users.find_one = AsyncMock(
-                return_value={
-                    "_id": ObjectId(user_id),
-                    "password_hash": "hashed_password",
-                }
-            )
-            with patch(
-                "services.otp_service.is_mfa_required",
-                new_callable=AsyncMock,
-                return_value=False,
-            ):
-                result = await authenticate_system_user(login_data)
+        with patch(
+            "services.otp_service.is_mfa_required",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            result = await authenticate_system_user(login_data)
 
         assert result.id == user_id
         assert result.access_token == "access_token_123"
@@ -380,33 +375,33 @@ class TestSystemUserService:
         new_callable=AsyncMock,
         return_value={"locked": False, "attempts_remaining": 4},
     )
-    @patch("services.system_user_service.get_system_user")
+    @patch("services.system_user_service.check_password")
+    @patch("services.system_user_service.get_raw_system_users_by_email")
     async def test_authenticate_system_user_invalid_password(
-        self, mock_get, mock_record, mock_lockout
+        self, mock_get_raw, mock_check_pwd, mock_record, mock_lockout
     ):
-        """Test authentication with invalid password raises 401."""
+        """Wrong password against the only matching record -> 401."""
         from services.system_user_service import authenticate_system_user
 
         user_id = str(ObjectId())
         login_data = SystemUserLogin(email="john@acme.com", password="wrongpassword")
-        user = SystemUserOut(
-            id=user_id,
-            tenant_id="tenant123",
-            full_name="John",
-            email="john@acme.com",
-            role=SystemUserRole.RECEPTIONIST,
-            account_status=AccountStatus.ACTIVE,
-        )
+        mock_get_raw.return_value = [
+            {
+                "_id": ObjectId(user_id),
+                "tenant_id": "tenant123",
+                "full_name": "John",
+                "email": "john@acme.com",
+                "role": SystemUserRole.RECEPTIONIST.value,
+                "account_status": AccountStatus.ACTIVE.value,
+                "password_hash": "hashed_password",
+            }
+        ]
+        mock_check_pwd.return_value = False
 
-        mock_get.return_value = user
+        with pytest.raises(HTTPException) as exc_info:
+            await authenticate_system_user(login_data)
 
-        with patch("core.database.db") as mock_db:
-            mock_db.system_users.find_one = AsyncMock(return_value=None)
-            with pytest.raises(HTTPException) as exc_info:
-                await authenticate_system_user(login_data)
-
-        # find_one returning None causes 401 (invalid credentials), not 404
-        assert exc_info.value.status_code in (401, 404)
+        assert exc_info.value.status_code in (401, 429)
 
     @patch(
         "security.password_policy.check_login_lockout",
@@ -419,41 +414,115 @@ class TestSystemUserService:
         return_value={"locked": False, "attempts_remaining": 4},
     )
     @patch("security.password_policy.clear_failed_logins", new_callable=AsyncMock)
-    @patch("services.system_user_service.get_system_user")
+    @patch("services.system_user_service.check_password")
+    @patch("services.system_user_service.get_raw_system_users_by_email")
     async def test_authenticate_system_user_inactive_account(
-        self, mock_get, mock_clear, mock_record, mock_lockout
+        self,
+        mock_get_raw,
+        mock_check_pwd,
+        mock_clear,
+        mock_record,
+        mock_lockout,
     ):
-        """Test authentication with inactive account raises 403."""
+        """Password matches but account not ACTIVE -> 403."""
         from services.system_user_service import authenticate_system_user
 
         user_id = str(ObjectId())
         login_data = SystemUserLogin(email="john@acme.com", password="password123")
-        user = SystemUserOut(
-            id=user_id,
-            tenant_id="tenant123",
-            full_name="John",
-            email="john@acme.com",
-            role=SystemUserRole.RECEPTIONIST,
-            account_status=AccountStatus.INACTIVE,
-        )
+        mock_get_raw.return_value = [
+            {
+                "_id": ObjectId(user_id),
+                "tenant_id": "tenant123",
+                "full_name": "John",
+                "email": "john@acme.com",
+                "role": SystemUserRole.RECEPTIONIST.value,
+                "account_status": AccountStatus.INACTIVE.value,
+                "password_hash": "hashed_password",
+            }
+        ]
+        mock_check_pwd.return_value = True
 
-        mock_get.return_value = user
-
-        with patch("core.database.db") as mock_db:
-            mock_db.system_users.find_one = AsyncMock(
-                return_value={
-                    "_id": ObjectId(user_id),
-                    "password_hash": "hashed_password",
-                }
-            )
-            with patch(
-                "services.system_user_service.check_password", return_value=True
-            ):
-                with pytest.raises(HTTPException) as exc_info:
-                    await authenticate_system_user(login_data)
+        with pytest.raises(HTTPException) as exc_info:
+            await authenticate_system_user(login_data)
 
         assert exc_info.value.status_code == 403
         assert "not active" in exc_info.value.detail
+
+    @patch(
+        "security.password_policy.check_login_lockout",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    @patch("security.password_policy.clear_failed_logins", new_callable=AsyncMock)
+    @patch(
+        "services.tenant_selection_service.create_tenant_selection_challenge",
+        new_callable=AsyncMock,
+        return_value="sel-token-abc",
+    )
+    @patch("services.system_user_service.check_password")
+    @patch("services.system_user_service.get_raw_system_users_by_email")
+    async def test_authenticate_system_user_multi_tenant_returns_selection(
+        self,
+        mock_get_raw,
+        mock_check_pwd,
+        mock_create_sel,
+        mock_clear,
+        mock_lockout,
+    ):
+        """Two ACTIVE matches -> returns tenant selection challenge."""
+        from services.system_user_service import authenticate_system_user
+
+        login_data = SystemUserLogin(email="john@acme.com", password="password123")
+        uid_a, uid_b = str(ObjectId()), str(ObjectId())
+        mock_get_raw.return_value = [
+            {
+                "_id": ObjectId(uid_a),
+                "tenant_id": "tenant-a",
+                "full_name": "John A",
+                "email": "john@acme.com",
+                "role": SystemUserRole.RECEPTIONIST.value,
+                "account_status": AccountStatus.ACTIVE.value,
+                "password_hash": "h1",
+            },
+            {
+                "_id": ObjectId(uid_b),
+                "tenant_id": "tenant-b",
+                "full_name": "John B",
+                "email": "john@acme.com",
+                "role": SystemUserRole.DEPT_ADMIN.value,
+                "account_status": AccountStatus.ACTIVE.value,
+                "password_hash": "h2",
+            },
+        ]
+        mock_check_pwd.return_value = True
+
+        with patch(
+            "services.system_user_service._build_tenant_options",
+            new_callable=AsyncMock,
+            return_value=[
+                {
+                    "tenant_id": "tenant-a",
+                    "company_name": "A Co",
+                    "role": "receptionist",
+                    "full_name": "John A",
+                    "mfa_enabled": False,
+                },
+                {
+                    "tenant_id": "tenant-b",
+                    "company_name": "B Co",
+                    "role": "dept_admin",
+                    "full_name": "John B",
+                    "mfa_enabled": True,
+                },
+            ],
+        ):
+            result = await authenticate_system_user(login_data)
+
+        assert isinstance(result, dict)
+        assert result["tenant_selection_required"] is True
+        assert result["selection_token"] == "sel-token-abc"
+        assert {t["tenant_id"] for t in result["tenants"]} == {"tenant-a", "tenant-b"}
+        mock_create_sel.assert_awaited_once()
 
     @patch("services.system_user_service.get_system_user")
     async def test_retrieve_system_user_by_id_success(self, mock_get):

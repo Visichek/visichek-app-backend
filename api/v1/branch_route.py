@@ -4,10 +4,11 @@ from typing import Annotated, Any, List
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
-from schemas.branch_schema import BranchCreate, BranchOut, BranchUpdate
+from schemas.branch_schema import BranchCreate, BranchUpdate
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.branch_service import (
@@ -114,10 +115,21 @@ async def _load_branches_for_tenant(tenant_id: str) -> List[Any]:
 async def get_branch_endpoint(
     branch_id: str,
     principal: AuthPrincipal = Depends(_super_admin_dep),
-) -> BranchOut | None:
-    branch = await retrieve_branch_by_id(branch_id)
-    if branch and branch.tenant_id != principal.tenant_id:
-        return None  # Don't leak data across tenants
+) -> Any:
+    branch = await get_or_compute_entity(
+        entity_type="branch",
+        entity_id=branch_id,
+        loader=lambda: retrieve_branch_by_id(branch_id),
+    )
+    # Cross-tenant filter is applied AFTER the read-through cache so the
+    # cache itself stays scope-agnostic (one Redis key per branch),
+    # while never leaking data outside the owning tenant.
+    if branch:
+        owning_tenant = (
+            branch.get("tenant_id") if isinstance(branch, dict) else branch.tenant_id
+        )
+        if owning_tenant != principal.tenant_id:
+            return None
     return branch
 
 

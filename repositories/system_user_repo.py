@@ -71,3 +71,13 @@ async def count_system_users(filter_dict: dict | None = None) -> int:
     if filter_dict is None:
         filter_dict = {}
     return await db.system_users.count_documents(filter_dict)
+
+
+async def get_raw_system_users_by_email(email: str) -> list[dict]:
+    """Return raw system_user documents (with password_hash) matching an email.
+
+    Used by login flow to verify password against every record sharing the email
+    so users can be matched across tenants.
+    """
+    cursor = db.system_users.find({"email": email})
+    return [doc async for doc in cursor]

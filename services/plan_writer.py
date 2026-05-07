@@ -45,16 +45,39 @@ def _enqueue_plan_cache_fanout(plan_id: str) -> None:
 
 
 def _enqueue_list_refresh() -> None:
-    try:
-        QueueManager.get_instance().enqueue(
-            task_key="precompute.tenant_resource",
-            payload={"tenant_id": "", "resource": "plans.list"},
-        )
-    except Exception:
-        logger.warning("plan_writer: list refresh enqueue failed", exc_info=True)
+    """Refresh both list precomputes — admin and public.
+
+    The route-layer ``GET /v1/plans`` endpoint reads
+    ``precomputed:global:plans.list`` for unfiltered admin views and
+    ``precomputed:global:plans.public_list`` when ``public_only=true``.
+    Refreshing only one leaves the other stale for up to
+    ``PRECOMPUTE_TTL_SECONDS`` (5 min), so an admin can activate a plan
+    and still see it as draft on the public catalogue.
+    """
+    qm = QueueManager.get_instance()
+    for resource in ("plans.list", "plans.public_list"):
+        try:
+            qm.enqueue(
+                task_key="precompute.tenant_resource",
+                payload={"tenant_id": "", "resource": resource},
+            )
+        except Exception:
+            logger.warning(
+                "plan_writer: list refresh enqueue failed resource=%s",
+                resource,
+                exc_info=True,
+            )
 
 
-@write_handler("plan.create")
+@write_handler(
+    "plan.create", invalidates=[
+        "plans.list",
+        "plans.public_list",
+        # plan_summary embedded on subscription views
+        "subscriptions.list",
+        "subscription.active",
+    ]
+)
 async def _plan_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     plan = PlanCreate(**data)
     result = await add_plan(plan_data=plan, preassigned_id=resource_id)
@@ -62,7 +85,15 @@ async def _plan_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]
     return {"id": result.id, "name": result.name}
 
 
-@write_handler("plan.update")
+@write_handler(
+    "plan.update", invalidates=[
+        "plans.list",
+        "plans.public_list",
+        # plan_summary embedded on subscription views
+        "subscriptions.list",
+        "subscription.active",
+    ]
+)
 async def _plan_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     upd = PlanUpdate(**data)
     result = await update_plan_by_id(plan_id=resource_id, plan_data=upd)
@@ -71,7 +102,15 @@ async def _plan_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]
     return {"id": result.id if result else resource_id}
 
 
-@write_handler("plan.activate")
+@write_handler(
+    "plan.activate", invalidates=[
+        "plans.list",
+        "plans.public_list",
+        # plan_summary embedded on subscription views
+        "subscriptions.list",
+        "subscription.active",
+    ]
+)
 async def _plan_activate(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     result = await activate_plan(plan_id=resource_id)
     _enqueue_plan_cache_fanout(resource_id)
@@ -79,7 +118,15 @@ async def _plan_activate(resource_id: str, data: dict[str, Any]) -> dict[str, An
     return {"id": result.id, "status": "active"}
 
 
-@write_handler("plan.archive")
+@write_handler(
+    "plan.archive", invalidates=[
+        "plans.list",
+        "plans.public_list",
+        # plan_summary embedded on subscription views
+        "subscriptions.list",
+        "subscription.active",
+    ]
+)
 async def _plan_archive(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     result = await archive_plan(plan_id=resource_id)
     _enqueue_plan_cache_fanout(resource_id)
@@ -87,7 +134,15 @@ async def _plan_archive(resource_id: str, data: dict[str, Any]) -> dict[str, Any
     return {"id": result.id if result else resource_id, "status": "archived"}
 
 
-@write_handler("plan.clone")
+@write_handler(
+    "plan.clone", invalidates=[
+        "plans.list",
+        "plans.public_list",
+        # plan_summary embedded on subscription views
+        "subscriptions.list",
+        "subscription.active",
+    ]
+)
 async def _plan_clone(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     new_name = data.get("new_name", "") or ""
     new_display_name = data.get("new_display_name", "") or ""
@@ -102,7 +157,15 @@ async def _plan_clone(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     return {"id": result.id, "name": result.name}
 
 
-@write_handler("plan.delete")
+@write_handler(
+    "plan.delete", invalidates=[
+        "plans.list",
+        "plans.public_list",
+        # plan_summary embedded on subscription views
+        "subscriptions.list",
+        "subscription.active",
+    ]
+)
 async def _plan_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     await remove_plan(plan_id=resource_id)
     _enqueue_plan_cache_fanout(resource_id)

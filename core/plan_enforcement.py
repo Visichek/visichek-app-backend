@@ -22,6 +22,7 @@ Enforcement is skipped for:
 """
 
 import fnmatch
+import logging
 import time
 from typing import Optional
 
@@ -31,6 +32,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from core.response_envelope import error_response
 from repositories.tokens_repo import get_access_token_allow_expired
 from security.principal import APP_ROLES
+
+logger = logging.getLogger(__name__)
 
 
 # Paths that bypass plan enforcement entirely
@@ -196,15 +199,28 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
 
         plan_data = await resolve_tenant_plan(tenant_id)
         if not plan_data:
-            # No subscription — deny access to tenant-scoped endpoints
+            request_id = getattr(request.state, "request_id", None)
+            logger.warning(
+                "subscription_required_block",
+                extra={
+                    "tenant_id": tenant_id,
+                    "user_id": getattr(access_token, "userId", None),
+                    "role": role,
+                    "path": path,
+                    "method": method,
+                    "request_id": request_id,
+                },
+            )
             return error_response(
                 status_code=402,
                 message="No active subscription",
                 data={
                     "code": "SUBSCRIPTION_REQUIRED",
                     "details": "Your organization does not have an active subscription plan.",
+                    "tenant_id": tenant_id,
+                    "next_action": "subscribe",
                 },
-                request_id=getattr(request.state, "request_id", None),
+                request_id=request_id,
             )
 
         # Check subscription status

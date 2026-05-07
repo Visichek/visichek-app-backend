@@ -47,7 +47,13 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
         )
 
 
-@write_handler("department.create")
+@write_handler("department.create", invalidates=[
+        "departments.list",
+        # Embedded as department_summary on system_user / appointment / incident lists
+        "system_users.list",
+        "appointments.list",
+        "incidents.list",
+    ])
 async def _department_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     created_by = data.pop("created_by", None)
     dept_data = DepartmentCreate(**data)
@@ -65,7 +71,13 @@ async def _department_create(resource_id: str, data: dict[str, Any]) -> dict[str
     }
 
 
-@write_handler("department.update")
+@write_handler("department.update", invalidates=[
+        "departments.list",
+        # Embedded as department_summary on system_user / appointment / incident lists
+        "system_users.list",
+        "appointments.list",
+        "incidents.list",
+    ])
 async def _department_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
     upd = DepartmentUpdate(**data)
@@ -76,7 +88,13 @@ async def _department_update(resource_id: str, data: dict[str, Any]) -> dict[str
     return {"id": result.id, "code": result.code, "name": result.name}
 
 
-@write_handler("department.delete")
+@write_handler("department.delete", invalidates=[
+        "departments.list",
+        # Embedded as department_summary on system_user / appointment / incident lists
+        "system_users.list",
+        "appointments.list",
+        "incidents.list",
+    ])
 async def _department_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.get("tenant_id", "") or ""
     await remove_department(department_id=resource_id, tenant_id=tenant_id)

@@ -2,13 +2,13 @@ from typing import Annotated, Any, List
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.appointment_schema import (
     AppointmentCreate,
     AppointmentUpdate,
-    AppointmentWithSummaryOut,
 )
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
@@ -112,10 +112,14 @@ async def _load_appointments_for_tenant(tenant_id: str) -> List[Any]:
 async def get_appointment_endpoint(
     appointment_id: str,
     principal: AuthPrincipal = Depends(_admin_roles),
-) -> AppointmentWithSummaryOut:
+) -> Any:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_appointment_by_id_with_summary(
-        appointment_id=appointment_id, tenant_id=tenant_id
+    return await get_or_compute_entity(
+        entity_type="appointment",
+        entity_id=appointment_id,
+        loader=lambda: retrieve_appointment_by_id_with_summary(
+            appointment_id=appointment_id, tenant_id=tenant_id
+        ),
     )
 
 

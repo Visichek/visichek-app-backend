@@ -2,6 +2,7 @@ from typing import Annotated, Any, List
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
@@ -98,7 +99,12 @@ async def _load_dsrs_for_tenant(tenant_id: str) -> List[Any]:
     },
 )
 async def get_dsr_endpoint(dsr_id: str, principal: AuthPrincipal = Depends(_dpo_roles)):
-    return await retrieve_dsr_by_id(dsr_id=dsr_id, tenant_id=principal.tenant_id or "")
+    tenant_id = principal.tenant_id or ""
+    return await get_or_compute_entity(
+        entity_type="dsr",
+        entity_id=dsr_id,
+        loader=lambda: retrieve_dsr_by_id(dsr_id=dsr_id, tenant_id=tenant_id),
+    )
 
 
 @router.patch("/{dsr_id}")

@@ -60,14 +60,14 @@ async def create_indexes():
     await db.privacy_notice_versions.create_index([("tenant_id", 1), ("is_active", 1)])
     print("  privacy_notice_versions: index on (tenant_id, is_active)")
 
-    # System Audit Logs
-    await db.system_audit_logs.create_index([("tenant_id", 1), ("occurred_at", -1)])
-    await db.system_audit_logs.create_index([("tenant_id", 1), ("actor_id", 1)])
-    await db.system_audit_logs.create_index(
-        [("tenant_id", 1), ("target_entity", 1), ("target_id", 1)]
+    # Audit Trail
+    await db.audit_trail.create_index([("tenant_id", 1), ("timestamp", -1)])
+    await db.audit_trail.create_index([("tenant_id", 1), ("actor_id", 1)])
+    await db.audit_trail.create_index(
+        [("tenant_id", 1), ("resource_type", 1), ("resource_id", 1)]
     )
     print(
-        "  system_audit_logs: indexes on (tenant_id, occurred_at), (tenant_id, actor_id), (tenant_id, target)"
+        "  audit_trail: indexes on (tenant_id, timestamp), (tenant_id, actor_id), (tenant_id, resource)"
     )
 
     # Incident Logs

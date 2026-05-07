@@ -2,13 +2,11 @@ from typing import Annotated, Any, List
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
-from schemas.visitor_profile_schema import (
-    VisitorProfileUpdate,
-    VisitorProfileWithSummaryOut,
-)
+from schemas.visitor_profile_schema import VisitorProfileUpdate
 from security.auth import verify_any_system_user_token, verify_system_user_token
 from security.principal import AuthPrincipal
 from services.visitor_profile_service import (
@@ -96,10 +94,14 @@ async def _load_visitor_profiles_for_tenant(tenant_id: str) -> List[Any]:
 async def get_visitor_profile_endpoint(
     profile_id: str,
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
-) -> VisitorProfileWithSummaryOut:
+) -> Any:
     tenant_id = principal.tenant_id or ""
-    return await retrieve_visitor_profile_by_id_with_summary(
-        profile_id=profile_id, tenant_id=tenant_id
+    return await get_or_compute_entity(
+        entity_type="visitor_profile",
+        entity_id=profile_id,
+        loader=lambda: retrieve_visitor_profile_by_id_with_summary(
+            profile_id=profile_id, tenant_id=tenant_id
+        ),
     )
 
 

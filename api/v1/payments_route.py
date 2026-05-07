@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, Request
 
 from core.errors import auth_permission_denied, resource_not_found
+from core.queue.entity_cache import get_or_compute_entity
 from core.response_envelope import document_response
 from schemas.payment_schema import PaymentIntentIn, RefundIn
 from security.account_status_check import check_admin_account_status_and_permissions
@@ -155,8 +156,14 @@ async def payment_webhook(provider: str, request: Request):
 async def fetch_transaction(
     payment_id: str, principal: AuthPrincipal = Depends(verify_any_token)
 ):
-    tx = await get_payment_transaction(payment_id=payment_id)
-    if tx.owner_id != principal.user_id and not principal.is_admin:
+    tx = await get_or_compute_entity(
+        entity_type="payment",
+        entity_id=payment_id,
+        loader=lambda: get_payment_transaction(payment_id=payment_id),
+    )
+    # tx is a Pydantic model on miss, dict on hit — handle both.
+    owner_id = tx.get("owner_id") if isinstance(tx, dict) else tx.owner_id
+    if owner_id != principal.user_id and not principal.is_admin:
         raise auth_permission_denied("GET:/v1/payments/{payment_id}")
     return tx
 

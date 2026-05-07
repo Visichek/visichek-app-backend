@@ -4,13 +4,13 @@ from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.discount_schema import (
     DiscountCreate,
     DiscountUpdate,
-    DiscountOut,
     DiscountScope,
     DiscountStatus,
 )
@@ -101,8 +101,12 @@ async def _load_discounts() -> List[Any]:
 async def get_discount_by_code_endpoint(
     code: str,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> DiscountOut | None:
-    return await retrieve_discount_by_code(code)
+) -> Any:
+    return await get_or_compute_entity(
+        entity_type="discount_code",
+        entity_id=code,
+        loader=lambda: retrieve_discount_by_code(code),
+    )
 
 
 @router.get("/{discount_id}")
@@ -113,8 +117,12 @@ async def get_discount_by_code_endpoint(
 async def get_discount_endpoint(
     discount_id: str,
     admin=Depends(check_admin_account_status_and_permissions),
-) -> DiscountOut | None:
-    return await retrieve_discount_by_id(discount_id)
+) -> Any:
+    return await get_or_compute_entity(
+        entity_type="discount",
+        entity_id=discount_id,
+        loader=lambda: retrieve_discount_by_id(discount_id),
+    )
 
 
 @router.put("/{discount_id}")
@@ -176,7 +184,7 @@ async def validate_discount_endpoint(
     plan_id: str = Query(...),
     subscription_value: float = Query(0.0),
     admin=Depends(check_admin_account_status_and_permissions),
-) -> DiscountOut:
+) -> Any:
     return await validate_discount_code(code, tenant_id, plan_id, subscription_value)
 
 

@@ -500,6 +500,141 @@ class TestSystemUserRoutes:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_login_returns_tenant_selection_when_email_matches_multiple(
+        self, cleanup_dependency_overrides
+    ):
+        """When the email matches multiple tenants, login returns the selection challenge."""
+        with patch(
+            "api.v1.system_user_route.authenticate_system_user",
+            new_callable=AsyncMock,
+        ) as mock_auth:
+            mock_auth.return_value = {
+                "tenant_selection_required": True,
+                "selection_token": "sel-token-xyz",
+                "tenants": [
+                    {
+                        "tenant_id": "tenant-a",
+                        "company_name": "A Co",
+                        "role": "receptionist",
+                        "full_name": "John A",
+                        "mfa_enabled": False,
+                    },
+                    {
+                        "tenant_id": "tenant-b",
+                        "company_name": "B Co",
+                        "role": "dept_admin",
+                        "full_name": "John B",
+                        "mfa_enabled": True,
+                    },
+                ],
+            }
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/system-users/login",
+                    json={
+                        "email": "john@example.com",
+                        "password": "secure_password",
+                    },
+                )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            payload = data["data"]
+            tenant_selection = payload.get("tenant_selection_required") or payload.get(
+                "tenantSelectionRequired"
+            )
+            selection_token = payload.get("selection_token") or payload.get(
+                "selectionToken"
+            )
+            tenants = payload.get("tenants")
+            assert tenant_selection is True
+            assert selection_token == "sel-token-xyz"
+            assert tenants is not None and len(tenants) == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_select_tenant_completes_login(self, cleanup_dependency_overrides):
+        """POST /select-tenant returns access/refresh tokens for the chosen tenant."""
+        with patch(
+            "api.v1.system_user_route.complete_login_after_tenant_selection",
+            new_callable=AsyncMock,
+        ) as mock_complete:
+            mock_complete.return_value = {
+                "id": "user-001",
+                "tenant_id": "tenant-a",
+                "full_name": "John A",
+                "email": "john@example.com",
+                "role": "receptionist",
+                "account_status": "ACTIVE",
+                "is_active": True,
+                "access_token": "access-after-select",
+                "refresh_token": "refresh-after-select",
+                "last_login_at": 1712520000,
+                "date_created": 1712500000,
+            }
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/system-users/select-tenant",
+                    json={
+                        "selection_token": "sel-token-xyz",
+                        "tenant_id": "tenant-a",
+                    },
+                    headers={"X-Auth-Include-Tokens": "true"},
+                )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            token = data["data"].get("access_token") or data["data"].get("accessToken")
+            assert token == "access-after-select"
+            mock_complete.assert_awaited_once_with(
+                selection_token="sel-token-xyz",
+                tenant_id="tenant-a",
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_select_tenant_otp_required(self, cleanup_dependency_overrides):
+        """If the chosen tenant user has 2FA, /select-tenant returns otp_required."""
+        with patch(
+            "api.v1.system_user_route.complete_login_after_tenant_selection",
+            new_callable=AsyncMock,
+        ) as mock_complete:
+            mock_complete.return_value = {
+                "otp_required": True,
+                "otp_challenge_id": "chal-123",
+            }
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/system-users/select-tenant",
+                    json={
+                        "selection_token": "sel-token-xyz",
+                        "tenant_id": "tenant-a",
+                    },
+                )
+
+            assert response.status_code == 200
+            data = response.json()
+            payload = data["data"]
+            otp_required = payload.get("otp_required") or payload.get("otpRequired")
+            otp_challenge_id = payload.get("otp_challenge_id") or payload.get(
+                "otpChallengeId"
+            )
+            assert otp_required is True
+            assert otp_challenge_id == "chal-123"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_login_invalid_credentials(self, cleanup_dependency_overrides):
         """Test login with invalid credentials."""
         with patch(

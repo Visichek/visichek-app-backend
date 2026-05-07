@@ -134,7 +134,15 @@ async def archive_plan(plan_id: str) -> Optional[PlanOut]:
 
 
 async def activate_plan(plan_id: str) -> PlanOut:
-    """Publish a draft plan."""
+    """Publish a draft plan.
+
+    After the update we re-read the plan from the DB to confirm the new
+    ``status`` was actually persisted. A silent persistence failure (the
+    update returned a doc but ``status`` is still ``"draft"``) raises so
+    the queued-write dispatcher records the job as ``failed`` and the
+    actor admin gets an in-app failure notification via
+    ``notify_job_failure`` instead of being told it succeeded.
+    """
     plan = await retrieve_plan_by_id(plan_id)
     if not plan:
         raise resource_not_found(resource="Plan", resource_id=plan_id)
@@ -149,6 +157,20 @@ async def activate_plan(plan_id: str) -> PlanOut:
     )
     if not activated:
         raise resource_not_found(resource="Plan", resource_id=plan_id)
+    if activated.status != PlanStatus.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"Plan activation did not persist (status is still "
+                f"{activated.status.value if hasattr(activated.status, 'value') else activated.status})."
+            ),
+        )
+    verified = await retrieve_plan_by_id(plan_id)
+    if not verified or verified.status != PlanStatus.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Plan activation did not persist on re-read; database may be lagging or another writer reverted it.",
+        )
 
     # Record audit event (fire-and-forget)
     try:
@@ -159,16 +181,16 @@ async def activate_plan(plan_id: str) -> PlanOut:
             resource_type="plan",
             resource_id=plan_id,
             details={
-                "name": activated.name,
-                "tier": activated.tier.value
-                if hasattr(activated.tier, "value")
-                else activated.tier,
+                "name": verified.name,
+                "tier": verified.tier.value
+                if hasattr(verified.tier, "value")
+                else verified.tier,
             },
         )
     except Exception:
         pass
 
-    return activated
+    return verified
 
 
 async def clone_plan(

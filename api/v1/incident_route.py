@@ -2,10 +2,11 @@ from typing import Annotated, Any, List
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
-from schemas.incident_log_schema import IncidentLogCreate, IncidentLogUpdate
+from schemas.incident_log_schema import IncidentLogCreateRequest, IncidentLogUpdate
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.incident_service import (
@@ -36,13 +37,12 @@ _security_roles = verify_system_user_token("super_admin", "security_officer")
     },
 )
 async def create_incident(
-    log_data: IncidentLogCreate,
+    log_data: IncidentLogCreateRequest,
     request: Request,
     principal: AuthPrincipal = Depends(_security_roles),
 ):
     payload = log_data.model_dump(exclude_none=True)
-    if principal.tenant_id:
-        payload["tenant_id"] = principal.tenant_id
+    payload["tenant_id"] = principal.tenant_id or ""
     payload["reported_by"] = principal.user_id
     return await enqueue_write(
         writer_key="incident.create",
@@ -139,8 +139,13 @@ async def _load_approaching_deadline(tenant_id: str) -> List[Any]:
 async def get_incident(
     incident_id: str, principal: AuthPrincipal = Depends(_security_roles)
 ):
-    return await retrieve_incident_by_id(
-        incident_id=incident_id, tenant_id=principal.tenant_id or ""
+    tenant_id = principal.tenant_id or ""
+    return await get_or_compute_entity(
+        entity_type="incident",
+        entity_id=incident_id,
+        loader=lambda: retrieve_incident_by_id(
+            incident_id=incident_id, tenant_id=tenant_id
+        ),
     )
 
 

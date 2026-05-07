@@ -61,6 +61,37 @@ async def get_active_visitors(
     return await get_visit_sessions(filter_dict=filter_dict, start=0, stop=1000)
 
 
+def _awaiting_checkout_filter(
+    tenant_id: str, department_id: Optional[str] = None
+) -> dict:
+    filter_dict: dict = {"tenant_id": tenant_id, "status": "checked_in"}
+    if department_id:
+        filter_dict["department_id"] = department_id
+    return filter_dict
+
+
+async def get_awaiting_checkout_sessions(
+    tenant_id: str,
+    department_id: Optional[str] = None,
+    start: int = 0,
+    stop: int = 50,
+) -> List[VisitSessionOut]:
+    """Visitors currently checked-in (status=checked_in) and not yet checked-out."""
+    return await get_visit_sessions(
+        filter_dict=_awaiting_checkout_filter(tenant_id, department_id),
+        start=start,
+        stop=stop,
+    )
+
+
+async def count_awaiting_checkout_sessions(
+    tenant_id: str, department_id: Optional[str] = None
+) -> int:
+    return await count_visit_sessions(
+        _awaiting_checkout_filter(tenant_id, department_id)
+    )
+
+
 async def get_visit_session_by_badge_token(
     badge_qr_token: str,
 ) -> Optional[VisitSessionOut]:

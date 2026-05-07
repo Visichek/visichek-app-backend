@@ -40,7 +40,13 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
         )
 
 
-@write_handler("branch.create")
+@write_handler("branch.create", invalidates=[
+        "branches.list",
+        # Embedded as branch_summary on system_user / department / appointment lists
+        "system_users.list",
+        "departments.list",
+        "appointments.list",
+    ])
 async def _branch_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     branch = BranchCreate(**data)
     result = await add_branch(branch_data=branch, preassigned_id=resource_id)
@@ -48,7 +54,13 @@ async def _branch_create(resource_id: str, data: dict[str, Any]) -> dict[str, An
     return {"id": result.id, "tenant_id": result.tenant_id, "name": result.name}
 
 
-@write_handler("branch.update")
+@write_handler("branch.update", invalidates=[
+        "branches.list",
+        # Embedded as branch_summary on system_user / department / appointment lists
+        "system_users.list",
+        "departments.list",
+        "appointments.list",
+    ])
 async def _branch_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
     upd = BranchUpdate(**data)
@@ -59,7 +71,13 @@ async def _branch_update(resource_id: str, data: dict[str, Any]) -> dict[str, An
     return {"id": result.id, "name": result.name}
 
 
-@write_handler("branch.deactivate")
+@write_handler("branch.deactivate", invalidates=[
+        "branches.list",
+        # Embedded as branch_summary on system_user / department / appointment lists
+        "system_users.list",
+        "departments.list",
+        "appointments.list",
+    ])
 async def _branch_deactivate(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.get("tenant_id", "") or ""
     result = await deactivate_branch(branch_id=resource_id)
@@ -69,7 +87,13 @@ async def _branch_deactivate(resource_id: str, data: dict[str, Any]) -> dict[str
     return {"id": result.id, "status": result.status}
 
 
-@write_handler("branch.delete")
+@write_handler("branch.delete", invalidates=[
+        "branches.list",
+        # Embedded as branch_summary on system_user / department / appointment lists
+        "system_users.list",
+        "departments.list",
+        "appointments.list",
+    ])
 async def _branch_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.get("tenant_id", "") or ""
     await remove_branch(branch_id=resource_id)

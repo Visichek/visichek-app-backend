@@ -14,6 +14,7 @@ from schemas.system_user_schema import (
     SystemUserRefresh,
     SystemUserProfileOut,
     TenantProfileSummary,
+    TenantSelectionRequest,
 )
 from security.auth import (
     verify_any_system_user_token,
@@ -32,6 +33,7 @@ from services.system_user_service import (
     authenticate_system_user,
     authenticate_super_admin_global,
     authenticate_system_user_by_tenant,
+    complete_login_after_tenant_selection,
     refresh_system_user_tokens,
     retrieve_system_user_by_id,
     retrieve_system_users,
@@ -76,7 +78,14 @@ router = APIRouter(prefix="/system-users", tags=["Tenant Users"])
         "access_token": "eyJhbGci...",
         "refresh_token": "eyJhbGci...",
     },
-    description="Authenticate a system user with email and password (global — not scoped to tenant). Returns access and refresh tokens.",
+    description=(
+        "Authenticate a system user with email and password.\n\n"
+        "The response can take three shapes — branch on the discriminator key:\n"
+        "1. **Login complete** — standard payload with `access_token` + `refresh_token`.\n"
+        "2. **2FA required** — `{ otp_required: true, otp_challenge_id }`. Continue at `POST /v1/system-users/verify-otp`.\n"
+        "3. **Tenant selection required** — `{ tenant_selection_required: true, selection_token, tenants: [...] }` "
+        "when the email matches more than one tenant. Continue at `POST /v1/system-users/select-tenant` with the user's choice."
+    ),
     summary="System user login (global)",
     response_codes={
         401: "Unauthorized - invalid credentials",
@@ -99,6 +108,77 @@ router = APIRouter(prefix="/system-users", tags=["Tenant Users"])
 )
 async def login_system_user(request: Request, login_data: SystemUserLogin):
     result = await authenticate_system_user(login_data=login_data)
+    request_id = getattr(request.state, "request_id", None)
+
+    if isinstance(result, dict) and result.get("otp_required"):
+        return JSONResponse(
+            content=jsonable_encoder(
+                success_payload(
+                    result, message="OTP verification required", request_id=request_id
+                )
+            ),
+        )
+
+    if isinstance(result, dict) and result.get("tenant_selection_required"):
+        return JSONResponse(
+            content=jsonable_encoder(
+                success_payload(
+                    result,
+                    message="Tenant selection required",
+                    request_id=request_id,
+                )
+            ),
+        )
+
+    user = result
+    is_prod = get_settings().env == "production"
+    return build_auth_response(
+        request=request,
+        payload=user,
+        message="Login successful",
+        is_production=is_prod,
+        access_token=_attr_or_key(user, "access_token") or "",
+        refresh_token=_attr_or_key(user, "refresh_token") or "",
+    )
+
+
+@router.post("/select-tenant")
+@document_response(
+    message="Login successful",
+    description=(
+        "Stage 2 of multi-tenant login. Submit the `selection_token` returned "
+        "by `POST /v1/system-users/login` along with the chosen `tenant_id`. "
+        "The token is single-use and expires after 5 minutes.\n\n"
+        "On success the response is either:\n"
+        "* the standard login payload with access/refresh tokens, OR\n"
+        "* `{ otp_required: true, otp_challenge_id }` if the chosen tenant "
+        "user has 2FA enabled — continue at `POST /v1/system-users/verify-otp`."
+    ),
+    summary="Select tenant after login",
+    response_codes={
+        401: "Unauthorized - invalid, used, or expired selection token",
+        403: "Forbidden - selected tenant not associated with this login attempt or account not active",
+    },
+    error_examples={
+        401: {
+            "success": False,
+            "message": "Invalid or expired tenant selection token",
+            "code": "AUTH_INVALID_TOKEN",
+        },
+        403: {
+            "success": False,
+            "message": "Selected tenant is not available for this login attempt",
+            "code": "AUTH_PERMISSION_DENIED",
+        },
+    },
+)
+async def select_tenant_after_login(
+    request: Request, payload: TenantSelectionRequest
+):
+    result = await complete_login_after_tenant_selection(
+        selection_token=payload.selection_token,
+        tenant_id=payload.tenant_id,
+    )
     request_id = getattr(request.state, "request_id", None)
 
     if isinstance(result, dict) and result.get("otp_required"):

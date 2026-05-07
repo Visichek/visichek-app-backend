@@ -109,12 +109,20 @@ async def _precompute_audit_recent(tenant_id: str) -> Any:
     logs = await retrieve_audit_logs_with_summary(filter_dict, start=0, stop=100)
     total = await count_audit_logs(filter_dict)
     return {
-        "items": [
-            log.model_dump(mode="json", by_alias=True)
-            if hasattr(log, "model_dump")
-            else log
-            for log in logs
-        ],
+        "items": [log.model_dump(mode="json", by_alias=True) for log in logs],
+        "total": total,
+    }
+
+
+@register_precompute("audit.admin_recent", scope=PrecomputeScope.GLOBAL)
+async def _precompute_audit_admin_recent(_scope_id: str) -> Any:
+    from repositories.audit_log_repo import count_audit_logs
+    from services.audit_service import retrieve_audit_logs_with_summary
+
+    logs = await retrieve_audit_logs_with_summary({}, start=0, stop=100)
+    total = await count_audit_logs({})
+    return {
+        "items": [log.model_dump(mode="json", by_alias=True) for log in logs],
         "total": total,
     }
 

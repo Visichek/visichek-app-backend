@@ -44,7 +44,7 @@ def _enqueue_refresh(tenant_id: str) -> None:
             )
 
 
-@write_handler("branding.upsert")
+@write_handler("branding.upsert", invalidates=["branding.full", "branding.public"])
 async def _branding_upsert(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     # resource_id is the tenant_id for branding (one-per-tenant upsert).
     tenant_id = data.pop("tenant_id", resource_id) or resource_id
@@ -54,7 +54,7 @@ async def _branding_upsert(resource_id: str, data: dict[str, Any]) -> dict[str, 
     return {"id": result.id, "tenant_id": result.tenant_id}
 
 
-@write_handler("branding.delete")
+@write_handler("branding.delete", invalidates=["branding.full", "branding.public"])
 async def _branding_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.get("tenant_id", resource_id) or resource_id
     await remove_branding(tenant_id=tenant_id)

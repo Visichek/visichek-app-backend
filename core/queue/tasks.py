@@ -103,6 +103,7 @@ async def _db_write_dispatcher(
     resource_id: str,
     data: dict[str, Any],
     task_id: str = "",
+    resource_type: str = "",
 ) -> Any:
     """Dispatch a queued write to its registered handler.
 
@@ -111,7 +112,14 @@ async def _db_write_dispatcher(
     ``queue_job_log`` can be transitioned through processing ->
     succeeded / failed without depending on ``celery.current_task``
     propagation, which is fragile under ``celery-aio-pool``.
+
+    ``resource_type`` is used to invalidate the per-id entity cache
+    after the write commits. The cache is also invalidated up-front in
+    ``enqueue_write``; the post-commit invalidation closes the (rare)
+    race where a concurrent GET repopulates the cache between the
+    enqueue-time delete and the commit.
     """
+    from core.queue.entity_cache import invalidate_entity
     from core.queue.write_pipeline import execute_writer
     from repositories.queue_job_log_repo import (
         mark_failed,
@@ -167,6 +175,13 @@ async def _db_write_dispatcher(
             task_id,
             exc_info=True,
         )
+
+    # Drop the per-id cache again post-commit. The eager delete in
+    # enqueue_write covers the gap before this point; this second drop
+    # handles the rare case where a concurrent GET re-populated the
+    # cache with pre-commit state between enqueue and worker commit.
+    if resource_type and resource_id:
+        invalidate_entity(resource_type, resource_id)
 
     return result
 

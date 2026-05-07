@@ -13,6 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, status
 
 from core.errors import auth_permission_denied
+from core.queue.entity_cache import get_or_compute_entity
 from core.response_envelope import document_response
 from bson import ObjectId
 
@@ -117,9 +118,15 @@ async def list_checkout_sessions_endpoint(
 async def get_checkout_endpoint(
     checkout_id: str,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
-) -> CheckoutSessionOut:
+):
     tenant_id = _require_tenant_scope(principal)
-    return await get_tenant_checkout(tenant_id=tenant_id, checkout_id=checkout_id)
+    return await get_or_compute_entity(
+        entity_type="checkout_session",
+        entity_id=checkout_id,
+        loader=lambda: get_tenant_checkout(
+            tenant_id=tenant_id, checkout_id=checkout_id
+        ),
+    )
 
 
 @router.post("/sessions/{checkout_id}/cancel")

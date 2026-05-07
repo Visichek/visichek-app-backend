@@ -30,7 +30,7 @@ def _enqueue_list_refresh() -> None:
         logger.warning("discount_writer: list refresh enqueue failed", exc_info=True)
 
 
-@write_handler("discount.create")
+@write_handler("discount.create", invalidates=["discounts.list"])
 async def _discount_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     discount = DiscountCreate(**data)
     result = await add_discount(discount_data=discount, preassigned_id=resource_id)
@@ -38,7 +38,7 @@ async def _discount_create(resource_id: str, data: dict[str, Any]) -> dict[str, 
     return {"id": result.id, "code": result.code}
 
 
-@write_handler("discount.update")
+@write_handler("discount.update", invalidates=["discounts.list"])
 async def _discount_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     upd = DiscountUpdate(**data)
     result = await update_discount_by_id(discount_id=resource_id, data=upd)
@@ -46,14 +46,14 @@ async def _discount_update(resource_id: str, data: dict[str, Any]) -> dict[str, 
     return {"id": result.id if result else resource_id}
 
 
-@write_handler("discount.disable")
+@write_handler("discount.disable", invalidates=["discounts.list"])
 async def _discount_disable(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     result = await disable_discount(discount_id=resource_id)
     _enqueue_list_refresh()
     return {"id": result.id if result else resource_id, "status": "disabled"}
 
 
-@write_handler("discount.delete")
+@write_handler("discount.delete", invalidates=["discounts.list"])
 async def _discount_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     await remove_discount(discount_id=resource_id)
     _enqueue_list_refresh()
