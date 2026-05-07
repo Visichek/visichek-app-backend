@@ -30,13 +30,21 @@ _BYPASS_PREFIXES = (
     "/openapi.json",
 )
 
-# Path segments that always bypass caching. ``/v1/jobs`` reflects state from
-# every queued write across the system, but the middleware only invalidates
-# entries whose first path segment matches the write's URL — so a POST to
-# ``/v1/notifications/...`` never touches a cached ``/v1/jobs`` entry. Serving
-# stale (often empty) job lists for up to 60s is worse than the per-request
-# DB lookup, so opt the resource out of caching entirely.
-_BYPASS_RESOURCE_SEGMENTS = frozenset({"v1-jobs"})
+# Path segments that always bypass caching.
+#
+# - ``v1-jobs`` reflects state from every queued write; the middleware only
+#   invalidates entries whose first path segment matches the write's URL,
+#   so a POST to ``/v1/notifications/...`` never touches a cached
+#   ``/v1/jobs`` entry. Serving stale (often empty) job lists for up to 60s
+#   is worse than the per-request DB lookup.
+# - ``v1-notifications`` is per-user and dispatched by many synchronous
+#   ``send_notification`` callers (incidents, check-ins, support cases) that
+#   write directly to MongoDB and don't pass through the middleware. With
+#   tenant-scoped scope keys, a stale cache would mask new badge counts and
+#   freshly delivered notifications for up to 60s. The collection is
+#   per-user with a tight {user_id, user_type, [read]} filter, so direct
+#   reads are cheap.
+_BYPASS_RESOURCE_SEGMENTS = frozenset({"v1-jobs", "v1-notifications"})
 
 # Substrings that mark a path as auth-related (never cacheable).
 _BYPASS_SUBSTRINGS = (
