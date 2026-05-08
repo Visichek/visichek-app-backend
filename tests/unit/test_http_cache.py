@@ -61,6 +61,7 @@ def fake_cache():
 def _build_app() -> FastAPI:
     app = FastAPI()
     app.state.counter = 0
+    app.state.checkin_counter = 0
     app.add_middleware(HttpCacheMiddleware)
 
     @app.get("/v1/visitors")
@@ -75,6 +76,19 @@ def _build_app() -> FastAPI:
     @app.get("/v1/plans")
     async def list_plans() -> dict:
         return {"plans": []}
+
+    @app.get("/v1/tenants/{tenant_id}/checkins")
+    async def list_tenant_checkins(tenant_id: str, state: str = "pending") -> dict:
+        app.state.checkin_counter += 1
+        return {
+            "tenant_id": tenant_id,
+            "state": state,
+            "count": app.state.checkin_counter,
+        }
+
+    @app.post("/v1/checkins/{checkin_id}/confirm")
+    async def confirm_checkin(checkin_id: str) -> dict:
+        return {"id": checkin_id, "state": "approved"}
 
     @app.get("/health")
     async def health() -> dict:
@@ -96,6 +110,8 @@ def app() -> FastAPI:
 def test_resource_segment_v1_path() -> None:
     assert _resource_segment("/v1/visitors/abc/checkout") == "v1-visitors"
     assert _resource_segment("/v1/plans") == "v1-plans"
+    assert _resource_segment("/v1/tenants/t1/checkins") == "v1-checkins"
+    assert _resource_segment("/v1/tenants/t1/checkins/analytics") == "v1-checkins"
     assert _resource_segment("/health") == "health"
     assert _resource_segment("/") == "_root"
 
@@ -224,6 +240,29 @@ async def test_post_does_not_invalidate_unrelated_resource(app, fake_cache) -> N
     assert plan_keys_before == plan_keys_after, (
         "writes on /v1/visitors must not wipe /v1/plans cache"
     )
+
+
+@pytest.mark.asyncio
+async def test_confirm_checkin_invalidates_tenant_scoped_checkin_list(
+    app, fake_cache
+) -> None:
+    with patch(
+        "core.http_cache.get_access_token_allow_expired", new_callable=AsyncMock
+    ) as m:
+        m.return_value = None
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            await client.get("/v1/tenants/t1/checkins?state=pending_approval")
+            assert any(
+                k.startswith("httpcache:anon:v1-checkins:")
+                for k in fake_cache.store
+            )
+            await client.post("/v1/checkins/c1/confirm", json={"action": "approve"})
+            assert not any(
+                k.startswith("httpcache:anon:v1-checkins:")
+                for k in fake_cache.store
+            )
 
 
 @pytest.mark.asyncio

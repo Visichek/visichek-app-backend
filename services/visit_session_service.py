@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from bson import ObjectId
 from fastapi import HTTPException
@@ -23,11 +23,23 @@ from repositories.visitor_profile_repo import (
     increment_visitor_profile_visits,
 )
 from repositories.appointment_repo import get_appointment, update_appointment
+from repositories.appointment_repo import (
+    count_due_scheduled_appointments_for_checkout,
+    get_due_scheduled_appointments_for_checkout,
+)
+from repositories.badge_repo import get_badge_by_qr_value, get_badges_by_checkin_ids
+from repositories.checkin_repo import (
+    count_approved_checkins_for_checkout,
+    get_approved_checkins_for_checkout,
+    get_checkin,
+    update_checkin,
+)
 from repositories.privacy_notice_repo import get_active_notice_for_tenant
 from repositories.tenant_repo import get_tenant
 from repositories.system_user_repo import get_system_user
 from repositories.department_repo import get_department
 from schemas.visit_session_schema import (
+    AwaitingCheckoutItem,
     VisitSessionCreate,
     VisitSessionUpdate,
     VisitSessionOut,
@@ -37,6 +49,7 @@ from schemas.visit_session_schema import (
 )
 from schemas.visitor_profile_schema import VisitorProfileUpdate
 from schemas.appointment_schema import AppointmentUpdate
+from schemas.checkin_schema import CheckinOut, CheckinUpdate
 from schemas.imports import (
     VisitStatus,
     CheckInMethod,
@@ -44,6 +57,7 @@ from schemas.imports import (
     VerificationMethod,
     LawfulBasis,
     AppointmentStatus,
+    CheckinState,
     ProfilingPreference,
     BadgeFormat,
 )
@@ -449,28 +463,144 @@ async def retrieve_pending_sessions(
     return await get_visit_sessions(filter_dict=filter_dict, start=start, stop=stop)
 
 
-async def check_out_visitor(
-    request: CheckOutRequest, tenant_id: str
-) -> VisitSessionOut:
-    """Check out a visitor by badge QR token or session ID."""
+def _enum_value(value: Any) -> Any:
+    return value.value if hasattr(value, "value") else value
+
+
+def _next_utc_midnight_ts() -> int:
+    now = int(time.time())
+    return ((now // 86400) + 1) * 86400
+
+
+def _checkout_request_id(request: CheckOutRequest, source_type: str) -> Optional[str]:
+    if request.source_type and request.source_type != source_type:
+        return None
+    if source_type == "visit_session":
+        return request.session_id or request.checkout_id
+    if source_type == "approved_checkin":
+        return request.checkin_id or request.checkout_id
+    if source_type == "scheduled_appointment":
+        return request.appointment_id or request.checkout_id
+    return None
+
+
+def _is_approved_checkin(checkin: CheckinOut) -> bool:
+    return _enum_value(checkin.state) == CheckinState.APPROVED.value
+
+
+async def _checkout_approved_checkin(
+    checkin_id: str, tenant_id: str
+) -> dict[str, Any]:
+    if not ObjectId.is_valid(checkin_id):
+        raise HTTPException(status_code=400, detail="Invalid check-in ID format")
+
+    checkin = await get_checkin({"_id": ObjectId(checkin_id), "tenant_id": tenant_id})
+    if not checkin:
+        raise HTTPException(status_code=404, detail="Check-in not found")
+    if not _is_approved_checkin(checkin):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Check-in is not approved for checkout (state: {checkin.state})",
+        )
+
+    updated = await update_checkin(
+        checkin_id,
+        CheckinUpdate(state=CheckinState.CHECKED_OUT),
+    )
+    return {
+        "id": updated.id,
+        "source_type": "approved_checkin",
+        "status": _enum_value(updated.state),
+        "checkin": updated,
+    }
+
+
+async def _checkout_due_appointment(
+    appointment_id: str, tenant_id: str
+) -> dict[str, Any]:
+    if not ObjectId.is_valid(appointment_id):
+        raise HTTPException(status_code=400, detail="Invalid appointment ID format")
+
+    appointment = await get_appointment(
+        {"_id": ObjectId(appointment_id), "tenant_id": tenant_id}
+    )
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    if _enum_value(appointment.status) != AppointmentStatus.SCHEDULED.value:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Appointment is not scheduled for checkout "
+                f"(status: {appointment.status})"
+            ),
+        )
+    if appointment.scheduled_datetime >= _next_utc_midnight_ts():
+        raise HTTPException(
+            status_code=400,
+            detail="Appointment is not due for checkout yet",
+        )
+
+    updated = await update_appointment(
+        {"_id": ObjectId(appointment_id), "tenant_id": tenant_id},
+        AppointmentUpdate(status=AppointmentStatus.FULFILLED),
+    )
+    return {
+        "id": updated.id,
+        "source_type": "scheduled_appointment",
+        "status": _enum_value(updated.status),
+        "appointment": updated,
+    }
+
+
+async def _checkout_checkin_by_badge_qr(
+    badge_qr_token: str, tenant_id: str
+) -> Optional[dict[str, Any]]:
+    badge = await get_badge_by_qr_value(badge_qr_token)
+    if not badge or badge.tenant_id != tenant_id:
+        return None
+    if badge.revoked_at is not None or badge.expires_at < int(time.time()):
+        return None
+    return await _checkout_approved_checkin(badge.checkin_id, tenant_id)
+
+
+async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Any:
+    """Check out a visitor by visit session, approved check-in, appointment, or QR."""
     session = None
 
     if request.badge_qr_token:
         # Verify the HMAC-signed token
         session_id = verify_badge_token(request.badge_qr_token)
-        if not session_id:
+        if session_id:
+            session = await get_visit_session(
+                {"_id": ObjectId(session_id), "tenant_id": tenant_id}
+            )
+        else:
+            checkin_checkout = await _checkout_checkin_by_badge_qr(
+                request.badge_qr_token, tenant_id
+            )
+            if checkin_checkout is not None:
+                return checkin_checkout
             raise HTTPException(
                 status_code=400, detail="Invalid or expired badge QR token"
             )
+    elif _checkout_request_id(request, "visit_session"):
+        session_id = _checkout_request_id(request, "visit_session")
+        if session_id is None or not ObjectId.is_valid(session_id):
+            raise HTTPException(status_code=400, detail="Invalid session ID format")
         session = await get_visit_session(
             {"_id": ObjectId(session_id), "tenant_id": tenant_id}
         )
-    elif request.session_id:
-        if not ObjectId.is_valid(request.session_id):
-            raise HTTPException(status_code=400, detail="Invalid session ID format")
-        session = await get_visit_session(
-            {"_id": ObjectId(request.session_id), "tenant_id": tenant_id}
-        )
+    elif _checkout_request_id(request, "approved_checkin"):
+        checkin_id = _checkout_request_id(request, "approved_checkin")
+        if checkin_id is None:
+            raise HTTPException(status_code=400, detail="Missing check-in ID")
+        return await _checkout_approved_checkin(checkin_id, tenant_id)
+    elif _checkout_request_id(request, "scheduled_appointment"):
+        appointment_id = _checkout_request_id(request, "scheduled_appointment")
+        if appointment_id is None:
+            raise HTTPException(status_code=400, detail="Missing appointment ID")
+        return await _checkout_due_appointment(appointment_id, tenant_id)
 
     if not session:
         raise HTTPException(status_code=404, detail="Visit session not found")
@@ -499,32 +629,256 @@ async def retrieve_active_visitors(tenant_id: str, department_id: Optional[str] 
     return await get_active_visitors(tenant_id=tenant_id, department_id=department_id)
 
 
+def _json_details(model: Any) -> dict[str, Any]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump(mode="json", by_alias=False)
+    return dict(model)
+
+
+def _visit_session_to_checkout_item(
+    session: VisitSessionWithSummaryOut,
+) -> AwaitingCheckoutItem:
+    visitor_s = session.visitor_profile_summary
+    verified = _enum_value(session.verification_status) == VerificationStatus.VERIFIED.value
+    return AwaitingCheckoutItem(
+        id=session.id or "",
+        source_type="visit_session",
+        checkout_id=session.id or "",
+        tenant_id=session.tenant_id,
+        status=str(_enum_value(session.status)),
+        visitor_name=session.visitor_name_snapshot
+        or (visitor_s.full_name if visitor_s else None),
+        email=visitor_s.email_address if visitor_s else None,
+        phone=visitor_s.phone if visitor_s else None,
+        company=session.company_snapshot or (visitor_s.company if visitor_s else None),
+        verified=verified,
+        purpose=session.purpose,
+        eligible_since=session.check_in_time or session.date_created,
+        check_in_time=session.check_in_time,
+        badge_qr_token=session.badge_qr_token,
+        department_id=session.department_id,
+        host_id=session.host_id,
+        visitor_profile_id=session.visitor_profile_id,
+        appointment_id=session.appointment_id,
+        tenant_summary=session.tenant_summary,
+        department_summary=session.department_summary,
+        visitor_profile_summary=visitor_s,
+        host_summary=session.host_summary,
+        receptionist_summary=session.receptionist_summary,
+        appointment_summary=session.appointment_summary,
+        details=_json_details(session),
+    )
+
+
+def _checkin_to_checkout_item(
+    checkin: CheckinOut,
+    visitor: Any = None,
+    badge: Any = None,
+) -> AwaitingCheckoutItem:
+    from schemas.summary_schema import VisitorBriefSummary
+
+    visitor_summary = None
+    company = None
+    if visitor is not None:
+        bio = visitor.bio_data or {}
+        company = bio.get("company") or bio.get("organization")
+        visitor_summary = VisitorBriefSummary(
+            id=visitor.id or "",
+            full_name=visitor.full_name,
+            email=visitor.email,
+            phone=visitor.phone,
+            company=company,
+            verified=bool(visitor.verified),
+            verification_method=(
+                visitor.verification_method.value
+                if visitor.verification_method is not None
+                else None
+            ),
+            portrait_url=visitor.portrait_url,
+        )
+
+    details = _json_details(checkin)
+    if visitor_summary is not None:
+        details["visitor"] = visitor_summary.model_dump(mode="json")
+    if badge is not None:
+        details["badge"] = _json_details(badge)
+
+    return AwaitingCheckoutItem(
+        id=checkin.id or "",
+        source_type="approved_checkin",
+        checkout_id=checkin.id or "",
+        tenant_id=checkin.tenant_id,
+        status=str(_enum_value(checkin.state)),
+        visitor_name=visitor.full_name if visitor is not None else None,
+        email=visitor.email if visitor is not None else None,
+        phone=visitor.phone if visitor is not None else None,
+        company=company,
+        portrait_url=visitor.portrait_url if visitor is not None else None,
+        verified=bool(checkin.verified),
+        purpose=checkin.purpose.purpose,
+        purpose_details=checkin.purpose.purpose_details,
+        expected_duration_minutes=checkin.purpose.expected_duration_minutes,
+        eligible_since=checkin.approved_at or checkin.date_created,
+        approved_at=checkin.approved_at,
+        badge_qr_token=badge.qr_code_value if badge is not None else None,
+        visitor_id=checkin.visitor_id,
+        visitor_summary=visitor_summary,
+        details=details,
+    )
+
+
+async def _appointment_to_checkout_item(appt: Any) -> AwaitingCheckoutItem:
+    import asyncio
+    from services.summary_resolver import (
+        resolve_appointment_summary,
+        resolve_department_summary,
+        resolve_system_user_summary,
+        resolve_tenant_summary,
+        resolve_visitor_profile_summary,
+    )
+
+    tenant_s, dept_s, host_s, visitor_s, appt_s = await asyncio.gather(
+        resolve_tenant_summary(appt.tenant_id),
+        resolve_department_summary(appt.department_id),
+        resolve_system_user_summary(appt.host_id),
+        resolve_visitor_profile_summary(appt.visitor_profile_id),
+        resolve_appointment_summary(appt.id),
+    )
+    details = _json_details(appt)
+    details["tenant_summary"] = tenant_s.model_dump(mode="json") if tenant_s else None
+    details["department_summary"] = dept_s.model_dump(mode="json") if dept_s else None
+    details["host_summary"] = host_s.model_dump(mode="json") if host_s else None
+    details["visitor_profile_summary"] = (
+        visitor_s.model_dump(mode="json") if visitor_s else None
+    )
+    details["appointment_summary"] = appt_s.model_dump(mode="json") if appt_s else None
+
+    return AwaitingCheckoutItem(
+        id=appt.id or "",
+        source_type="scheduled_appointment",
+        checkout_id=appt.id or "",
+        tenant_id=appt.tenant_id,
+        status=str(_enum_value(appt.status)),
+        visitor_name=appt.visitor_name_snapshot
+        or (visitor_s.full_name if visitor_s else None),
+        email=visitor_s.email_address if visitor_s else None,
+        phone=visitor_s.phone if visitor_s else None,
+        company=visitor_s.company if visitor_s else None,
+        purpose=appt.purpose,
+        eligible_since=appt.scheduled_datetime,
+        scheduled_datetime=appt.scheduled_datetime,
+        department_id=appt.department_id,
+        host_id=appt.host_id,
+        visitor_profile_id=appt.visitor_profile_id,
+        appointment_id=appt.id,
+        tenant_summary=tenant_s,
+        department_summary=dept_s,
+        visitor_profile_summary=visitor_s,
+        host_summary=host_s,
+        appointment_summary=appt_s,
+        details=details,
+    )
+
+
+async def _approved_checkins_to_checkout_items(
+    tenant_id: str, checkins: list[CheckinOut]
+) -> list[AwaitingCheckoutItem]:
+    if not checkins:
+        return []
+
+    from repositories.visitor_repo import get_visitors_by_ids
+
+    visitor_ids = list({c.visitor_id for c in checkins if c.visitor_id})
+    visitors = await get_visitors_by_ids(tenant_id=tenant_id, visitor_ids=visitor_ids)
+    visitors_by_id = {v.id: v for v in visitors if v.id}
+
+    checkin_ids = [c.id for c in checkins if c.id]
+    badges = await get_badges_by_checkin_ids(tenant_id=tenant_id, checkin_ids=checkin_ids)
+    badges_by_checkin_id: dict[str, Any] = {}
+    for badge in badges:
+        badges_by_checkin_id.setdefault(badge.checkin_id, badge)
+
+    return [
+        _checkin_to_checkout_item(
+            checkin,
+            visitor=visitors_by_id.get(checkin.visitor_id),
+            badge=badges_by_checkin_id.get(checkin.id or ""),
+        )
+        for checkin in checkins
+    ]
+
+
 async def retrieve_visitors_awaiting_checkout(
     tenant_id: str,
     department_id: Optional[str] = None,
     start: int = 0,
     stop: int = 50,
-) -> tuple[list[VisitSessionWithSummaryOut], int]:
-    """Paginated list of currently checked-in visitors (status=checked_in) for
-    the manual-checkout selector UI. Each row is enriched with the standard
-    summaries (visitor profile, host, department, receptionist) so the
-    receptionist can identify who they're checking out without follow-up calls.
+) -> tuple[list[AwaitingCheckoutItem], int]:
+    """Paginated manual-checkout selector across all eligible visitor sources.
+
+    Includes:
+    - checked-in visit sessions;
+    - approved check-ins that have not yet been checked out;
+    - scheduled appointments whose scheduled day is today or earlier.
     """
     import asyncio
 
-    sessions = await get_awaiting_checkout_sessions(
-        tenant_id=tenant_id,
-        department_id=department_id,
-        start=start,
-        stop=stop,
+    page_stop = max(stop, start + 1)
+    due_before_ts = _next_utc_midnight_ts()
+
+    (
+        sessions,
+        checkins,
+        appointments,
+        session_total,
+        checkin_total,
+        appointment_total,
+    ) = await asyncio.gather(
+        get_awaiting_checkout_sessions(
+            tenant_id=tenant_id,
+            department_id=department_id,
+            start=0,
+            stop=page_stop,
+        ),
+        get_approved_checkins_for_checkout(
+            tenant_id=tenant_id,
+            start=0,
+            stop=page_stop,
+        ),
+        get_due_scheduled_appointments_for_checkout(
+            tenant_id=tenant_id,
+            due_before_ts=due_before_ts,
+            department_id=department_id,
+            start=0,
+            stop=page_stop,
+        ),
+        count_awaiting_checkout_sessions(
+            tenant_id=tenant_id, department_id=department_id
+        ),
+        count_approved_checkins_for_checkout(tenant_id=tenant_id),
+        count_due_scheduled_appointments_for_checkout(
+            tenant_id=tenant_id,
+            due_before_ts=due_before_ts,
+            department_id=department_id,
+        ),
     )
-    total = await count_awaiting_checkout_sessions(
-        tenant_id=tenant_id, department_id=department_id
+
+    enriched_sessions = await asyncio.gather(
+        *[_enrich_visit_session(s) for s in sessions]
     )
-    enriched = list(
-        await asyncio.gather(*[_enrich_visit_session(s) for s in sessions])
+    session_items = [_visit_session_to_checkout_item(s) for s in enriched_sessions]
+    checkin_items = await _approved_checkins_to_checkout_items(tenant_id, checkins)
+    appointment_items = list(
+        await asyncio.gather(*[_appointment_to_checkout_item(a) for a in appointments])
     )
-    return enriched, total
+
+    all_items = [*session_items, *checkin_items, *appointment_items]
+    all_items.sort(
+        key=lambda item: (item.eligible_since or 0, item.source_type, item.checkout_id),
+        reverse=True,
+    )
+    total = session_total + checkin_total + appointment_total
+    return all_items[start:stop], total
 
 
 async def retrieve_visit_session_by_id(

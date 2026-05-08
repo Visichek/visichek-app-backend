@@ -50,3 +50,26 @@ async def get_badge_by_qr_value(qr_code_value: str) -> Optional[BadgeOut]:
     if doc is None:
         return None
     return BadgeOut(**doc)
+
+
+async def get_badges_by_checkin_ids(
+    tenant_id: str, checkin_ids: list[str]
+) -> list[BadgeOut]:
+    """Fetch active badges for approved check-ins."""
+    if not checkin_ids:
+        return []
+    cursor = (
+        db[COLLECTION]
+        .find(
+            {
+                "tenant_id": tenant_id,
+                "checkin_id": {"$in": checkin_ids},
+                "revoked_at": None,
+            }
+        )
+        .sort("issued_at", -1)
+    )
+    badges: list[BadgeOut] = []
+    async for doc in cursor:
+        badges.append(BadgeOut(**doc))
+    return badges

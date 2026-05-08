@@ -109,6 +109,7 @@ from schemas.summary_schema import (  # noqa: E402
     TenantBriefSummary,
     DepartmentBriefSummary,
     UserBriefSummary,
+    VisitorBriefSummary,
     VisitorProfileBriefSummary,
     AppointmentBriefSummary,
 )
@@ -156,4 +157,49 @@ class DenyVisitorRequest(BaseModel):
 class CheckOutRequest(BaseModel):
     badge_qr_token: Optional[str] = None
     session_id: Optional[str] = None
+    checkin_id: Optional[str] = None
+    appointment_id: Optional[str] = None
+    checkout_id: Optional[str] = None
+    source_type: Optional[str] = None
     check_out_method: CheckOutMethod = CheckOutMethod.QR_SCAN
+
+
+class AwaitingCheckoutItem(BaseModel):
+    """Unified row for the manual checkout selector.
+
+    ``source_type`` identifies which underlying collection owns ``checkout_id``:
+    ``visit_session``, ``approved_checkin``, or ``scheduled_appointment``.
+    """
+
+    id: str
+    source_type: str
+    checkout_id: str
+    tenant_id: str
+    status: str
+    visitor_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    company: Optional[str] = None
+    portrait_url: Optional[str] = None
+    verified: Optional[bool] = None
+    purpose: Optional[str] = None
+    purpose_details: Optional[str] = None
+    expected_duration_minutes: Optional[int] = None
+    eligible_since: Optional[int] = None
+    check_in_time: Optional[int] = None
+    approved_at: Optional[int] = None
+    scheduled_datetime: Optional[int] = None
+    badge_qr_token: Optional[str] = None
+    department_id: Optional[str] = None
+    host_id: Optional[str] = None
+    visitor_id: Optional[str] = None
+    visitor_profile_id: Optional[str] = None
+    appointment_id: Optional[str] = None
+    tenant_summary: Optional[TenantBriefSummary] = None
+    department_summary: Optional[DepartmentBriefSummary] = None
+    visitor_summary: Optional["VisitorBriefSummary"] = None
+    visitor_profile_summary: Optional[VisitorProfileBriefSummary] = None
+    host_summary: Optional[UserBriefSummary] = None
+    receptionist_summary: Optional[UserBriefSummary] = None
+    appointment_summary: Optional[AppointmentBriefSummary] = None
+    details: dict[str, Any] = Field(default_factory=dict)

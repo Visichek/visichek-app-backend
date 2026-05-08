@@ -75,6 +75,27 @@ async def count_checkins(filter_dict: dict) -> int:
     return await db[COLLECTION].count_documents(filter_dict)
 
 
+def _approved_for_checkout_filter(tenant_id: str) -> dict:
+    return {"tenant_id": tenant_id, "state": "approved"}
+
+
+async def get_approved_checkins_for_checkout(
+    tenant_id: str, start: int = 0, stop: int = 50
+) -> list[CheckinOut]:
+    """Approved check-ins that have not been checked out yet."""
+    return await get_checkins(
+        _approved_for_checkout_filter(tenant_id),
+        skip=start,
+        limit=stop - start,
+        sort=[("approved_at", -1), ("date_created", -1)],
+    )
+
+
+async def count_approved_checkins_for_checkout(tenant_id: str) -> int:
+    """Count approved check-ins that are still awaiting checkout."""
+    return await count_checkins(_approved_for_checkout_filter(tenant_id))
+
+
 async def get_active_pending_for_visitor(
     tenant_id: str, visitor_id: str
 ) -> Optional[CheckinOut]:

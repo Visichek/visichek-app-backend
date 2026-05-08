@@ -90,6 +90,9 @@ def _resource_segment(path: str) -> str:
     /health                   -> 'health'
     """
     parts = [p for p in path.split("/") if p]
+    if len(parts) >= 4 and parts[0] == "v1" and parts[1] == "tenants":
+        if parts[3] == "checkins":
+            return "v1-checkins"
     if len(parts) >= 2:
         return f"{parts[0]}-{parts[1]}"
     if len(parts) == 1:

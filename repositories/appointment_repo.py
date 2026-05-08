@@ -79,3 +79,46 @@ async def count_appointments(filter_dict: dict | None = None) -> int:
     if filter_dict is None:
         filter_dict = {}
     return await db.expected_appointments.count_documents(filter_dict)
+
+
+def _due_scheduled_checkout_filter(
+    tenant_id: str,
+    due_before_ts: int,
+    department_id: Optional[str] = None,
+) -> dict:
+    filter_dict: dict = {
+        "tenant_id": tenant_id,
+        "status": "scheduled",
+        "scheduled_datetime": {"$lt": due_before_ts},
+    }
+    if department_id:
+        filter_dict["department_id"] = department_id
+    return filter_dict
+
+
+async def get_due_scheduled_appointments_for_checkout(
+    tenant_id: str,
+    due_before_ts: int,
+    department_id: Optional[str] = None,
+    start: int = 0,
+    stop: int = 50,
+) -> List[AppointmentOut]:
+    """Scheduled appointments whose scheduled day is today or earlier."""
+    return await get_appointments(
+        filter_dict=_due_scheduled_checkout_filter(
+            tenant_id, due_before_ts, department_id
+        ),
+        start=start,
+        stop=stop,
+    )
+
+
+async def count_due_scheduled_appointments_for_checkout(
+    tenant_id: str,
+    due_before_ts: int,
+    department_id: Optional[str] = None,
+) -> int:
+    """Count scheduled appointments whose scheduled day is today or earlier."""
+    return await count_appointments(
+        _due_scheduled_checkout_filter(tenant_id, due_before_ts, department_id)
+    )

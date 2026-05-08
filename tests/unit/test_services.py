@@ -904,6 +904,41 @@ class TestVisitSessionService:
         mock_get.assert_called_once()
         mock_update.assert_called_once()
 
+    @patch("services.visit_session_service.get_checkin", new_callable=AsyncMock)
+    @patch("services.visit_session_service.update_checkin", new_callable=AsyncMock)
+    async def test_check_out_approved_checkin_success(
+        self, mock_update_checkin, mock_get_checkin
+    ):
+        """Approved check-ins can be checked out without a visit session."""
+        from schemas.checkin_schema import CheckinOut, CheckinPurpose
+        from schemas.imports import CheckinState
+        from services.visit_session_service import check_out_visitor
+
+        tenant_id = str(ObjectId())
+        checkin_id = str(ObjectId())
+        checkin = CheckinOut(
+            id=checkin_id,
+            tenant_id=tenant_id,
+            visitor_id=str(ObjectId()),
+            checkin_config_id="",
+            tenant_specific_data={},
+            purpose=CheckinPurpose(purpose="Maintenance"),
+            state=CheckinState.APPROVED,
+        )
+        checked_out = checkin.model_copy(update={"state": CheckinState.CHECKED_OUT})
+        mock_get_checkin.return_value = checkin
+        mock_update_checkin.return_value = checked_out
+
+        result = await check_out_visitor(
+            CheckOutRequest(source_type="approved_checkin", checkout_id=checkin_id),
+            tenant_id,
+        )
+
+        assert result["source_type"] == "approved_checkin"
+        assert result["status"] == "checked_out"
+        mock_get_checkin.assert_awaited_once()
+        mock_update_checkin.assert_awaited_once()
+
     @patch("services.visit_session_service.verify_badge_token")
     async def test_check_out_visitor_invalid_badge_token(self, mock_verify):
         """Test check out with invalid badge token raises 400."""
@@ -969,6 +1004,129 @@ class TestVisitSessionService:
 
         assert exc_info.value.status_code == 400
         assert "not currently checked in" in exc_info.value.detail
+
+    async def test_awaiting_checkout_includes_approved_and_due_scheduled(self):
+        """Awaiting checkout includes approved check-ins and due appointments."""
+        from schemas.checkin_schema import CheckinOut, CheckinPurpose
+        from schemas.imports import CheckinState
+        from schemas.visitor_schema import VisitorOut
+        from services.visit_session_service import retrieve_visitors_awaiting_checkout
+
+        tenant_id = str(ObjectId())
+        checkin_id = str(ObjectId())
+        appointment_id = str(ObjectId())
+        visitor_id = str(ObjectId())
+        checkin = CheckinOut(
+            id=checkin_id,
+            tenant_id=tenant_id,
+            visitor_id=visitor_id,
+            checkin_config_id="",
+            tenant_specific_data={},
+            purpose=CheckinPurpose(purpose="Maintenance"),
+            state=CheckinState.APPROVED,
+            approved_at=100,
+        )
+        visitor = VisitorOut(
+            id=visitor_id,
+            tenant_id=tenant_id,
+            full_name="James Bond",
+            email="james@example.com",
+            phone="+2348052964826",
+            bio_data={"company": "Spy"},
+            verified=True,
+        )
+        appointment = AppointmentOut(
+            id=appointment_id,
+            tenant_id=tenant_id,
+            visitor_profile_id=str(ObjectId()),
+            host_id=str(ObjectId()),
+            department_id=str(ObjectId()),
+            visitor_name_snapshot="Jane Scheduled",
+            scheduled_datetime=200,
+            purpose="Scheduled visit",
+            status=AppointmentStatus.SCHEDULED,
+        )
+
+        with (
+            patch(
+                "services.visit_session_service.get_awaiting_checkout_sessions",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "services.visit_session_service.get_approved_checkins_for_checkout",
+                new_callable=AsyncMock,
+                return_value=[checkin],
+            ),
+            patch(
+                "services.visit_session_service.get_due_scheduled_appointments_for_checkout",
+                new_callable=AsyncMock,
+                return_value=[appointment],
+            ),
+            patch(
+                "services.visit_session_service.count_awaiting_checkout_sessions",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "services.visit_session_service.count_approved_checkins_for_checkout",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
+            patch(
+                "services.visit_session_service.count_due_scheduled_appointments_for_checkout",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
+            patch(
+                "repositories.visitor_repo.get_visitors_by_ids",
+                new_callable=AsyncMock,
+                return_value=[visitor],
+            ),
+            patch(
+                "services.visit_session_service.get_badges_by_checkin_ids",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "services.summary_resolver.resolve_tenant_summary",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "services.summary_resolver.resolve_department_summary",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "services.summary_resolver.resolve_system_user_summary",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "services.summary_resolver.resolve_visitor_profile_summary",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "services.summary_resolver.resolve_appointment_summary",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            items, total = await retrieve_visitors_awaiting_checkout(
+                tenant_id=tenant_id,
+                start=0,
+                stop=50,
+            )
+
+        assert total == 2
+        assert {item.source_type for item in items} == {
+            "approved_checkin",
+            "scheduled_appointment",
+        }
+        assert any(item.visitor_name == "James Bond" for item in items)
+        assert any(item.visitor_name == "Jane Scheduled" for item in items)
 
     @patch("services.visit_session_service.get_visit_session")
     async def test_retrieve_visit_session_by_id_success(self, mock_get):

@@ -287,13 +287,12 @@ async def list_active_visitors(
 @document_response(
     message="Visitors awaiting checkout fetched successfully",
     description=(
-        "Paginated list of visitors who are currently checked-in and have NOT "
-        "yet been checked out (status=checked_in). Designed for the manual "
-        "checkout selector UI: the receptionist picks an entry from this list "
-        "and then submits the matching session_id to POST /v1/visitors/check-out. "
-        "Each row is enriched with visitor / host / department summaries so the "
-        "list can be rendered without follow-up requests. Sorted by check-in "
-        "time descending (most recent first)."
+        "Paginated manual checkout selector. Includes checked-in visit sessions, "
+        "approved check-ins that have not been checked out, and scheduled "
+        "appointments whose scheduled day is today or earlier. Each row returns "
+        "source_type plus checkout_id, flattened visitor details, summaries, and "
+        "the source record in details. Submit source_type + checkout_id, or the "
+        "specific session_id/checkin_id/appointment_id, to POST /v1/visitors/check-out."
     ),
     summary="List visitors awaiting checkout (manual selector)",
     include_meta=True,
