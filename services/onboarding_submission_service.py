@@ -13,6 +13,7 @@ from core.settings import get_settings
 from repositories.onboarding_submission_repo import (
     count_submissions,
     create_submission,
+    distinct_marketing_opt_in_emails,
     get_submission_by_id,
     list_submissions,
     update_submission_by_id,
@@ -133,6 +134,19 @@ async def list_onboarding_submissions(
     items = await list_submissions(filter_dict, skip=skip, limit=limit)
     total = await count_submissions(filter_dict)
     return items, total
+
+
+async def list_marketing_opt_in_emails() -> Tuple[List[str], int]:
+    """Return the deduplicated email list for every onboarding submission whose
+    ``marketing_opt_in`` field is set to an affirmative value.
+
+    Emails are stored already-normalized on the submission row (see
+    ``_extract_indexed_fields``), so distinct() at the DB layer is enough to
+    drop alias / casing duplicates across multiple submissions for the same
+    person. Submissions without an extracted email are skipped.
+    """
+    emails = await distinct_marketing_opt_in_emails()
+    return emails, len(emails)
 
 
 async def retrieve_onboarding_submission(submission_id: str) -> OnboardingSubmissionOut:

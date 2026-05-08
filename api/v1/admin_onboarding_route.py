@@ -32,9 +32,11 @@ from schemas.onboarding_submission_schema import (
     OnboardingSubmissionOut,
 )
 from security.account_status_check import check_admin_account_status_and_permissions
+from schemas.onboarding_submission_schema import MarketingOptInEmailsOut
 from services.onboarding_submission_service import (
     accept_onboarding_submission,
     archive_onboarding_submission,
+    list_marketing_opt_in_emails,
     list_onboarding_submissions,
     partial_accept_onboarding_submission,
     reject_onboarding_submission,
@@ -71,6 +73,28 @@ async def list_submissions_endpoint(
         "items": [item.model_dump(mode="json", by_alias=True) for item in items],
         "total": total,
     }
+
+
+@router.get("/marketing-opt-ins")
+@document_response(
+    message="Marketing opt-in emails fetched successfully",
+    description=(
+        "Returns the deduplicated, sorted list of normalized work emails for "
+        "every onboarding submission whose ``marketing_opt_in`` field is set "
+        "to an affirmative value. Use this to compose marketing campaign "
+        "recipient lists. Emails are stored normalized (lowercased, "
+        "+aliases stripped, gmail dots removed) so the list is duplicate-free "
+        "across re-submissions from the same person. Submissions with no "
+        "extracted email are skipped."
+    ),
+    summary="List marketing opt-in emails",
+    response_codes={401: "Unauthorized", 403: "Insufficient permissions"},
+)
+async def list_marketing_opt_in_emails_endpoint(
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+) -> MarketingOptInEmailsOut:
+    emails, total = await list_marketing_opt_in_emails()
+    return MarketingOptInEmailsOut(emails=emails, total=total)
 
 
 @router.get("/{submission_id}")

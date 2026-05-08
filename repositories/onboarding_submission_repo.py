@@ -86,3 +86,23 @@ async def update_submission_by_id(
     if not ObjectId.is_valid(submission_id):
         return None
     return await update_submission({"_id": ObjectId(submission_id)}, data)
+
+
+async def distinct_marketing_opt_in_emails() -> List[str]:
+    """Return the deduplicated, normalized email list for every submission
+    whose ``payload.marketing_opt_in`` evaluates to an opt-in value.
+
+    Matching is intentionally lenient: the public form is schema-on-read, so
+    the value may arrive as ``"yes"`` (any casing) or a boolean ``True``.
+    Submissions with a missing/empty extracted email are skipped — there is
+    nothing to send to.
+    """
+    filter_dict: dict = {
+        "email": {"$nin": [None, ""]},
+        "$or": [
+            {"payload.marketing_opt_in": {"$regex": "^yes$", "$options": "i"}},
+            {"payload.marketing_opt_in": True},
+        ],
+    }
+    raw = await db[COLLECTION].distinct("email", filter_dict)
+    return sorted(e for e in raw if isinstance(e, str) and e)

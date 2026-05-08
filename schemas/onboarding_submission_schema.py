@@ -292,3 +292,10 @@ class OnboardingAcceptOut(BaseModel):
     tenant_id: str
     super_admin_user_id: str
     pending_field_keys: List[str] = Field(default_factory=list)
+
+
+class MarketingOptInEmailsOut(BaseModel):
+    """Deduplicated list of normalized emails for marketing-opt-in submissions."""
+
+    emails: List[str] = Field(default_factory=list)
+    total: int = 0
