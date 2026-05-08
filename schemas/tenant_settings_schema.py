@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pydantic import ConfigDict
+
 from schemas.imports import *
 
 
@@ -19,11 +21,26 @@ class SsoProvider(str, Enum):
     CUSTOM = "custom"
 
 
+class KYCProviderName(str, Enum):
+    """Available KYC providers. Plan tier gates whether the tenant can
+    actually use any of these — see ``services.kyc_service.kyc_available``.
+    """
+
+    DOJAH = "dojah"
+
+
 # --- Tenant Settings ---
 
 
 class TenantSettingsBase(BaseModel):
-    """Organization-level configuration managed by super_admin."""
+    """Organization-level configuration managed by super_admin.
+
+    Security policies (password rules, account lockout, session timeout,
+    2FA enforcement, IP allow-list) are NOT configured here — they are
+    owned by the platform admin via ``PlatformSettings`` and applied
+    uniformly to every tenant. Only operational policies that are
+    safe for a tenant to control live on this schema.
+    """
 
     tenant_id: str
 
@@ -35,18 +52,6 @@ class TenantSettingsBase(BaseModel):
     company_address: Optional[str] = None
     default_timezone: str = "Africa/Lagos"
     default_language: str = "en"
-
-    # Security Policies
-    enforce_totp: bool = False
-    password_min_length: int = 8
-    password_require_uppercase: bool = True
-    password_require_number: bool = True
-    password_require_special_char: bool = True
-    password_expiry_days: Optional[int] = None
-    max_failed_login_attempts: int = 5
-    lockout_duration_minutes: int = 30
-    session_timeout_minutes: int = 60
-    allowed_ip_ranges: Optional[List[str]] = None
 
     # Visitor Policies
     require_id_scan: bool = False
@@ -73,6 +78,17 @@ class TenantSettingsBase(BaseModel):
     geofencing_reference_lat: Optional[float] = None
     geofencing_reference_lng: Optional[float] = None
 
+    # KYC (identity verification at kiosk submit). Availability is
+    # plan-gated — see ``services.kyc_service.kyc_available_for_tenant``.
+    # Even when the plan grants access, ``kyc_required`` decides whether
+    # visitors can skip the widget. ``kyc_provider`` is the provider key
+    # passed to ``KYCManager.get_provider`` (currently only "dojah").
+    # ``kyc_methods`` is the ordered list of Dojah verification types
+    # the kiosk should request — empty means "use the provider default".
+    kyc_required: bool = False
+    kyc_provider: KYCProviderName = KYCProviderName.DOJAH
+    kyc_methods: List[str] = Field(default_factory=list)
+
     # Data Retention
     visitor_data_retention_days: int = 365
     audit_log_retention_days: int = 730
@@ -94,10 +110,6 @@ class TenantSettingsBase(BaseModel):
 
     @model_validator(mode="after")
     def validate_settings(self):
-        if self.password_min_length < 8:
-            raise ValueError("password_min_length must be at least 8")
-        if self.password_min_length > 128:
-            raise ValueError("password_min_length must be at most 128")
         if (
             self.visitor_badge_expiry == VisitorBadgeExpiry.HOURS
             and not self.visitor_badge_expiry_hours
@@ -130,7 +142,14 @@ class TenantSettingsCreate(TenantSettingsBase):
 
 
 class TenantSettingsUpdate(BaseModel):
-    """Partial update — all fields optional."""
+    """Partial update — all fields optional.
+
+    Any payload key not declared here is silently ignored by Pydantic, so
+    leftover security-policy fields the frontend may still be sending
+    (``password_min_length``, ``session_timeout_minutes``,
+    ``max_failed_login_attempts`` etc.) are dropped at the boundary
+    rather than persisted.
+    """
 
     # General
     company_name: Optional[str] = None
@@ -140,18 +159,6 @@ class TenantSettingsUpdate(BaseModel):
     company_address: Optional[str] = None
     default_timezone: Optional[str] = None
     default_language: Optional[str] = None
-
-    # Security Policies
-    enforce_totp: Optional[bool] = None
-    password_min_length: Optional[int] = None
-    password_require_uppercase: Optional[bool] = None
-    password_require_number: Optional[bool] = None
-    password_require_special_char: Optional[bool] = None
-    password_expiry_days: Optional[int] = None
-    max_failed_login_attempts: Optional[int] = None
-    lockout_duration_minutes: Optional[int] = None
-    session_timeout_minutes: Optional[int] = None
-    allowed_ip_ranges: Optional[List[str]] = None
 
     # Visitor Policies
     require_id_scan: Optional[bool] = None
@@ -167,6 +174,11 @@ class TenantSettingsUpdate(BaseModel):
     geofencing_radius_meters: Optional[int] = None
     geofencing_reference_lat: Optional[float] = None
     geofencing_reference_lng: Optional[float] = None
+
+    # KYC (see TenantSettingsBase docs).
+    kyc_required: Optional[bool] = None
+    kyc_provider: Optional[KYCProviderName] = None
+    kyc_methods: Optional[List[str]] = None
 
     # Data Retention
     visitor_data_retention_days: Optional[int] = None
@@ -187,13 +199,10 @@ class TenantSettingsUpdate(BaseModel):
 
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
+    model_config = ConfigDict(extra="ignore")
+
     @model_validator(mode="after")
     def validate_settings(self):
-        if self.password_min_length is not None:
-            if self.password_min_length < 8:
-                raise ValueError("password_min_length must be at least 8")
-            if self.password_min_length > 128:
-                raise ValueError("password_min_length must be at most 128")
         if self.geofencing_radius_meters is not None:
             if self.geofencing_radius_meters < 5 or self.geofencing_radius_meters > 5000:
                 raise ValueError(

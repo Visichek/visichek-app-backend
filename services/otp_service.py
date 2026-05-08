@@ -95,9 +95,20 @@ async def verify_otp_challenge(challenge_id: str, otp_code: str) -> dict:
 
 
 async def is_mfa_required(user_type: str, user_id: str) -> bool:
-    """Check whether a user must complete 2FA."""
+    """Check whether a user must complete 2FA.
+
+    The platform admin owns the rule (``enforce_totp_for_admins`` /
+    ``enforce_totp_for_tenant_users``); a tenant cannot opt itself in
+    or out. Tenant users may *additionally* enable 2FA on their own
+    account, in which case ``user.mfa_enabled`` triggers the prompt
+    even when platform enforcement is off.
+    """
+    from core.security_policy import get_security_policy
+
+    policy = await get_security_policy()
+
     if user_type == "admin":
-        return True
+        return policy.enforce_totp_for_admins
 
     from core.database import db
     from bson import ObjectId
@@ -108,6 +119,11 @@ async def is_mfa_required(user_type: str, user_id: str) -> bool:
         user = await db.system_users.find_one({"_id": user_id})
 
     if not user:
-        return False
+        # Platform-level enforcement still applies even if the user record
+        # is unexpectedly missing.
+        return policy.enforce_totp_for_tenant_users
+
+    if policy.enforce_totp_for_tenant_users:
+        return True
 
     return bool(user.get("mfa_enabled", False))

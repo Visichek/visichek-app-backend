@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+import time
+from typing import Any, Optional
+
+from pymongo import ReturnDocument
+
+from core.database import db
+from schemas.imports import KYCStatus
+from schemas.kyc_schema import (
+    KYCVerificationCreate,
+    KYCVerificationOut,
+    KYCVerificationUpdate,
+)
+
+VERIFICATION_COLLECTION = "kyc_verifications"
+WEBHOOK_EVENT_COLLECTION = "kyc_webhook_events"
+
+
+# ── Verification rows ────────────────────────────────────────────────
+
+async def create_kyc_verification(
+    payload: KYCVerificationCreate,
+) -> KYCVerificationOut:
+    doc = payload.model_dump()
+    doc["status"] = payload.status.value
+    result = await db[VERIFICATION_COLLECTION].insert_one(doc)
+    fetched = await db[VERIFICATION_COLLECTION].find_one(
+        {"_id": result.inserted_id}
+    )
+    return KYCVerificationOut(**fetched)
+
+
+async def get_kyc_verification(
+    filter_dict: dict,
+) -> Optional[KYCVerificationOut]:
+    doc = await db[VERIFICATION_COLLECTION].find_one(filter_dict)
+    if doc is None:
+        return None
+    return KYCVerificationOut(**doc)
+
+
+async def get_kyc_by_checkin(
+    checkin_id: str,
+) -> Optional[KYCVerificationOut]:
+    return await get_kyc_verification({"checkin_id": checkin_id})
+
+
+async def get_kyc_by_reference(
+    reference_id: str,
+) -> Optional[KYCVerificationOut]:
+    return await get_kyc_verification({"reference_id": reference_id})
+
+
+async def update_kyc_verification(
+    filter_dict: dict, data: KYCVerificationUpdate
+) -> Optional[KYCVerificationOut]:
+    update_dict = {
+        k: v for k, v in data.model_dump(exclude_none=True).items() if v is not None
+    }
+    if "status" in update_dict and isinstance(update_dict["status"], KYCStatus):
+        update_dict["status"] = update_dict["status"].value
+    doc = await db[VERIFICATION_COLLECTION].find_one_and_update(
+        filter_dict,
+        {"$set": update_dict},
+        return_document=ReturnDocument.AFTER,
+    )
+    if doc is None:
+        return None
+    return KYCVerificationOut(**doc)
+
+
+# ── Webhook idempotency ──────────────────────────────────────────────
+
+async def is_webhook_event_processed(
+    *, provider: str, event_id: str
+) -> bool:
+    """Idempotency check.
+
+    The unique sparse index on ``event_id`` already enforces this at the
+    database level — but a cheap pre-check avoids round-tripping a full
+    insert on duplicate webhook deliveries.
+    """
+    doc = await db[WEBHOOK_EVENT_COLLECTION].find_one(
+        {"provider": provider, "event_id": event_id}
+    )
+    return doc is not None
+
+
+async def record_webhook_event(
+    *,
+    provider: str,
+    event_id: str,
+    event_type: str,
+    reference_id: Optional[str],
+    raw_payload: dict[str, Any],
+    signature_valid: bool,
+    processing_status: str,
+    error: Optional[str] = None,
+) -> Optional[str]:
+    """Insert the audit row. Returns the new id, or ``None`` on
+    duplicate (the ``event_id`` unique index will reject the second
+    write — that's a feature, not a bug).
+    """
+    try:
+        result = await db[WEBHOOK_EVENT_COLLECTION].insert_one(
+            {
+                "provider": provider,
+                "event_id": event_id,
+                "event_type": event_type,
+                "reference_id": reference_id,
+                "raw_payload": raw_payload,
+                "signature_valid": signature_valid,
+                "processing_status": processing_status,
+                "error": error,
+                "received_at": int(time.time()),
+            }
+        )
+        return str(result.inserted_id)
+    except Exception:
+        return None

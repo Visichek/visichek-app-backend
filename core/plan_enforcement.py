@@ -57,6 +57,11 @@ EXEMPT_PATH_PREFIXES = (
     # under /v1/tenants/onboarding are already covered by the admin role
     # short-circuit in the middleware.
     "/v1/onboarding/",
+    # KYC routes are public-facing (kiosk + webhook). Per-tenant
+    # availability is checked inside ``services.kyc_service`` against
+    # the plan's feature_rules — we don't need (and shouldn't have)
+    # the middleware blocking the kiosk before it can decide.
+    "/v1/kyc/",
 )
 
 # Map HTTP methods to operation types for quota checking

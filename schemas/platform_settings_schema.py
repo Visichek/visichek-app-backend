@@ -16,7 +16,13 @@ class SmtpEncryption(str, Enum):
 
 
 class PlatformSettingsBase(BaseModel):
-    """Global platform configuration managed by application admins."""
+    """Global platform configuration managed by application admins.
+
+    Security policies (password rules, account lockout, session timeout,
+    2FA enforcement) live here and apply uniformly to every account on
+    the platform — admins, tenant super_admins, and all tenant users.
+    Tenants cannot override these.
+    """
 
     # General
     platform_name: str = "VisiChek"
@@ -24,10 +30,28 @@ class PlatformSettingsBase(BaseModel):
     support_phone: Optional[str] = None
     platform_url: Optional[str] = None
 
-    # Security
-    admin_enforce_totp: bool = False
-    admin_session_timeout_minutes: int = 30
-    admin_password_min_length: int = 12
+    # Password Policy (platform-wide)
+    password_min_length: int = 8
+    password_max_length: int = 128
+    password_require_uppercase: bool = True
+    password_require_lowercase: bool = True
+    password_require_number: bool = True
+    password_require_special_char: bool = True
+    password_expiry_days: Optional[int] = None
+    password_history_count: int = 5
+
+    # Account Lockout (platform-wide)
+    max_failed_login_attempts: int = 5
+    lockout_duration_minutes: int = 15
+
+    # Session (platform-wide)
+    session_timeout_minutes: int = 60
+
+    # Two-Factor Authentication (platform-wide)
+    enforce_totp_for_admins: bool = True
+    enforce_totp_for_tenant_users: bool = False
+
+    # Admin Account Limits
     max_admin_accounts: Optional[int] = None
 
     # Tenant Defaults
@@ -58,6 +82,31 @@ class PlatformSettingsBase(BaseModel):
     global_rate_limit_per_minute: int = 80
     global_rate_limit_burst: int = 20
 
+    @model_validator(mode="after")
+    def validate_security_settings(self):
+        if self.password_min_length < 8:
+            raise ValueError("password_min_length must be at least 8")
+        if self.password_min_length > self.password_max_length:
+            raise ValueError(
+                "password_min_length cannot exceed password_max_length"
+            )
+        if self.password_max_length > 256:
+            raise ValueError("password_max_length must be at most 256")
+        if self.password_history_count < 0 or self.password_history_count > 24:
+            raise ValueError("password_history_count must be between 0 and 24")
+        if self.max_failed_login_attempts < 1:
+            raise ValueError("max_failed_login_attempts must be at least 1")
+        if self.lockout_duration_minutes < 1:
+            raise ValueError("lockout_duration_minutes must be at least 1")
+        if self.session_timeout_minutes < 5:
+            raise ValueError("session_timeout_minutes must be at least 5")
+        if (
+            self.password_expiry_days is not None
+            and self.password_expiry_days < 1
+        ):
+            raise ValueError("password_expiry_days must be at least 1 if set")
+        return self
+
 
 class PlatformSettingsCreate(PlatformSettingsBase):
     """Internal creation schema."""
@@ -75,10 +124,28 @@ class PlatformSettingsUpdate(BaseModel):
     support_phone: Optional[str] = None
     platform_url: Optional[str] = None
 
-    # Security
-    admin_enforce_totp: Optional[bool] = None
-    admin_session_timeout_minutes: Optional[int] = None
-    admin_password_min_length: Optional[int] = None
+    # Password Policy
+    password_min_length: Optional[int] = None
+    password_max_length: Optional[int] = None
+    password_require_uppercase: Optional[bool] = None
+    password_require_lowercase: Optional[bool] = None
+    password_require_number: Optional[bool] = None
+    password_require_special_char: Optional[bool] = None
+    password_expiry_days: Optional[int] = None
+    password_history_count: Optional[int] = None
+
+    # Account Lockout
+    max_failed_login_attempts: Optional[int] = None
+    lockout_duration_minutes: Optional[int] = None
+
+    # Session
+    session_timeout_minutes: Optional[int] = None
+
+    # Two-Factor Authentication
+    enforce_totp_for_admins: Optional[bool] = None
+    enforce_totp_for_tenant_users: Optional[bool] = None
+
+    # Admin Account Limits
     max_admin_accounts: Optional[int] = None
 
     # Tenant Defaults
@@ -107,6 +174,52 @@ class PlatformSettingsUpdate(BaseModel):
     global_rate_limit_burst: Optional[int] = None
 
     last_updated: int = Field(default_factory=lambda: int(time.time()))
+
+    @model_validator(mode="after")
+    def validate_security_updates(self):
+        if (
+            self.password_min_length is not None
+            and self.password_min_length < 8
+        ):
+            raise ValueError("password_min_length must be at least 8")
+        if (
+            self.password_max_length is not None
+            and self.password_max_length > 256
+        ):
+            raise ValueError("password_max_length must be at most 256")
+        if (
+            self.password_min_length is not None
+            and self.password_max_length is not None
+            and self.password_min_length > self.password_max_length
+        ):
+            raise ValueError(
+                "password_min_length cannot exceed password_max_length"
+            )
+        if self.password_history_count is not None and (
+            self.password_history_count < 0 or self.password_history_count > 24
+        ):
+            raise ValueError("password_history_count must be between 0 and 24")
+        if (
+            self.max_failed_login_attempts is not None
+            and self.max_failed_login_attempts < 1
+        ):
+            raise ValueError("max_failed_login_attempts must be at least 1")
+        if (
+            self.lockout_duration_minutes is not None
+            and self.lockout_duration_minutes < 1
+        ):
+            raise ValueError("lockout_duration_minutes must be at least 1")
+        if (
+            self.session_timeout_minutes is not None
+            and self.session_timeout_minutes < 5
+        ):
+            raise ValueError("session_timeout_minutes must be at least 5")
+        if (
+            self.password_expiry_days is not None
+            and self.password_expiry_days < 1
+        ):
+            raise ValueError("password_expiry_days must be at least 1 if set")
+        return self
 
 
 class PlatformSettingsOut(PlatformSettingsBase):

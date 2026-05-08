@@ -114,11 +114,14 @@ async def add_user(user_data: UserCreate) -> UserOut:
 
 
 async def authenticate_user(login_data: UserLogin) -> UserOut:
+    from core.security_policy import get_security_policy
     from security.password_policy import (
         check_login_lockout,
         record_failed_login,
         clear_failed_logins,
     )
+
+    policy = await get_security_policy()
 
     # Check lockout before anything else
     lockout = await check_login_lockout(login_data.email)
@@ -142,11 +145,14 @@ async def authenticate_user(login_data: UserLogin) -> UserOut:
             user.refresh_token = refresh_token
             return user
         else:
-            lockout_status = await record_failed_login(login_data.email)
+            lockout_status = await record_failed_login(login_data.email, policy=policy)
             if lockout_status.get("locked"):
                 raise HTTPException(
                     status_code=429,
-                    detail="Too many failed login attempts. Account is temporarily locked for 15 minutes.",
+                    detail=(
+                        "Too many failed login attempts. Account is temporarily "
+                        f"locked for {policy.lockout_duration_minutes} minute(s)."
+                    ),
                 )
             remaining = lockout_status.get("attempts_remaining", "?")
             raise HTTPException(

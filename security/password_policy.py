@@ -7,10 +7,17 @@ Provides:
 - Account lockout after failed login attempts
 - Password history to prevent reuse
 
-Usage in schemas:
+The numeric thresholds (length, lockout count, lockout duration, history
+depth) are pulled from ``core.security_policy`` which mirrors the
+platform-settings singleton. Module-level constants below are kept as
+the *fallback floor* used by Pydantic schema validators when the cache
+has not been primed yet.
+
+Usage in schemas (sync — uses cached or default policy):
     from security.password_policy import validate_password_strength
 
-Usage in services:
+Usage in services (async — passes a freshly-loaded policy):
+    from core.security_policy import get_security_policy
     from security.password_policy import (
         check_login_lockout,
         record_failed_login,
@@ -28,23 +35,21 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
+from core.security_policy import SecurityPolicy, get_security_policy_sync
+
 # ---------------------------------------------------------------------------
-# Configuration constants
+# Default / floor constants — kept in sync with SecurityPolicy() defaults
 # ---------------------------------------------------------------------------
 
 MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 128
-REQUIRE_UPPERCASE = True
-REQUIRE_LOWERCASE = True
-REQUIRE_DIGIT = True
-REQUIRE_SPECIAL = True
 SPECIAL_CHARS = r"""!@#$%^&*()_+-=[]{}|;':",./<>?`~"""
 
-# Account lockout settings
+# Account lockout defaults (overridden by platform settings)
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 15 * 60  # 15 minutes
 
-# Password history settings
+# Password history default (overridden by platform settings)
 PASSWORD_HISTORY_COUNT = 5  # Prevent reusing last N passwords
 
 # ---------------------------------------------------------------------------
@@ -327,47 +332,52 @@ class PasswordStrengthResult(BaseModel):
     score: int  # 0-5 strength score
 
 
-def validate_password_strength(password: str) -> PasswordStrengthResult:
-    """
-    Validate a password against security policy rules.
+def validate_password_strength(
+    password: str, policy: Optional[SecurityPolicy] = None
+) -> PasswordStrengthResult:
+    """Validate a password against the platform-configured policy.
 
-    Returns a PasswordStrengthResult with is_valid=True if all rules pass,
-    or is_valid=False with a list of specific error messages.
+    ``policy`` is the platform's current ``SecurityPolicy`` snapshot. When
+    omitted, the cached snapshot from ``get_security_policy_sync()`` is
+    used so synchronous Pydantic validators stay synchronous; the cache
+    is primed at startup and refreshed whenever platform settings are
+    updated.
     """
+    p = policy or get_security_policy_sync()
     errors: List[str] = []
     score = 0
 
     # Length check
-    if len(password) < MIN_PASSWORD_LENGTH:
+    if len(password) < p.password_min_length:
         errors.append(
-            f"Password must be at least {MIN_PASSWORD_LENGTH} characters long"
+            f"Password must be at least {p.password_min_length} characters long"
         )
     elif len(password) >= 12:
         score += 1  # Bonus for longer passwords
 
-    if len(password) > MAX_PASSWORD_LENGTH:
-        errors.append(f"Password must not exceed {MAX_PASSWORD_LENGTH} characters")
+    if len(password) > p.password_max_length:
+        errors.append(f"Password must not exceed {p.password_max_length} characters")
 
     # Uppercase check
-    if REQUIRE_UPPERCASE and not re.search(r"[A-Z]", password):
+    if p.password_require_uppercase and not re.search(r"[A-Z]", password):
         errors.append("Password must contain at least one uppercase letter")
     else:
         score += 1
 
     # Lowercase check
-    if REQUIRE_LOWERCASE and not re.search(r"[a-z]", password):
+    if p.password_require_lowercase and not re.search(r"[a-z]", password):
         errors.append("Password must contain at least one lowercase letter")
     else:
         score += 1
 
     # Digit check
-    if REQUIRE_DIGIT and not re.search(r"\d", password):
+    if p.password_require_number and not re.search(r"\d", password):
         errors.append("Password must contain at least one digit")
     else:
         score += 1
 
     # Special character check
-    if REQUIRE_SPECIAL and not re.search(
+    if p.password_require_special_char and not re.search(
         r"[!@#$%^&*()\-_+=\[\]{}|;':\",./<>?`~]", password
     ):
         errors.append("Password must contain at least one special character")
@@ -426,15 +436,20 @@ def _has_repeated_chars(password: str, count: int) -> bool:
 # ---------------------------------------------------------------------------
 
 
+async def _resolve_policy(policy: Optional[SecurityPolicy]) -> SecurityPolicy:
+    if policy is not None:
+        return policy
+    from core.security_policy import get_security_policy
+
+    return await get_security_policy()
+
+
 async def check_login_lockout(identifier: str) -> Optional[dict]:
-    """
-    Check if an account is currently locked out due to failed login attempts.
+    """Check if an account is currently locked out due to failed login attempts.
 
-    Args:
-        identifier: email or user_id to check
-
-    Returns:
-        None if not locked out, or dict with lockout details
+    The lockout state is stored on the ``login_attempts`` record itself, so
+    no policy lookup is needed here — the policy only matters when *recording*
+    a failure (where the threshold and duration are applied).
     """
     from core.database import db
 
@@ -463,17 +478,15 @@ async def check_login_lockout(identifier: str) -> Optional[dict]:
     return None
 
 
-async def record_failed_login(identifier: str) -> dict:
-    """
-    Record a failed login attempt. Returns lockout status after recording.
-
-    Args:
-        identifier: email or user_id
-
-    Returns:
-        dict with failed_count and locked status
-    """
+async def record_failed_login(
+    identifier: str, policy: Optional[SecurityPolicy] = None
+) -> dict:
+    """Record a failed login attempt. Returns lockout status after recording."""
     from core.database import db
+
+    p = await _resolve_policy(policy)
+    max_attempts = p.max_failed_login_attempts
+    lockout_seconds = p.lockout_duration_minutes * 60
 
     now = int(time.time())
 
@@ -491,8 +504,8 @@ async def record_failed_login(identifier: str) -> dict:
     failed_count = result.get("failed_count", 1) if result else 1
 
     # Check if we should lock the account
-    if failed_count >= MAX_FAILED_ATTEMPTS:
-        locked_until = now + LOCKOUT_DURATION_SECONDS
+    if failed_count >= max_attempts:
+        locked_until = now + lockout_seconds
         await db["login_attempts"].update_one(
             {"identifier": identifier},
             {"$set": {"locked_until": locked_until}},
@@ -501,13 +514,13 @@ async def record_failed_login(identifier: str) -> dict:
             "locked": True,
             "failed_count": failed_count,
             "locked_until": locked_until,
-            "remaining_seconds": LOCKOUT_DURATION_SECONDS,
+            "remaining_seconds": lockout_seconds,
         }
 
     return {
         "locked": False,
         "failed_count": failed_count,
-        "attempts_remaining": MAX_FAILED_ATTEMPTS - failed_count,
+        "attempts_remaining": max_attempts - failed_count,
     }
 
 
@@ -527,20 +540,22 @@ async def check_password_history(
     user_id: str,
     new_password: str,
     role: str = "admin",
+    history_count: Optional[int] = None,
 ) -> bool:
-    """
-    Check if the new password was recently used.
+    """Check if the new password was recently used.
 
-    Args:
-        user_id: The user's ID
-        new_password: The plaintext new password to check
-        role: User role (for namespacing history records)
-
-    Returns:
-        True if the password is safe (not in history), False if reused
+    Returns True if the password is safe (not in history), False if reused.
+    ``history_count`` defaults to the platform-configured value when omitted.
     """
     from core.database import db
     from security.hash import check_password
+
+    if history_count is None:
+        policy = await _resolve_policy(None)
+        history_count = policy.password_history_count
+
+    if history_count <= 0:
+        return True
 
     cursor = (
         db["password_history"]
@@ -548,10 +563,10 @@ async def check_password_history(
             {"user_id": user_id, "role": role},
         )
         .sort("changed_at", -1)
-        .limit(PASSWORD_HISTORY_COUNT)
+        .limit(history_count)
     )
 
-    records = await cursor.to_list(length=PASSWORD_HISTORY_COUNT)
+    records = await cursor.to_list(length=history_count)
 
     for record in records:
         old_hash = record.get("password_hash", "")
@@ -565,13 +580,17 @@ async def record_password_in_history(
     user_id: str,
     password_hash: str | bytes,
     role: str = "admin",
+    history_count: Optional[int] = None,
 ) -> None:
-    """
-    Record a password hash in the user's history.
+    """Record a password hash in the user's history.
 
-    Keeps only the last PASSWORD_HISTORY_COUNT entries.
+    Keeps only the last ``history_count`` entries (default: platform policy).
     """
     from core.database import db
+
+    if history_count is None:
+        policy = await _resolve_policy(None)
+        history_count = policy.password_history_count
 
     now = int(time.time())
 
@@ -589,17 +608,20 @@ async def record_password_in_history(
     )
 
     # Prune old entries beyond the history limit
+    if history_count <= 0:
+        return
+
     count = await db["password_history"].count_documents(
         {"user_id": user_id, "role": role}
     )
-    if count > PASSWORD_HISTORY_COUNT:
+    if count > history_count:
         oldest = (
             db["password_history"]
             .find(
                 {"user_id": user_id, "role": role},
             )
             .sort("changed_at", 1)
-            .limit(count - PASSWORD_HISTORY_COUNT)
+            .limit(count - history_count)
         )
 
         old_ids = [doc["_id"] async for doc in oldest]

@@ -53,3 +53,6 @@ from services import compliance_writer as _compliance_writer  # noqa: F401
 # decorators; the writer module below registers the write handlers.
 from services import support_case_service as _support_case_service  # noqa: F401
 from services import support_case_writer as _support_case_writer  # noqa: F401
+
+# Cluster 8 — visitor check-in v2: tenant enums + KYC feed-throughs
+from services import tenant_enum_writer as _tenant_enum_writer  # noqa: F401

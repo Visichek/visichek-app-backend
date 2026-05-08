@@ -294,7 +294,7 @@ async def _upsert_visitor_profile_from_submit(
 async def submit_verified_checkin(
     *,
     checkin_config_id: str,
-    email: str,
+    email: Optional[str],
     phone: str,
     bio_data: dict,
     tenant_specific_data: dict,
@@ -304,6 +304,7 @@ async def submit_verified_checkin(
     id_type: Optional[IDType] = None,
     visitor_lat: Optional[float] = None,
     visitor_lng: Optional[float] = None,
+    kyc_reference_id: Optional[str] = None,
 ) -> CheckinOut:
     """Single-step check-in that optionally runs ID verification.
 
@@ -338,6 +339,7 @@ async def submit_verified_checkin(
         id_type=id_type,
         visitor_lat=visitor_lat,
         visitor_lng=visitor_lng,
+        kyc_reference_id=kyc_reference_id,
     )
 
 
@@ -486,7 +488,7 @@ async def submit_returning_visitor_checkin_by_id(
 async def submit_verified_checkin_for_tenant(
     *,
     tenant_id: str,
-    email: str,
+    email: Optional[str],
     phone: str,
     bio_data: dict,
     tenant_specific_data: dict,
@@ -496,6 +498,7 @@ async def submit_verified_checkin_for_tenant(
     id_type: Optional[IDType] = None,
     visitor_lat: Optional[float] = None,
     visitor_lng: Optional[float] = None,
+    kyc_reference_id: Optional[str] = None,
 ) -> CheckinOut:
     """Tenant-scoped submit. Resolves the tenant's active config, or falls back
     to the default required-field set when the tenant hasn't configured one yet.
@@ -540,6 +543,7 @@ async def submit_verified_checkin_for_tenant(
         id_type=id_type,
         visitor_lat=visitor_lat,
         visitor_lng=visitor_lng,
+        kyc_reference_id=kyc_reference_id,
     )
 
 
@@ -548,7 +552,7 @@ async def _submit_verified_checkin_core(
     tenant_id: str,
     checkin_config_id: str,
     required_field_keys: set[str],
-    email: str,
+    email: Optional[str],
     phone: str,
     bio_data: dict,
     tenant_specific_data: dict,
@@ -558,15 +562,26 @@ async def _submit_verified_checkin_core(
     id_type: Optional[IDType] = None,
     visitor_lat: Optional[float] = None,
     visitor_lng: Optional[float] = None,
+    kyc_reference_id: Optional[str] = None,
 ) -> CheckinOut:
     from repositories.visitor_repo import find_visitor_by_email_or_phone_any
     from schemas.visitor_schema import VisitorCreate
 
-    if not email or not phone:
+    # Phone is the visitor identity key — required system-wide.
+    # Email is optional (tenants can flip it to required on their config,
+    # which is enforced via ``required_field_keys`` below).
+    if not phone:
         raise AppException(
             status_code=400,
             code=ErrorCode.VALIDATION_FAILED,
-            message="email and phone are required",
+            message="phone is required",
+        )
+    full_name_in = str(bio_data.get("full_name") or "").strip()
+    if not full_name_in:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="full_name is required",
         )
 
     if id_file_bytes and not id_type:
@@ -595,7 +610,7 @@ async def _submit_verified_checkin_core(
                 file_bytes=id_file_bytes,
                 mime_type=id_file_mime or "application/octet-stream",
                 id_type=id_type,
-                email=email,
+                email=email or "",
                 phone=phone,
             )
         except AppException:
@@ -630,7 +645,7 @@ async def _submit_verified_checkin_core(
                 full_name=str(merged_bio_data.get("full_name") or existing.full_name),
                 bio_data=merged_bio_data,
             )
-            if not existing.email:
+            if email and not existing.email:
                 update_payload.email = email
             if not existing.phone:
                 update_payload.phone = phone
@@ -714,7 +729,31 @@ async def _submit_verified_checkin_core(
         if hash_record is not None:
             id_extraction_id = hash_record.extraction_id
 
-    # 5. Create check-in
+    # 5. KYC routing decision.
+    #
+    # If the tenant's plan grants Dojah KYC and the provider is
+    # configured, the check-in starts in PENDING_KYC — invisible to the
+    # receptionist queue until the kiosk completes (or skips) the
+    # widget. ``kyc_reference_id`` is a kiosk-supplied opt-in: if the
+    # kiosk has already pre-run the widget before submit, we trust it
+    # and short-circuit to PENDING_APPROVAL with verified=True. The
+    # webhook still validates and persists the verification record
+    # asynchronously.
+    from services.kyc_service import kyc_available_for_tenant
+
+    kyc_available, _kyc_required, _kyc_provider = await kyc_available_for_tenant(
+        tenant_id
+    )
+    visitor_verified = visitor.verified
+    if kyc_reference_id:
+        initial_state = CheckinState.PENDING_APPROVAL
+        visitor_verified = True
+    elif kyc_available:
+        initial_state = CheckinState.PENDING_KYC
+    else:
+        initial_state = CheckinState.PENDING_APPROVAL
+
+    # 6. Create check-in
     create_data = CheckinCreate(
         tenant_id=tenant_id,
         visitor_id=visitor_id,
@@ -722,27 +761,68 @@ async def _submit_verified_checkin_core(
         id_extraction_id=id_extraction_id,
         tenant_specific_data=tenant_specific_data,
         purpose=purpose,
-        state=CheckinState.PENDING_APPROVAL,
-        verified=visitor.verified,
+        state=initial_state,
+        verified=visitor_verified,
     )
     checkin = await create_checkin(create_data)
 
-    # 6. Fire notification (fire-and-forget — never fail the check-in on notify errors)
-    try:
-        from services.notification_service import notify_checkin_pending_approval
+    # If the visitor came in with a pre-run KYC reference, link the
+    # verification record so the webhook lands on the correct check-in.
+    if kyc_reference_id and checkin.id:
+        try:
+            from repositories.kyc_repo import (
+                get_kyc_by_reference,
+                update_kyc_verification,
+            )
+            from schemas.kyc_schema import KYCVerificationCreate
+            from repositories.kyc_repo import create_kyc_verification
 
-        await notify_checkin_pending_approval(
-            tenant_id=tenant_id,
-            checkin_id=checkin.id or "",
-            visitor_name=visitor.full_name,
-            verified=visitor.verified,
-            purpose=purpose.purpose,
-            host_employee_id="",
-        )
-    except Exception as e:
-        import logging
+            kyc_existing = await get_kyc_by_reference(kyc_reference_id)
+            if kyc_existing is None:
+                await create_kyc_verification(
+                    KYCVerificationCreate(
+                        tenant_id=tenant_id,
+                        checkin_id=checkin.id,
+                        visitor_id=visitor_id,
+                        provider="dojah",
+                        reference_id=kyc_reference_id,
+                        status=__import__(
+                            "schemas.imports", fromlist=["KYCStatus"]
+                        ).KYCStatus.ONGOING,
+                    )
+                )
+            else:
+                await update_kyc_verification(
+                    {"reference_id": kyc_reference_id},
+                    __import__(
+                        "schemas.kyc_schema", fromlist=["KYCVerificationUpdate"]
+                    ).KYCVerificationUpdate(),
+                )
+        except Exception:
+            logger.warning(
+                "kyc_reference_id link failed checkin=%s ref=%s",
+                checkin.id,
+                kyc_reference_id,
+                exc_info=True,
+            )
 
-        logging.warning(f"Failed to send checkin notification: {e}")
+    # 7. Fire receptionist notification (only when the check-in is
+    # actually in the queue — PENDING_KYC waits for KYC to complete /
+    # be skipped before notifying).
+    if initial_state == CheckinState.PENDING_APPROVAL:
+        try:
+            from services.notification_service import notify_checkin_pending_approval
+
+            await notify_checkin_pending_approval(
+                tenant_id=tenant_id,
+                checkin_id=checkin.id or "",
+                visitor_name=visitor.full_name,
+                verified=visitor_verified,
+                purpose=purpose.purpose,
+                host_employee_id="",
+            )
+        except Exception as e:
+            logger.warning("Failed to send checkin notification: %s", e)
 
     return checkin
 
@@ -805,6 +885,18 @@ async def submit_checkin(
             details={"existing_checkin_id": existing.id},
         )
 
+    # KYC routing — see ``_submit_verified_checkin_core`` for the full
+    # rationale. Tenants with KYC available park new check-ins in
+    # PENDING_KYC until the kiosk completes / skips the widget.
+    from services.kyc_service import kyc_available_for_tenant
+
+    kyc_available, _kyc_required, _kyc_provider = await kyc_available_for_tenant(
+        tenant_id
+    )
+    initial_state = (
+        CheckinState.PENDING_KYC if kyc_available else CheckinState.PENDING_APPROVAL
+    )
+
     # Create checkin
     create_data = CheckinCreate(
         tenant_id=tenant_id,
@@ -813,27 +905,26 @@ async def submit_checkin(
         id_extraction_id=req.id_extraction_id,
         tenant_specific_data=req.tenant_specific_data,
         purpose=req.purpose,
-        state=CheckinState.PENDING_APPROVAL,
+        state=initial_state,
         verified=visitor.verified,
     )
     checkin = await create_checkin(create_data)
 
-    # Fire notification
-    try:
-        from services.notification_service import notify_checkin_pending_approval
+    # Notify approvers only when the check-in is queue-visible.
+    if initial_state == CheckinState.PENDING_APPROVAL:
+        try:
+            from services.notification_service import notify_checkin_pending_approval
 
-        await notify_checkin_pending_approval(
-            tenant_id=tenant_id,
-            checkin_id=checkin.id or "",
-            visitor_name=visitor.full_name,
-            verified=visitor.verified,
-            purpose=req.purpose.purpose,
-            host_employee_id="",  # TODO: extract from context if available
-        )
-    except Exception as e:
-        import logging
-
-        logging.warning(f"Failed to send checkin notification: {e}")
+            await notify_checkin_pending_approval(
+                tenant_id=tenant_id,
+                checkin_id=checkin.id or "",
+                visitor_name=visitor.full_name,
+                verified=visitor.verified,
+                purpose=req.purpose.purpose,
+                host_employee_id="",
+            )
+        except Exception as e:
+            logger.warning("Failed to send checkin notification: %s", e)
 
     return checkin
 

@@ -78,11 +78,18 @@ def create_jwt_token(
 
 
 async def create_jwt_role_token(token: str, user_id: str, role: str) -> str:
+    # Session timeout is owned by the platform admin and applied to every
+    # role uniformly. We refresh the cache each issuance so a settings
+    # change rolls out within the cache TTL window.
+    from core.security_policy import get_security_policy
+
+    policy = await get_security_policy()
     payload = {
         "accessToken": token,
         "role": role,
         "userId": user_id,
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+        "exp": datetime.now(timezone.utc)
+        + timedelta(minutes=policy.session_timeout_minutes),
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 

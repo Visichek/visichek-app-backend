@@ -234,12 +234,15 @@ async def authenticate_system_user(
     * ``{"otp_required": True, "otp_challenge_id": ...}``
     * ``{"tenant_selection_required": True, "selection_token": ..., "tenants": [...]}``
     """
+    from core.security_policy import get_security_policy
     from security.password_policy import (
         check_login_lockout,
         record_failed_login,
         clear_failed_logins,
     )
     from core.database import db
+
+    policy = await get_security_policy()
 
     # Lockout is keyed by email so it applies regardless of how many tenants
     # share the address. An attacker can't rotate tenants to bypass it.
@@ -275,13 +278,14 @@ async def authenticate_system_user(
     ]
 
     if not matched_raw:
-        lockout_status = await record_failed_login(login_data.email)
+        lockout_status = await record_failed_login(login_data.email, policy=policy)
         if lockout_status.get("locked"):
             raise HTTPException(
                 status_code=429,
                 detail=(
                     "Too many failed login attempts. "
-                    "Account is temporarily locked for 15 minutes."
+                    "Account is temporarily locked for "
+                    f"{policy.lockout_duration_minutes} minute(s)."
                 ),
             )
         remaining = lockout_status.get("attempts_remaining", "?")

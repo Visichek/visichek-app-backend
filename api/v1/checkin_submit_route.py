@@ -37,11 +37,19 @@ def _parse_json_dict(raw: str, field_name: str) -> dict:
     message="Check-in submitted",
     status_code=status.HTTP_201_CREATED,
     description=(
-        "Public kiosk endpoint. Combines ID verification with check-in submission "
-        "in a single multipart request. If `id_file` is uploaded, OCR + face "
-        "verification run and the visitor is marked verified. If verification "
-        "fails, the caller receives 422 with guidance to either retry with a "
-        "clearer ID or resubmit without the file (manual entry fallback)."
+        "Public kiosk endpoint. Combines optional ID verification with "
+        "check-in submission in a single multipart request.\n\n"
+        "**Required fields**: ``phone`` (visitor identity key) and "
+        "``full_name`` (passed via ``bio_data`` JSON, or as a top-level "
+        "form field). Email is optional; everything else (purpose, "
+        "company, etc.) follows the tenant's CheckinConfig and is "
+        "submitted via ``bio_data`` / ``tenant_specific_data``.\n\n"
+        "If ``id_file`` is uploaded, OCR runs and the visitor is marked "
+        "verified. If OCR fails the caller receives 422 with guidance "
+        "to retry with a clearer photo or resubmit without the file "
+        "(manual-entry fallback). For full Dojah KYC, use the kiosk "
+        "widget flow described in ``backend-docs/visitor-checkin-v2.md`` "
+        "and submit ``kyc_reference_id`` instead of an ``id_file``."
     ),
     summary="Submit check-in (optional ID verification)",
     response_codes={
@@ -53,13 +61,31 @@ def _parse_json_dict(raw: str, field_name: str) -> dict:
 )
 async def submit_checkin_endpoint(
     checkin_config_id: str,
-    email: str = Form(...),
-    phone: str = Form(...),
-    purpose: str = Form(..., description="JSON object"),
-    bio_data: str = Form("{}", description="JSON object — fields from the ID"),
+    phone: str = Form(..., description="Visitor phone — required identity key."),
+    full_name: Optional[str] = Form(
+        None,
+        description=(
+            "Visitor full name. Required by the system at submission time, "
+            "but may also be carried inside the ``bio_data`` JSON object — "
+            "either source satisfies the requirement."
+        ),
+    ),
+    email: Optional[str] = Form(
+        None, description="Optional. May be omitted entirely."
+    ),
+    purpose: str = Form(..., description="JSON object: { purpose, ... }"),
+    bio_data: str = Form("{}", description="JSON object — bio fields"),
     tenant_specific_data: str = Form("{}", description="JSON object"),
     id_type: Optional[IDType] = Form(None),
     id_file: Optional[UploadFile] = File(None),
+    kyc_reference_id: Optional[str] = Form(
+        None,
+        description=(
+            "Dojah verification reference returned by the kiosk widget. "
+            "When supplied the backend skips OCR and trusts the Dojah "
+            "result (subject to plan + tenant settings allowing KYC)."
+        ),
+    ),
 ) -> CheckinOut:
     bio_dict = _parse_json_dict(bio_data, "bio_data")
     tsd_dict = _parse_json_dict(tenant_specific_data, "tenant_specific_data")
@@ -73,6 +99,16 @@ async def submit_checkin_endpoint(
             code=ErrorCode.VALIDATION_FAILED,
             message=f"purpose is invalid: {exc}",
         ) from exc
+
+    # full_name may arrive top-level or in bio_data — either works.
+    resolved_name = full_name or str(bio_dict.get("full_name") or "").strip()
+    if not resolved_name:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="full_name is required (top-level or inside bio_data)",
+        )
+    bio_dict.setdefault("full_name", resolved_name)
 
     file_bytes: Optional[bytes] = None
     file_mime: Optional[str] = None
@@ -96,4 +132,5 @@ async def submit_checkin_endpoint(
         id_file_bytes=file_bytes,
         id_file_mime=file_mime,
         id_type=id_type,
+        kyc_reference_id=kyc_reference_id,
     )

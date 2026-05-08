@@ -40,6 +40,20 @@ async def update_platform_settings_data(
             status_code=500, detail="Failed to update platform settings"
         )
 
+    # Drop the cached security policy so the next read pulls the new
+    # values. Without this, password validation, lockout thresholds,
+    # session-timeout, and 2FA enforcement would lag by up to one cache TTL.
+    try:
+        from core.security_policy import (
+            get_security_policy,
+            invalidate_security_policy_cache,
+        )
+
+        invalidate_security_policy_cache()
+        await get_security_policy(force_refresh=True)
+    except Exception:
+        pass
+
     # Record audit event (fire-and-forget)
     try:
         changed_fields = data.model_dump(exclude_none=True)

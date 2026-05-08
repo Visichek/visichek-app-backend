@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from bson import ObjectId
-from typing import Any
+from typing import Any, Optional
 
 from core.database import db
 from security.principal import AuthPrincipal, TENANT_USER_ROLES
@@ -96,40 +96,48 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
                 "mfa_locked_by_admin": doc.get("mfa_locked_by_admin", False),
             }
 
-    # ── Check tenant-level 2FA enforcement ──────────────────────────
-    tenant_enforces_totp = False
+    # ── 2FA enforcement is platform-wide ────────────────────────────
+    # Tenants no longer toggle 2FA enforcement; it lives on
+    # ``PlatformSettings``. The legacy ``tenant.mfa_default_for_users`` flag
+    # is still honored as a tenant-level *override* if set, but the platform
+    # admin's policy is the source of truth for whether disabling is allowed.
+    from core.security_policy import get_security_policy
+
+    policy = await get_security_policy()
+
+    tenant_legacy_default_mfa = False
     if principal.tenant_id:
         tenant = await db.tenant_companies.find_one(
             {"_id": ObjectId(principal.tenant_id)}
         )
         if tenant:
-            tenant_enforces_totp = tenant.get("mfa_default_for_users", False)
-            tenant.get("mfa_user_override_allowed", True)
-
-        # Also check tenant_settings collection
-        ts = await db["tenant_settings"].find_one({"tenant_id": principal.tenant_id})
-        if ts and ts.get("enforce_totp"):
-            tenant_enforces_totp = True
+            tenant_legacy_default_mfa = tenant.get("mfa_default_for_users", False)
 
     # ── 2FA enforcement logic ───────────────────────────────────────
     mfa_required = False
     mfa_can_disable = True
+    enforcement_reason: Optional[str] = None
 
     if is_primary:
-        # Primary admin MUST have 2FA — cannot disable
         mfa_required = True
         mfa_can_disable = False
+        enforcement_reason = "Required for the primary platform admin."
     elif user_type == "admin":
-        # All admins have mfa_enabled=True by default but can manage it
+        mfa_required = policy.enforce_totp_for_admins
+        mfa_can_disable = not policy.enforce_totp_for_admins
+        if mfa_required:
+            enforcement_reason = "Required for all platform admins by policy."
+    elif policy.enforce_totp_for_tenant_users:
         mfa_required = True
         mfa_can_disable = False
-    elif tenant_enforces_totp:
-        # Tenant policy forces 2FA
+        enforcement_reason = "Required by platform policy."
+    elif tenant_legacy_default_mfa:
         mfa_required = True
         mfa_can_disable = False
+        enforcement_reason = "Enforced by tenant default."
     elif profile.get("mfa_locked_by_admin"):
-        # Super admin locked this user's MFA
         mfa_can_disable = False
+        enforcement_reason = "Locked by your organization admin."
 
     # ── Account deletion eligibility ────────────────────────────────
     can_delete_account = True
@@ -234,15 +242,7 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
                 "enabled": profile.get("mfa_enabled", False),
                 "required": mfa_required,
                 "can_disable": mfa_can_disable,
-                "enforcement_reason": (
-                    "Required for all platform admins."
-                    if (is_primary or user_type == "admin")
-                    else "Enforced by tenant policy."
-                    if tenant_enforces_totp
-                    else "Locked by your organization admin."
-                    if profile.get("mfa_locked_by_admin")
-                    else None
-                ),
+                "enforcement_reason": enforcement_reason,
             },
             "endpoints": {
                 "setup": "/v1/auth/2fa/setup",

@@ -12,6 +12,13 @@ class CheckinFieldDef(BaseModel):
     category: CheckinFieldCategory
     options_endpoint: Optional[str] = None
     options: Optional[list[dict]] = None
+    # When set, the kiosk renders this field as a picker backed by the
+    # tenant's configured enum (resolved via
+    # ``GET /v1/checkin-configs/{id}/enums``). Mutually exclusive with
+    # ``options`` / ``options_endpoint`` — the enum bundle wins.
+    enum_kind: Optional[TenantEnumKind] = None
+    placeholder: Optional[str] = None
+    help_text: Optional[str] = None
 
 
 class CheckinConfigBase(BaseModel):

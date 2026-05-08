@@ -85,6 +85,20 @@ class Settings:
     turnstile_verify_url: str = (
         "https://challenges.cloudflare.com/turnstile/v0/siteverify"
     )
+    # Dojah KYC. ``app_id`` is the public client identifier; ``secret_key``
+    # signs server-side calls and verifies webhook signatures;
+    # ``public_key`` is exposed to the kiosk widget. ``base_url`` falls
+    # back to sandbox in development and production base in prod when
+    # left unset.
+    dojah_app_id: str | None = None
+    dojah_secret_key: str | None = None
+    dojah_public_key: str | None = None
+    dojah_base_url: str | None = None
+    # When true (production default) we reject webhooks that don't carry
+    # the body-bound v1 signature, even if v2 is present. Set to "false"
+    # in dev when working against the Dojah sandbox without webhook
+    # configuration.
+    dojah_require_v1_signature: bool = True
 
     @property
     def is_production(self) -> bool:
@@ -178,5 +192,13 @@ def get_settings() -> Settings:
             "TURNSTILE_VERIFY_URL",
             "https://challenges.cloudflare.com/turnstile/v0/siteverify",
         ),
+        dojah_app_id=os.getenv("DOJAH_APP_ID") or None,
+        dojah_secret_key=os.getenv("DOJAH_SECRET_KEY") or None,
+        dojah_public_key=os.getenv("DOJAH_PUBLIC_KEY") or None,
+        dojah_base_url=os.getenv("DOJAH_BASE_URL") or None,
+        dojah_require_v1_signature=os.getenv(
+            "DOJAH_REQUIRE_V1_SIGNATURE", "true"
+        ).lower()
+        in {"1", "true", "yes"},
     )
     return settings

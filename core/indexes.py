@@ -145,10 +145,44 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
         [("tenant_id", ASCENDING), ("email_normalized", ASCENDING)],
         {"sparse": True},
     ),
+    # Phone is the canonical visitor-identity key per-tenant (the kiosk
+    # checks for an existing profile by phone before falling back to
+    # email or id_number). Sparse-unique so legacy profiles with no
+    # phone aren't rejected, but new writes can't create a duplicate
+    # ``(tenant_id, phone)`` pair.
     (
         "visitor_profiles",
         [("tenant_id", ASCENDING), ("phone", ASCENDING)],
+        {"sparse": True, "unique": True, "name": "tenant_phone_unique"},
+    ),
+    # Per-tenant enum config (purpose-of-visit, id_type, …). One row per
+    # ``(tenant_id, kind)`` so the kiosk can fetch every picker in one hit.
+    (
+        "tenant_enums",
+        [("tenant_id", ASCENDING), ("kind", ASCENDING)],
+        {"unique": True},
+    ),
+    # KYC verification records — one row per check-in attempt, keyed by
+    # provider reference_id for webhook idempotency.
+    (
+        "kyc_verifications",
+        [("reference_id", ASCENDING)],
+        {"unique": True, "sparse": True},
+    ),
+    (
+        "kyc_verifications",
+        [("checkin_id", ASCENDING)],
         {"sparse": True},
+    ),
+    (
+        "kyc_verifications",
+        [("tenant_id", ASCENDING), ("status", ASCENDING)],
+        {},
+    ),
+    (
+        "kyc_webhook_events",
+        [("event_id", ASCENDING)],
+        {"unique": True, "sparse": True},
     ),
     (
         "appointments",

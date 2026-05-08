@@ -97,6 +97,22 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
         await delete_tenant({"_id": ObjectId(tenant.id)})
         raise
 
+    # 5. Seed tenant-configurable enums (purpose-of-visit, id_type, ...)
+    # so the kiosk has a sensible default picker before the super_admin
+    # ever touches the configuration UI. Best-effort — a seed failure
+    # is logged but does not roll back the tenant; ``list_enums_for_tenant``
+    # auto-seeds on first read as a fallback.
+    try:
+        from services.tenant_enum_service import seed_tenant_enums
+
+        await seed_tenant_enums(tenant.id or "")
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "tenant_enum seeding failed for tenant_id=%s", tenant.id, exc_info=True
+        )
+
     return {
         "tenant": tenant,
         "super_admin": super_admin,

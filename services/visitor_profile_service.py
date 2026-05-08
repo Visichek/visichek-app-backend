@@ -30,18 +30,22 @@ async def get_or_create_visitor_profile(
     email: str | None = None,
     id_number: str | None = None,
 ) -> VisitorProfileOut:
-    """Find an existing visitor profile by phone, email, or id_number, or create a new one."""
-    # Try phone first
+    """Find an existing visitor profile or create a new one.
+
+    Lookup order is phone → email → id_number, with phone as the
+    canonical identity key per tenant. The MongoDB sparse-unique index
+    on ``(tenant_id, phone)`` enforces this at the database layer, so a
+    racing concurrent submit will fail the insert; the helper retries
+    the phone lookup so the second writer reuses the first writer's row.
+    """
     if phone:
         existing = await get_visitor_profile_by_phone(tenant_id=tenant_id, phone=phone)
         if existing:
             return existing
-    # Try email next
     if email:
         existing = await get_visitor_profile_by_email(tenant_id=tenant_id, email=email)
         if existing:
             return existing
-    # Try id_number last
     if id_number:
         existing = await get_visitor_profile_by_id_number(
             tenant_id=tenant_id, id_number=id_number
@@ -58,7 +62,24 @@ async def get_or_create_visitor_profile(
         email_address=email,
         id_number=id_number,
     )
-    return await create_visitor_profile(profile)
+    try:
+        return await create_visitor_profile(profile)
+    except Exception as exc:
+        # Phone uniqueness collision: another concurrent writer just
+        # created the profile we wanted. Re-fetch by phone and surface
+        # that record. Anything else (no phone supplied, or a different
+        # error) re-raises.
+        if not phone:
+            raise
+        msg = str(exc).lower()
+        if "duplicate key" not in msg and "e11000" not in msg:
+            raise
+        retry = await get_visitor_profile_by_phone(
+            tenant_id=tenant_id, phone=phone
+        )
+        if retry is not None:
+            return retry
+        raise
 
 
 async def retrieve_visitor_profile_by_id(

@@ -147,6 +147,11 @@ class LogoPosition(str, Enum):
 
 
 class CheckinState(str, Enum):
+    # PENDING_KYC: visitor submitted, KYC widget is running. The check-in
+    # is invisible to receptionists in this state — only after the
+    # provider webhook lands (or the visitor explicitly skips KYC) does
+    # it transition to PENDING_APPROVAL and surface in the approval queue.
+    PENDING_KYC = "pending_kyc"
     PENDING_APPROVAL = "pending_approval"
     APPROVED = "approved"
     REJECTED = "rejected"
@@ -166,6 +171,42 @@ class IDExtractionProvider(str, Enum):
 class CheckinFieldCategory(str, Enum):
     BIO = "bio"
     TENANT_SPECIFIC = "tenant_specific"
+
+
+class TenantEnumKind(str, Enum):
+    """Kinds of tenant-configurable enumerations.
+
+    Each kind is a list of accepted values the tenant offers to visitors
+    on the kiosk form. The system ships defaults for each kind on tenant
+    bootstrap; tenants can add, edit, or deactivate values via
+    ``/v1/tenants/{tenant_id}/enums``.
+
+    Add a new kind only when both the kiosk *and* the back-office UI
+    need a per-tenant picker — every kind is loaded into the public
+    kiosk payload, so this list should stay small.
+    """
+
+    PURPOSE_OF_VISIT = "purpose_of_visit"
+    ID_TYPE = "id_type"
+    VISITOR_CATEGORY = "visitor_category"
+
+
+class KYCStatus(str, Enum):
+    """Lifecycle of a KYC verification attempt for a single check-in.
+
+    PENDING is the moment a kiosk submit decides to run KYC; ONGOING
+    is once the widget has launched. SUCCESS / FAILED are the terminal
+    states returned by the provider webhook. SKIPPED is set when the
+    visitor explicitly declines verification on a tenant where KYC is
+    optional.
+    """
+
+    PENDING = "pending"
+    ONGOING = "ongoing"
+    SUCCESS = "success"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    EXPIRED = "expired"
 
 
 class BadgeValidationReason(str, Enum):

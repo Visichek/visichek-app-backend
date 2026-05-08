@@ -99,12 +99,18 @@ async def count_approved_checkins_for_checkout(tenant_id: str) -> int:
 async def get_active_pending_for_visitor(
     tenant_id: str, visitor_id: str
 ) -> Optional[CheckinOut]:
-    """Get active pending check-in for a visitor in a tenant."""
+    """Get any in-flight check-in for a visitor in a tenant.
+
+    "In-flight" covers both ``pending_kyc`` (KYC widget running) and
+    ``pending_approval`` (receptionist hasn't acted yet) so a visitor
+    can't accidentally spawn a duplicate by re-submitting while their
+    first check-in is still working through the state machine.
+    """
     doc = await db[COLLECTION].find_one(
         {
             "tenant_id": tenant_id,
             "visitor_id": visitor_id,
-            "state": "pending_approval",
+            "state": {"$in": ["pending_kyc", "pending_approval"]},
         }
     )
     if doc is None:

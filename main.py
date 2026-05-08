@@ -269,6 +269,16 @@ async def lifespan(app: FastAPI):
         # Payments remain unavailable until provider credentials are configured.
         pass
 
+    try:
+        from core.kyc import KYCManager
+
+        KYCManager.configure_from_settings()
+    except Exception:
+        # KYC providers (Dojah) remain unavailable until credentials are
+        # configured — kyc_available_for_tenant returns False, kiosks
+        # silently skip the verify step.
+        logger.warning("KYC manager configuration deferred", exc_info=True)
+
     # Configure OCR manager (optional - only if credentials are provided)
     try:
         from core.ocr.manager import OCRManager
@@ -293,6 +303,16 @@ async def lifespan(app: FastAPI):
         await ensure_indexes(_db)
     except Exception:
         logger.warning("ensure_indexes failed at startup", exc_info=True)
+
+    # Prime the platform-wide security policy cache so password validators
+    # (which run synchronously inside Pydantic) see real values rather than
+    # the dataclass defaults on the very first request after boot.
+    try:
+        from core.security_policy import get_security_policy
+
+        await get_security_policy(force_refresh=True)
+    except Exception:
+        logger.warning("security policy prime failed at startup", exc_info=True)
 
     # Schedule retention cleanup job
     from services.retention_service import run_retention_cleanup
@@ -702,6 +722,11 @@ from api.v1.admin_support_case_route import (
 )
 from api.v1.onboarding_route import router as v1_onboarding_route_router
 from api.v1.admin_onboarding_route import router as v1_admin_onboarding_route_router
+from api.v1.tenant_enum_route import (
+    public_router as v1_tenant_enum_public_router,
+    router as v1_tenant_enum_route_router,
+)
+from api.v1.kyc_route import router as v1_kyc_route_router
 
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
@@ -769,6 +794,12 @@ app.include_router(v1_admin_support_case_route_router, prefix="/v1")
 app.include_router(v1_onboarding_route_router, prefix="/v1")
 # v1_admin_onboarding_route_router is included earlier (before tenant_route)
 # to avoid GET "/{tenant_id}" shadowing /tenants/onboarding.
+# Tenant-configurable enums (purpose-of-visit, id_type, ...).
+# Two routers: super_admin CRUD + public kiosk bundle.
+app.include_router(v1_tenant_enum_route_router, prefix="/v1")
+app.include_router(v1_tenant_enum_public_router, prefix="/v1")
+# KYC (Dojah today, pluggable). Public kiosk + webhook routes.
+app.include_router(v1_kyc_route_router, prefix="/v1")
 # App-mode payment simulator — deliberately NOT under /v1 so the URLs
 # match the checkout_url emitted by AppCheckoutPaymentProvider.
 app.include_router(app_payment_route_router)

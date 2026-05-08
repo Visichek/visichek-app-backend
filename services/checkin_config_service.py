@@ -21,9 +21,14 @@ from schemas.checkin_config_schema import (
     CheckinFieldDef,
     PublicCheckinConfigOut,
 )
-from schemas.imports import CheckinFieldCategory
+from schemas.imports import CheckinFieldCategory, TenantEnumKind
 
 
+# System-default required fields. Phone + Full Name are *system-mandated*
+# (the visitor profile uniqueness key + badge label); everything else is
+# tenant-configurable on the active CheckinConfig. Email is shown by
+# default but optional — tenants who care about email capture can flip
+# ``required=True`` on their copy of the config.
 DEFAULT_REQUIRED_FIELDS: list[CheckinFieldDef] = [
     CheckinFieldDef(
         key="full_name",
@@ -33,17 +38,17 @@ DEFAULT_REQUIRED_FIELDS: list[CheckinFieldDef] = [
         category=CheckinFieldCategory.BIO,
     ),
     CheckinFieldDef(
-        key="email",
-        label="Email",
-        type="email",
+        key="phone",
+        label="Phone Number",
+        type="tel",
         required=True,
         category=CheckinFieldCategory.BIO,
     ),
     CheckinFieldDef(
-        key="phone",
-        label="Phone",
-        type="tel",
-        required=True,
+        key="email",
+        label="Email (optional)",
+        type="email",
+        required=False,
         category=CheckinFieldCategory.BIO,
     ),
     CheckinFieldDef(
@@ -56,9 +61,10 @@ DEFAULT_REQUIRED_FIELDS: list[CheckinFieldDef] = [
     CheckinFieldDef(
         key="purpose",
         label="Purpose of Visit",
-        type="text",
+        type="select",
         required=True,
         category=CheckinFieldCategory.TENANT_SPECIFIC,
+        enum_kind=TenantEnumKind.PURPOSE_OF_VISIT,
     ),
 ]
 
