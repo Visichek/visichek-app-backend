@@ -173,6 +173,50 @@ async def _plan_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]
     return {"id": resource_id, "deleted": True}
 
 
+@write_handler(
+    "plan.set_feature", invalidates=[
+        "plans.list",
+        "plans.public_list",
+        "subscriptions.list",
+        "subscription.active",
+    ]
+)
+async def _plan_set_feature(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    """Toggle a single named feature on a plan.
+
+    Backed by ``services.plan_feature_service.set_plan_feature``. The
+    payload carries ``feature_key`` + ``enabled`` plus the standard
+    actor envelope. Plan-cache fanout runs so subscribed tenants see
+    the new feature gate within seconds rather than waiting on the
+    5-minute cache TTL.
+    """
+    from services.plan_feature_service import set_plan_feature
+
+    feature_key = data.pop("feature_key", "") or ""
+    enabled = bool(data.pop("enabled", False))
+    actor_id = data.pop("_actor_id", "") or ""
+    actor_role = data.pop("_actor_role", "") or "admin"
+    request_id = data.pop("_request_id", None)
+
+    result = await set_plan_feature(
+        plan_id=resource_id,
+        feature_key=feature_key,
+        enabled=enabled,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=request_id,
+    )
+    _enqueue_plan_cache_fanout(resource_id)
+    _enqueue_list_refresh()
+    return {
+        "id": result.id,
+        "feature_key": feature_key,
+        "enabled": enabled,
+    }
+
+
 @register_precompute("plans.list", scope=PrecomputeScope.GLOBAL)
 async def _precompute_plans_list(_tenant_id: str) -> List[dict[str, Any]]:
     plans = await retrieve_plans(start=0, stop=100)

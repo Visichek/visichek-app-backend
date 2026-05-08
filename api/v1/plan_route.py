@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from pydantic import BaseModel
 
 from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
@@ -18,6 +19,25 @@ from services.plan_service import retrieve_plan_by_id, retrieve_plans
 from security.account_status_check import check_admin_account_status_and_permissions
 
 router = APIRouter(prefix="/plans", tags=["Plans"])
+
+
+class PlanFeatureToggleRequest(BaseModel):
+    """Body for ``POST /v1/plans/{plan_id}/features/{feature_key}``."""
+
+    enabled: bool
+
+
+class PlanFeatureCatalogEntry(BaseModel):
+    """Frontend rendering hint for the plan-features checklist."""
+
+    key: str
+    label: str
+    description: str
+    endpoint_pattern: str
+    methods: list[str]
+    default_enabled: bool
+    requires_external_config: bool
+    external_config_hint: Optional[str] = None
 
 
 @router.post("")
@@ -202,6 +222,92 @@ async def delete_plan_endpoint(
     return await enqueue_write(
         writer_key="plan.delete",
         payload={},
+        resource_type="plan",
+        resource_id=plan_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+# ── Plan-feature toggles ─────────────────────────────────────────────
+#
+# Convenience endpoints over the togglable-feature catalog defined in
+# ``services.plan_feature_service``. The frontend renders the catalog
+# as a checklist on the plan editor page; toggling any item POSTs to
+# ``/{plan_id}/features/{feature_key}`` with ``{ enabled: bool }``.
+# This avoids the frontend having to PATCH the entire ``feature_rules``
+# array just to flip one flag.
+
+
+@router.get(
+    "/features/catalog",
+    response_model=List[PlanFeatureCatalogEntry],
+)
+@document_response(
+    message="Plan feature catalog retrieved",
+    description=(
+        "List the togglable features available on every plan. The "
+        "frontend renders this as a checklist on the plan editor "
+        "page. New features added in ``TOGGLEABLE_FEATURES`` "
+        "automatically surface here."
+    ),
+    summary="List togglable plan features",
+)
+async def list_plan_features_endpoint() -> List[PlanFeatureCatalogEntry]:
+    from services.plan_feature_service import get_feature_catalog
+
+    return [
+        PlanFeatureCatalogEntry(
+            key=spec.key,
+            label=spec.label,
+            description=spec.description,
+            endpoint_pattern=spec.endpoint_pattern,
+            methods=list(spec.methods),
+            default_enabled=spec.default_enabled,
+            requires_external_config=spec.requires_external_config,
+            external_config_hint=spec.external_config_hint,
+        )
+        for spec in get_feature_catalog()
+    ]
+
+
+@router.post("/{plan_id}/features/{feature_key}")
+@document_response(
+    message="Plan feature toggle queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Enable or disable one named feature on the given plan. "
+        "Behaves like a flag: enabling an already-enabled feature is a "
+        "no-op (no audit row). Subscribed tenants get a plan-cache "
+        "fanout on commit so the new gate takes effect within seconds."
+    ),
+    summary="Toggle plan feature (async)",
+    success_example={
+        "id": "507f1f77bcf86cd799439012",
+        "job_id": "a2c4e6f8-1234-4abc-8def-0123456789ab",
+        "status": "queued",
+    },
+    response_codes={
+        404: "Unknown feature_key — call /v1/plans/features/catalog for the list",
+    },
+)
+async def toggle_plan_feature_endpoint(
+    plan_id: str,
+    feature_key: str,
+    payload: PlanFeatureToggleRequest,
+    request: Request,
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    return await enqueue_write(
+        writer_key="plan.set_feature",
+        payload={
+            "feature_key": feature_key,
+            "enabled": payload.enabled,
+            "_actor_id": getattr(admin, "id", None) or "",
+            "_actor_role": "admin",
+            "_request_id": getattr(request.state, "request_id", None),
+        },
         resource_type="plan",
         resource_id=plan_id,
         actor_id=getattr(admin, "id", None),

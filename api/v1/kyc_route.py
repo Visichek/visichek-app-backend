@@ -53,7 +53,7 @@ async def initiate_kyc_endpoint(
     description=(
         "Visitor opted not to verify with Dojah. Allowed only when the "
         "tenant's settings have ``kyc_required = False``. Transitions "
-        "the check-in from ``PENDING_KYC`` → ``PENDING_APPROVAL`` and "
+        "the check-in from ``PENDING_VERIFICATION`` → ``PENDING_APPROVAL`` and "
         "notifies the receptionist queue."
     ),
     summary="Skip KYC verification",

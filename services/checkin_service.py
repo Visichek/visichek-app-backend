@@ -748,7 +748,7 @@ async def _submit_verified_checkin_core(
     # 5. KYC routing decision.
     #
     # If the tenant's plan grants Dojah KYC and the provider is
-    # configured, the check-in starts in PENDING_KYC — invisible to the
+    # configured, the check-in starts in PENDING_VERIFICATION — invisible to the
     # receptionist queue until the kiosk completes (or skips) the
     # widget. ``kyc_reference_id`` is a kiosk-supplied opt-in: if the
     # kiosk has already pre-run the widget before submit, we trust it
@@ -765,7 +765,7 @@ async def _submit_verified_checkin_core(
         initial_state = CheckinState.PENDING_APPROVAL
         visitor_verified = True
     elif kyc_available:
-        initial_state = CheckinState.PENDING_KYC
+        initial_state = CheckinState.PENDING_VERIFICATION
     else:
         initial_state = CheckinState.PENDING_APPROVAL
 
@@ -823,7 +823,7 @@ async def _submit_verified_checkin_core(
             )
 
     # 7. Fire receptionist notification (only when the check-in is
-    # actually in the queue — PENDING_KYC waits for KYC to complete /
+    # actually in the queue — PENDING_VERIFICATION waits for KYC to complete /
     # be skipped before notifying).
     if initial_state == CheckinState.PENDING_APPROVAL:
         try:
@@ -904,14 +904,14 @@ async def submit_checkin(
 
     # KYC routing — see ``_submit_verified_checkin_core`` for the full
     # rationale. Tenants with KYC available park new check-ins in
-    # PENDING_KYC until the kiosk completes / skips the widget.
+    # PENDING_VERIFICATION until the kiosk completes / skips the widget.
     from services.kyc_service import kyc_available_for_tenant
 
     kyc_available, _kyc_required, _kyc_provider = await kyc_available_for_tenant(
         tenant_id
     )
     initial_state = (
-        CheckinState.PENDING_KYC if kyc_available else CheckinState.PENDING_APPROVAL
+        CheckinState.PENDING_VERIFICATION if kyc_available else CheckinState.PENDING_APPROVAL
     )
 
     # Create checkin

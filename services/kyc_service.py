@@ -8,9 +8,9 @@ machine. Three things live here:
    it's required.
 2. :func:`initiate_kyc_for_checkin` — creates a ``kyc_verifications``
    row, calls the provider for widget config, and parks the check-in
-   in ``PENDING_KYC``.
+   in ``PENDING_VERIFICATION``.
 3. :func:`process_webhook_event` / :func:`finalize_kyc` — moves a
-   check-in from ``PENDING_KYC`` to ``PENDING_APPROVAL`` (success) or
+   check-in from ``PENDING_VERIFICATION`` to ``PENDING_APPROVAL`` (success) or
    ``REJECTED`` (hard failure / explicit denial) when the provider
    webhook lands.
 """
@@ -162,7 +162,7 @@ async def initiate_kyc_for_checkin(
     if not checkin:
         raise resource_not_found(resource="Checkin", resource_id=checkin_id)
 
-    if checkin.state not in (CheckinState.PENDING_KYC, CheckinState.PENDING_APPROVAL):
+    if checkin.state not in (CheckinState.PENDING_VERIFICATION, CheckinState.PENDING_APPROVAL):
         raise AppException(
             status_code=409,
             code=ErrorCode.VALIDATION_FAILED,
@@ -229,11 +229,11 @@ async def initiate_kyc_for_checkin(
         )
     )
 
-    # Park the check-in in PENDING_KYC so receptionists don't see it
+    # Park the check-in in PENDING_VERIFICATION so receptionists don't see it
     # in their approval queue while the widget is running.
-    if checkin.state != CheckinState.PENDING_KYC:
+    if checkin.state != CheckinState.PENDING_VERIFICATION:
         await repo_update_checkin(
-            checkin_id, CheckinUpdate(state=CheckinState.PENDING_KYC)
+            checkin_id, CheckinUpdate(state=CheckinState.PENDING_VERIFICATION)
         )
 
     await record_audit_event(
@@ -317,7 +317,7 @@ async def skip_kyc_for_checkin(
                 failure_reason=reason or "visitor opted to skip",
             ),
         )
-    if checkin.state == CheckinState.PENDING_KYC:
+    if checkin.state == CheckinState.PENDING_VERIFICATION:
         await repo_update_checkin(
             checkin_id, CheckinUpdate(state=CheckinState.PENDING_APPROVAL)
         )
@@ -524,7 +524,7 @@ async def _apply_to_checkin(record: KYCVerificationOut) -> None:
         # Move to PENDING_APPROVAL only if we're still parked. If a
         # receptionist already approved (rare, but theoretically possible
         # for tenants where KYC isn't required), don't unwind.
-        if checkin.state == CheckinState.PENDING_KYC:
+        if checkin.state == CheckinState.PENDING_VERIFICATION:
             await repo_update_checkin(
                 record.checkin_id,
                 CheckinUpdate(state=CheckinState.PENDING_APPROVAL, verified=True),
@@ -575,7 +575,7 @@ async def _apply_to_checkin(record: KYCVerificationOut) -> None:
                 exc_info=True,
             )
     elif record.status == KYCStatus.FAILED:
-        if checkin.state == CheckinState.PENDING_KYC:
+        if checkin.state == CheckinState.PENDING_VERIFICATION:
             await repo_update_checkin(
                 record.checkin_id,
                 CheckinUpdate(
@@ -585,7 +585,7 @@ async def _apply_to_checkin(record: KYCVerificationOut) -> None:
                 ),
             )
     elif record.status == KYCStatus.EXPIRED:
-        if checkin.state == CheckinState.PENDING_KYC:
+        if checkin.state == CheckinState.PENDING_VERIFICATION:
             await repo_update_checkin(
                 record.checkin_id,
                 CheckinUpdate(

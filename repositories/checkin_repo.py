@@ -101,7 +101,7 @@ async def get_active_pending_for_visitor(
 ) -> Optional[CheckinOut]:
     """Get any in-flight check-in for a visitor in a tenant.
 
-    "In-flight" covers both ``pending_kyc`` (KYC widget running) and
+    "In-flight" covers both ``pending_verification`` (KYC widget running) and
     ``pending_approval`` (receptionist hasn't acted yet) so a visitor
     can't accidentally spawn a duplicate by re-submitting while their
     first check-in is still working through the state machine.
@@ -110,7 +110,7 @@ async def get_active_pending_for_visitor(
         {
             "tenant_id": tenant_id,
             "visitor_id": visitor_id,
-            "state": {"$in": ["pending_kyc", "pending_approval"]},
+            "state": {"$in": ["pending_verification", "pending_approval"]},
         }
     )
     if doc is None:

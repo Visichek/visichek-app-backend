@@ -457,6 +457,96 @@ async def change_plan(
     return updated
 
 
+async def provision_plan_change_from_checkout(
+    existing_sub_id: str,
+    tenant_id: str,
+    new_plan_id: str,
+    billing_cycle: BillingCycle,
+    discount_ids: Optional[List[str]] = None,
+) -> Optional[SubscriptionOut]:
+    """Switch a tenant onto a new plan after they paid via checkout.
+
+    Differs from :func:`change_plan` by replacing (not carrying forward)
+    the discount set, forcing the subscription to ``ACTIVE`` (so a paid
+    checkout converts a trialing sub), clearing ``trial_ends_at``, and
+    resetting renewal counters. Used by the checkout completion path
+    when the tenant already has an active/trialing subscription.
+    """
+    if not ObjectId.is_valid(new_plan_id):
+        raise HTTPException(status_code=400, detail="Invalid new_plan_id")
+    new_plan = await get_plan({"_id": ObjectId(new_plan_id)})
+    if not new_plan:
+        raise HTTPException(status_code=404, detail="New plan not found")
+    if new_plan.status != PlanStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="New plan is not active")
+
+    base_price = (
+        new_plan.base_price_monthly
+        if billing_cycle == BillingCycle.MONTHLY
+        else new_plan.base_price_yearly
+    )
+    valid_discounts: List[DiscountOut] = []
+    if discount_ids:
+        valid_discounts = await _validate_and_collect_discounts(
+            discount_ids, tenant_id, new_plan, base_price
+        )
+
+    effective_price = _calculate_effective_price(
+        new_plan, billing_cycle, valid_discounts
+    )
+
+    applied_ids: List[str] = []
+    for d in valid_discounts:
+        if d.id:
+            await increment_redemptions({"_id": ObjectId(d.id)})
+            applied_ids.append(d.id)
+
+    now = int(time.time())
+    update_data = SubscriptionUpdate(
+        plan_id=new_plan_id,
+        status=SubscriptionStatus.ACTIVE,
+        billing_cycle=billing_cycle,
+        effective_price=effective_price,
+        currency=new_plan.currency,
+        trial_ends_at=None,
+        current_period_start=now,
+        current_period_end=_calculate_period_end(now, billing_cycle),
+        applied_discount_ids=applied_ids,
+        renewal_attempts=0,
+        next_retry_at=None,
+        cancelled_at=None,
+        cancellation_reason=None,
+    )
+    updated = await update_subscription(
+        {"_id": ObjectId(existing_sub_id)},
+        update_data,
+    )
+
+    try:
+        await record_audit_event(
+            actor_id="system",
+            actor_role="admin",
+            action="subscription.plan_changed_via_checkout",
+            resource_type="subscription",
+            resource_id=existing_sub_id,
+            tenant_id=tenant_id,
+            details={
+                "new_plan_id": new_plan_id,
+                "billing_cycle": billing_cycle.value,
+                "effective_price": effective_price,
+                "applied_discount_ids": applied_ids,
+            },
+        )
+    except Exception:
+        pass
+
+    from services.plan_cache_service import invalidate_tenant_plan_cache
+
+    await invalidate_tenant_plan_cache(tenant_id)
+
+    return updated
+
+
 async def cancel_subscription(
     tenant_id: str,
     reason: Optional[str] = None,

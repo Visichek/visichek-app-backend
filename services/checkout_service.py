@@ -47,6 +47,8 @@ from services.audit_service import record_audit_event
 from services.subscription_service import (
     _calculate_effective_price,
     _validate_and_collect_discounts,
+    provision_plan_change_from_checkout,
+    retrieve_tenant_active_subscription,
     subscribe_tenant,
 )
 
@@ -414,18 +416,37 @@ async def complete_checkout(
         )
 
     # --- Success path: provision subscription ------------------------------
+    # If the tenant already has an active/trialing subscription this is a
+    # plan change paid for via checkout (upgrade/downgrade). Switch plans
+    # in place rather than failing with a 409.
+    existing_sub = await retrieve_tenant_active_subscription(session.tenant_id)
     try:
-        subscription: SubscriptionOut = await subscribe_tenant(
-            tenant_id=session.tenant_id,
-            plan_id=session.plan_id,
-            billing_cycle=session.billing_cycle,
-            discount_ids=session.applied_discount_ids,
-            trial_days=session.trial_days,
-        )
+        if existing_sub and existing_sub.id:
+            switched = await provision_plan_change_from_checkout(
+                existing_sub_id=existing_sub.id,
+                tenant_id=session.tenant_id,
+                new_plan_id=session.plan_id,
+                billing_cycle=session.billing_cycle,
+                discount_ids=session.applied_discount_ids,
+            )
+            if switched is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to switch plan after checkout",
+                )
+            subscription: SubscriptionOut = switched
+        else:
+            subscription = await subscribe_tenant(
+                tenant_id=session.tenant_id,
+                plan_id=session.plan_id,
+                billing_cycle=session.billing_cycle,
+                discount_ids=session.applied_discount_ids,
+                trial_days=session.trial_days,
+            )
     except HTTPException as http_exc:
-        # Most likely reason: the tenant already has an active/trialing sub
-        # after the checkout was created. Record as failed so the admin can
-        # see what happened, but do not re-raise a 500.
+        # Provisioning failed for a non-409 reason (invalid plan,
+        # archived plan, internal error). Record as failed so the admin
+        # can see what happened, but do not re-raise a 500.
         await _mark_failed(
             session, f"Subscription provisioning failed: {http_exc.detail}"
         )

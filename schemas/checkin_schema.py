@@ -4,10 +4,40 @@ import time
 from schemas.imports import *
 
 
+# Sensible defaults per purpose-of-visit value. Aligned with the
+# default ``purpose_of_visit`` enum seeded by
+# ``services.tenant_enum_service`` — a tenant can still customise its
+# enum values without breaking this map (custom values fall through to
+# ``DEFAULT_VISIT_DURATION_MINUTES``).
+PURPOSE_DURATION_DEFAULTS_MINUTES: dict[str, int] = {
+    "meeting": 60,
+    "interview": 60,
+    "delivery": 15,
+    "contractor": 120,
+    "event": 120,
+    "tour": 30,
+    "personal": 30,
+    "other": 30,
+}
+DEFAULT_VISIT_DURATION_MINUTES = 30
+
+
 class CheckinPurpose(BaseModel):
     purpose: str
     purpose_details: Optional[str] = None
     expected_duration_minutes: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _fill_default_duration(self) -> "CheckinPurpose":
+        # Only apply the default when the kiosk doesn't supply a value;
+        # an explicit ``0`` from the kiosk still wins (treated as
+        # "indefinite / unspecified").
+        if self.expected_duration_minutes is None:
+            key = (self.purpose or "").strip().lower()
+            self.expected_duration_minutes = PURPOSE_DURATION_DEFAULTS_MINUTES.get(
+                key, DEFAULT_VISIT_DURATION_MINUTES
+            )
+        return self
 
 
 class CheckinBase(BaseModel):

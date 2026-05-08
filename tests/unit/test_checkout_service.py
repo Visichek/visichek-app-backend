@@ -182,6 +182,11 @@ async def test_complete_checkout_success_provisions_subscription() -> None:
             checkout_service, "get_checkout_by_id", new=AsyncMock(return_value=pending)
         ),
         patch.object(
+            checkout_service,
+            "retrieve_tenant_active_subscription",
+            new=AsyncMock(return_value=None),
+        ),
+        patch.object(
             checkout_service, "subscribe_tenant", new=AsyncMock(return_value=sub)
         ),
         patch.object(
@@ -195,6 +200,52 @@ async def test_complete_checkout_success_provisions_subscription() -> None:
 
     assert result.status == CheckoutStatus.SUCCEEDED
     assert result.subscription_id == "sub_1"
+
+
+async def test_complete_checkout_changes_plan_when_subscription_exists() -> None:
+    """When the tenant already has an active sub, checkout completion
+    must switch plans rather than 409ing on subscribe_tenant."""
+    from services import checkout_service
+
+    pending = _session_stub()
+    updated = _session_stub(status=CheckoutStatus.SUCCEEDED, subscription_id="sub_old")
+    existing = MagicMock(id="sub_old")
+    switched = MagicMock(id="sub_old")
+
+    subscribe_mock = AsyncMock()
+    change_mock = AsyncMock(return_value=switched)
+
+    with (
+        patch.object(
+            checkout_service, "get_checkout_by_id", new=AsyncMock(return_value=pending)
+        ),
+        patch.object(
+            checkout_service,
+            "retrieve_tenant_active_subscription",
+            new=AsyncMock(return_value=existing),
+        ),
+        patch.object(checkout_service, "subscribe_tenant", new=subscribe_mock),
+        patch.object(
+            checkout_service, "provision_plan_change_from_checkout", new=change_mock
+        ),
+        patch.object(
+            checkout_service, "update_checkout", new=AsyncMock(return_value=updated)
+        ),
+        patch.object(checkout_service, "record_audit_event", new=AsyncMock()),
+    ):
+        result = await checkout_service.complete_checkout(
+            checkout_id="64f0000000000000000000aa", outcome="success"
+        )
+
+    assert result.status == CheckoutStatus.SUCCEEDED
+    subscribe_mock.assert_not_called()
+    change_mock.assert_awaited_once()
+    await_args = change_mock.await_args
+    assert await_args is not None
+    kwargs = await_args.kwargs
+    assert kwargs["existing_sub_id"] == "sub_old"
+    assert kwargs["tenant_id"] == "tenant_1"
+    assert kwargs["new_plan_id"] == "507f1f77bcf86cd799439011"
 
 
 async def test_complete_checkout_is_idempotent_for_terminal_state() -> None:

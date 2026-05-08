@@ -147,11 +147,12 @@ class LogoPosition(str, Enum):
 
 
 class CheckinState(str, Enum):
-    # PENDING_KYC: visitor submitted, KYC widget is running. The check-in
-    # is invisible to receptionists in this state — only after the
-    # provider webhook lands (or the visitor explicitly skips KYC) does
-    # it transition to PENDING_APPROVAL and surface in the approval queue.
-    PENDING_KYC = "pending_kyc"
+    # PENDING_VERIFICATION: visitor submitted, KYC widget is running.
+    # The check-in is invisible to receptionists in this state — only
+    # after the provider webhook lands (or the visitor explicitly skips
+    # KYC) does it transition to PENDING_APPROVAL and surface in the
+    # approval queue.
+    PENDING_VERIFICATION = "pending_verification"
     PENDING_APPROVAL = "pending_approval"
     APPROVED = "approved"
     REJECTED = "rejected"
