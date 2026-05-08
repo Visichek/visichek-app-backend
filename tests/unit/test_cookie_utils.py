@@ -55,9 +55,19 @@ def test_set_auth_cookies_omits_secure_in_non_production() -> None:
     resp = Response()
     set_auth_cookies(resp, "at", "rt", is_production=False)
     raw = [v.decode() for k, v in resp.headers.raw if k == b"set-cookie"]
-    # Domain still present — we hardcode it.
-    assert all("domain=.visichek.app" in v.lower() for v in raw)
+    # Non-production: no Domain attribute — cookie is scoped to the
+    # request host (e.g. localhost) so local dev works.
+    assert all("domain=" not in v.lower() for v in raw)
     assert all("secure" not in v.lower() for v in raw)
+
+
+def test_clear_auth_cookies_omits_domain_in_non_production() -> None:
+    resp = Response()
+    clear_auth_cookies(resp, is_production=False)
+    raw = [v.decode() for k, v in resp.headers.raw if k == b"set-cookie"]
+    assert len(raw) == 2
+    assert all("domain=" not in v.lower() for v in raw)
+    assert all("max-age=0" in v.lower() for v in raw)
 
 
 def test_clear_auth_cookies_matches_set_domain() -> None:

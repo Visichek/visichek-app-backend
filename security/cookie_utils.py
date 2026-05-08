@@ -35,7 +35,14 @@ def set_auth_cookies(
     *,
     is_production: bool = False,
 ) -> None:
-    """Set httpOnly auth cookies on the response."""
+    """Set httpOnly auth cookies on the response.
+
+    In production we pin the cookie to ``.visichek.app`` so every subdomain
+    sees the same auth. In non-production we omit the ``Domain`` attribute
+    entirely — the browser then scopes the cookie to whatever host served
+    the request (e.g. ``localhost``), which is what local dev needs.
+    """
+    domain = AUTH_COOKIE_DOMAIN if is_production else None
     response.set_cookie(
         key=ACCESS_TOKEN_COOKIE,
         value=access_token,
@@ -44,7 +51,7 @@ def set_auth_cookies(
         samesite="lax",
         path="/",
         max_age=REFRESH_TOKEN_MAX_AGE,
-        domain=AUTH_COOKIE_DOMAIN,
+        domain=domain,
     )
     response.set_cookie(
         key=REFRESH_TOKEN_COOKIE,
@@ -54,7 +61,7 @@ def set_auth_cookies(
         samesite="lax",
         path="/v1/",
         max_age=REFRESH_TOKEN_MAX_AGE,
-        domain=AUTH_COOKIE_DOMAIN,
+        domain=domain,
     )
 
 
@@ -163,15 +170,17 @@ def clear_auth_cookies(
 
     ``domain`` must match the value used at set time — browsers key cookies
     by ``(name, domain, path)``, so deleting without the domain set would
-    leave the shared-parent cookie alive.
+    leave the shared-parent cookie alive. In non-production we never set a
+    Domain at write time, so we must not set one here either.
     """
+    domain = AUTH_COOKIE_DOMAIN if is_production else None
     response.delete_cookie(
         key=ACCESS_TOKEN_COOKIE,
         httponly=True,
         secure=is_production,
         samesite="lax",
         path="/",
-        domain=AUTH_COOKIE_DOMAIN,
+        domain=domain,
     )
     response.delete_cookie(
         key=REFRESH_TOKEN_COOKIE,
@@ -179,5 +188,5 @@ def clear_auth_cookies(
         secure=is_production,
         samesite="lax",
         path="/v1/",
-        domain=AUTH_COOKIE_DOMAIN,
+        domain=domain,
     )
