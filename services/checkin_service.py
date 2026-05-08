@@ -697,9 +697,25 @@ async def _submit_verified_checkin_core(
 
         logging.warning(f"Failed to upsert visitor profile from submit: {e}")
 
-    # 3. Validate required fields against combined data
+    # 3. Validate required fields against combined data.
+    #
+    # Phone, email, and full_name arrive as top-level form fields on
+    # the multipart submit endpoints (not inside bio_data). Inject them
+    # so a config that lists e.g. ``phone`` as a required field finds a
+    # value to satisfy the requirement.
+    if phone:
+        merged_bio_data.setdefault("phone", phone)
+    if email:
+        merged_bio_data.setdefault("email", email)
+    # ``email`` is system-optional regardless of what an older
+    # CheckinConfig (provisioned under the v1 contract) says. Tenants
+    # that need email capture should keep ``required=True`` on their
+    # config for the *display* hint, but the kiosk submit never rejects
+    # a missing email — the v2 contract makes phone the sole identity
+    # key. ``full_name`` and ``phone`` remain mandatory.
+    effective_required_keys = required_field_keys - {"email"}
     available_keys = set(merged_bio_data.keys()) | set(tenant_specific_data.keys())
-    missing_fields = required_field_keys - available_keys
+    missing_fields = effective_required_keys - available_keys
     if missing_fields:
         raise AppException(
             status_code=400,
@@ -848,10 +864,11 @@ async def submit_checkin(
 
     tenant_id = config.tenant_id
 
-    # Validate required fields
+    # Validate required fields. Email is system-optional in v2 — see
+    # ``_submit_verified_checkin_core`` for the full rationale.
     bio_data_keys = set(req.bio_data.keys())
     tenant_specific_keys = set(req.tenant_specific_data.keys())
-    required_field_keys = {f.key for f in config.required_fields}
+    required_field_keys = {f.key for f in config.required_fields} - {"email"}
 
     available_keys = bio_data_keys | tenant_specific_keys
     missing_fields = required_field_keys - available_keys
