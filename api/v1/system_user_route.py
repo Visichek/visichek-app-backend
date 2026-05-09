@@ -22,6 +22,7 @@ from security.auth import (
     verify_system_user_refresh_token,
 )
 from schemas.otp_schema import MfaSettingsUpdate, OtpVerifyRequest
+from schemas.session_schema import ResetPasswordRequest
 from security.cookie_utils import (
     build_auth_response,
     clear_auth_cookies,
@@ -537,6 +538,47 @@ async def logout_system_user(request: Request):
     )
     clear_auth_cookies(response, is_production=is_prod)
     return response
+
+
+@router.post("/{user_id}/reset-password")
+@document_response(
+    message="Password reset successfully",
+    description=(
+        "Super_admin-driven password reset for any system user inside the same "
+        "tenant. The actor's tenant is taken from their token; the target must "
+        "belong to that tenant or a 404 is returned. The target's tokens are "
+        "all revoked so they're forced to log in again. Super admins cannot "
+        "reset their own password through this endpoint — use "
+        "/v1/auth/change-password instead."
+    ),
+    summary="Super admin reset of another tenant user's password",
+    response_codes={
+        400: "Validation error or actor cannot reset their own password here",
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - only super_admins",
+        404: "Target system user not found in this tenant",
+        422: "Password does not meet policy or matches a recent password",
+    },
+)
+async def super_admin_reset_user_password_endpoint(
+    user_id: str,
+    payload: ResetPasswordRequest,
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+):
+    """Super_admin can reset any tenant user's password (including other
+    super_admins inside the same tenant)."""
+    from services.password_change_service import (
+        reset_system_user_password_by_authority,
+    )
+
+    await reset_system_user_password_by_authority(
+        target_user_id=user_id,
+        new_password=payload.new_password,
+        actor_id=principal.user_id,
+        actor_role="super_admin",
+        scope_tenant_id=principal.tenant_id or "",
+    )
+    return {"id": user_id, "password_reset": True}
 
 
 @router.get("/me")

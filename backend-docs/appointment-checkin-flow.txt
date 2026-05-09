@@ -1,0 +1,206 @@
+================================================================================
+APPOINTMENT SUBMISSION + CHECK-IN FLOW — what the frontend sends, what the
+backend expects, and how to handle missing-phone cases for old appointments.
+================================================================================
+
+Last updated: 2026-05-09
+Audience: frontend (host scheduling UI + reception dashboard)
+
+--------------------------------------------------------------------------------
+1. THE TWO STEPS
+--------------------------------------------------------------------------------
+
+Appointments have two distinct lifecycle phases:
+
+  A) SCHEDULE — a host (system_user) pre-books a visitor before they arrive.
+                Creates an Appointment row in status=SCHEDULED.
+
+  B) CHECK-IN — when the visitor arrives, reception converts the SCHEDULED
+                appointment into a real visit-session with a printed badge.
+                The appointment moves to status=CHECKED_IN once the badge is
+                issued.
+
+These are different endpoints with different expectations. Section 2 covers
+SCHEDULE; section 3 covers CHECK-IN.
+
+--------------------------------------------------------------------------------
+2. SCHEDULING A NEW APPOINTMENT
+--------------------------------------------------------------------------------
+
+Endpoint: POST /v1/appointments
+Auth:     system_user (any role authorised to create appointments)
+Returns:  202 Accepted + { id, job_id, status: "queued" } (queued write)
+
+Required fields (frontend MUST send):
+  - tenant_id           (from token, but schema requires it on create)
+  - department_id
+  - host_id             (system_user id of the host)
+  - scheduled_at        (unix timestamp; when the visitor is expected)
+  - visitor_name_snapshot  (full name as the host knows it)
+  - purpose             (free-text reason for the visit)
+
+STRONGLY RECOMMENDED (collect at scheduling, even if not enforced):
+  - visitor_phone_snapshot  → the host's best guess of the visitor's phone
+  - visitor_email_snapshot  → optional, for reminder emails
+  - visitor_profile_id      → if the host can look up an existing profile
+  - expected_visitor_photo_object_key → for the badge mockup at reception
+
+WHY phone is "strongly recommended" but not "required":
+  Phone is what the backend uses to look up or create the visitor profile at
+  CHECK-IN time. Old appointments scheduled before this rule was tightened may
+  not have one. Section 3 covers what happens then.
+
+Returns:
+  202 with { jobId, id }
+  Poll GET /v1/jobs/{jobId} if you need the final id; the speculative `id` in
+  the 202 body is the same id the worker will use unless the writer reassigns.
+
+--------------------------------------------------------------------------------
+3. CHECKING IN A SCHEDULED APPOINTMENT (NEW: PHONE FALLBACK)
+--------------------------------------------------------------------------------
+
+Endpoint:    POST /v1/appointments/{appointment_id}/check-in
+Auth:        system_user (super_admin, dept_admin, receptionist)
+Synchronous: returns 201 with { session, visitor_profile, badge_qr_token,
+             badge_pdf_base64 }
+
+Body (AppointmentCheckInRequest — every field is OPTIONAL):
+  {
+    "phone":             string  | null,   // override of profile/snapshot phone
+    "full_name":         string  | null,   // override
+    "company":           string  | null,   // override
+    "photo_object_key":  string  | null,   // visitor portrait, optional
+    "id_image_object_key": string | null,  // ID card image, optional
+    "consent_granted":   bool    | null,
+    "badge_format":      "A4"|"A6"|"A7",   // default A7
+    "issue_badge":       bool              // default true
+  }
+
+The backend hydrates from the appointment + linked visitor profile when fields
+are omitted, in this priority order:
+
+  resolved_name  = body.full_name  ||  visitor_profile.full_name  ||  appointment.visitor_name_snapshot
+  resolved_phone = body.phone      ||  visitor_profile.phone
+
+PHONE IS REQUIRED ONE WAY OR ANOTHER, because the backend's downstream
+upsert_visitor_from_checkin / get_or_create_visitor_profile both key on phone.
+
+================================================================================
+3a. NEW BEHAVIOR (FIXED 2026-05-09): missing-phone handling
+================================================================================
+
+If the appointment was scheduled BEFORE phone was collected (or the scheduling
+flow allows phone-less appointments), and the linked visitor_profile also has
+no phone, the check-in endpoint now returns a STRUCTURED 400 the frontend can
+branch on without parsing the message text:
+
+  HTTP 400
+  {
+    "success": false,
+    "code": "VALIDATION_FAILED",
+    "message": "phone is required to check in this appointment — neither the
+                appointment nor the linked visitor profile has one on record.
+                Please collect it from the visitor and resubmit this request
+                with `phone` set.",
+    "details": {
+      "missing_field":    "phone",
+      "prompt_required":  true
+    }
+  }
+
+  Same shape applies if full_name is missing (rare):
+    "details": { "missing_field": "full_name", "prompt_required": true }
+
+FRONTEND HANDLING:
+
+  When the receptionist clicks "Check in" on an appointment row in the
+  pending-approvals queue, the kiosk / reception UI MUST handle this 400:
+
+    if (response.status === 400 && response.body.details?.prompt_required) {
+        const field = response.body.details.missing_field;   // "phone" | "full_name"
+        const value = await promptUserFor(field);            // open a modal
+        if (!value) return;                                  // user cancelled
+        retry POST .../check-in with the missing field added to the body
+    }
+
+  PREFERRED: detect missing phone in advance — the pending-approvals queue
+  already returns each appointment row's visitor summary (with `phone` =
+  null when missing). When you render the row, check `visitor.phone`:
+    - phone present → enable [Check in] button → submit normally
+    - phone null    → enable [Check in] button BUT open the phone modal
+                       FIRST, then call check-in with phone in the body
+
+  This avoids the round-trip 400 entirely and gives a smoother UX.
+
+  USER-FACING COPY suggestion:
+    "We don't have a phone number for this appointment. Please ask the
+     visitor for their phone number before checking them in — it's used to
+     create their visitor profile."
+
+--------------------------------------------------------------------------------
+4. issue_badge=false — REGISTER WITHOUT PRINTING
+--------------------------------------------------------------------------------
+
+Set issue_badge=false in the check-in body when you want to create the visit
+session record (so retention / visit count / audit trail are correct) but you
+DON'T want to print the badge yet — typically because KYC still needs to
+complete.
+
+In that case:
+  - The endpoint returns the visit_session (status=REGISTERED) and the visitor
+    profile, but NO badge_qr_token and NO badge_pdf_base64.
+  - The appointment STAYS in status=SCHEDULED — it does not move to CHECKED_IN.
+  - When you're ready to issue the badge, call the regular confirm endpoint
+    POST /v1/visit-sessions/{session_id}/confirm which fires the badge and
+    transitions the appointment to CHECKED_IN.
+
+--------------------------------------------------------------------------------
+5. ERROR CODES SUMMARY
+--------------------------------------------------------------------------------
+
+  400 VALIDATION_FAILED  details.missing_field="phone"
+        → resolved phone is null. Prompt visitor, retry with phone in body.
+
+  400 VALIDATION_FAILED  details.missing_field="full_name"
+        → resolved name is null. Prompt visitor, retry with full_name in body.
+
+  400 (no structured details)
+        "Cannot check in from an appointment in terminal state (cancelled)"
+        → appointment is cancelled / no_show. Cannot recover; create a new
+          appointment or use the regular kiosk submit flow.
+
+  400 "Appointment is missing department_id..."
+        → bad data on the appointment itself. Edit the appointment first.
+
+  404 RESOURCE_NOT_FOUND
+        → appointment_id does not exist or belongs to a different tenant.
+
+--------------------------------------------------------------------------------
+6. PUBLIC APPOINTMENT LOOKUP (kiosk QR code path)
+--------------------------------------------------------------------------------
+
+When a visitor walks up to a kiosk and scans an appointment QR, the kiosk hits:
+
+  GET /v1/public/appointments/{tenant_id}/{appointment_id}
+
+This returns the appointment summary (host name, scheduled time, purpose) so
+the kiosk can pre-fill the registration form. After that, the visitor goes
+through the public registration flow normally — that creates a visit_session
+not a check-in, so the appointment-style check-in endpoint above is for
+RECEPTIONISTS only, not for the public kiosk.
+
+--------------------------------------------------------------------------------
+7. RELATED FIXES (ALSO 2026-05-09)
+--------------------------------------------------------------------------------
+
+  - GET /v1/tenants/{tenant_id}/pending-approvals now includes BOTH
+    pending_approval AND pending_verification check-ins. See
+    `kyc-pending-verification-flow.txt` for what the frontend should do with
+    pending_verification rows.
+
+  - POST /v1/checkins/{checkin_id}/force-approve-pending — new super_admin
+    endpoint to unstick check-ins parked in pending_verification. Audit-logged.
+
+================================================================================
+END OF FILE
+================================================================================

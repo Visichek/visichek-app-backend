@@ -26,6 +26,9 @@ class accessTokenOut(accessTokenBase):
     role: Optional[str] = "anonymous"
     tenant_id: Optional[str] = None
     department_id: Optional[str] = None
+    # System-user branch assignments at issuance time. Used by AuthPrincipal to
+    # short-circuit the per-request DB lookup. None on app-admin / app-user tokens.
+    branch_ids: Optional[List[str]] = None
 
     @model_validator(mode="before")
     def set_values(cls, values):

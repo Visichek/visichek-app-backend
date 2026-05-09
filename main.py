@@ -314,6 +314,17 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("security policy prime failed at startup", exc_info=True)
 
+    # One-shot branch-assignment backfill. Idempotent: tenants that already
+    # have a HQ branch and users that already carry branch_ids are skipped.
+    # See services/branch_backfill.py for the rationale.
+    try:
+        from services.branch_backfill import backfill_branch_assignments
+
+        backfill_summary = await backfill_branch_assignments()
+        logger.info("branch_backfill summary: %s", backfill_summary)
+    except Exception:
+        logger.warning("branch_backfill failed at startup", exc_info=True)
+
     # Schedule retention cleanup job
     from services.retention_service import run_retention_cleanup
 

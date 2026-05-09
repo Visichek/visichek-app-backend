@@ -215,8 +215,14 @@ async def update_appointment_endpoint(
     error_examples={
         400: {
             "success": False,
-            "message": "phone is required to look up or create the visitor profile",
+            "message": (
+                "phone is required to check in this appointment — neither the "
+                "appointment nor the linked visitor profile has one on record. "
+                "Please collect it from the visitor and resubmit this request "
+                "with `phone` set."
+            ),
             "code": "VALIDATION_FAILED",
+            "details": {"missing_field": "phone", "prompt_required": True},
         },
         404: {
             "success": False,

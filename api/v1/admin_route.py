@@ -14,6 +14,7 @@ from schemas.admin_schema import (
     AdminSearchResult,
     AdminSignupRequest,
 )
+from schemas.session_schema import AddSuperAdminRequest, ResetPasswordRequest
 from schemas.tenant_schema import TenantBootstrapRequest
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_admin_refresh_token
@@ -533,3 +534,76 @@ async def get_tenant_offboarding_summary_endpoint(
     """Get offboarding assessment summary for a tenant."""
     summary = await get_offboarding_summary(tenant_id=tenant_id)
     return summary
+
+
+@router.post("/tenants/{tenant_id}/super-admins")
+@document_response(
+    message="Super admin added to tenant",
+    status_code=status.HTTP_201_CREATED,
+    description=(
+        "Add a super_admin system user to an existing tenant. Distinct from "
+        "/tenants/bootstrap which creates the tenant and its first super_admin "
+        "together. Use this to recover a tenant whose super_admin was offboarded, "
+        "or to add a secondary super_admin for redundancy."
+    ),
+    summary="Add super admin to existing tenant",
+    response_codes={
+        400: "Tenant is inactive or super_admin add validation failed",
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - only application admins can add super_admins",
+        404: "Tenant not found",
+        409: "Email already in use by another system user",
+    },
+)
+async def add_super_admin_to_tenant_endpoint(
+    tenant_id: str,
+    payload: AddSuperAdminRequest,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    """Application-admin only path to add a super_admin to a live tenant."""
+    from services.system_user_service import add_super_admin_to_tenant
+
+    return await add_super_admin_to_tenant(
+        tenant_id=tenant_id,
+        full_name=payload.full_name,
+        email=payload.email,
+        password=payload.password,
+        branch_ids=payload.branch_ids,
+    )
+
+
+@router.post("/system-users/{user_id}/reset-password")
+@document_response(
+    message="Password reset successfully",
+    description=(
+        "Application-admin password reset for any system user (including "
+        "super_admins of any tenant). All of the target user's tokens are "
+        "revoked so they must log in again with the new password."
+    ),
+    summary="Admin reset of a system user's password",
+    response_codes={
+        400: "Validation error or actor cannot reset their own password here",
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - only application admins",
+        404: "Target system user not found",
+        422: "Password does not meet policy or matches a recent password",
+    },
+)
+async def admin_reset_system_user_password_endpoint(
+    user_id: str,
+    payload: ResetPasswordRequest,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    """Reset another system user's password without knowing the old one."""
+    from services.password_change_service import (
+        reset_system_user_password_by_authority,
+    )
+
+    await reset_system_user_password_by_authority(
+        target_user_id=user_id,
+        new_password=payload.new_password,
+        actor_id=admin.id or "",  # type: ignore[arg-type]
+        actor_role="admin",
+        scope_tenant_id=None,
+    )
+    return {"id": user_id, "password_reset": True}

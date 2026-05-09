@@ -81,10 +81,25 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
             detail="This tenant already has a super_admin",
         )
 
-    # 4. Create the first super_admin system user
+    # 4. Provision a default Headquarters branch BEFORE creating the first
+    # super_admin so the user lands on at least one branch (every system_user
+    # carries branch_ids — see schemas/system_user_schema.py).
+    try:
+        from services.branch_service import ensure_default_branch
+
+        hq_branch = await ensure_default_branch(
+            tenant_id=tenant.id or "",
+            company_name=tenant.company_name or payload.company_name,
+        )
+    except Exception:
+        await delete_tenant({"_id": ObjectId(tenant.id)})
+        raise
+
+    # 5. Create the first super_admin system user
     try:
         super_admin_data = SystemUserCreate(
             tenant_id=tenant.id or "",
+            branch_ids=[hq_branch.id] if hq_branch and hq_branch.id else [],
             full_name=payload.admin_full_name,
             email=payload.admin_email,
             role=SystemUserRole.SUPER_ADMIN,

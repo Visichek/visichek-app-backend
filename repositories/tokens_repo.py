@@ -259,3 +259,25 @@ async def delete_all_tokens_with_admin_id(adminId: str):
     await db.refreshToken.delete_many(filter={"userId": adminId})
     await db.accessToken.delete_many(filter={"userId": adminId})
     token_cache.clear()
+
+
+async def update_branch_ids_on_user_access_tokens(
+    userId: str, branch_ids: list[str]
+) -> int:
+    """Sync ``branch_ids`` onto every active access-token record for ``userId``.
+
+    Branch_ids are stored on the access-token record so AuthPrincipal can
+    populate them without a per-request DB lookup. When a super_admin
+    reassigns a user's branches we must propagate the change to live
+    sessions immediately — otherwise the user keeps seeing data from
+    branches they no longer belong to until their token expires.
+
+    Also invalidates the in-process token cache so the next read picks up
+    the new value.
+    """
+    result = await db.accessToken.update_many(
+        {"userId": userId},
+        {"$set": {"branch_ids": list(branch_ids)}},
+    )
+    token_cache.clear()
+    return int(getattr(result, "modified_count", 0) or 0)

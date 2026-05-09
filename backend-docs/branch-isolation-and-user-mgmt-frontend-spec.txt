@@ -1,0 +1,399 @@
+================================================================================
+BRANCH ISOLATION + USER MANAGEMENT — FRONTEND SPEC
+================================================================================
+
+Last updated: 2026-05-09
+Audience:    frontend (super-admin portal, app-admin console, invite flow)
+Scope:       what's now supported on the API and what the UI must do with it.
+
+This document covers four feature additions that ship together:
+
+  1. Branch isolation — every system_user lands on at least one branch and
+     branch-scoped roles only see their branch's data.
+  2. Adding a super_admin to an EXISTING tenant (app-admin path, separate
+     from the bootstrap-a-new-tenant path).
+  3. Password reset by an authority — app-admin can reset any system_user's
+     password, super_admin can reset other tenant users' passwords.
+  4. Super_admin delete protection — removing a super_admin via /v1/system-
+     users now returns a structured 400 the UI can branch on.
+
+Phases 1–3 are LIVE. Phase 4 (branch-summary on every list response +
+branch-aware read filtering on visitors/sessions/appointments/depts/incidents/
+audit/dashboard) is queued and will ship next — see "Phase 4 preview" at the
+bottom for the response shape the FE should code defensively for.
+
+--------------------------------------------------------------------------------
+1. BRANCH ISOLATION — MODEL OVERVIEW
+--------------------------------------------------------------------------------
+
+Every system_user document now carries a non-empty `branch_ids: string[]`.
+The list is the user's "scope" inside the tenant. There are two kinds of
+roles:
+
+  BRANCH-SCOPED ROLES (data visibility limited to user.branch_ids):
+    - dept_admin
+    - receptionist
+    - security_officer
+
+  UNSCOPED ROLES (see every branch in the tenant):
+    - super_admin
+    - auditor
+    - dpo
+
+  APP ROLES (no tenant, no branches at all):
+    - admin (application admin)
+    - user  (legacy boilerplate user)
+
+The "default branch" is the tenant's Headquarters branch — the one created
+automatically when the tenant is bootstrapped (or backfilled on startup
+for legacy tenants). It carries `is_headquarters: true`.
+
+Plan dependency:
+
+  Plan.tenant_caps.max_branches = null    → unlimited multi-branch
+  Plan.tenant_caps.max_branches = 1       → single branch only (default)
+  Plan.tenant_caps.max_branches = N (>1)  → up to N branches per user
+
+The first branch is always free — no plan check applies when assigning a
+single branch to a user. Multi-branch assignment (`branch_ids.length > 1`)
+is the part that gets gated.
+
+--------------------------------------------------------------------------------
+2. INVITING A USER — DEFAULT BRANCH UX
+--------------------------------------------------------------------------------
+
+Endpoint: POST /v1/system-users/invite (existing — no URL change)
+Auth:     super_admin
+Returns:  202 + { id, job_id, status: "queued" } (queued write)
+
+Body:
+
+  {
+    "full_name":     "Jane Doe",
+    "email":         "jane@example.com",
+    "password":      "St0ngP@ssword!",
+    "role":          "receptionist",        // any tenant role
+    "department_id": "650f...optional",
+    "branch_ids":    ["650f..."]            // OPTIONAL — see rules below
+  }
+
+Server-side rules (applied inside the writer, no FE work needed):
+
+  * If `branch_ids` is OMITTED or empty: defaults to [tenant_HQ_branch_id].
+  * If `branch_ids` is present:
+      - Every id must belong to the tenant. Unknown ids → 400
+        VALIDATION_FAILED with `details.unknown_branch_ids`.
+      - If `branch_ids.length > 1` AND plan's `max_branches` < length →
+        403 with message "Your plan allows at most N branch(es) per user.
+        Upgrade your plan to assign a user to multiple branches."
+
+FRONTEND UX:
+
+  Single-branch plans:
+    - Hide the "branches" picker entirely. Just submit without
+      `branch_ids` and the server defaults to HQ.
+    - When you DO show branch info on the user row, fall back to "HQ"
+      because that's where the user lands.
+
+  Multi-branch plans:
+    - Show a multi-select branch picker.
+    - Pre-tick the HQ branch by default (matches the server's default).
+    - Hard cap the picker at `tenant.plan_summary.entity_caps.max_branches`
+      with an inline upgrade nudge when the user hits the cap.
+    - On submit, send the chosen `branch_ids` array.
+
+  Recommended copy for the cap-hit nudge:
+    "Your plan supports up to N branches per user. To assign a user to
+     more than one branch, upgrade your plan."
+
+Existing users see the same rules through the update endpoint:
+
+  Endpoint: PUT /v1/system-users/{user_id}  (existing)
+
+  Body (partial — any subset of these):
+    {
+      "full_name":     "...",
+      "department_id": "...",
+      "branch_ids":    ["650f...", "651a..."]   // replaces, not merges
+    }
+
+  Important: setting `branch_ids: []` is treated the same as omitting it —
+  the server resolves it to [HQ]. This means the UI cannot accidentally
+  unscope a user to "no branches".
+
+  When `branch_ids` changes:
+    - The server immediately syncs the new list onto every active access
+      token for that user, so live sessions reflect the change without
+      requiring re-login.
+    - The gate cache is invalidated.
+    - An audit row is written with the diff in `details.changes`.
+
+--------------------------------------------------------------------------------
+3. ADDING A SUPER_ADMIN TO AN EXISTING TENANT (NEW)
+--------------------------------------------------------------------------------
+
+Distinct from `POST /v1/admins/tenants/bootstrap` (which creates the tenant
+and its first super_admin together). Use this when:
+  - The tenant's super_admin was offboarded and a new one needs setting up.
+  - You're adding a secondary super_admin for redundancy.
+  - You're restoring access for a tenant that lost their credentials.
+
+Endpoint: POST /v1/admins/tenants/{tenant_id}/super-admins
+Auth:     application admin
+Returns:  201 + SystemUserOut (with access_token + refresh_token —
+          intended to be passed to the new super_admin out-of-band)
+
+Body:
+
+  {
+    "full_name":  "Replacement Super",
+    "email":      "boss@tenant.example",
+    "password":   "Stong-Pa$$word",
+    "branch_ids": ["650f..."]   // OPTIONAL — defaults to HQ
+  }
+
+Validations:
+  - Tenant must exist and be active. Inactive tenant → 400
+    "Cannot add a super admin to an inactive tenant".
+  - Email must be GLOBALLY unique across system_users (super_admin emails
+    are globally unique by design; conflict → 409).
+  - Plan caps + branch validation apply just like a normal user invite.
+
+Response (truncated):
+
+  {
+    "success": true,
+    "data": {
+      "id":           "650f...",
+      "tenant_id":    "650e...",
+      "branch_ids":   ["650a..."],
+      "role":         "super_admin",
+      "full_name":    "Replacement Super",
+      "email":        "boss@tenant.example",
+      "access_token":  "...",
+      "refresh_token": "...",
+      "account_status": "ACTIVE"
+    }
+  }
+
+FRONTEND UX (app admin console):
+  Surface this on the tenant detail page next to the "offboard tenant"
+  button. Common copy: "Add another super admin" or "Replace super admin".
+  On success, present the new credentials in a "copy to clipboard, send
+  out-of-band" modal — never email them automatically from the FE.
+
+--------------------------------------------------------------------------------
+4. PASSWORD RESET BY AN AUTHORITY (NEW)
+--------------------------------------------------------------------------------
+
+Two endpoints — same semantics, different actor + scope:
+
+A) Application admin → reset any system_user's password
+   Endpoint: POST /v1/admins/system-users/{user_id}/reset-password
+   Auth:     application admin
+   Scope:    NONE — can reset any system_user including super_admins of
+             any tenant. Used by app admins to support locked-out tenants.
+
+B) Tenant super_admin → reset another tenant user's password
+   Endpoint: POST /v1/system-users/{user_id}/reset-password
+   Auth:     super_admin
+   Scope:    tenant_id from token — target user MUST be in the same
+             tenant or you get 404.
+
+Body (both):
+
+  { "new_password": "NewStr0ng!" }
+
+Returns:
+
+  {
+    "success": true,
+    "data": { "id": "<user_id>", "password_reset": true }
+  }
+
+Effects:
+  - Server validates the new password against policy + history (last 5).
+  - Updates `password_hash` on the target user.
+  - Records the new hash in `password_history`.
+  - Revokes EVERY active access + refresh token for the target — they
+    must log in again.
+  - Drops the target's gate cache.
+  - Writes an audit event:
+      action="system_user.password_reset"
+      actor_id=<caller>, actor_role="admin" or "super_admin"
+      details={ target_email, target_role }
+
+Errors the FE must handle:
+
+  400 VALIDATION_FAILED, message="Use /v1/auth/change-password to change
+      your own password."
+      → The actor tried to reset their OWN password through this path.
+        UI: redirect them to the self-service change-password screen.
+
+  404 RESOURCE_NOT_FOUND
+      → Target doesn't exist OR (super_admin path) target is in a
+        different tenant. Show a generic "user not found" — do NOT leak
+        cross-tenant existence.
+
+  422 VALIDATION_FAILED with policy errors (joined string in `message`)
+      → The new password failed policy or matched a recent password.
+        Show inline against the password field. Same shape as the
+        existing /v1/auth/change-password 422.
+
+UX RECOMMENDATIONS:
+
+  - In the user-management list, show a "Reset password" action only for
+    rows the actor can target:
+        super_admin → other users in the same tenant (NOT themselves)
+        app admin   → all rows in the tenant detail page
+  - Open a single-input modal asking for the new password.
+  - On success, show a toast: "Password reset. The user has been logged
+    out of all sessions." Then surface (or copy-to-clipboard) the new
+    password so it can be passed out-of-band — the API does NOT email it.
+
+--------------------------------------------------------------------------------
+5. SUPER_ADMIN DELETE PROTECTION (NEW)
+--------------------------------------------------------------------------------
+
+Endpoint: DELETE /v1/system-users/{user_id}  (existing)
+Behaviour change: when the target user has role="super_admin", the server
+now responds with a structured 400 the FE can branch on without parsing
+free text.
+
+Response shape:
+
+  HTTP 400
+  {
+    "success": false,
+    "code":    "VALIDATION_FAILED",
+    "message": "Super admins cannot be removed from user management.",
+    "details": {
+      "code": "SUPER_ADMIN_DELETE_BLOCKED",
+      "hint": "Use tenant offboarding (application admin only) to remove
+               the tenant entirely, or transfer the role first."
+    }
+  }
+
+FRONTEND UX:
+
+  PREFERRED: hide / disable the [Remove user] button on rows where
+  `user.role === "super_admin"`. The 400 should never need to fire in
+  the happy path.
+
+  When it DOES fire (e.g. another tab raced ahead), surface a modal:
+
+    Title:  "Super admins can't be removed from here"
+    Body:   <details.hint from the response>
+    CTA1:   "View tenant offboarding" → links the app admin to
+            POST /v1/admins/tenants/{tenant_id}/offboard
+    CTA2:   "Cancel"
+
+  Detection rule:
+
+    if (response.status === 400 &&
+        response.body.details?.code === "SUPER_ADMIN_DELETE_BLOCKED") {
+       openSuperAdminBlockedModal(response.body.details.hint);
+       return;
+    }
+
+  Do NOT match on the message string — it's intended for humans, not for
+  the FE branch logic.
+
+--------------------------------------------------------------------------------
+6. AUTH PRINCIPAL — WHAT THE BACKEND KNOWS ABOUT THE LOGGED-IN USER
+--------------------------------------------------------------------------------
+
+The JWT + access-token record now carry `branch_ids` for system users.
+The Pydantic principal has these properties the FE doesn't see directly
+but should be aware of when reasoning about API behaviour:
+
+  principal.branch_ids: string[]        // user's branch assignments
+  principal.is_branch_scoped: bool      // true for the 3 scoped roles
+  principal.branch_filter() → Mongo `{branch_id: {$in: [...]}}` or null
+
+These drive the read-side filtering that ships in Phase 4 (see below).
+
+When a super_admin reassigns branches on a user, the change propagates
+IMMEDIATELY: every active access token record for that user is updated
+in Mongo, so even un-refreshed live sessions see the new scope on their
+next request.
+
+--------------------------------------------------------------------------------
+7. STARTUP BACKFILL (LEGACY TENANTS)
+--------------------------------------------------------------------------------
+
+On the first boot after this change ships, the server runs a one-shot
+idempotent backfill (services/branch_backfill.py):
+
+  for each tenant:
+    if no branches exist  → create "{company_name} - Headquarters"
+    for each system_user with empty/missing branch_ids:
+      set branch_ids = [HQ_branch_id]
+
+Resulting state:
+  - Every tenant has at least one branch (HQ).
+  - Every system_user has at least one branch (HQ by default).
+
+The backfill is safe to call repeatedly — users that already carry
+branch_ids are not touched.
+
+The FE doesn't need to do anything during the migration. After the
+deploy, every existing user appears as "based at Headquarters" on the
+user list until super_admin reassigns them.
+
+--------------------------------------------------------------------------------
+8. WHAT'S COMING IN PHASE 4 (HEADS-UP ONLY)
+--------------------------------------------------------------------------------
+
+This phase is queued, NOT shipped yet. Code defensively for it now so
+the rollout doesn't require a synchronous FE change:
+
+A) Every list response that contains a branch-bound resource will
+   include `branch_id` and `branch_summary` per record:
+
+   {
+     "id": "...",
+     "branch_id": "650a...",
+     "branch_summary": {
+       "id": "650a...",
+       "name": "Headquarters",
+       "is_active": true
+     },
+     ...
+   }
+
+   For BRANCH-SCOPED users (dept_admin / receptionist / security_officer):
+     `branch_summary` MAY be null in the response — they always operate
+     inside their own branch so the redundant label is suppressed.
+
+   For UNSCOPED users (super_admin / auditor / dpo / app admin):
+     `branch_summary` is populated on every record so the UI can show
+     "Branch: HQ", "Branch: Lagos Office", etc. without a follow-up
+     fetch.
+
+B) Read-path filtering: branch-scoped users automatically only see
+   data from their `principal.branch_ids` on:
+     - visitors, visit_sessions
+     - appointments
+     - departments (filter by department.branch_id)
+     - incidents
+     - dashboard stats (rolled up to the user's branches)
+     - audit logs
+
+   Unscoped users see everything in the tenant; the response carries
+   `branch_id` + `branch_summary` per record so they can group / filter
+   client-side.
+
+ACTION FOR THE FE NOW:
+  - Wherever you render a user list / visitor list / appointment list,
+    treat `branch_id` and `branch_summary` as OPTIONAL fields that may
+    appear after the next deploy. Don't crash on them, don't crash
+    without them.
+  - Plan the "branch column" UI now so you can flip it on without a
+    schema reshuffle. Hide the column when every row's `branch_id`
+    matches the current user (i.e. branch-scoped user looking at their
+    own branch).
+
+================================================================================
+END OF FILE
+================================================================================

@@ -69,6 +69,31 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class ResetPasswordRequest(BaseModel):
+    """Request body for an authority-driven password reset (no current
+    password required because the actor is privileged).
+
+    Used by:
+      * Application admin → /v1/admins/system-users/{user_id}/reset-password
+      * Tenant super_admin → /v1/system-users/{user_id}/reset-password
+    """
+
+    new_password: str
+
+
+class AddSuperAdminRequest(BaseModel):
+    """Request body for an application admin adding a super_admin to an
+    existing tenant (separate from the bootstrap path which creates the
+    tenant + first super_admin together)."""
+
+    full_name: str
+    email: EmailStr
+    password: str
+    # Optional branch assignment; defaults to the tenant's headquarters
+    # branch when omitted. Multi-branch requires the plan's max_branches > 1.
+    branch_ids: Optional[List[str]] = None
+
+
 # --- Two-Factor Authentication ---
 
 

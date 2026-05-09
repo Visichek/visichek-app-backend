@@ -1006,7 +1006,16 @@ async def list_pending_approvals_for_tenant(
     from schemas.imports import AppointmentStatus
     from schemas.summary_schema import VisitorBriefSummary
 
-    pending_filter = {"tenant_id": tenant_id, "state": "pending_approval"}
+    # Include pending_verification rows so KYC-parked check-ins are visible to
+    # the receptionist queue. Without this, a stalled or never-started KYC
+    # flow leaves the visitor invisible until someone explicitly skips KYC or
+    # a webhook lands. The frontend distinguishes the two states via the
+    # ``state`` field on each row and renders a "KYC in progress" badge for
+    # pending_verification.
+    pending_filter = {
+        "tenant_id": tenant_id,
+        "state": {"$in": ["pending_approval", "pending_verification"]},
+    }
     pending_checkins = await get_checkins(pending_filter, skip=0, limit=200)
     enriched_checkins = await _enrich_checkins_with_visitors(
         tenant_id, pending_checkins
@@ -1281,6 +1290,84 @@ async def confirm_checkin(
             code=ErrorCode.VALIDATION_FAILED,
             message=f"Invalid action: {req.action}. Must be 'approve' or 'reject'",
         )
+
+
+async def force_approve_pending_verification(
+    checkin_id: str,
+    *,
+    actor_id: str,
+    actor_role: str,
+    request_id: Optional[str] = None,
+) -> CheckinOut:
+    """Manually unstick a check-in that's parked in PENDING_VERIFICATION.
+
+    Used when a KYC widget never started, never completed, or its webhook
+    failed to land — the check-in would otherwise stay invisible to the
+    receptionist queue forever. Transitions to PENDING_APPROVAL so a
+    receptionist can approve normally; does NOT skip the verification
+    record on file (any KYC row keeps its current status). Records an
+    audit event with the prior state so we can answer "who unstuck what
+    and when?" later.
+    """
+    checkin = await get_checkin({"_id": checkin_id})
+    if not checkin:
+        raise resource_not_found(resource="Checkin", resource_id=checkin_id)
+
+    current_state = (
+        checkin.state.value if hasattr(checkin.state, "value") else str(checkin.state)
+    )
+    if current_state != CheckinState.PENDING_VERIFICATION.value:
+        raise AppException(
+            status_code=409,
+            code=ErrorCode.VALIDATION_FAILED,
+            message=(
+                f"Cannot force-approve check-in in state '{current_state}'. "
+                "Only check-ins parked in 'pending_verification' are eligible."
+            ),
+        )
+
+    updated = await update_checkin(
+        checkin_id, CheckinUpdate(state=CheckinState.PENDING_APPROVAL)
+    )
+
+    from services.audit_service import record_audit_event
+
+    await record_audit_event(
+        actor_id=actor_id,
+        actor_role=actor_role,
+        action="checkin.force_approved_pending",
+        resource_type="checkin",
+        resource_id=checkin_id,
+        tenant_id=checkin.tenant_id,
+        details={
+            "from_state": current_state,
+            "to_state": CheckinState.PENDING_APPROVAL.value,
+            "reason": "manual_unstick",
+        },
+        request_id=request_id,
+    )
+
+    try:
+        from repositories.visitor_repo import get_visitor
+        from services.notification_service import notify_checkin_pending_approval
+
+        visitor = await get_visitor({"_id": checkin.visitor_id})
+        await notify_checkin_pending_approval(
+            tenant_id=checkin.tenant_id,
+            checkin_id=checkin_id,
+            visitor_name=visitor.full_name if visitor else "Visitor",
+            verified=bool(checkin.verified),
+            purpose=checkin.purpose.purpose if checkin.purpose else "",
+            host_employee_id="",
+        )
+    except Exception:
+        logger.warning(
+            "force_approve_pending_verification: notify failed checkin=%s",
+            checkin_id,
+            exc_info=True,
+        )
+
+    return updated
 
 
 async def list_checkins_analytics(

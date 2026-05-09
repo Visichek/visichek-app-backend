@@ -7,6 +7,11 @@ from security.hash import hash_password
 class SystemUserBase(BaseModel):
     tenant_id: str
     department_id: Optional[str] = None
+    # Every system user is assigned to at least one branch within their tenant.
+    # For branch-scoped roles (dept_admin, receptionist, security_officer) this
+    # restricts the data they can read/write. For unscoped roles (super_admin,
+    # auditor, dpo) it identifies their primary branch but does NOT filter access.
+    branch_ids: List[str] = Field(default_factory=list)
     full_name: str
     email: EmailStr
     role: SystemUserRole
@@ -23,6 +28,10 @@ class SystemUserSignupRequest(BaseModel):
     those are system-assigned based on role defaults."""
 
     department_id: Optional[str] = None
+    # Optional on the wire: when omitted (or empty) the service layer defaults
+    # to the tenant's headquarters branch. When provided, it must be a subset of
+    # the tenant's branches AND respect the plan's max_branches cap.
+    branch_ids: Optional[List[str]] = None
     full_name: str
     email: EmailStr
     password: str
@@ -66,6 +75,9 @@ class SystemUserUpdate(BaseModel):
     full_name: Optional[str] = None
     email: Optional[EmailStr] = None
     department_id: Optional[str] = None
+    # When set, replaces the user's branch assignments. Must be non-empty and
+    # the service layer enforces tenant-membership + plan cap.
+    branch_ids: Optional[List[str]] = None
     role: Optional[SystemUserRole] = None
     account_status: Optional[AccountStatus] = None
     is_active: Optional[bool] = None

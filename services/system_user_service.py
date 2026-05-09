@@ -37,6 +37,94 @@ from services.audit_service import record_audit_event
 from services.plan_limits import enforce_entity_cap
 
 
+async def _resolve_branch_ids_for_user_assignment(
+    tenant_id: str,
+    requested: list[str] | None,
+) -> list[str]:
+    """Return the canonical branch_ids to persist on a system_user row.
+
+    Rules:
+      * If ``requested`` is None or empty → defaults to ``[headquarters_id]``,
+        falling back to the first active branch when no headquarters exists.
+        If the tenant has no branches at all, one is provisioned via
+        ``ensure_default_branch`` so every user always lands on at least one.
+      * Every requested id must belong to the tenant.
+      * The total count must respect the plan's ``max_branches`` cap. Single
+        branch is always allowed (no cap); multi-branch requires the plan
+        feature.
+      * Result is always non-empty and de-duplicated.
+    """
+    from repositories.branch_repo import get_branches
+    from services.branch_service import ensure_default_branch
+    from services.tenant_service import retrieve_tenant_by_id
+
+    tenant_branches = await get_branches({"tenant_id": tenant_id}, start=0, stop=1000)
+    if not tenant_branches:
+        # Tenants are supposed to be bootstrapped with a HQ branch but
+        # historical tenants may not be. Provision lazily so user invites
+        # never fail with "no branches exist for this tenant".
+        try:
+            tenant = await retrieve_tenant_by_id(tenant_id)
+            company_name = tenant.company_name or "HQ"
+        except Exception:
+            company_name = "HQ"
+        hq = await ensure_default_branch(tenant_id, company_name)
+        tenant_branches = [hq]
+
+    valid_ids = {b.id for b in tenant_branches if b.id}
+
+    if not requested:
+        # Pick HQ if present, else the first branch.
+        hq_branch = next(
+            (b for b in tenant_branches if b.is_headquarters and b.id),
+            None,
+        )
+        chosen = hq_branch.id if hq_branch and hq_branch.id else tenant_branches[0].id
+        return [chosen or ""]
+
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for bid in requested:
+        if bid and bid not in seen:
+            seen.add(bid)
+            cleaned.append(bid)
+
+    unknown = [bid for bid in cleaned if bid not in valid_ids]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "One or more branch_ids do not belong to this tenant",
+                "unknown_branch_ids": unknown,
+            },
+        )
+
+    if len(cleaned) > 1:
+        # Multi-branch assignment requires plan support (max_branches > 1).
+        try:
+            from services.plan_cache_service import resolve_tenant_plan
+
+            plan_data = await resolve_tenant_plan(tenant_id)
+        except Exception:
+            plan_data = None
+
+        max_branches = None
+        if plan_data:
+            max_branches = (plan_data.get("tenant_caps") or {}).get("max_branches")
+
+        if max_branches is not None and max_branches < len(cleaned):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Your plan allows at most {max_branches} branch(es) per user. "
+                    "Upgrade your plan to assign a user to multiple branches."
+                ),
+            )
+
+    return cleaned
+
+
 async def _check_email_uniqueness(email: str, role: str, tenant_id: str) -> None:
     """Enforce email uniqueness rules:
 
@@ -98,11 +186,18 @@ async def add_system_user(
     )
     user_data.permissionList = get_default_permissions_for_role(role_str)
 
+    # Resolve and validate branch_ids — every user lands on at least one branch.
+    user_data.branch_ids = await _resolve_branch_ids_for_user_assignment(
+        tenant_id=user_data.tenant_id,
+        requested=list(user_data.branch_ids) if user_data.branch_ids else None,
+    )
+
     new_user = await create_system_user(user_data, preassigned_id=preassigned_id)
     access_token, refresh_token = await issue_tokens_for_role(
         user_id=new_user.id or "",
         role=new_user.role.value,
         tenant_id=new_user.tenant_id,
+        branch_ids=list(getattr(new_user, "branch_ids", None) or []),
     )
     new_user.access_token = access_token
     new_user.refresh_token = refresh_token
@@ -122,6 +217,7 @@ async def add_system_user(
                 if hasattr(new_user.role, "value")
                 else new_user.role,
                 "department_id": new_user.department_id,
+                "branch_ids": list(new_user.branch_ids or []),
                 "full_name": new_user.full_name,
             },
         )
@@ -129,6 +225,49 @@ async def add_system_user(
         pass
 
     return new_user
+
+
+async def add_super_admin_to_tenant(
+    tenant_id: str,
+    full_name: str,
+    email: str,
+    password: str,
+    branch_ids: list[str] | None = None,
+) -> SystemUserOut:
+    """Create a super_admin for an *existing* tenant.
+
+    Distinct from ``services.tenant_service.bootstrap_tenant`` (which creates
+    the tenant + first super_admin atomically). Use this when an application
+    admin needs to add a secondary super_admin or recreate one after the
+    original was offboarded.
+
+    Reuses the standard ``add_system_user`` so plan caps, email uniqueness,
+    permission defaults, branch validation and audit logging all run.
+    """
+    from schemas.imports import AccountStatus as _AccountStatus
+    from schemas.imports import SystemUserRole as _SystemUserRole
+    from services.tenant_service import retrieve_tenant_by_id
+
+    # Validate the tenant exists and is active before we even hash the
+    # password — avoids creating an orphaned user on a deleted tenant.
+    tenant = await retrieve_tenant_by_id(tenant_id)
+    if not getattr(tenant, "is_active", True):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot add a super admin to an inactive tenant",
+        )
+
+    create_data = SystemUserCreate(
+        tenant_id=tenant_id,
+        branch_ids=list(branch_ids) if branch_ids else [],
+        full_name=full_name,
+        email=email,
+        role=_SystemUserRole.SUPER_ADMIN,
+        account_status=_AccountStatus.ACTIVE,
+        is_active=True,
+        password_hash=password,
+    )
+    return await add_system_user(create_data)
 
 
 async def add_system_user_from_invite(
@@ -142,10 +281,12 @@ async def add_system_user_from_invite(
     """
     signup_data.role.value if hasattr(signup_data.role, "value") else signup_data.role
 
-    # Build internal SystemUserCreate with system-assigned fields
+    # Build internal SystemUserCreate with system-assigned fields. branch_ids
+    # validation + default-branch fallback runs inside add_system_user.
     create_data = SystemUserCreate(
         tenant_id=tenant_id,
         department_id=signup_data.department_id,
+        branch_ids=list(signup_data.branch_ids) if signup_data.branch_ids else [],
         full_name=signup_data.full_name,
         email=signup_data.email,
         role=signup_data.role,
@@ -162,6 +303,7 @@ async def _issue_login_tokens(user: SystemUserOut) -> SystemUserOut:
         user_id=user.id or "",
         role=user.role.value,
         tenant_id=user.tenant_id,
+        branch_ids=list(getattr(user, "branch_ids", None) or []),
     )
     user.access_token = access_token
     user.refresh_token = refresh_token
@@ -448,6 +590,7 @@ async def refresh_system_user_tokens(
         user_id=user.id or "",
         role=user.role.value,
         tenant_id=user.tenant_id,
+        branch_ids=list(getattr(user, "branch_ids", None) or []),
     )
     user.access_token = access_token
     user.refresh_token = refresh_token
@@ -478,6 +621,23 @@ async def update_system_user_by_id(
 ) -> SystemUserOut:
     if not ObjectId.is_valid(user_id):
         raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    # Snapshot the existing record so we can diff and decide on side-effects
+    # (token-record sync, audit payload).
+    existing = await get_system_user({"_id": ObjectId(user_id), "tenant_id": tenant_id})
+    if not existing:
+        raise HTTPException(
+            status_code=404, detail="System user not found or update failed"
+        )
+
+    # Branch-assignment validation runs in the service layer (it needs DB +
+    # plan lookups, which can't sit on the schema validator).
+    if user_data.branch_ids is not None:
+        user_data.branch_ids = await _resolve_branch_ids_for_user_assignment(
+            tenant_id=tenant_id,
+            requested=list(user_data.branch_ids),
+        )
+
     result = await update_system_user(
         {"_id": ObjectId(user_id), "tenant_id": tenant_id}, user_data
     )
@@ -485,6 +645,63 @@ async def update_system_user_by_id(
         raise HTTPException(
             status_code=404, detail="System user not found or update failed"
         )
+
+    # Sync branch_ids onto live access-token records so existing sessions
+    # immediately reflect the new branch scope (no wait for token refresh).
+    if user_data.branch_ids is not None:
+        try:
+            from repositories.tokens_repo import update_branch_ids_on_user_access_tokens
+
+            await update_branch_ids_on_user_access_tokens(
+                userId=user_id,
+                branch_ids=list(result.branch_ids or []),
+            )
+        except Exception:
+            # Token sync is best-effort: stale branch_ids on a token will
+            # self-correct at the gate-cache TTL or next refresh.
+            pass
+
+    # Audit with a diff so the trail answers "what changed?", not just "X was
+    # touched". Mandatory for tenant-scoped writers per the audit rule.
+    try:
+        changes: dict = {}
+        update_dump = user_data.model_dump(exclude_none=True)
+        for key, new_val in update_dump.items():
+            if key == "last_updated":
+                continue
+            old_val: Any = getattr(existing, key, None)
+            # Normalise enum values for comparison.
+            old_cmp = (
+                old_val.value
+                if old_val is not None and hasattr(old_val, "value")
+                else old_val
+            )
+            new_cmp = (
+                new_val.value
+                if new_val is not None and hasattr(new_val, "value")
+                else new_val
+            )
+            if old_cmp != new_cmp:
+                changes[key] = {"from": old_cmp, "to": new_cmp}
+        if changes:
+            await record_audit_event(
+                actor_id="system",
+                actor_role="admin",
+                action="system_user.updated",
+                resource_type="system_user",
+                resource_id=user_id,
+                tenant_id=tenant_id,
+                details={
+                    "email": result.email,
+                    "role": result.role.value
+                    if hasattr(result.role, "value")
+                    else result.role,
+                    "changes": changes,
+                },
+            )
+    except Exception:
+        pass
+
     return result
 
 
@@ -496,6 +713,25 @@ async def remove_system_user(user_id: str, tenant_id: str):
     user = await get_system_user({"_id": ObjectId(user_id), "tenant_id": tenant_id})
     if not user:
         raise HTTPException(status_code=404, detail="System user not found")
+
+    # Super admins are tenant-critical. They own billing, branch config, and
+    # invite other users — deleting one through the normal user-management
+    # surface would orphan the tenant. The application-admin offboarding
+    # path (services/tenant_offboarding_service.py) is the only sanctioned
+    # way to remove a super_admin.
+    role_str = user.role.value if hasattr(user.role, "value") else user.role
+    if role_str == "super_admin":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Super admins cannot be removed from user management.",
+                "code": "SUPER_ADMIN_DELETE_BLOCKED",
+                "hint": (
+                    "Use tenant offboarding (application admin only) to remove "
+                    "the tenant entirely, or transfer the role first."
+                ),
+            },
+        )
 
     result = await delete_system_user(
         {"_id": ObjectId(user_id), "tenant_id": tenant_id}
@@ -536,6 +772,7 @@ async def verify_system_user_otp(challenge_id: str, otp_code: str):
         user_id=user.id or "",
         role=user.role.value,
         tenant_id=user.tenant_id,
+        branch_ids=list(getattr(user, "branch_ids", None) or []),
     )
     user.access_token = access_token
     user.refresh_token = refresh_token

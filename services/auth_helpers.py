@@ -57,19 +57,28 @@ async def _issue_access_token(user_id: str, role: str):
 
 
 async def issue_tokens_for_role(
-    user_id: str, role: str, tenant_id: str | None = None
+    user_id: str,
+    role: str,
+    tenant_id: str | None = None,
+    branch_ids: list[str] | None = None,
 ) -> tuple[str, str]:
     normalized_role = _normalize_role(role)
     access_token = await _issue_access_token(user_id=user_id, role=normalized_role)
 
-    # Store tenant_id on the access token record for system users
-    if tenant_id and access_token.accesstoken:
+    # Store tenant_id (and, for system users, branch_ids) on the access token
+    # record so AuthPrincipal can populate them without a per-request DB lookup.
+    if access_token.accesstoken and (tenant_id or branch_ids):
         from core.database import db
         from bson import ObjectId
 
+        update_doc: dict = {}
+        if tenant_id:
+            update_doc["tenant_id"] = tenant_id
+        if branch_ids is not None:
+            update_doc["branch_ids"] = list(branch_ids)
         await db.accessToken.update_one(
             {"_id": ObjectId(access_token.accesstoken)},
-            {"$set": {"tenant_id": tenant_id}},
+            {"$set": update_doc},
         )
 
     jwt_token = await create_jwt_role_token(

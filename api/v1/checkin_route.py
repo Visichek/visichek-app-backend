@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from core.response_envelope import document_response
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.checkin_service import (
     confirm_checkin,
+    force_approve_pending_verification,
     get_checkin_detail,
     list_checkins_analytics,
     list_checkins_for_tenant,
@@ -154,6 +155,45 @@ async def confirm_pending_checkin(
 ):
     """Approve or reject a check-in (receptionist/super_admin)."""
     return await confirm_checkin(checkin_id, principal, payload)
+
+
+@router.post(
+    "/checkins/{checkin_id}/force-approve-pending",
+    status_code=status.HTTP_200_OK,
+)
+@document_response(
+    message="Check-in unstuck — moved to pending_approval",
+    description=(
+        "Manually transition a check-in that is stuck in "
+        "``pending_verification`` to ``pending_approval`` so it becomes "
+        "visible / actionable in the receptionist queue. Use this when a "
+        "KYC widget never started, never completed, or its webhook didn't "
+        "land — without it the visitor stays invisible to the queue "
+        "forever. Records an audit event with the prior state. Only "
+        "super_admins may call. Returns 409 if the check-in is already in "
+        "any other state (already approved, rejected, etc.)."
+    ),
+    summary="Force-approve a stuck pending_verification check-in (super_admin)",
+    response_codes={
+        401: "Unauthorized",
+        403: "Forbidden",
+        404: "Check-in not found",
+        409: "Check-in is not in pending_verification",
+    },
+)
+async def force_approve_pending_endpoint(
+    checkin_id: str,
+    request: Request,
+    principal: AuthPrincipal = Depends(verify_system_user_token("super_admin")),
+):
+    """Unstick a KYC-parked check-in (super_admin only)."""
+    request_id = getattr(request.state, "request_id", None)
+    return await force_approve_pending_verification(
+        checkin_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=request_id,
+    )
 
 
 @router.get(

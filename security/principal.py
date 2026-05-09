@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # Application-level roles (platform operators)
@@ -24,6 +24,14 @@ TENANT_USER_ROLES = (
     "auditor",
     "security_officer",
     "dpo",
+)
+
+# Tenant roles whose data visibility is limited to their assigned branch_ids.
+# Other tenant roles (super_admin, auditor, dpo) see all branches in the tenant.
+BRANCH_SCOPED_ROLES: tuple[str, ...] = (
+    "dept_admin",
+    "receptionist",
+    "security_officer",
 )
 
 ALL_ROLES = APP_ROLES + TENANT_USER_ROLES
@@ -48,6 +56,9 @@ class AuthPrincipal(BaseModel):
     allow_expired: bool = False
     tenant_id: Optional[str] = None
     department_id: Optional[str] = None
+    # Branch assignments captured at token-issuance time. Branch-scoped roles
+    # use this list to filter reads/writes; unscoped roles ignore it.
+    branch_ids: List[str] = Field(default_factory=list)
 
     @property
     def is_admin(self) -> bool:
@@ -72,6 +83,28 @@ class AuthPrincipal(BaseModel):
     @property
     def is_receptionist(self) -> bool:
         return self.role == "receptionist"
+
+    @property
+    def is_branch_scoped(self) -> bool:
+        """True when this principal can only see data from their branch_ids.
+
+        Returns False for app-admin/app-user (no tenant) and for the unscoped
+        tenant roles (super_admin, auditor, dpo) which see every branch.
+        """
+        return self.role in BRANCH_SCOPED_ROLES
+
+    def branch_filter(self, field: str = "branch_id") -> Optional[dict[str, Any]]:
+        """Return a Mongo filter fragment that scopes a query to this user's
+        branches, or ``None`` if the principal sees everything.
+
+        Use as: ``query.update(principal.branch_filter() or {})``.
+        Returns ``{"branch_id": {"$in": [...]}}`` for branch-scoped principals,
+        or ``{"branch_id": {"$in": []}}`` (which matches nothing) when a
+        scoped user has no branches assigned — fail closed, never wide-open.
+        """
+        if not self.is_branch_scoped:
+            return None
+        return {field: {"$in": list(self.branch_ids)}}
 
     def has_role(self, *roles: str) -> bool:
         return self.role in roles

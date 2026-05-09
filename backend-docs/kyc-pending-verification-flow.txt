@@ -1,0 +1,190 @@
+================================================================================
+KYC PENDING_VERIFICATION FLOW — what happens after a kiosk submit, and how the
+receptionist queue treats parked check-ins
+================================================================================
+
+Last updated: 2026-05-09
+Audience: frontend (kiosk + reception dashboard) + ops / on-call
+
+--------------------------------------------------------------------------------
+1. THE BIG PICTURE
+--------------------------------------------------------------------------------
+
+When a visitor completes a kiosk check-in form, the backend creates a row in the
+`checkins` collection and parks it in one of two states based on whether the
+tenant has Dojah KYC enabled:
+
+  - Tenant has KYC enabled (plan grants it AND provider configured)
+      → state = "pending_verification"
+      → MEANING: "we are waiting for the KYC widget to finish or be skipped"
+      → the visitor MUST run (or skip) the Dojah ID-verification widget before
+        this row becomes actionable to a receptionist
+
+  - Tenant does NOT have KYC enabled
+      → state = "pending_approval"
+      → MEANING: "ready for receptionist to approve or reject"
+
+Reference (services/checkin_service.py):
+  - submit_checkin              → ~line 910-915
+  - submit_verified_checkin_core → ~line 760-770
+
+--------------------------------------------------------------------------------
+2. WHAT THE FRONTEND MUST DO WHEN IT SEES "pending_verification"
+--------------------------------------------------------------------------------
+
+The submit response includes the new check-in's id and state. If state is
+"pending_verification", the kiosk UI MUST do ONE of these — never just leave the
+visitor staring at a "submitted" screen, because the row will be invisible to
+reception until something below happens:
+
+  A) Run the KYC widget (default path)
+       1. POST /v1/kyc/checkins/{checkin_id}/initiate
+            → returns { reference_id, provider, widget_config, expires_at }
+       2. Render Dojah's widget client-side using widget_config
+       3. On widget success/failure, the webhook fires to Dojah → us, and the
+          backend transitions the check-in:
+             SUCCESS → state="pending_approval", verified=true
+             FAILED  → state="rejected"
+             EXPIRED → state="rejected"
+       4. The kiosk should poll GET /v1/kyc/checkins/{checkin_id}/status while
+          the widget runs (every 2-3s) so the UI flips to "verified, please
+          proceed to reception" without waiting for the webhook.
+
+  B) Skip KYC (only if tenant_settings.kyc_required is false)
+       1. POST /v1/kyc/checkins/{checkin_id}/skip
+            body: { "reason": "visitor opted out" }   (reason optional)
+       2. Backend transitions PENDING_VERIFICATION → PENDING_APPROVAL and
+          notifies the receptionist queue.
+       Note: if kyc_required=true on the tenant, this returns 403.
+
+  C) Submit with a pre-run KYC reference (rare — used when the kiosk runs Dojah
+     BEFORE pressing Submit)
+       Pass `kyc_reference_id` in the submit body. The backend short-circuits
+       to PENDING_APPROVAL with verified=true and links the verification row
+       so the webhook still lands on the right check-in.
+
+USER-FACING COPY suggestion for kiosks:
+  "You're almost done — please complete the quick ID check on the next screen.
+   Until then, our reception team can't see your check-in."
+  + a [Skip ID check] button only when kyc_required=false.
+
+--------------------------------------------------------------------------------
+3. THE RECEPTIONIST QUEUE (FIXED 2026-05-09)
+--------------------------------------------------------------------------------
+
+GET /v1/tenants/{tenant_id}/pending-approvals now returns BOTH
+"pending_approval" AND "pending_verification" rows. Each row carries a `state`
+field; the frontend should render them differently:
+
+  - state = "pending_approval"
+       → "Ready to approve" (green badge, [Approve] [Reject] buttons enabled)
+
+  - state = "pending_verification"
+       → "Awaiting ID verification" (amber badge, [Approve]/[Reject] DISABLED,
+          show small text "visitor is completing their ID check at the kiosk")
+       → If the row has been in this state for more than ~10 minutes, surface
+          a [Force-approve] button (super_admin only) that calls the new
+          unstick endpoint — see section 4.
+
+Why we now show pending_verification too: previously, if the kiosk crashed,
+the visitor walked away mid-widget, the network dropped, or the Dojah webhook
+never landed, the check-in was invisible to reception forever. Showing them
+disabled-but-visible lets reception spot stuck visitors and recover.
+
+--------------------------------------------------------------------------------
+4. UNSTICK ENDPOINT (super_admin only, NEW)
+--------------------------------------------------------------------------------
+
+POST /v1/checkins/{checkin_id}/force-approve-pending
+  Auth: system_user with role="super_admin"
+  Body: none
+  Effect: transitions state PENDING_VERIFICATION → PENDING_APPROVAL, records an
+          audit event ("checkin.force_approved_pending") with from_state /
+          to_state / reason="manual_unstick", and fires the standard
+          notify_checkin_pending_approval notification so receptionists see it.
+
+  Returns 200 on success, 404 if the check-in does not exist, 409 if the
+  check-in is in any state other than pending_verification (e.g. already
+  approved or rejected).
+
+  When to use:
+    - The 2 visitors that registered on 2026-05-09 are still parked because
+      the kiosk did not run / complete KYC. A super_admin can call this for
+      each stuck check-in to make them visible in the queue.
+    - Long-term, the frontend should expose a button on stuck rows so
+      super_admins can recover them in one click.
+
+  Audit: every call writes to `audit_trail`:
+    {
+      "actor_id": <super_admin id>,
+      "action": "checkin.force_approved_pending",
+      "resource_type": "checkin",
+      "resource_id": <checkin_id>,
+      "details": { "from_state": "pending_verification",
+                   "to_state":   "pending_approval",
+                   "reason":     "manual_unstick" }
+    }
+
+--------------------------------------------------------------------------------
+5. STATE TRANSITION TABLE
+--------------------------------------------------------------------------------
+
+  Trigger                                   From                    To
+  ----------------------------------------  ----------------------  ----------------
+  submit_checkin (KYC enabled)              (new)                   pending_verification
+  submit_checkin (KYC disabled)             (new)                   pending_approval
+  submit_checkin (kyc_reference_id present) (new)                   pending_approval (verified=true)
+  KYC webhook: SUCCESS                      pending_verification    pending_approval (verified=true)
+  KYC webhook: FAILED                       pending_verification    rejected
+  KYC webhook: EXPIRED                      pending_verification    rejected
+  POST /v1/kyc/checkins/{id}/skip            pending_verification    pending_approval
+  POST /v1/checkins/{id}/force-approve-pending  pending_verification pending_approval
+  POST /v1/checkins/{id}/confirm  (approve) pending_approval        approved
+  POST /v1/checkins/{id}/confirm  (reject)  pending_approval        rejected
+  Visitor checkout                          approved                checked_out
+
+--------------------------------------------------------------------------------
+6. DEBUGGING A STUCK CHECK-IN
+--------------------------------------------------------------------------------
+
+Run these in order:
+
+  1) Confirm the check-in IS in pending_verification:
+        db.checkins.findOne({_id: ObjectId("<checkin_id>")}, {state: 1, verified: 1})
+
+  2) Was a KYC verification row created?
+        db.kyc_verifications.findOne({checkin_id: "<checkin_id>"})
+       - if missing → kiosk never called /v1/kyc/checkins/{id}/initiate
+       - if status="ongoing" → widget started but never completed
+       - if status="success" but checkin still pending_verification → webhook
+         landed but _apply_to_checkin failed; check logs for the kyc.success
+         audit event and any exceptions in the apply path.
+
+  3) Did Dojah send any webhooks for this reference?
+        db.kyc_webhook_events.find(
+          {reference_id: "<ref_id>"}
+        ).sort({date_created: -1})
+       - empty → Dojah never called us. Check the webhook URL in Dojah dashboard
+                 and verify the webhook secret matches FLUTTERWAVE_WEBHOOK_SECRET_HASH
+                 / DOJAH_WEBHOOK_SECRET.
+       - rejected_signature → secret mismatch.
+       - received but state didn't move → exception in finalize_kyc; check logs.
+
+  4) If you can't fix the widget/webhook quickly, unstick the check-in:
+        curl -X POST http://api.../v1/checkins/<checkin_id>/force-approve-pending \
+             -H "Authorization: Bearer <super_admin token>"
+
+--------------------------------------------------------------------------------
+7. WHY THIS MATTERS
+--------------------------------------------------------------------------------
+
+The old behavior — silently parking pending_verification rows out of sight —
+optimizes for the happy KYC path. But ANY failure mode (kiosk crash, network
+drop, Dojah misconfig, visitor abandons) leaves a visitor stranded and
+invisible. The fix above keeps the KYC parking semantics (state=pending_
+verification still means "do not approve yet") but makes the rows VISIBLE so
+reception can spot and recover them.
+
+================================================================================
+END OF FILE
+================================================================================

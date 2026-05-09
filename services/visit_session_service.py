@@ -7,6 +7,8 @@ from typing import Any, Optional
 from bson import ObjectId
 from fastapi import HTTPException
 
+from core.errors import AppException, ErrorCode
+
 from repositories.visit_session_repo import (
     count_visit_sessions,
     create_visit_session,
@@ -324,16 +326,33 @@ async def check_in_from_appointment(
 
     resolved_name = full_name or profile_name or appointment.visitor_name_snapshot
     if not resolved_name:
-        raise HTTPException(
+        raise AppException(
             status_code=400,
-            detail="full_name is required (none on appointment or visitor profile)",
+            code=ErrorCode.VALIDATION_FAILED,
+            message=(
+                "full_name is required to check in this appointment — neither "
+                "the appointment nor the linked visitor profile has one on "
+                "record. Please collect it from the visitor and resubmit."
+            ),
+            details={"missing_field": "full_name", "prompt_required": True},
         )
 
     resolved_phone = phone or profile_phone
     if not resolved_phone:
-        raise HTTPException(
+        # Surface a structured error so the kiosk / receptionist UI can pop a
+        # "please enter the visitor's phone number" prompt and resubmit with
+        # the ``phone`` field populated. ``missing_field`` and
+        # ``prompt_required`` are the discriminators the frontend branches on.
+        raise AppException(
             status_code=400,
-            detail="phone is required to look up or create the visitor profile",
+            code=ErrorCode.VALIDATION_FAILED,
+            message=(
+                "phone is required to check in this appointment — neither "
+                "the appointment nor the linked visitor profile has one on "
+                "record. Please collect it from the visitor and resubmit "
+                "this request with `phone` set."
+            ),
+            details={"missing_field": "phone", "prompt_required": True},
         )
 
     request = CheckInRequest(

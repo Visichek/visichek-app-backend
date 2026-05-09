@@ -82,7 +82,10 @@ async def change_system_user_password(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if not check_password(current_password, user["password"]):
+    # System users store the password under ``password_hash`` (see
+    # SystemUserCreate). The previous implementation read/wrote ``password``,
+    # which silently bypassed verification on every call.
+    if not check_password(current_password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
 
     hashed = await _enforce_new_password_policy(
@@ -91,7 +94,7 @@ async def change_system_user_password(
 
     await db.system_users.update_one(
         {"_id": ObjectId(user_id)},
-        {"$set": {"password": hashed}},
+        {"$set": {"password_hash": hashed}},
     )
 
     policy = await get_security_policy()
@@ -101,3 +104,102 @@ async def change_system_user_password(
         role="system_user",
         history_count=policy.password_history_count,
     )
+
+
+async def reset_system_user_password_by_authority(
+    target_user_id: str,
+    new_password: str,
+    *,
+    actor_id: str,
+    actor_role: str,
+    scope_tenant_id: str | None = None,
+) -> None:
+    """Reset another system user's password without knowing the old one.
+
+    Used by:
+      * Application admins (``actor_role="admin"``) — no tenant scope, can
+        reset any system user's password including super_admins.
+      * Tenant super_admins (``actor_role="super_admin"`` +
+        ``scope_tenant_id``) — limited to users inside their own tenant.
+
+    Side effects: writes the new ``password_hash``, records it in
+    ``password_history``, deletes every active token for the target user
+    (so they're forced to log in again), and emits a tenant-scoped audit
+    event.
+    """
+    if not ObjectId.is_valid(target_user_id):
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    filter_doc: dict = {"_id": ObjectId(target_user_id)}
+    if scope_tenant_id:
+        filter_doc["tenant_id"] = scope_tenant_id
+
+    user = await db.system_users.find_one(filter_doc)
+    if not user:
+        raise HTTPException(status_code=404, detail="System user not found")
+
+    # A super_admin cannot reset their own password through this path —
+    # they should use the self-service /v1/auth/change-password flow which
+    # requires the current password. Application admins can reset their own
+    # via /v1/auth/change-password as well.
+    if actor_id == target_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Use /v1/auth/change-password to change your own password. "
+                "This endpoint is for resetting another user's password."
+            ),
+        )
+
+    hashed = await _enforce_new_password_policy(
+        target_user_id, new_password, role="system_user"
+    )
+
+    await db.system_users.update_one(
+        filter_doc,
+        {"$set": {"password_hash": hashed}},
+    )
+
+    policy = await get_security_policy()
+    await record_password_in_history(
+        target_user_id,
+        hashed,
+        role="system_user",
+        history_count=policy.password_history_count,
+    )
+
+    # Force re-login: revoke every active token for the target so an
+    # attacker holding an old session can't continue with stolen creds.
+    try:
+        from repositories.tokens_repo import delete_all_tokens_with_user_id
+
+        await delete_all_tokens_with_user_id(userId=target_user_id)
+    except Exception:
+        pass
+
+    # Drop the cached gate snapshot so the next request re-reads the row.
+    try:
+        from core.queue.gate_cache import invalidate_gate
+
+        invalidate_gate(user_id=target_user_id)
+    except Exception:
+        pass
+
+    # Audit (mandatory for tenant-scoped writes).
+    try:
+        from services.audit_service import record_audit_event
+
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role,
+            action="system_user.password_reset",
+            resource_type="system_user",
+            resource_id=target_user_id,
+            tenant_id=user.get("tenant_id"),
+            details={
+                "target_email": user.get("email"),
+                "target_role": user.get("role"),
+            },
+        )
+    except Exception:
+        pass
