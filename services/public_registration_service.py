@@ -12,7 +12,7 @@ from repositories.visit_session_repo import (
 )
 from repositories.tenant_repo import get_tenant
 from repositories.department_repo import get_department, get_departments
-from repositories.appointment_repo import get_appointment, update_appointment
+from repositories.appointment_repo import get_appointment
 from repositories.privacy_notice_repo import get_active_notice_for_tenant
 from repositories.visitor_profile_repo import (
     get_visitor_profile,
@@ -22,7 +22,6 @@ from repositories.visitor_profile_repo import (
 )
 from repositories.system_user_repo import get_system_user
 from repositories.tenant_settings_repo import get_tenant_settings
-from schemas.appointment_schema import AppointmentUpdate
 from schemas.public_registration_schema import (
     PublicAppointmentLookupOut,
     PublicCheckoutResponse,
@@ -158,7 +157,9 @@ async def register_visitor_public(
         if dept:
             department_name = dept.name
 
-    # Handle appointment linkage
+    # Handle appointment linkage. The appointment stays SCHEDULED until
+    # the badge is actually issued (confirm_check_in) — public
+    # registration only creates a REGISTERED session.
     host_id = None
     appointment_id = request.appointment_id
     if appointment_id and ObjectId.is_valid(appointment_id):
@@ -169,10 +170,6 @@ async def register_visitor_public(
             host_id = appointment.host_id if hasattr(appointment, "host_id") else None
             if not department_id and hasattr(appointment, "department_id"):
                 department_id = appointment.department_id
-            await update_appointment(
-                {"_id": ObjectId(appointment_id)},
-                AppointmentUpdate(status=AppointmentStatus.FULFILLED),
-            )
 
     # Create visit session with REGISTERED status
     session_data = VisitSessionCreate(

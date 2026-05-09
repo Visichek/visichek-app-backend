@@ -57,8 +57,12 @@ _VERIFICATION_METHOD_LABELS: Dict[str, str] = {
 _BADGE_FORMAT_LABELS: Dict[str, str] = {"A6": "A6", "A7": "A7"}
 _APPOINTMENT_STATUS_LABELS: Dict[str, str] = {
     "scheduled": "Scheduled",
-    "fulfilled": "Fulfilled",
+    "checked_in": "Checked in",
+    "checked_out": "Checked out",
+    "no_show": "No show",
     "cancelled": "Cancelled",
+    # Legacy values still possible on older records.
+    "fulfilled": "Fulfilled",
     "missed": "Missed",
 }
 _INCIDENT_TYPE_LABELS: Dict[str, str] = {
@@ -1028,23 +1032,30 @@ async def _appointment_metrics(
     appointment_status_counts: Dict[str, int],
     total_visits: int,
 ) -> Dict[str, Any]:
+    # Roll legacy "fulfilled" into the new "checked_out" bucket so old
+    # records and new ones contribute to the same metric.
     scheduled = appointment_status_counts.get("scheduled", 0)
-    fulfilled = appointment_status_counts.get("fulfilled", 0)
-    missed = appointment_status_counts.get("missed", 0)
+    checked_in = appointment_status_counts.get("checked_in", 0)
+    fulfilled = appointment_status_counts.get(
+        "checked_out", 0
+    ) + appointment_status_counts.get("fulfilled", 0)
+    no_show = appointment_status_counts.get(
+        "no_show", 0
+    ) + appointment_status_counts.get("missed", 0)
     cancelled = appointment_status_counts.get("cancelled", 0)
-    total = scheduled + fulfilled + missed + cancelled
+    total = scheduled + checked_in + fulfilled + no_show + cancelled
     fulfillment = round((fulfilled / total) * 100, 1) if total else 0.0
-    no_show = round(((missed + cancelled) / total) * 100, 1) if total else 0.0
+    no_show_rate = round(((no_show + cancelled) / total) * 100, 1) if total else 0.0
     conversion = (
         round((fulfilled / total_visits) * 100, 1) if total_visits else 0.0
     )
     return {
         "appointments_scheduled": scheduled,
         "appointments_fulfilled": fulfilled,
-        "appointments_missed": missed,
+        "appointments_missed": no_show,
         "appointments_cancelled": cancelled,
         "appointment_fulfillment_rate": fulfillment,
-        "appointment_no_show_rate": no_show,
+        "appointment_no_show_rate": no_show_rate,
         "appointment_conversion_rate": conversion,
     }
 

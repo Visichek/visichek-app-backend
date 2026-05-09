@@ -10,12 +10,14 @@ from schemas.appointment_schema import (
     AppointmentCreate,
     AppointmentUpdate,
 )
+from schemas.visit_session_schema import AppointmentCheckInRequest
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.appointment_service import (
     retrieve_appointment_by_id_with_summary,
     retrieve_appointments_with_summary,
 )
+from services.visit_session_service import check_in_from_appointment
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
 
@@ -166,6 +168,86 @@ async def update_appointment_endpoint(
         actor_id=principal.user_id,
         actor_role=principal.role,
         request_id=request_id,
+    )
+
+
+@router.post("/{appointment_id}/check-in")
+@document_response(
+    message="Visitor checked in from appointment",
+    status_code=status.HTTP_201_CREATED,
+    description=(
+        "Convert a SCHEDULED appointment into a real visit-session check-in. "
+        "Hydrates the visitor identity from the appointment's snapshot + "
+        "linked visitor profile, then runs the standard register → confirm "
+        "flow. The appointment is moved to CHECKED_IN as a side-effect of "
+        "the badge being issued. Set ``issue_badge=false`` to register the "
+        "visitor without printing a badge yet (e.g. when KYC needs to "
+        "complete first); the appointment then stays SCHEDULED until "
+        "confirm_check_in fires."
+    ),
+    summary="Check in a scheduled appointment",
+    success_example={
+        "appointment_id": "69fcc9d3e1c9a86e47bc7564",
+        "session": {
+            "id": "507f1f77bcf86cd799439011",
+            "status": "checked_in",
+            "appointment_id": "69fcc9d3e1c9a86e47bc7564",
+            "visitor_name_snapshot": "Edoka Issac",
+            "host_name_snapshot": "Nathaniel Uriri",
+            "department_name_snapshot": "Human Resources",
+            "check_in_time": 1778952010,
+            "badge_qr_token": "VIS_20260515_1234567890AB",
+        },
+        "visitor_profile": {
+            "id": "507f1f77bcf86cd799439012",
+            "phone": "+2341232323432",
+            "full_name": "Edoka Issac",
+        },
+        "badge_qr_token": "VIS_20260515_1234567890AB",
+        "badge_pdf_base64": "JVBERi0xLjQK...",
+    },
+    response_codes={
+        400: "Appointment is in a terminal state, or required visitor data is missing",
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        404: "Appointment not found",
+    },
+    error_examples={
+        400: {
+            "success": False,
+            "message": "phone is required to look up or create the visitor profile",
+            "code": "VALIDATION_FAILED",
+        },
+        404: {
+            "success": False,
+            "message": "Appointment not found",
+            "code": "RESOURCE_NOT_FOUND",
+        },
+    },
+)
+async def check_in_appointment_endpoint(
+    appointment_id: str,
+    request: AppointmentCheckInRequest,
+    principal: AuthPrincipal = Depends(_admin_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    badge_format_value = (
+        request.badge_format.value
+        if request.badge_format is not None
+        else "A7"
+    )
+    return await check_in_from_appointment(
+        appointment_id=appointment_id,
+        tenant_id=tenant_id,
+        receptionist_id=principal.user_id,
+        phone=request.phone,
+        full_name=request.full_name,
+        company=request.company,
+        photo_object_key=request.photo_object_key,
+        id_image_object_key=request.id_image_object_key,
+        consent_granted=request.consent_granted,
+        badge_format=badge_format_value,
+        issue_badge=request.issue_badge,
     )
 
 

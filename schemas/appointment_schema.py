@@ -14,6 +14,12 @@ class AppointmentBase(BaseModel):
     purpose: Optional[str] = None
     status: AppointmentStatus = AppointmentStatus.SCHEDULED
     fulfilled_at: Optional[int] = None
+    # Object key for a host-uploaded photo of the expected visitor.
+    # Surfaced on the pending-approvals list so the receptionist can
+    # match the person at the desk to the face the host pre-vetted.
+    # Resolved to a presigned URL on read via
+    # ``expected_visitor_photo_url`` on the *Out schema.
+    expected_visitor_photo_object_key: Optional[str] = None
 
 
 class AppointmentCreate(AppointmentBase):
@@ -28,6 +34,7 @@ class AppointmentUpdate(BaseModel):
     scheduled_datetime: Optional[int] = None
     purpose: Optional[str] = None
     fulfilled_at: Optional[int] = None
+    expected_visitor_photo_object_key: Optional[str] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
@@ -36,6 +43,10 @@ class AppointmentOut(AppointmentBase):
     created_by: Optional[str] = None
     date_created: Optional[int] = None
     last_updated: Optional[int] = None
+    # Presigned URL for the host-uploaded visitor photo. Resolved by the
+    # service layer (best-effort — null if storage is misconfigured or
+    # the object_key is unset).
+    expected_visitor_photo_url: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod

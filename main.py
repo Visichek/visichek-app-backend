@@ -406,6 +406,16 @@ async def lifespan(app: FastAPI):
         name="Support Case SLA Breach Alerts",
         replace_existing=True,
     )
+    # Flip SCHEDULED appointments past their grace window to NO_SHOW.
+    # Runs hourly so the dashboard's appointment-status pie reflects
+    # missed visits without operator intervention.
+    scheduler.add_job(
+        "services.appointment_lifecycle_service:mark_no_shows",
+        trigger=IntervalTrigger(hours=1),
+        id="appointment_no_show_sweep",
+        name="Appointment No-Show Sweeper",
+        replace_existing=True,
+    )
 
     try:
         yield

@@ -859,9 +859,28 @@ async def _support_overview(*, now: int) -> Dict[str, Any]:
     priority_counts = await _group_count("support_cases", {}, "priority")
     category_counts = await _group_count("support_cases", {}, "category")
 
-    # Top tenants by support volume.
+    # Top tenants by support volume. ``$nin`` is a query operator, not an
+    # aggregation expression — inside ``$cond`` we have to invert ``$in``.
     pipeline = [
-        {"$group": {"_id": "$tenant_id", "total": {"$sum": 1}, "open": {"$sum": {"$cond": [{"$nin": ["$status", ["resolved", "closed"]]}, 1, 0]}}}},
+        {
+            "$group": {
+                "_id": "$tenant_id",
+                "total": {"$sum": 1},
+                "open": {
+                    "$sum": {
+                        "$cond": [
+                            {
+                                "$not": [
+                                    {"$in": ["$status", ["resolved", "closed"]]}
+                                ]
+                            },
+                            1,
+                            0,
+                        ]
+                    }
+                },
+            }
+        },
         {"$sort": {"total": -1}},
         {"$limit": 10},
     ]

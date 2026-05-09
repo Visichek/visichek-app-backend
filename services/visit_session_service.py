@@ -238,17 +238,148 @@ async def check_in_visitor(
     # 8. Update visitor profile visit count and last visit date
     await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
 
-    # 9. Mark appointment as fulfilled if appointment was linked
-    if appointment_id:
-        await update_appointment(
-            {"_id": ObjectId(appointment_id)},
-            AppointmentUpdate(status=AppointmentStatus.FULFILLED),
-        )
+    # 9. Appointment status stays SCHEDULED until the badge is actually
+    # issued in confirm_check_in — registering only creates the session
+    # in REGISTERED state and shouldn't fulfil the appointment yet.
 
     # PHASE 1A: Return session + profile only, no badge yet
     return {
         "session": session,
         "visitor_profile": profile,
+    }
+
+
+async def check_in_from_appointment(
+    appointment_id: str,
+    tenant_id: str,
+    receptionist_id: str,
+    *,
+    phone: Optional[str] = None,
+    full_name: Optional[str] = None,
+    company: Optional[str] = None,
+    photo_object_key: Optional[str] = None,
+    id_image_object_key: Optional[str] = None,
+    consent_granted: Optional[bool] = None,
+    badge_format: str = "A7",
+    issue_badge: bool = True,
+) -> dict:
+    """One-shot check-in driven by an existing scheduled appointment.
+
+    Resolves the appointment, hydrates a ``CheckInRequest`` from its
+    snapshots (host, department, visitor name) and the linked
+    ``visitor_profile`` if any, then runs the standard register →
+    optionally confirm flow. The appointment lifecycle is moved to
+    CHECKED_IN as a side effect of ``confirm_check_in`` (the helper
+    that issues the badge).
+
+    Override fields (``phone``, ``full_name`` etc.) win over the
+    appointment snapshots — useful when the receptionist needs to
+    correct a typo at the desk before the visitor walks in. Defaults
+    pulled from the appointment cover the common case where everything
+    on the appointment is already accurate."""
+
+    if not ObjectId.is_valid(appointment_id):
+        raise HTTPException(status_code=400, detail="Invalid appointment ID format")
+
+    appointment = await get_appointment(
+        {"_id": ObjectId(appointment_id), "tenant_id": tenant_id}
+    )
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    appt_status = _enum_value(appointment.status)
+    if appt_status not in (
+        AppointmentStatus.SCHEDULED.value,
+        AppointmentStatus.CHECKED_IN.value,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cannot check in from an appointment in terminal state "
+                f"({appt_status})"
+            ),
+        )
+
+    if not appointment.department_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Appointment is missing department_id; cannot derive check-in target",
+        )
+
+    # Pull visitor identity from the appointment's linked profile if any,
+    # then let the override args win.
+    profile_phone: Optional[str] = None
+    profile_name: Optional[str] = None
+    profile_company: Optional[str] = None
+    if appointment.visitor_profile_id and ObjectId.is_valid(
+        appointment.visitor_profile_id
+    ):
+        profile = await get_visitor_profile(
+            {"_id": ObjectId(appointment.visitor_profile_id), "tenant_id": tenant_id}
+        )
+        if profile is not None:
+            profile_phone = profile.phone
+            profile_name = profile.full_name
+            profile_company = profile.company
+
+    resolved_name = full_name or profile_name or appointment.visitor_name_snapshot
+    if not resolved_name:
+        raise HTTPException(
+            status_code=400,
+            detail="full_name is required (none on appointment or visitor profile)",
+        )
+
+    resolved_phone = phone or profile_phone
+    if not resolved_phone:
+        raise HTTPException(
+            status_code=400,
+            detail="phone is required to look up or create the visitor profile",
+        )
+
+    request = CheckInRequest(
+        phone=resolved_phone,
+        full_name=resolved_name,
+        company=company or profile_company,
+        department_id=appointment.department_id,
+        host_id=appointment.host_id,
+        purpose=appointment.purpose,
+        appointment_id=appointment_id,
+        check_in_method=CheckInMethod.MANUAL,
+        photo_object_key=photo_object_key,
+        id_image_object_key=id_image_object_key,
+        consent_granted=consent_granted,
+    )
+    register_result = await check_in_visitor(
+        request=request,
+        tenant_id=tenant_id,
+        receptionist_id=receptionist_id,
+    )
+
+    if not issue_badge:
+        return register_result
+
+    session_obj = register_result.get("session")
+    session_id = getattr(session_obj, "id", None) if session_obj else None
+    if not session_id:
+        # Defensive — check_in_visitor always returns a session with an id.
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create visit session for the appointment",
+        )
+
+    confirm_result = await confirm_check_in(
+        session_id=session_id,
+        receptionist_id=receptionist_id,
+        tenant_id=tenant_id,
+        badge_format=badge_format,
+    )
+
+    return {
+        "appointment_id": appointment_id,
+        "visitor_profile": register_result.get("visitor_profile"),
+        "session": confirm_result.get("session"),
+        "badge_qr_token": confirm_result.get("badge_qr_token"),
+        "badge_pdf_base64": confirm_result.get("badge_pdf_base64"),
     }
 
 
@@ -395,6 +526,18 @@ async def confirm_check_in(
         ),
     )
 
+    # If the session was created from an appointment, mirror the badge
+    # issuance on the appointment itself so the host's calendar reflects
+    # the visitor's actual arrival.
+    if updated_session.appointment_id:
+        from services.appointment_lifecycle_service import transition_appointment
+
+        await transition_appointment(
+            updated_session.appointment_id,
+            tenant_id=tenant_id,
+            target=AppointmentStatus.CHECKED_IN,
+        )
+
     # PHASE 1A: Return session + badge info
     return {
         "session": updated_session,
@@ -443,6 +586,18 @@ async def deny_visitor(
             denied_by=denied_by,
         ),
     )
+
+    # Cancel the linked appointment so the host doesn't see it sitting in
+    # SCHEDULED forever after the visitor was turned away at reception.
+    if updated.appointment_id:
+        from services.appointment_lifecycle_service import transition_appointment
+
+        await transition_appointment(
+            updated.appointment_id,
+            tenant_id=tenant_id,
+            target=AppointmentStatus.CANCELLED,
+        )
+
     return updated
 
 
@@ -576,11 +731,15 @@ async def _checkout_due_appointment(
     if not appointment:
         raise HTTPException(status_code=404, detail="Appointment not found")
 
-    if _enum_value(appointment.status) != AppointmentStatus.SCHEDULED.value:
+    current_status = _enum_value(appointment.status)
+    if current_status not in (
+        AppointmentStatus.SCHEDULED.value,
+        AppointmentStatus.CHECKED_IN.value,
+    ):
         raise HTTPException(
             status_code=400,
             detail=(
-                "Appointment is not scheduled for checkout "
+                "Appointment is not in a checkout-able state "
                 f"(status: {appointment.status})"
             ),
         )
@@ -593,7 +752,7 @@ async def _checkout_due_appointment(
     now = int(time.time())
     updated = await update_appointment(
         {"_id": ObjectId(appointment_id), "tenant_id": tenant_id},
-        AppointmentUpdate(status=AppointmentStatus.FULFILLED, fulfilled_at=now),
+        AppointmentUpdate(status=AppointmentStatus.CHECKED_OUT, fulfilled_at=now),
     )
     timing = _build_checkout_timing(
         eligible_since=updated.scheduled_datetime,
@@ -696,6 +855,20 @@ async def check_out_visitor(
             check_out_time=now,
         ),
     )
+
+    # Mirror the checkout on the originating appointment, if any. The
+    # lifecycle helper is a no-op when the appointment is already in a
+    # terminal state, so a redundant call here is harmless.
+    if updated.appointment_id:
+        from services.appointment_lifecycle_service import transition_appointment
+
+        await transition_appointment(
+            updated.appointment_id,
+            tenant_id=tenant_id,
+            target=AppointmentStatus.CHECKED_OUT,
+            fulfilled_at=now,
+        )
+
     timing = _build_checkout_timing(
         eligible_since=updated.check_in_time,
         checked_out_at=now,

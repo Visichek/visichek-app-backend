@@ -1,0 +1,607 @@
+================================================================================
+SPEC — Two new endpoints for the frontend
+================================================================================
+
+This spec documents:
+
+  1. POST  /v1/appointments/{appointment_id}/check-in
+     Convert a SCHEDULED appointment into a real visit-session check-in.
+
+  2. GET   /v1/audit-logs/export        (tenant-scoped)
+     GET   /v1/audit-logs/admin/export  (cross-tenant, application admin)
+     Stream the audit trail as an XLSX with frozen headers, autofilter,
+     and pre-sized columns.
+
+Both endpoints return through the standard middleware stack
+(CaseConversionMiddleware, RequestId, RateLimit). Field naming on the
+wire is camelCase; this spec uses snake_case for clarity — translate by
+swapping `_x` for `X` (e.g. `appointment_id` → `appointmentId`,
+`badge_pdf_base64` → `badgePdfBase64`).
+
+================================================================================
+1. POST /v1/appointments/{appointment_id}/check-in
+================================================================================
+
+Convert a SCHEDULED appointment into a live visit-session check-in. The
+service hydrates everything from the appointment + linked visitor profile;
+the request body only needs to override anything the receptionist wants
+to correct at the desk.
+
+--------------------------------------------------------------------------------
+1.1 AUTH
+--------------------------------------------------------------------------------
+
+Header:        Authorization: Bearer <system_user_token>
+Allowed roles: receptionist, dept_admin, super_admin
+
+403 AUTH_ROLE_MISMATCH for any other role.
+
+--------------------------------------------------------------------------------
+1.2 PATH
+--------------------------------------------------------------------------------
+
+POST /v1/appointments/{appointment_id}/check-in
+
+`appointment_id` is the ObjectId of an existing appointment. Must belong
+to the caller's tenant — cross-tenant lookup returns 404.
+
+--------------------------------------------------------------------------------
+1.3 REQUEST BODY  (AppointmentCheckInRequest — every field optional)
+--------------------------------------------------------------------------------
+
+{
+    "phone":                  "+2341232323432",   // overrides profile.phone
+    "full_name":              "Edoka Issac",      // overrides appointment.visitor_name_snapshot
+    "company":                "Acme",
+    "photo_object_key":       "uploads/.../photo.jpg",
+    "id_image_object_key":    "uploads/.../id.jpg",
+    "consent_granted":        true,                // required for tenants on
+                                                   //   lawful_basis="consent"
+    "badge_format":           "A7",                // "A6" or "A7"; default A7
+    "issue_badge":            true                 // default true. Set false
+                                                   //   when KYC/ID-scan needs
+                                                   //   to complete first; the
+                                                   //   appointment then stays
+                                                   //   SCHEDULED until
+                                                   //   confirm_check_in fires.
+}
+
+Resolution rules:
+
+  * `phone`    — overrides win; otherwise falls back to the visitor
+                  profile linked on the appointment. **Required** in
+                  effective form (override OR profile must supply it),
+                  because the visitor-profile lookup is keyed off phone.
+
+  * `full_name` — overrides win; otherwise visitor_profile.full_name;
+                  otherwise appointment.visitor_name_snapshot. At least
+                  one must be present.
+
+  * `company`   — overrides win; otherwise visitor_profile.company.
+                  Optional.
+
+  * `host_id`, `department_id`, `purpose` — NEVER taken from the body.
+                  Always pulled from the appointment so the visit row
+                  matches the host's calendar entry.
+
+If a field has no override and no fallback, the endpoint returns
+400 VALIDATION_FAILED with the specific field named in `message`.
+
+--------------------------------------------------------------------------------
+1.4 LIFECYCLE EFFECTS
+--------------------------------------------------------------------------------
+
+1. Looks up the appointment (must be in `scheduled` or `checked_in`
+   state — terminal states are rejected with 400).
+2. Resolves visitor identity per §1.3.
+3. Calls `check_in_visitor`:
+       - Enforces the monthly visitor cap from the tenant plan.
+       - Creates a `visit_session` with status=`registered` and the
+         appointment_id linked.
+       - Increments visitor_profile.total_visits.
+4. If `issue_badge=true` (default), calls `confirm_check_in`:
+       - Validates required snapshots (visitor_name, department, host or
+         purpose).
+       - Generates the badge PDF + signed QR token, uploads to storage,
+         updates the session to status=`checked_in`.
+       - Transitions the appointment to status=`checked_in` via
+         services.appointment_lifecycle_service.
+5. Returns the session, profile, badge token, and base64-encoded PDF.
+
+If `issue_badge=false`, the response omits the badge fields and the
+appointment stays SCHEDULED until the badge is later issued via
+`POST /v1/visitors/check-in/{session_id}/confirm`.
+
+--------------------------------------------------------------------------------
+1.5 SUCCESS RESPONSE  (HTTP 201)
+--------------------------------------------------------------------------------
+
+{
+    "success": true,
+    "message": "Visitor checked in from appointment",
+    "data": {
+        "appointmentId": "69fcc9d3e1c9a86e47bc7564",
+
+        "session": {
+            "id": "507f1f77bcf86cd799439011",
+            "tenantId": "69e35ec9c27723b4b442bcb1",
+            "visitorProfileId": "507f1f77bcf86cd799439012",
+            "departmentId": "69eb55ee42ee3c318de52cfb",
+            "hostId": "69e35ecec27723b4b442bcb2",
+            "appointmentId": "69fcc9d3e1c9a86e47bc7564",
+            "status": "checked_in",
+            "checkInMethod": "manual_entry",
+            "verificationStatus": "unverified",
+            "checkInTime": 1778952010,
+            "visitorNameSnapshot": "Edoka Issac",
+            "companySnapshot": "Acme",
+            "hostNameSnapshot": "Nathaniel Uriri",
+            "departmentNameSnapshot": "Human Resources",
+            "badgeQrToken": "VIS_20260515_1234567890AB",
+            "badgeFormat": "A7",
+            "badgeGenerationTime": 1778952010,
+            "badgeExpiry": 1779038410,
+            "badgePdfObjectKey": "badges/{tenant}/{session}.pdf"
+        },
+
+        "visitorProfile": {
+            "id": "507f1f77bcf86cd799439012",
+            "tenantId": "69e35ec9c27723b4b442bcb1",
+            "fullName": "Edoka Issac",
+            "phone": "+2341232323432",
+            "company": "Acme",
+            "totalVisits": 4,
+            "lastVisitDate": 1778952010
+        },
+
+        "badgeQrToken": "VIS_20260515_1234567890AB",
+        "badgePdfBase64": "JVBERi0xLjQKJ...."   // PDF, render or save
+    },
+    "requestId": "..."
+}
+
+When `issue_badge=false`:
+{
+    "success": true,
+    "message": "Visitor checked in from appointment",
+    "data": {
+        "session": { "status": "registered", ... no badge fields ... },
+        "visitorProfile": { ... }
+        // no badgeQrToken / badgePdfBase64
+    }
+}
+
+--------------------------------------------------------------------------------
+1.6 SIDE EFFECT — APPOINTMENT
+--------------------------------------------------------------------------------
+
+After a successful response with `issue_badge=true`, GET on the same
+appointment returns:
+
+    "status": "checked_in"
+    // checked_out / fulfilled_at populated later when the visitor
+    // checks out via /v1/visitors/check-out
+
+--------------------------------------------------------------------------------
+1.7 ERROR RESPONSES
+--------------------------------------------------------------------------------
+
+400 VALIDATION_FAILED
+  - "Invalid appointment ID format"
+  - "Cannot check in from an appointment in terminal state (checked_out)"
+  - "Appointment is missing department_id; cannot derive check-in target"
+  - "phone is required to look up or create the visitor profile"
+  - "full_name is required (none on appointment or visitor profile)"
+
+400 from confirm_check_in (when issue_badge=true)
+  - "Missing required field: visitor_name_snapshot"
+  - "Missing required field: department_id"
+  - "Missing required fields: either host_id or purpose must be provided"
+
+402 SUBSCRIPTION / QUOTA
+  - "Monthly visitor cap reached for your plan"
+
+404 RESOURCE_NOT_FOUND
+  - "Appointment not found"
+  - "Tenant not found"
+  - "Department not found"
+  - "Host not found in this tenant"
+  - "Visitor profile not found"
+
+--------------------------------------------------------------------------------
+1.8 EXAMPLE — frontend wire calls
+--------------------------------------------------------------------------------
+
+# Happy path: appointment has everything the system needs.
+POST /v1/appointments/69fcc9d3e1c9a86e47bc7564/check-in
+{}    ← empty body is fine
+
+# Receptionist corrects a typo at the desk.
+POST /v1/appointments/69fcc9d3e1c9a86e47bc7564/check-in
+{
+    "phone": "+2348012341234",
+    "full_name": "Edoka Isaac",     // spelling fix
+    "consent_granted": true
+}
+
+# Visitor needs to complete KYC at the kiosk before they get a badge.
+POST /v1/appointments/69fcc9d3e1c9a86e47bc7564/check-in
+{
+    "issue_badge": false,
+    "id_image_object_key": "uploads/scans/abc.jpg"
+}
+# → session.status="registered", appointment.status stays "scheduled"
+# → frontend then polls KYC, calls
+#   POST /v1/visitors/check-in/{session_id}/confirm  (existing endpoint)
+#   to actually issue the badge.
+
+
+================================================================================
+2. GET /v1/audit-logs/export   and   GET /v1/audit-logs/admin/export
+================================================================================
+
+Stream the audit trail as a styled XLSX with a frozen header row,
+autofilter, and column widths sized to the longest cell value.
+
+--------------------------------------------------------------------------------
+2.1 AUTH
+--------------------------------------------------------------------------------
+
+  /v1/audit-logs/export       — super_admin, auditor, dpo (tenant scope)
+  /v1/audit-logs/admin/export — application admin only (cross-tenant)
+
+403 AUTH_ROLE_MISMATCH for other roles.
+
+--------------------------------------------------------------------------------
+2.2 QUERY PARAMETERS
+--------------------------------------------------------------------------------
+
+Identical filter set on both endpoints — mirrors GET /v1/audit-logs:
+
+  actor_id        Optional[str]   exact match on actor_id
+  action          Optional[str]   exact match on action verb (e.g. "appointment.created")
+  resource_type   Optional[str]   exact match (e.g. "subscription")
+  resource_id     Optional[str]   exact match
+  date_from       Optional[int]   inclusive lower bound on `timestamp`
+  date_to         Optional[int]   inclusive upper bound on `timestamp`
+  limit           int (1..50000)  hard row cap, default 10 000
+
+The admin endpoint additionally accepts:
+
+  tenant_id       Optional[str]   scope the export to one tenant. Omit
+                                  for platform-wide (includes events
+                                  where tenant_id is null).
+
+--------------------------------------------------------------------------------
+2.3 RESPONSE
+--------------------------------------------------------------------------------
+
+HTTP 200
+Content-Type:        application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+Content-Disposition: attachment; filename="audit-logs-YYYYMMDD-HHMMSSZ.xlsx"
+                     filename="audit-logs-platform-YYYYMMDD-HHMMSSZ.xlsx"  (admin)
+
+The body is the binary XLSX. NOT wrapped in the standard JSON envelope
+because it's a file download.
+
+--------------------------------------------------------------------------------
+2.4 SPREADSHEET LAYOUT
+--------------------------------------------------------------------------------
+
+Sheet name:   "Audit Logs"
+Frozen panes: A2  → header row stays visible while scrolling
+Autofilter:   A1:L<last_row>  → users can sort/filter every column
+
+Header styling:
+  Bold, white text on slate fill (#334155), centered.
+
+Columns (in order):
+
+  A  Timestamp (UTC)        "YYYY-MM-DD HH:MM:SS"
+  B  Action                 "appointment.created" etc.
+  C  Resource Type          "appointment", "subscription", ...
+  D  Resource ID            ObjectId hex
+  E  Resource Label         derived from resource_summary — uses
+                            company_name / full_name / name /
+                            display_name / invoice_number,
+                            falling back to the bare id
+  F  Actor ID
+  G  Actor Name             from actor_summary.full_name
+  H  Actor Email            from actor_summary.email
+  I  Actor Role             "super_admin", "admin", ...
+  J  Tenant                 tenant_summary.company_name (or tenant_id
+                            when summary unavailable; blank for
+                            platform-level events)
+  K  Request ID             correlation id from middleware
+  L  Details (JSON)         pretty JSON dump of `details`, capped at
+                            80 chars wide
+
+Column widths are sized to the longest cell value in each column,
+bounded by per-column caps so a 10 000-row Details column doesn't
+stretch to 200 chars wide.
+
+Rows are ordered newest-first — same as the JSON list endpoint.
+
+--------------------------------------------------------------------------------
+2.5 EXAMPLE
+--------------------------------------------------------------------------------
+
+# Tenant export: every appointment.* event in the last 7 days.
+GET /v1/audit-logs/export
+    ?action=appointment.created
+    &date_from=1778347200
+    &date_to=1778952000
+
+# Application admin export: every subscription event for one tenant
+# in the last 30 days.
+GET /v1/audit-logs/admin/export
+    ?tenant_id=69e35ec9c27723b4b442bcb1
+    &resource_type=subscription
+    &date_from=1776360000
+
+--------------------------------------------------------------------------------
+2.6 ERROR RESPONSES
+--------------------------------------------------------------------------------
+
+401 AUTH_INVALID_TOKEN
+{
+    "success": false,
+    "message": "Invalid or expired token",
+    "data": { "code": "AUTH_INVALID_TOKEN" }
+}
+
+403 AUTH_ROLE_MISMATCH
+{
+    "success": false,
+    "message": "Token role mismatch",
+    "data": { "code": "AUTH_ROLE_MISMATCH" }
+}
+
+422 VALIDATION
+  Returned by FastAPI when `limit` is outside 1..50000.
+
+--------------------------------------------------------------------------------
+2.7 FRONTEND HANDLING
+--------------------------------------------------------------------------------
+
+Because the response is a file download, the standard JSON
+fetch+envelope helper won't work. Use a streaming download:
+
+    const res = await fetch(`/v1/audit-logs/export?${qs}`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+        // The error envelope is JSON for non-200 responses, parse normally.
+        const err = await res.json();
+        throw new Error(err.message);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = (
+        res.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1]
+        ?? "audit-logs.xlsx"
+    );
+    a.click();
+    URL.revokeObjectURL(url);
+
+Wire `limit` to whatever the user picked from a dropdown (10 000 /
+25 000 / 50 000) and offer date pickers + an action multi-select for
+filtering before export. The endpoint is synchronous: a 50 000-row
+download takes a few seconds; show a spinner.
+
+
+================================================================================
+3. GET /v1/tenants/{tenant_id}/pending-approvals
+================================================================================
+
+Unified approval queue for the receptionist UI. Returns kiosk check-ins
+awaiting approval AND scheduled appointments the host pre-vetted, in
+one paginated list. Each row carries a ``source_type`` discriminator so
+the frontend knows which endpoint to call to action it.
+
+--------------------------------------------------------------------------------
+3.1 AUTH
+--------------------------------------------------------------------------------
+
+Header:        Authorization: Bearer <system_user_token>
+Allowed roles: receptionist, dept_admin, super_admin
+
+The path's ``tenant_id`` MUST match the principal's ``tenant_id`` —
+mismatches return 403 AUTH_PERMISSION_DENIED.
+
+--------------------------------------------------------------------------------
+3.2 QUERY PARAMETERS
+--------------------------------------------------------------------------------
+
+  skip                  int (≥0)     pagination offset, default 0
+  limit                 int (1..100) page size, default 50
+  include_appointments  bool         set false to suppress appointment
+                                     rows and get the legacy "checkins
+                                     only" view; default true.
+
+--------------------------------------------------------------------------------
+3.3 RESPONSE  (HTTP 200)
+--------------------------------------------------------------------------------
+
+{
+    "success": true,
+    "message": "Pending approvals retrieved",
+    "data": [
+        {
+            // SCHEDULED APPOINTMENT row
+            "id": "69fcc9d3e1c9a86e47bc7564",
+            "sourceType": "appointment",
+            "tenantId": "69e35ec9c27723b4b442bcb1",
+            "state": "scheduled",
+            "verified": true,
+            "visitorName": "Edoka Issac",
+            "company": "Acme Corp",
+            "purpose": "Interview",
+            "expectedDurationMinutes": null,
+            "photoUrl": "https://.../signed?expires=...",
+            "departmentId": "69eb55ee42ee3c318de52cfb",
+            "hostId": "69e35ecec27723b4b442bcb2",
+            "scheduledDatetime": 1778952000,
+            "createdAt": 1778174419,
+            "visitor": {
+                "id": "...",
+                "fullName": "Edoka Issac",
+                "phone": "+2341232323432",
+                "company": "Acme Corp",
+                "verified": true,
+                "portraitUrl": "https://.../signed?expires=..."
+            },
+            "appointmentId": "69fcc9d3e1c9a86e47bc7564",
+            "checkinId": null
+        },
+        {
+            // PENDING CHECK-IN row
+            "id": "abc123def456...",
+            "sourceType": "checkin",
+            "tenantId": "69e35ec9c27723b4b442bcb1",
+            "state": "pending_approval",
+            "verified": false,
+            "visitorName": "John Doe",
+            "company": null,
+            "purpose": "Delivery",
+            "expectedDurationMinutes": 15,
+            "photoUrl": "https://.../signed?expires=...",
+            "departmentId": null,
+            "hostId": null,
+            "scheduledDatetime": null,
+            "createdAt": 1778952005,
+            "visitor": { ... VisitorBriefSummary ... },
+            "appointmentId": null,
+            "checkinId": "abc123def456..."
+        }
+    ],
+    "meta": { "total": 14, "skip": 0, "limit": 50 }
+}
+
+Sort order:
+  1. Source ``appointment`` rows first, ordered by ``scheduledDatetime``
+     ascending (soonest first).
+  2. Then ``checkin`` rows by ``createdAt`` ascending (oldest waiting
+     first — the receptionist works the queue head-first).
+
+--------------------------------------------------------------------------------
+3.4 ACTIONING A ROW
+--------------------------------------------------------------------------------
+
+Use the discriminator to pick the right endpoint:
+
+  sourceType == "checkin"
+    POST /v1/checkins/{checkinId}/confirm
+    Body: { "action": "approve" | "reject", "notes": "..." }
+
+  sourceType == "appointment"
+    POST /v1/appointments/{appointmentId}/check-in
+    Body: AppointmentCheckInRequest  (see §1.3 above)
+
+--------------------------------------------------------------------------------
+3.5 BACKWARDS COMPATIBILITY
+--------------------------------------------------------------------------------
+
+The legacy endpoint
+    GET /v1/tenants/{tenant_id}/checkins?state=pending_approval
+remains available and unchanged — it returns ``CheckinWithVisitorOut``
+rows ONLY (no appointment merging). New frontends should prefer
+``/pending-approvals``; existing integrations don't need to change.
+
+
+================================================================================
+4. NEW APPOINTMENT FIELD — expected_visitor_photo_object_key
+================================================================================
+
+Hosts can attach a photo of the expected visitor when creating or
+updating an appointment. The receptionist sees that photo on the
+pending-approvals row so they can match the person at the desk to the
+face the host pre-vetted.
+
+--------------------------------------------------------------------------------
+4.1 SCHEMA
+--------------------------------------------------------------------------------
+
+POST /v1/appointments  body:
+{
+    ...,
+    "expected_visitor_photo_object_key": "uploads/photos/abc123.jpg"
+}
+
+PATCH /v1/appointments/{id}  body:
+{
+    "expected_visitor_photo_object_key": "uploads/photos/abc123.jpg"
+}
+
+The wire field is camelCased to ``expectedVisitorPhotoObjectKey``.
+
+The value is an object key in the same storage backend the rest of the
+app uses. Upload the file via the existing /v1/documents upload route
+(or whatever upload endpoint the kiosk already uses), then send the
+returned key here.
+
+--------------------------------------------------------------------------------
+4.2 RESPONSE
+--------------------------------------------------------------------------------
+
+GET /v1/appointments/{id} now returns:
+{
+    ...,
+    "expectedVisitorPhotoObjectKey": "uploads/photos/abc123.jpg",
+    "expectedVisitorPhotoUrl": "https://.../signed?expires=..."
+}
+
+``expectedVisitorPhotoUrl`` is a presigned URL the frontend can drop
+into an ``<img src=...>`` tag. Resolved on every read; ``null`` if the
+object key is unset, the storage backend is offline, or URL generation
+fails.
+
+The same photo URL also flows through to the pending-approvals row:
+``photoUrl`` and ``visitor.portraitUrl`` both surface it.
+
+--------------------------------------------------------------------------------
+4.3 INTERACTION WITH CHECK-IN
+--------------------------------------------------------------------------------
+
+When the receptionist actions a scheduled-appointment row by calling
+``POST /v1/appointments/{id}/check-in``, the visit-session created
+inherits the photo key into ``visit_session.photo_object_key`` (visitor
+profile photo). The badge PDF picks it up automatically — no extra
+upload at the desk.
+
+
+================================================================================
+5. SOURCE FILES
+================================================================================
+
+POST /v1/appointments/{appointment_id}/check-in
+  Schema  : schemas/visit_session_schema.py :: AppointmentCheckInRequest
+  Service : services/visit_session_service.py :: check_in_from_appointment
+  Route   : api/v1/appointment_route.py
+  Lifecycle helper :
+            services/appointment_lifecycle_service.py :: transition_appointment
+
+GET /v1/audit-logs/export   and   /v1/audit-logs/admin/export
+  Service : services/export_service.py :: export_audit_logs_xlsx
+  Route   : api/v1/audit_route.py
+
+GET /v1/tenants/{tenant_id}/pending-approvals
+  Schema  : schemas/checkin_schema.py :: PendingApprovalItem
+  Service : services/checkin_service.py :: list_pending_approvals_for_tenant
+  Route   : api/v1/checkin_route.py
+
+Appointment photo field
+  Schema  : schemas/appointment_schema.py
+            (expected_visitor_photo_object_key, expected_visitor_photo_url)
+  Service : services/appointment_service.py :: _resolve_appointment_photo_url
+
+Existing related endpoints
+  POST /v1/visitors/check-in                        Standalone check-in (no appointment)
+  POST /v1/visitors/check-in/{session_id}/confirm   Issue badge after register
+  POST /v1/visitors/check-out                       Check out a visitor
+  GET  /v1/audit-logs                               Paginated JSON audit list
+  GET  /v1/audit-logs/admin                         Cross-tenant JSON audit list
+  GET  /v1/tenants/{tenant_id}/checkins             Legacy checkins-only list
+================================================================================

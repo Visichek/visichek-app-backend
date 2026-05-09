@@ -150,6 +150,24 @@ class ConfirmCheckInRequest(BaseModel):
     host_id: Optional[str] = None
 
 
+class AppointmentCheckInRequest(BaseModel):
+    """Body for ``POST /v1/appointments/{appointment_id}/check-in``.
+
+    Every field is optional — the service hydrates from the appointment's
+    snapshots and the linked visitor profile when omitted. Override
+    fields when the receptionist needs to correct or supplement the
+    on-record data at the desk."""
+
+    phone: Optional[str] = None
+    full_name: Optional[str] = None
+    company: Optional[str] = None
+    photo_object_key: Optional[str] = None
+    id_image_object_key: Optional[str] = None
+    consent_granted: Optional[bool] = None
+    badge_format: Optional[BadgeFormat] = BadgeFormat.A7
+    issue_badge: bool = True
+
+
 class DenyVisitorRequest(BaseModel):
     reason: str
 

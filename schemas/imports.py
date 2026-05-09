@@ -74,9 +74,37 @@ class VerificationStatus(str, Enum):
 
 
 class AppointmentStatus(str, Enum):
+    """Lifecycle of an expected appointment.
+
+    Transitions are driven by the linked visit-session events:
+
+    ``scheduled`` (initial)
+        ↓ visitor presents at reception and gets a badge issued
+    ``checked_in``
+        ↓ visitor checks out (manually or via QR)
+    ``checked_out``         ← terminal, happy path
+
+    Other terminal states:
+
+    * ``cancelled`` — manually cancelled by host/super_admin, or visitor
+      was denied entry on arrival.
+    * ``no_show`` — scheduled time passed without the visitor ever
+      checking in (set by the periodic sweeper in
+      ``services.appointment_lifecycle_service``).
+    * ``missed`` — legacy alias kept for backwards compatibility with the
+      old "missed" terminology; no new code should set this.
+    * ``fulfilled`` — legacy alias of ``checked_out``. Older clients and
+      tests still emit / expect this; the lifecycle helper treats it as
+      equivalent and the dashboard rolls it into the same bucket.
+    """
+
     SCHEDULED = "scheduled"
-    FULFILLED = "fulfilled"
+    CHECKED_IN = "checked_in"
+    CHECKED_OUT = "checked_out"
+    NO_SHOW = "no_show"
     CANCELLED = "cancelled"
+    # ── Legacy ──
+    FULFILLED = "fulfilled"
     MISSED = "missed"
 
 

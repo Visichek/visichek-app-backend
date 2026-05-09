@@ -1,0 +1,858 @@
+================================================================================
+SPEC — Tenant configuration: dynamic forms for appointments & check-ins
+================================================================================
+
+Tenants need to capture different information per visit depending on what kind
+of business they run — a hospital wants triage notes, an embassy wants
+passport numbers, a construction site wants PPE confirmations. The platform
+gives every tenant a form-builder so the receptionist UI, the kiosk
+self-registration UI, and the appointment-booking UI render whatever fields
+the tenant configured, without code changes.
+
+This spec covers the missing piece of the tenant-config story: the form
+definition, where it attaches, and how submissions are stored so they survive
+schema evolution.
+
+Companions:
+- backend-docs/visitor-checkout-flow.md   — how rows leave the system
+- backend-docs/dashboard-statistics.md    — how aggregations consume the data
+- TENANT SETTINGS section in CLAUDE.md     — adjacent org-level config
+
+--------------------------------------------------------------------------------
+1. WHO CONFIGURES, WHO SUBMITS, WHO READS
+--------------------------------------------------------------------------------
+
+Configure (CRUD):
+    super_admin (tenant scope)
+
+Submit (form values stored on a record):
+    receptionist / dept_admin / super_admin   — appointment create, check-in
+    public visitor flow                       — staged self-registration
+
+Read (rendered values on retrieval):
+    any role with read access to the parent record (appointment / checkin /
+    visit_session). The form definition itself is readable by any tenant
+    user — the kiosk and self-registration flow read it unauthenticated via
+    a tenant-scoped public endpoint.
+
+Forms never cross tenants. Every read filters on tenant_id.
+
+--------------------------------------------------------------------------------
+2. ENDPOINTS
+--------------------------------------------------------------------------------
+
+All paths under /v1. Tenant context comes from the auth token.
+
+2.1 FORM CONFIGURATION (super_admin)
+-----------------------------------------
+GET    /v1/tenant-forms
+GET    /v1/tenant-forms/{form_id}
+POST   /v1/tenant-forms
+PATCH  /v1/tenant-forms/{form_id}
+POST   /v1/tenant-forms/{form_id}/archive
+POST   /v1/tenant-forms/{form_id}/clone
+
+GET supports ?target=appointment|checkin|visit_session and ?status=active|archived.
+
+POST creates version 1. PATCH does NOT mutate the existing version — it
+creates a new version of the same form_id, marks the previous one
+"superseded", and returns the new version. This keeps historical submissions
+readable against the schema they were collected with. See §6.
+
+DELETE is intentionally absent. Forms with submissions can never be deleted
+because that would orphan records. Use POST /archive instead — it sets
+status=archived; submissions still resolve.
+
+2.2 FORM RESOLUTION (any tenant role + public)
+-----------------------------------------
+GET    /v1/tenant-forms/by-target/{target_type}
+
+Returns the *active* form for a target_type, with its current version. This
+is the call the appointment / check-in / kiosk UI makes on mount to know
+what fields to render. Returns 404 NO_ACTIVE_FORM if none configured.
+
+target_type ∈ { appointment, checkin, visit_session }.
+
+If a tenant has no active form for `appointment` and a non-public
+DEFAULT_APPOINTMENT_FORM exists in code, the server returns that default
+(seeded on tenant bootstrap, but always reconstructable from a constant).
+
+Public variant for unauthenticated kiosk:
+    GET /public/tenant-forms/by-target/{tenant_id}/{target_type}
+    No auth. Tenant id is part of the URL the kiosk QR encodes.
+
+2.3 SUBMISSIONS — embedded, not separate
+-----------------------------------------
+There is no /v1/form-submissions endpoint. A submission is a payload on the
+parent record: appointment.form_submission, checkin.form_submission,
+visit_session.form_submission. The parent's create / update endpoints accept
+the submission inline; the parent's read endpoints embed the submission
+back, with backwards-compat resolution applied (see §6 and §7).
+
+--------------------------------------------------------------------------------
+3. FIELD TYPES (FormFieldType enum)
+--------------------------------------------------------------------------------
+
+Source of truth: schemas/imports.py :: FormFieldType. Wire values are
+snake_case lowercase. Renderer-relevant validation is on FormFieldDefinition
+itself (see §4).
+
+Type                Stored as       Used for
+------------------  --------------  -----------------------------------------
+text                str             single-line free text (name, ID number)
+long_text           str             multiline (notes, comments, reason)
+email               str             validated email
+phone               str             E.164 phone number
+url                 str             URL
+number              float           any numeric value (decimal allowed)
+integer             int             whole numbers (count, age)
+boolean             bool            yes/no, agree/disagree
+date                int (epoch)     date-only (UTC midnight)
+time                str "HH:MM"     time-of-day, no date
+datetime            int (epoch)     date+time
+select              str             single choice from options
+multi_select        list[str]       multiple choices from options
+country             str (ISO-2)     ISO 3166-1 alpha-2 country code
+address             dict            { line1, line2?, city, region?,
+                                      postal_code?, country (ISO-2) }
+file                str             object key in storage backend (S3/local)
+                                    — server resolves a presigned URL on read
+image               str             object key — same as file but UI hints
+                                      a camera/picture picker
+signature           str             object key for captured signature image
+consent_checkbox    bool            REQUIRED-style true/false. Distinct from
+                                    boolean because the schema enforces
+                                    `required=true` and the value MUST be
+                                    `true` for the submission to be accepted.
+                                    Backed by NDPA consent capture — separate
+                                    from `boolean` so audits can find it.
+rating              int 1..N        N defined per-field via `max`
+id_document         dict            { id_type (passport|nin|driver_license|
+                                      voter_card|other), id_number,
+                                      id_image_object_key }
+host_picker         str             department/system_user id from a
+                                    server-resolved list (see §4.5)
+visitor_picker      str             visitor_profile id (server-resolved)
+calculated          (varies)        DERIVED — never submitted. Server computes
+                                    on read from `formula` (see §8).
+
+Adding a new type is a backwards-compatible change as long as old
+submissions never relied on it. Removing or renaming a type is breaking and
+requires a migration plan.
+
+--------------------------------------------------------------------------------
+4. FORM FIELD DEFINITION
+--------------------------------------------------------------------------------
+
+Each field on a form has these properties. Per-type validation is opt-in —
+only the relevant subset applies. The server validates on submission and
+ignores irrelevant rules for the field's type.
+
+4.1 COMMON
+-----------------------------------------
+field_id             str        Stable identifier. NEVER changes once
+                                published. New version of the form keeps the
+                                same field_id when meaning is preserved;
+                                produces a new field_id when meaning shifts.
+                                Format: snake_case, ≤ 64 chars.
+type                 FormFieldType
+label                str        Displayed to the user.
+help_text            str | null Below-input hint.
+placeholder          str | null Input placeholder.
+required             bool       Default false. consent_checkbox forces true.
+visible              bool       Default true. false hides at render time but
+                                preserves data round-trip — used to retire a
+                                field without breaking history (see §6).
+order                int        Render order. Lower first. Ties break on
+                                field_id alphabetical.
+
+4.2 STRING VALIDATION (text, long_text, email, phone, url)
+-----------------------------------------
+min_length           int | null
+max_length           int | null
+pattern              str | null   ECMA-style regex. Server compiles on
+                                  submission; invalid regex on the form
+                                  definition rejects the form.
+trim                 bool         Default true. Whitespace-only treated
+                                  as empty.
+
+4.3 NUMERIC VALIDATION (number, integer, rating)
+-----------------------------------------
+min                  float | null
+max                  float | null
+step                 float | null Renderer hint (e.g. 0.5 for half-stars).
+unit                 str | null   Renderer hint, e.g. "°C", "kg", "mins".
+
+4.4 TEMPORAL VALIDATION (date, time, datetime)
+-----------------------------------------
+min_offset_seconds   int | null   Earliest allowed value, relative to "now".
+                                  Negative for past, positive for future.
+max_offset_seconds   int | null   Latest allowed value, relative to "now".
+                                  Lets you say e.g. "no appointment > 90 days
+                                  out" without per-tenant absolute dates.
+allow_past           bool         Sugar shortcut for `min_offset_seconds=0`
+                                  when false. Default true.
+
+4.5 OPTION-BASED (select, multi_select)
+-----------------------------------------
+options              list[FormFieldOption]
+                                  [{ key, label, archived? }]
+                                  `archived: true` keeps the option valid for
+                                  history but hides it from the dropdown.
+multi_min            int | null   For multi_select: min selections.
+multi_max            int | null   For multi_select: max selections.
+
+For host_picker / visitor_picker / country, options are server-resolved at
+render time from existing collections (system_users / visitor_profiles /
+hardcoded ISO-3166 list). The form definition does NOT carry the option list
+for these types — the renderer fetches at mount time.
+
+4.6 FILE / IMAGE / SIGNATURE
+-----------------------------------------
+max_bytes            int | null   Default 10 MB.
+allowed_mime_types   list[str]    Default ["image/jpeg","image/png","application/pdf"].
+                                  signature defaults to ["image/png"].
+storage_prefix       str | null   Override the storage key prefix
+                                  (default "form-submissions/{tenant}/{form}").
+
+4.7 CONSENT
+-----------------------------------------
+consent_text         str          Long-form notice the user agrees to.
+                                  Stored verbatim with the submission so the
+                                  tenant can prove which version was agreed
+                                  to. Required if type=consent_checkbox.
+lawful_basis         LawfulBasis | null
+                                  NDPA basis recorded for this consent.
+                                  Auditors filter on this field.
+
+4.8 CALCULATED FIELDS
+-----------------------------------------
+formula              CalculatedFormula
+                                  See §8. Required if type=calculated.
+
+4.9 PER-RECORD FIELDS
+-----------------------------------------
+A small number of fields have first-class support on the parent record so
+existing infrastructure (search, audit summaries, dashboards) can query
+without diving into nested submission JSON. The form definition carries an
+optional `maps_to` pointer:
+
+maps_to              str | null   ∈ { "visitor.full_name", "visitor.phone",
+                                  "visitor.email", "visitor.company",
+                                  "purpose", "expected_duration_minutes",
+                                  "host_id", "department_id" }.
+                                  When set, the submitted value is mirrored
+                                  to the parent's typed column on save. The
+                                  source of truth on read is still the
+                                  submission — the parent column is a derived
+                                  shortcut.
+
+--------------------------------------------------------------------------------
+5. FORM DEFINITION
+--------------------------------------------------------------------------------
+
+Source-of-truth schema:
+    schemas/tenant_form_schema.py :: TenantForm{Base,Create,Update,Out}
+
+5.1 FIELDS
+-----------------------------------------
+form_id              str        Stable across versions.
+tenant_id            str
+target_type          FormTargetType ∈ { appointment, checkin, visit_session }
+name                 str        Internal admin-facing name.
+description          str | null
+status               FormStatus ∈ { active, archived, superseded }
+                                  At most ONE active form per (tenant_id,
+                                  target_type). Repository enforces this.
+version              int        Starts at 1. Increments on PATCH.
+fields               list[FormFieldDefinition]
+date_created         int
+last_updated         int
+created_by_user_id   str
+last_updated_by_user_id   str | null
+
+5.2 STATUS LIFECYCLE
+-----------------------------------------
+   active                          - the live form for this target_type
+   superseded                      - an older version of an active form
+   archived                        - retired by super_admin; old submissions
+                                     still resolve against it
+
+POST creates v1 with status=active. PATCH inserts a NEW row with version=N+1
+and status=active, then sets the previous row's status=superseded. Archive
+flips active→archived without creating a new version.
+
+Cloning (POST /clone) copies the active form into a new form_id, useful
+when a tenant wants to test a redesign without disturbing live submissions.
+
+5.3 FORMS COLLECTION
+-----------------------------------------
+MongoDB collection: `tenant_forms`. Indexes:
+   - { tenant_id: 1, target_type: 1, status: 1 }      (fast resolution)
+   - { tenant_id: 1, form_id: 1, version: 1 } unique  (version constraint)
+
+--------------------------------------------------------------------------------
+6. SUBMISSIONS — STORED, VERSIONED, EMBEDDED
+--------------------------------------------------------------------------------
+
+A FormSubmission is stored on the parent record (appointment, checkin,
+visit_session) under field name `form_submission`. There is no separate
+`form_submissions` collection — submissions live with the record they
+describe so reads need no join.
+
+6.1 SCHEMA
+-----------------------------------------
+form_submission:
+    form_id          str
+    form_version     int        - the version the user actually filled
+    submitted_at     int (epoch)
+    values           dict[str, Any]
+                                - keys are field_id; values are typed per
+                                  the field definition (see §3). Storage
+                                  values are post-validation, post-trim.
+    consent_records  list[ConsentRecord]
+                                - one per consent_checkbox field, captures
+                                  consent_text, lawful_basis, value, ts.
+    raw              dict | null
+                                - the unmodified submission body. Kept so a
+                                  future migration can re-run validation
+                                  against a corrected form definition.
+
+6.2 VALIDATION ORDER
+-----------------------------------------
+On save, the server:
+   1. Resolves the active form for (tenant, target_type). Submission missing
+      `form_id` is treated as the active form.
+   2. Validates `form_version` matches the form's current version. If it
+      doesn't (stale tab, racing publish), the server re-validates against
+      the version actually submitted and stamps form_version with that
+      number. The submission still records what was sent — no silent
+      upgrades.
+   3. Validates each field in the resolved version: type coercion,
+      required-ness, per-type rules.
+   4. Drops fields that aren't in the resolved version (preserved in `raw`
+      only). Logs at INFO so misconfigurations surface in CI.
+   5. Mirrors `maps_to` fields onto the parent's typed columns.
+
+--------------------------------------------------------------------------------
+7. READING — BACKWARDS / FORWARDS COMPAT
+--------------------------------------------------------------------------------
+
+The challenge: a tenant changes their appointment form. Yesterday's
+appointments were filled against v3; today's against v4. The same UI must
+render both without crashing.
+
+Resolution rules, applied at read time by services/form_submission_resolver
+(planned):
+
+7.1 RENDER VALUES — `values` on the response
+-----------------------------------------
+For each field in the form's CURRENT version:
+   - If submission has a value at field_id   → return it.
+   - If field is `calculated`                 → compute on the fly (see §8).
+   - If submission lacks field_id (added later) AND there is a calculable
+     fallback (e.g. derived from another field still present) → calculate.
+   - Otherwise                                → null.
+
+Frontend decides what null means: most fields render as "—" (Em dash, no
+data); required fields surface as "Not captured at the time of this visit"
+in audit views.
+
+7.2 PRESERVE HISTORICAL FIELDS — `historical_values` on the response
+-----------------------------------------
+For each field in the SUBMITTED version that is NOT in the current
+version (deleted / superseded):
+   - Carry the value through under `historical_values[field_id]`.
+   - Carry the field's submitted-at-the-time label / type under
+     `historical_field_meta[field_id]` so the renderer can still print it.
+
+This is what makes the contract forwards-compatible: removing a field from
+the form doesn't erase history.
+
+7.3 BREAKING RENAMES
+-----------------------------------------
+A field_id is treated as immutable. To "rename":
+   - Add a new field_id with the new label.
+   - Mark the old field `visible: false` so it stops rendering.
+   - DON'T delete the old definition — keep it on superseded versions so
+     historical submissions still resolve.
+
+If the old field appears in a current submission (because the user filled
+out an old version through a stale tab), it lands in `historical_values`
+on read.
+
+7.4 RESPONSE SHAPE
+-----------------------------------------
+form_submission_out:
+    form_id              str
+    form_version         int   - the version actually submitted
+    current_form_version int   - the active version at READ time
+    submitted_at         int
+
+    values               dict  - resolved against current_form_version
+    historical_values    dict  - fields submitted but no longer in current
+    historical_field_meta dict - { field_id: { label, type } }
+
+    field_render_order   list[str]
+                               - field_ids in current render order, so the
+                                 frontend doesn't have to merge two ordered
+                                 lists itself.
+
+    raw                  dict | null  - exact submission body
+
+If `form_version == current_form_version`, `historical_values` and
+`historical_field_meta` are guaranteed empty.
+
+--------------------------------------------------------------------------------
+8. CALCULATED / DERIVED FIELDS
+--------------------------------------------------------------------------------
+
+Type `calculated` is never submitted; it's recomputed on every read so
+reformulating a calculation retroactively updates every historical record
+without a backfill.
+
+8.1 FORMULA
+-----------------------------------------
+formula:
+    operation   CalculatedOperation
+                    ∈ { concat, sum, difference, product, quotient,
+                        years_since, days_since, hours_between,
+                        coalesce, format_template }
+    operands    list[Operand]
+
+operand:
+    kind        ∈ { field_ref, literal }
+    field_id    str | null   when kind=field_ref
+    value       Any | null   when kind=literal
+    transform   ∈ { none, lower, upper, title, strip } | null
+                              applied to text operands
+
+8.2 BUILT-INS
+-----------------------------------------
+- concat            string concat with optional separator (literal operand)
+- sum / product     numeric aggregate over operands
+- difference        a - b
+- quotient          a / b   (returns null if b == 0)
+- years_since       (now - epoch_field) / 365.25 days, floored
+- days_since        (now - epoch_field) / 86400, floored
+- hours_between     hours between two epoch fields
+- coalesce          first non-null
+- format_template   "{first} {last}" — operands fill named placeholders
+
+8.3 EXAMPLES
+-----------------------------------------
+full_name (text, calculated):
+    operation: format_template
+    operands:
+        - { kind: literal, value: "{first_name} {last_name}" }
+        - { kind: field_ref, field_id: "first_name" }
+        - { kind: field_ref, field_id: "last_name" }
+
+age (integer, calculated):
+    operation: years_since
+    operands:
+        - { kind: field_ref, field_id: "date_of_birth" }
+
+8.4 NULL PROPAGATION
+-----------------------------------------
+If any operand is null, the calculated value is null (UNLESS the operation
+is `coalesce`, which is null-aware by definition). Calculated fields are
+never required.
+
+8.5 CIRCULAR REFERENCES
+-----------------------------------------
+Rejected at form-definition save time. The graph of field_ref dependencies
+must be acyclic; max depth 4.
+
+--------------------------------------------------------------------------------
+9. COMPULSORY FORMS FOR APPOINTMENTS
+--------------------------------------------------------------------------------
+
+POST /v1/appointments REQUIRES `form_submission` in the body whenever the
+tenant has any form (active or default-seeded) for target_type=appointment.
+This is enforced by:
+
+   1. services/appointment_service.create_appointment   resolves the active
+      form before insert.
+   2. If no active form found AND no DEFAULT_APPOINTMENT_FORM seeded, a
+      400 FORM_NOT_CONFIGURED is returned. Tenants cannot create
+      appointments until super_admin sets up at least one form.
+   3. If a form exists and the body omits form_submission, 400
+      FORM_SUBMISSION_REQUIRED.
+
+For check-in (target_type=checkin) and visit_session (target_type=
+visit_session), forms are OPTIONAL. The receptionist UI still shows the
+fields when a form is configured; missing form_submission is accepted.
+
+DEFAULT_APPOINTMENT_FORM is a code-level constant (defined in
+config/default_forms.py, planned) so a fresh tenant can immediately accept
+appointments. On bootstrap, the constant is materialised into the
+tenant_forms collection so super_admins can edit it. Tenants that delete
+their copy fall back to the constant.
+
+--------------------------------------------------------------------------------
+10. ERRORS
+--------------------------------------------------------------------------------
+
+400 FORM_VALIDATION_FAILED
+{
+    "code": "FORM_VALIDATION_FAILED",
+    "message": "Form submission failed validation",
+    "details": {
+        "form_id": "...",
+        "form_version": 4,
+        "errors": [
+            {"field_id": "phone", "code": "PATTERN_MISMATCH", "message": "..."},
+            {"field_id": "expected_duration_minutes", "code": "OUT_OF_RANGE",
+             "message": "Must be between 5 and 480"}
+        ]
+    }
+}
+
+400 FORM_NOT_CONFIGURED        — Appointment requires a form; none exists.
+400 FORM_SUBMISSION_REQUIRED   — Form exists but body omitted form_submission.
+404 NO_ACTIVE_FORM             — GET /by-target/{target} when none configured.
+409 FORM_VERSION_CONFLICT      — Concurrent edit; client should refetch the
+                                 form before resubmitting.
+422 FORM_DEFINITION_INVALID    — POST/PATCH form with bad regex / cycle.
+
+--------------------------------------------------------------------------------
+11. AUDIT
+--------------------------------------------------------------------------------
+
+Per CLAUDE.md "MANDATORY: Audit every tenant-scoped edit", every form
+mutation records:
+
+   action               resource_type    resource_id    details (diff)
+   ------------------   --------------   ------------   --------------------
+   form.created         tenant_form      form_id        version, target_type
+   form.updated         tenant_form      form_id        old_version,
+                                                        new_version,
+                                                        field-level diff
+   form.archived        tenant_form      form_id        previous_status
+   form.cloned          tenant_form      new_form_id    source_form_id
+
+Submissions are NOT audited as form events — they are part of the parent
+record's audit trail (appointment.created, checkin.submitted, etc.).
+
+--------------------------------------------------------------------------------
+12. CACHING
+--------------------------------------------------------------------------------
+
+Form resolution is hot — every appointment / checkin / visit page hits it.
+Apply the standard precompute/cache pattern from CLAUDE.md:
+
+   resource:    tenant_forms.by_target.{target_type}
+   scope:       TENANT
+   ttl:         300 seconds
+   loader:      services/read_precompute._load_active_form_for_tenant
+   invalidation: tenant_form.{create,update,archive,clone} writers each
+                 invalidate `tenant_forms.by_target.{target_type}` for
+                 the tenant before returning.
+
+The submission resolver itself (rendering historical_values, computing
+calculated fields) is NOT cached — it reads with the parent record.
+
+--------------------------------------------------------------------------------
+13. EXAMPLES
+--------------------------------------------------------------------------------
+
+13.1 Create a form
+-----------------------------------------
+POST /v1/tenant-forms
+{
+    "target_type": "appointment",
+    "name": "Standard Appointment",
+    "description": "Default form for booked visits",
+    "fields": [
+        {
+            "field_id": "first_name",
+            "type": "text",
+            "label": "First name",
+            "required": true,
+            "min_length": 1,
+            "max_length": 80,
+            "maps_to": null,
+            "order": 10
+        },
+        {
+            "field_id": "last_name",
+            "type": "text",
+            "label": "Last name",
+            "required": true,
+            "min_length": 1,
+            "max_length": 80,
+            "order": 20
+        },
+        {
+            "field_id": "full_name",
+            "type": "calculated",
+            "label": "Full name",
+            "required": false,
+            "maps_to": "visitor.full_name",
+            "formula": {
+                "operation": "format_template",
+                "operands": [
+                    {"kind": "literal", "value": "{first_name} {last_name}"},
+                    {"kind": "field_ref", "field_id": "first_name"},
+                    {"kind": "field_ref", "field_id": "last_name"}
+                ]
+            },
+            "order": 30
+        },
+        {
+            "field_id": "phone",
+            "type": "phone",
+            "label": "Mobile phone",
+            "required": true,
+            "pattern": "^\\+?[1-9]\\d{7,14}$",
+            "maps_to": "visitor.phone",
+            "order": 40
+        },
+        {
+            "field_id": "purpose",
+            "type": "select",
+            "label": "Purpose of visit",
+            "required": true,
+            "maps_to": "purpose",
+            "options": [
+                {"key": "interview", "label": "Interview"},
+                {"key": "meeting", "label": "Meeting"},
+                {"key": "delivery", "label": "Delivery"},
+                {"key": "contractor", "label": "Contractor"},
+                {"key": "other", "label": "Other"}
+            ],
+            "order": 50
+        },
+        {
+            "field_id": "expected_duration_minutes",
+            "type": "integer",
+            "label": "Expected duration (minutes)",
+            "required": true,
+            "min": 5,
+            "max": 480,
+            "step": 5,
+            "unit": "mins",
+            "maps_to": "expected_duration_minutes",
+            "order": 60
+        },
+        {
+            "field_id": "host_id",
+            "type": "host_picker",
+            "label": "Who are you visiting?",
+            "required": true,
+            "maps_to": "host_id",
+            "order": 70
+        },
+        {
+            "field_id": "scheduled_for",
+            "type": "datetime",
+            "label": "Date & time",
+            "required": true,
+            "min_offset_seconds": 0,
+            "max_offset_seconds": 7776000,    // 90 days
+            "order": 80
+        },
+        {
+            "field_id": "id_doc",
+            "type": "id_document",
+            "label": "ID document",
+            "required": false,
+            "order": 90
+        },
+        {
+            "field_id": "consent",
+            "type": "consent_checkbox",
+            "label": "Privacy consent",
+            "required": true,
+            "consent_text": "I have read the visitor privacy notice ...",
+            "lawful_basis": "consent",
+            "order": 999
+        }
+    ]
+}
+->  201 { "formId": "...", "version": 1, "status": "active" }
+
+13.2 Resolve the active form (kiosk)
+-----------------------------------------
+GET /v1/tenant-forms/by-target/appointment
+->  200 { ... full FormDefinition with version 1 ... }
+
+13.3 Submit an appointment with a form payload
+-----------------------------------------
+POST /v1/appointments
+{
+    "form_submission": {
+        "form_id": "<form_id>",
+        "form_version": 1,
+        "values": {
+            "first_name": "Edoka",
+            "last_name": "Issac",
+            "phone": "+2341232323432",
+            "purpose": "interview",
+            "expected_duration_minutes": 60,
+            "host_id": "69e35ecec27723b4b442bcb2",
+            "scheduled_for": 1778280000,
+            "consent": true
+        }
+    }
+}
+->  202 (queued; appointment id returned)
+
+The mirrored fields land on the appointment record:
+    visitor_name_snapshot = "Edoka Issac"        // from full_name calc
+    purpose               = "interview"
+    scheduled_datetime    = 1778280000
+
+13.4 Reading the appointment with backwards-compat
+-----------------------------------------
+After the tenant evolves the form to v2 (renamed `purpose` to
+`purpose_category`, added `triage_score` integer), an old appointment
+returns:
+
+GET /v1/appointments/{id}
+->  {
+        ...,
+        "form_submission": {
+            "formId": "...",
+            "formVersion": 1,
+            "currentFormVersion": 2,
+
+            "values": {
+                "first_name": "Edoka",
+                "last_name": "Issac",
+                "full_name": "Edoka Issac",         // recomputed
+                "phone": "+2341232323432",
+                "purpose_category": null,           // didn't exist back then
+                "expected_duration_minutes": 60,
+                "host_id": "...",
+                "scheduled_for": 1778280000,
+                "id_doc": null,
+                "consent": true,
+                "triage_score": null                // added later
+            },
+
+            "historical_values": {
+                "purpose": "interview"              // existed in v1, gone in v2
+            },
+            "historical_field_meta": {
+                "purpose": { "label": "Purpose of visit", "type": "select" }
+            },
+
+            "fieldRenderOrder": [
+                "first_name", "last_name", "full_name",
+                "phone", "purpose_category", "expected_duration_minutes",
+                "host_id", "scheduled_for", "id_doc", "triage_score",
+                "consent"
+            ]
+        }
+    }
+
+The frontend renders `values` as primary content, and shows a small
+"Captured under previous version" panel when `historical_values` is
+non-empty.
+
+--------------------------------------------------------------------------------
+14. NON-GOALS
+--------------------------------------------------------------------------------
+
+- Conditional logic ("show field B only when field A == X"). Out of scope
+  for v1; revisit if there is real demand. Workaround: tenants split forms
+  per appointment type.
+- Per-department or per-branch forms. v1 is one-per-target_type per tenant.
+- Multi-language labels. v1 is single-language; the consent_text can be
+  hand-written in whatever language the tenant prefers.
+- Submissions analytics / aggregation. The dashboard answers global
+  cross-tenant questions; per-tenant submission analytics is a separate
+  feature.
+
+--------------------------------------------------------------------------------
+15. SOURCE FILES (planned)
+--------------------------------------------------------------------------------
+
+Schemas
+   schemas/imports.py                          - add FormFieldType,
+                                                 FormStatus, FormTargetType,
+                                                 CalculatedOperation enums
+   schemas/tenant_form_schema.py               - FormFieldDefinition,
+                                                 FormFieldOption,
+                                                 CalculatedFormula,
+                                                 TenantForm{Base,Create,
+                                                 Update,Out}
+   schemas/form_submission_schema.py           - FormSubmission{In,Out},
+                                                 ConsentRecord
+   schemas/appointment_schema.py               - add form_submission field
+   schemas/checkin_schema.py                   - add form_submission field
+   schemas/visit_session_schema.py             - add form_submission field
+
+Repositories
+   repositories/tenant_form_repo.py            - CRUD, version transition
+                                                 (active→superseded under
+                                                 single transaction)
+   repositories/appointment_repo.py            - persist embedded submission
+   repositories/checkin_repo.py                - persist embedded submission
+
+Services
+   services/tenant_form_service.py             - create / patch (=new
+                                                 version), archive, clone,
+                                                 resolve_active
+   services/form_validator.py                  - validate(submission, form)
+   services/form_submission_resolver.py        - render values +
+                                                 historical_values,
+                                                 compute calculated fields
+   services/calculated_field_engine.py         - operand evaluator
+
+Routes
+   api/v1/tenant_form_route.py                 - /v1/tenant-forms*
+   api/v1/public_form_route.py                 - /public/tenant-forms*
+   api/v1/appointment_route.py                 - inject form validation on
+                                                 create/update
+   api/v1/visitor_route.py                     - inject form validation on
+                                                 check-in path
+
+Config / defaults
+   config/default_forms.py                     - DEFAULT_APPOINTMENT_FORM,
+                                                 DEFAULT_CHECKIN_FORM
+                                                 (constants)
+   services/tenant_service.py                  - on bootstrap, materialise
+                                                 default forms
+
+Caching / queue integration
+   services/read_precompute.py                 - register
+                                                 tenant_forms.by_target.*
+   core/queue/registrations.py                 - register form writers
+   services/tenant_form_writer.py              - queued writer handlers
+                                                 (form.create, form.update,
+                                                 form.archive, form.clone)
+
+Tests
+   tests/unit/test_tenant_form_schema.py       - field validation rules,
+                                                 calculated formula sanity
+   tests/unit/test_form_validator.py           - per-type accept/reject
+   tests/unit/test_form_submission_resolver.py - backwards-compat & calc
+   tests/integration/test_form_lifecycle.py    - create → patch (versions)
+                                                 → submit → read → archive
+
+--------------------------------------------------------------------------------
+16. OPEN QUESTIONS
+--------------------------------------------------------------------------------
+
+A. Should `consent_text` versions also be queryable separately for
+   regulatory audits? (Maintain a `tenant_consent_versions` collection
+   keyed by hash of consent_text?)
+
+B. When a form mirrors a field via `maps_to`, and the field is later
+   marked `visible: false`, should the parent column continue to update?
+   Current proposal: yes — `visible` is purely a render hint; data
+   round-trip stays intact.
+
+C. Should `calculated` fields be permitted at the parent level too — i.e.
+   recompute `visit_duration_overage_minutes = actual - expected` on read
+   without storing it on visit_session? Adjacent to the visitor checkout
+   work; defer to a follow-up spec.
+
+D. Does the public endpoint need rate limiting beyond the global anonymous
+   bucket? Kiosks make few requests but auto-refresh; consider a
+   per-tenant override.
+
+================================================================================

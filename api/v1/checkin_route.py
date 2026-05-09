@@ -12,10 +12,12 @@ from services.checkin_service import (
     get_checkin_detail,
     list_checkins_analytics,
     list_checkins_for_tenant,
+    list_pending_approvals_for_tenant,
 )
 from schemas.checkin_schema import (
     CheckinConfirmRequest,
     CheckinWithVisitorOut,
+    PendingApprovalItem,
 )
 
 router = APIRouter(tags=["Check-Ins"])
@@ -55,6 +57,53 @@ async def list_pending_checkins(
         tenant_id=tenant_id, state=state, skip=skip, limit=limit
     )
     return checkins, {"total": total, "skip": skip, "limit": limit, "state": state}
+
+
+@router.get(
+    "/tenants/{tenant_id}/pending-approvals",
+    response_model=list[PendingApprovalItem],
+)
+@document_response(
+    message="Pending approvals retrieved",
+    description=(
+        "Unified approval queue for the receptionist UI: kiosk check-ins "
+        "awaiting approval (state=pending_approval) AND scheduled "
+        "appointments the host pre-vetted (state=scheduled, verified=true). "
+        "Each row carries a ``source_type`` discriminator so the frontend "
+        "knows which endpoint to call to action it: appointments → "
+        "POST /v1/appointments/{id}/check-in, checkins → "
+        "POST /v1/checkins/{id}/confirm. Sorted with appointments first "
+        "(by scheduled time) then checkins (oldest waiting first)."
+    ),
+    summary="List unified pending approvals (checkins + scheduled appointments)",
+    include_meta=True,
+    response_codes={
+        401: "Unauthorized",
+        403: "Forbidden",
+    },
+)
+async def list_pending_approvals_endpoint(
+    tenant_id: str,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(gt=0, le=100)] = 50,
+    include_appointments: Annotated[bool, Query()] = True,
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("receptionist", "super_admin", "dept_admin")
+    ),
+):
+    """Unified approval queue (receptionist/super_admin/dept_admin)."""
+    if principal.tenant_id != tenant_id:
+        from core.errors import auth_permission_denied
+
+        raise auth_permission_denied("tenant_scope")
+
+    rows, total = await list_pending_approvals_for_tenant(
+        tenant_id=tenant_id,
+        skip=skip,
+        limit=limit,
+        include_appointments=include_appointments,
+    )
+    return rows, {"total": total, "skip": skip, "limit": limit}
 
 
 @router.get(

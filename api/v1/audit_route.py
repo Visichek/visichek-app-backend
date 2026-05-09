@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 from typing import Annotated, Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.response_envelope import document_response
@@ -14,6 +16,7 @@ from security.account_status_check import (
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.audit_service import retrieve_audit_logs_with_summary
+from services.export_service import export_audit_logs_xlsx
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 _audit_roles = verify_system_user_token("super_admin", "auditor", "dpo")
@@ -233,3 +236,87 @@ async def _load_audit_recent_admin() -> Dict[str, Any]:
         "items": [log.model_dump(mode="json", by_alias=True) for log in logs],
         "total": total,
     }
+
+
+def _audit_export_filename(prefix: str) -> str:
+    from datetime import datetime, timezone
+
+    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+    return f"{prefix}-{stamp}.xlsx"
+
+
+@router.get("/export")
+async def export_tenant_audit_logs(
+    actor_id: Optional[str] = None,
+    action: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    resource_id: Optional[str] = None,
+    date_from: Optional[int] = None,
+    date_to: Optional[int] = None,
+    limit: Annotated[int, Query(gt=0, le=50000)] = 10000,
+    principal: AuthPrincipal = Depends(_audit_roles),
+):
+    """Stream the current tenant's audit trail as an XLSX with frozen headers.
+
+    Filters mirror ``GET /v1/audit-logs`` so the same query a user runs in
+    the table view downloads as a spreadsheet. Capped at ``limit`` rows
+    (default 10 000, max 50 000) — paginate-and-call-again is intentionally
+    not supported because XLSX isn't a streaming format."""
+    tenant_id = principal.tenant_id or ""
+    data = await export_audit_logs_xlsx(
+        tenant_id=tenant_id or None,
+        actor_id=actor_id,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+    )
+    filename = _audit_export_filename("audit-logs")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/admin/export")
+async def export_admin_audit_logs(
+    tenant_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    action: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    resource_id: Optional[str] = None,
+    date_from: Optional[int] = None,
+    date_to: Optional[int] = None,
+    limit: Annotated[int, Query(gt=0, le=50000)] = 10000,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    """Cross-tenant audit-trail export for application admins.
+
+    Same shape as the tenant export but scope is the entire platform.
+    Pass ``tenant_id`` to scope to a single tenant; omit it to capture
+    platform-wide events including admin actions where ``tenant_id`` is
+    null."""
+    _ = admin  # auth dependency only — the query itself is cross-tenant
+    data = await export_audit_logs_xlsx(
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+    )
+    filename = _audit_export_filename("audit-logs-platform")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

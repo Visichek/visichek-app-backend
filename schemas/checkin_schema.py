@@ -114,6 +114,49 @@ class CheckinListItem(BaseModel):
 from schemas.summary_schema import VisitorBriefSummary  # noqa: E402
 
 
+class PendingApprovalItem(BaseModel):
+    """Unified row for the pending-approvals UI.
+
+    The receptionist's approval queue mixes two sources:
+
+    * ``checkin``     — a kiosk submission awaiting receptionist
+                        approval (status mirrors ``CheckinState``,
+                        usually ``pending_approval``).
+    * ``appointment`` — a SCHEDULED appointment the host pre-vetted;
+                        ``state`` is the literal string ``"scheduled"``
+                        and ``verified`` is true because the host
+                        attached the visitor's photo / identity ahead
+                        of time.
+
+    The ``id`` is whichever underlying record's id; ``source_type``
+    tells the frontend which collection to use when the receptionist
+    actions the row (approve a checkin → ``POST /checkins/{id}/confirm``;
+    a scheduled appointment becomes a real visit via
+    ``POST /v1/appointments/{id}/check-in``)."""
+
+    id: str
+    source_type: str  # "checkin" | "appointment"
+    tenant_id: str
+    state: str
+    verified: bool = False
+    visitor_name: Optional[str] = None
+    company: Optional[str] = None
+    purpose: Optional[str] = None
+    expected_duration_minutes: Optional[int] = None
+    photo_url: Optional[str] = None  # presigned URL when available
+    department_id: Optional[str] = None
+    host_id: Optional[str] = None
+    scheduled_datetime: Optional[int] = None
+    created_at: int
+    visitor: Optional["VisitorBriefSummary"] = None
+    # When source_type=="appointment", carries the appointment's id again
+    # so the frontend can call /v1/appointments/{id}/check-in directly.
+    appointment_id: Optional[str] = None
+    # When source_type=="checkin", carries the checkin record id (same as
+    # ``id``); kept for symmetry with appointment_id.
+    checkin_id: Optional[str] = None
+
+
 class CheckinWithVisitorOut(CheckinOut):
     """``CheckinOut`` with an embedded visitor snapshot so the approver UI
     can render the visitor's name, contact info, and verification state

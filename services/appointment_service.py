@@ -64,6 +64,23 @@ async def retrieve_appointments(
     )
 
 
+def _resolve_appointment_photo_url(object_key: Optional[str]) -> Optional[str]:
+    """Best-effort presigned URL for the host-uploaded visitor photo.
+
+    Returns ``None`` silently if storage is misconfigured — appointments
+    must remain readable even when the storage backend is offline."""
+    if not object_key:
+        return None
+    try:
+        from core.storage.manager import DocumentStorageManager
+
+        return DocumentStorageManager.get_instance().provider.download_url(
+            object_key=object_key
+        )
+    except Exception:
+        return None
+
+
 async def _enrich_appointment(appt: AppointmentOut) -> AppointmentWithSummaryOut:
     import asyncio
     from services.summary_resolver import (
@@ -87,6 +104,11 @@ async def _enrich_appointment(appt: AppointmentOut) -> AppointmentWithSummaryOut
     data["host_summary"] = host_s
     data["visitor_profile_summary"] = visitor_s
     data["created_by_summary"] = creator_s
+    # Surface the host-uploaded photo as a presigned URL so the
+    # receptionist UI doesn't need a second roundtrip through storage.
+    data["expected_visitor_photo_url"] = _resolve_appointment_photo_url(
+        appt.expected_visitor_photo_object_key
+    )
     return AppointmentWithSummaryOut(**data)
 
 

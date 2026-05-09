@@ -962,6 +962,190 @@ async def list_checkins_for_tenant(
     return enriched, total
 
 
+def _resolve_storage_url(object_key: Optional[str]) -> Optional[str]:
+    """Best-effort presigned URL for ``object_key``. None if storage is
+    not configured or generation fails — never raises."""
+    if not object_key:
+        return None
+    try:
+        from core.storage.manager import DocumentStorageManager
+
+        manager = DocumentStorageManager.get_instance()
+        return manager.provider.download_url(object_key=object_key)
+    except Exception:
+        return None
+
+
+async def list_pending_approvals_for_tenant(
+    tenant_id: str,
+    *,
+    skip: int = 0,
+    limit: int = 50,
+    include_appointments: bool = True,
+) -> tuple[list, int]:
+    """Unified approval queue: kiosk check-ins awaiting approval +
+    SCHEDULED appointments the host pre-vetted.
+
+    Returns a list of ``PendingApprovalItem`` (declared in
+    ``schemas/checkin_schema.py``). Each row carries a ``source_type``
+    discriminator so the frontend knows which action endpoint to call:
+
+    * ``checkin``     → ``POST /v1/checkins/{id}/confirm``
+    * ``appointment`` → ``POST /v1/appointments/{id}/check-in``
+
+    Appointment rows always report ``state="scheduled"`` and
+    ``verified=true`` (the host pre-vetted them when scheduling).
+    Pagination is applied to the merged, sorted result so the caller
+    sees a stable ``limit``-bounded page."""
+    from repositories.appointment_repo import (
+        count_appointments,
+        get_appointments,
+    )
+    from repositories.visitor_profile_repo import get_visitor_profiles
+    from schemas.checkin_schema import PendingApprovalItem
+    from schemas.imports import AppointmentStatus
+    from schemas.summary_schema import VisitorBriefSummary
+
+    pending_filter = {"tenant_id": tenant_id, "state": "pending_approval"}
+    pending_checkins = await get_checkins(pending_filter, skip=0, limit=200)
+    enriched_checkins = await _enrich_checkins_with_visitors(
+        tenant_id, pending_checkins
+    )
+    pending_total = await count_checkins(pending_filter)
+
+    rows: list[PendingApprovalItem] = []
+    for c in enriched_checkins:
+        visitor_summary = c.visitor
+        rows.append(
+            PendingApprovalItem(
+                id=c.id or "",
+                source_type="checkin",
+                tenant_id=c.tenant_id,
+                state=str(c.state.value if hasattr(c.state, "value") else c.state),
+                verified=bool(c.verified),
+                visitor_name=visitor_summary.full_name if visitor_summary else None,
+                company=visitor_summary.company if visitor_summary else None,
+                purpose=c.purpose.purpose if c.purpose else None,
+                expected_duration_minutes=(
+                    c.purpose.expected_duration_minutes if c.purpose else None
+                ),
+                photo_url=visitor_summary.portrait_url if visitor_summary else None,
+                department_id=None,
+                host_id=None,
+                scheduled_datetime=None,
+                created_at=c.date_created or 0,
+                visitor=visitor_summary,
+                appointment_id=None,
+                checkin_id=c.id,
+            )
+        )
+
+    appointment_total = 0
+    if include_appointments:
+        appt_filter = {
+            "tenant_id": tenant_id,
+            "status": AppointmentStatus.SCHEDULED.value,
+        }
+        appointments = await get_appointments(
+            filter_dict=appt_filter, start=0, stop=200
+        )
+        appointment_total = await count_appointments(appt_filter)
+
+        # Hydrate visitor names/photos in one batch to keep the queue cheap.
+        profile_ids = {
+            a.visitor_profile_id for a in appointments if a.visitor_profile_id
+        }
+        profile_by_id: dict[str, Any] = {}
+        if profile_ids:
+            from bson import ObjectId
+
+            obj_ids = []
+            for raw in profile_ids:
+                try:
+                    obj_ids.append(ObjectId(raw))
+                except Exception:
+                    continue
+            if obj_ids:
+                profiles = await get_visitor_profiles(
+                    {"tenant_id": tenant_id, "_id": {"$in": obj_ids}},
+                    start=0,
+                    stop=len(obj_ids),
+                )
+                profile_by_id = {p.id: p for p in profiles if p.id}
+
+        for a in appointments:
+            profile = (
+                profile_by_id.get(a.visitor_profile_id)
+                if a.visitor_profile_id
+                else None
+            )
+            visitor_name = (
+                (profile.full_name if profile else None)
+                or a.visitor_name_snapshot
+                or "Scheduled visitor"
+            )
+            company = profile.company if profile else None
+            photo_key = a.expected_visitor_photo_object_key or (
+                profile.photo_object_key if profile else None
+            )
+            photo_url = _resolve_storage_url(photo_key)
+
+            visitor_summary = (
+                VisitorBriefSummary(
+                    id=profile.id or "",
+                    full_name=profile.full_name,
+                    email=profile.email_address,
+                    phone=profile.phone,
+                    company=profile.company,
+                    verified=True,
+                    verification_method=profile.verification_method,
+                    portrait_url=photo_url,
+                )
+                if profile is not None
+                else VisitorBriefSummary(
+                    id="",
+                    full_name=visitor_name,
+                    verified=True,
+                    portrait_url=photo_url,
+                )
+            )
+
+            rows.append(
+                PendingApprovalItem(
+                    id=a.id or "",
+                    source_type="appointment",
+                    tenant_id=a.tenant_id,
+                    state="scheduled",
+                    verified=True,
+                    visitor_name=visitor_name,
+                    company=company,
+                    purpose=a.purpose,
+                    expected_duration_minutes=None,
+                    photo_url=photo_url,
+                    department_id=a.department_id,
+                    host_id=a.host_id,
+                    scheduled_datetime=a.scheduled_datetime,
+                    created_at=a.date_created or a.scheduled_datetime or 0,
+                    visitor=visitor_summary,
+                    appointment_id=a.id,
+                    checkin_id=None,
+                )
+            )
+
+    # Sort: scheduled appointments by scheduled time (soonest first),
+    # checkins by creation time (oldest first — they've been waiting).
+    rows.sort(
+        key=lambda r: (
+            r.source_type != "appointment",  # appointments first
+            r.scheduled_datetime or r.created_at,
+        )
+    )
+
+    total = pending_total + appointment_total
+    paged = rows[skip : skip + limit]
+    return paged, total
+
+
 async def get_checkin_detail(
     tenant_id: str, checkin_id: str
 ) -> CheckinWithVisitorOut:
