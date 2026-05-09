@@ -203,3 +203,39 @@ class AwaitingCheckoutItem(BaseModel):
     receptionist_summary: Optional[UserBriefSummary] = None
     appointment_summary: Optional[AppointmentBriefSummary] = None
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class CheckoutResult(BaseModel):
+    """Unified response for ``POST /v1/visitors/check-out`` across all
+    three sources, with timing math pre-computed for the frontend.
+
+    The frontend never needs to subtract timestamps itself — every
+    field the UI renders next to the visitor's name (how long they
+    stayed, whether they ran over, the moment they walked out) is
+    on this object.
+    """
+
+    id: str
+    source_type: str  # "visit_session" | "approved_checkin" | "scheduled_appointment"
+    checkout_id: str
+    status: str  # terminal status: "checked_out" or "fulfilled"
+
+    # Timing — same names regardless of source
+    eligible_since: Optional[int] = None
+    eligible_since_field: Optional[str] = None  # "check_in_time" / "approved_at" / "scheduled_datetime"
+    checked_out_at: int
+
+    actual_duration_seconds: Optional[int] = None
+    actual_duration_minutes: Optional[float] = None
+    expected_duration_minutes: Optional[int] = None
+    duration_variance_seconds: Optional[int] = None  # actual - expected*60; negative = early
+
+    check_out_method: Optional[CheckOutMethod] = None
+
+    # Source record. Exactly one of the next three is populated.
+    visit_session: Optional[Any] = None
+    checkin: Optional[Any] = None
+    appointment: Optional[Any] = None
+
+    class Config:
+        arbitrary_types_allowed = True

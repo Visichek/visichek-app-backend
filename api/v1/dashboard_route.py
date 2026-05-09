@@ -23,20 +23,46 @@ _all_tenant_roles = verify_system_user_token(
 @document_response(
     message="Dashboard stats fetched successfully",
     success_example={
-        "total_visitors": 1250,
-        "active_visitors": 8,
-        "total_departments": 12,
-        "total_incidents": 3,
+        "total_visits": 1250,
+        "total_visitors": 540,
+        "currently_active": 8,
+        "visitors_today": 47,
+        "new_signups_today": 6,
+        "new_signups_30d": 142,
+        "visitor_retention_rate": 38.5,
+        "avg_visit_duration_minutes": 45.2,
+        "visits_growth_wow": {
+            "current": 312,
+            "previous": 280,
+            "change": 32,
+            "change_percent": 11.4,
+        },
+        "visit_status_distribution": [
+            {"key": "checked_out", "label": "Checked out", "value": 980, "percentage": 78.4},
+            {"key": "checked_in", "label": "Checked in", "value": 8, "percentage": 0.6},
+        ],
+        "check_in_method_distribution": [
+            {"key": "qr_registration", "label": "QR registration", "value": 720, "percentage": 57.6},
+            {"key": "manual_entry", "label": "Manual entry", "value": 410, "percentage": 32.8},
+            {"key": "id_scan", "label": "ID scan", "value": 120, "percentage": 9.6},
+        ],
+        "top_departments": [
+            {"id": "dept-1", "label": "Engineering", "value": 412, "percentage": 33.0, "extra": {"code": "ENG"}},
+        ],
+        "top_companies": [
+            {"id": None, "label": "Acme Corp", "value": 38, "percentage": 3.0, "extra": {}},
+        ],
+        "hourly_distribution": [{"hour": 9, "label": "09:00", "value": 81}],
+        "day_of_week_distribution": [{"day": 1, "label": "Tue", "value": 220}],
+        "visits_last_7_days": [
+            {"timestamp": 1746662400, "label": "2026-05-08", "value": 47},
+        ],
         "open_incidents": 1,
-        "avg_visit_duration_minutes": 45,
-        "visitors_today": 156,
-        "expected_visitors_today": 180,
-        "check_in_rate": 86.7,
-        "peak_hours": ["09:00", "14:30"],
-        "most_visited_department": "reception",
+        "open_dsr_requests": 2,
+        "role_view": "super_admin",
         "last_updated": 1712548800,
     },
-    description="Retrieve dashboard statistics including visitor counts, incidents, and department metrics",
+    description="Comprehensive tenant dashboard payload — KPIs, pie-chart distributions, top-N rollups, hourly/daily heatmaps, time series, growth metrics, and real-time samples",
     summary="Get dashboard stats",
     response_codes={
         200: "Dashboard stats fetched successfully",
@@ -61,14 +87,17 @@ async def dashboard_stats(
     principal: AuthPrincipal = Depends(_all_tenant_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
-    # Unfiltered, role-agnostic stats hit the precompute cache; filtered
-    # views fall through to the live service.
+    # Unfiltered views hit the precompute cache. The cache resource is
+    # the same for every role (the payload is role-agnostic — see
+    # services.dashboard_service.get_dashboard_stats), so the precompute
+    # fanout that prebuilds ``dashboard.stats`` per tenant warms this for
+    # every authenticated role at once.
     if not department_id and tenant_id:
         return await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
             resource="dashboard.stats",
             ttl=60,
-            loader=lambda: _load_dashboard_stats(tenant_id),
+            loader=lambda: _load_dashboard_stats(tenant_id, principal.role),
         )
     return await get_dashboard_stats(
         tenant_id=tenant_id,
@@ -77,8 +106,8 @@ async def dashboard_stats(
     )
 
 
-async def _load_dashboard_stats(tenant_id: str) -> Any:
-    result = await get_dashboard_stats(tenant_id=tenant_id)
+async def _load_dashboard_stats(tenant_id: str, role: Optional[str] = None) -> Any:
+    result = await get_dashboard_stats(tenant_id=tenant_id, role=role)
     return (
         result.model_dump(mode="json", by_alias=True)
         if hasattr(result, "model_dump")

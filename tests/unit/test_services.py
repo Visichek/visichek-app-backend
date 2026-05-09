@@ -900,7 +900,9 @@ class TestVisitSessionService:
 
         result = await check_out_visitor(request, tenant_id)
 
-        assert result.status == VisitStatus.CHECKED_OUT
+        assert result.source_type == "visit_session"
+        assert result.status == VisitStatus.CHECKED_OUT.value
+        assert result.visit_session is checked_out
         mock_get.assert_called_once()
         mock_update.assert_called_once()
 
@@ -934,8 +936,9 @@ class TestVisitSessionService:
             tenant_id,
         )
 
-        assert result["source_type"] == "approved_checkin"
-        assert result["status"] == "checked_out"
+        assert result.source_type == "approved_checkin"
+        assert result.status == "checked_out"
+        assert result.checkin is checked_out
         mock_get_checkin.assert_awaited_once()
         mock_update_checkin.assert_awaited_once()
 

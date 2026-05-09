@@ -52,6 +52,7 @@ class CheckinBase(BaseModel):
     approved_by_user_id: Optional[str] = None
     approved_at: Optional[int] = None
     rejection_reason: Optional[str] = None
+    checked_out_at: Optional[int] = None
 
 
 class CheckinCreate(CheckinBase):
@@ -66,6 +67,7 @@ class CheckinUpdate(BaseModel):
     approved_at: Optional[int] = None
     rejection_reason: Optional[str] = None
     tenant_specific_data: Optional[dict] = None
+    checked_out_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

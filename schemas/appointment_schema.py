@@ -13,6 +13,7 @@ class AppointmentBase(BaseModel):
     scheduled_datetime: int
     purpose: Optional[str] = None
     status: AppointmentStatus = AppointmentStatus.SCHEDULED
+    fulfilled_at: Optional[int] = None
 
 
 class AppointmentCreate(AppointmentBase):
@@ -26,6 +27,7 @@ class AppointmentUpdate(BaseModel):
     status: Optional[AppointmentStatus] = None
     scheduled_datetime: Optional[int] = None
     purpose: Optional[str] = None
+    fulfilled_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

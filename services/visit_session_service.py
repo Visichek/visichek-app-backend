@@ -40,6 +40,7 @@ from repositories.system_user_repo import get_system_user
 from repositories.department_repo import get_department
 from schemas.visit_session_schema import (
     AwaitingCheckoutItem,
+    CheckoutResult,
     VisitSessionCreate,
     VisitSessionUpdate,
     VisitSessionOut,
@@ -472,6 +473,35 @@ def _next_utc_midnight_ts() -> int:
     return ((now // 86400) + 1) * 86400
 
 
+def _build_checkout_timing(
+    eligible_since: Optional[int],
+    checked_out_at: int,
+    expected_duration_minutes: Optional[int],
+) -> dict[str, Any]:
+    """Compute the timing block returned on every checkout response.
+
+    ``actual_duration_*`` are ``None`` when ``eligible_since`` is missing
+    (e.g. an approved checkin that has no ``approved_at`` recorded).
+    ``duration_variance_seconds`` is ``None`` when expected duration is
+    unknown — it is intentionally signed: negative means the visitor left
+    earlier than planned, positive means they overstayed.
+    """
+    actual_seconds: Optional[int] = None
+    actual_minutes: Optional[float] = None
+    variance: Optional[int] = None
+    if eligible_since is not None:
+        actual_seconds = max(checked_out_at - eligible_since, 0)
+        actual_minutes = round(actual_seconds / 60.0, 1)
+        if expected_duration_minutes is not None:
+            variance = actual_seconds - expected_duration_minutes * 60
+    return {
+        "actual_duration_seconds": actual_seconds,
+        "actual_duration_minutes": actual_minutes,
+        "expected_duration_minutes": expected_duration_minutes,
+        "duration_variance_seconds": variance,
+    }
+
+
 def _checkout_request_id(request: CheckOutRequest, source_type: str) -> Optional[str]:
     if request.source_type and request.source_type != source_type:
         return None
@@ -489,8 +519,10 @@ def _is_approved_checkin(checkin: CheckinOut) -> bool:
 
 
 async def _checkout_approved_checkin(
-    checkin_id: str, tenant_id: str
-) -> dict[str, Any]:
+    checkin_id: str,
+    tenant_id: str,
+    check_out_method: Optional[Any] = None,
+) -> CheckoutResult:
     if not ObjectId.is_valid(checkin_id):
         raise HTTPException(status_code=400, detail="Invalid check-in ID format")
 
@@ -503,21 +535,38 @@ async def _checkout_approved_checkin(
             detail=f"Check-in is not approved for checkout (state: {checkin.state})",
         )
 
+    now = int(time.time())
     updated = await update_checkin(
         checkin_id,
-        CheckinUpdate(state=CheckinState.CHECKED_OUT),
+        CheckinUpdate(state=CheckinState.CHECKED_OUT, checked_out_at=now),
     )
-    return {
-        "id": updated.id,
-        "source_type": "approved_checkin",
-        "status": _enum_value(updated.state),
-        "checkin": updated,
-    }
+    expected_minutes = (
+        updated.purpose.expected_duration_minutes if updated.purpose else None
+    )
+    timing = _build_checkout_timing(
+        eligible_since=updated.approved_at,
+        checked_out_at=now,
+        expected_duration_minutes=expected_minutes,
+    )
+    return CheckoutResult(
+        id=updated.id or "",
+        source_type="approved_checkin",
+        checkout_id=updated.id or "",
+        status=str(_enum_value(updated.state)),
+        eligible_since=updated.approved_at,
+        eligible_since_field="approved_at",
+        checked_out_at=now,
+        check_out_method=check_out_method,
+        checkin=updated,
+        **timing,
+    )
 
 
 async def _checkout_due_appointment(
-    appointment_id: str, tenant_id: str
-) -> dict[str, Any]:
+    appointment_id: str,
+    tenant_id: str,
+    check_out_method: Optional[Any] = None,
+) -> CheckoutResult:
     if not ObjectId.is_valid(appointment_id):
         raise HTTPException(status_code=400, detail="Invalid appointment ID format")
 
@@ -541,30 +590,48 @@ async def _checkout_due_appointment(
             detail="Appointment is not due for checkout yet",
         )
 
+    now = int(time.time())
     updated = await update_appointment(
         {"_id": ObjectId(appointment_id), "tenant_id": tenant_id},
-        AppointmentUpdate(status=AppointmentStatus.FULFILLED),
+        AppointmentUpdate(status=AppointmentStatus.FULFILLED, fulfilled_at=now),
     )
-    return {
-        "id": updated.id,
-        "source_type": "scheduled_appointment",
-        "status": _enum_value(updated.status),
-        "appointment": updated,
-    }
+    timing = _build_checkout_timing(
+        eligible_since=updated.scheduled_datetime,
+        checked_out_at=now,
+        expected_duration_minutes=None,
+    )
+    return CheckoutResult(
+        id=updated.id or "",
+        source_type="scheduled_appointment",
+        checkout_id=updated.id or "",
+        status=str(_enum_value(updated.status)),
+        eligible_since=updated.scheduled_datetime,
+        eligible_since_field="scheduled_datetime",
+        checked_out_at=now,
+        check_out_method=check_out_method,
+        appointment=updated,
+        **timing,
+    )
 
 
 async def _checkout_checkin_by_badge_qr(
-    badge_qr_token: str, tenant_id: str
-) -> Optional[dict[str, Any]]:
+    badge_qr_token: str,
+    tenant_id: str,
+    check_out_method: Optional[Any] = None,
+) -> Optional[CheckoutResult]:
     badge = await get_badge_by_qr_value(badge_qr_token)
     if not badge or badge.tenant_id != tenant_id:
         return None
     if badge.revoked_at is not None or badge.expires_at < int(time.time()):
         return None
-    return await _checkout_approved_checkin(badge.checkin_id, tenant_id)
+    return await _checkout_approved_checkin(
+        badge.checkin_id, tenant_id, check_out_method=check_out_method
+    )
 
 
-async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Any:
+async def check_out_visitor(
+    request: CheckOutRequest, tenant_id: str
+) -> CheckoutResult:
     """Check out a visitor by visit session, approved check-in, appointment, or QR."""
     session = None
 
@@ -577,7 +644,9 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Any:
             )
         else:
             checkin_checkout = await _checkout_checkin_by_badge_qr(
-                request.badge_qr_token, tenant_id
+                request.badge_qr_token,
+                tenant_id,
+                check_out_method=request.check_out_method,
             )
             if checkin_checkout is not None:
                 return checkin_checkout
@@ -595,12 +664,16 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Any:
         checkin_id = _checkout_request_id(request, "approved_checkin")
         if checkin_id is None:
             raise HTTPException(status_code=400, detail="Missing check-in ID")
-        return await _checkout_approved_checkin(checkin_id, tenant_id)
+        return await _checkout_approved_checkin(
+            checkin_id, tenant_id, check_out_method=request.check_out_method
+        )
     elif _checkout_request_id(request, "scheduled_appointment"):
         appointment_id = _checkout_request_id(request, "scheduled_appointment")
         if appointment_id is None:
             raise HTTPException(status_code=400, detail="Missing appointment ID")
-        return await _checkout_due_appointment(appointment_id, tenant_id)
+        return await _checkout_due_appointment(
+            appointment_id, tenant_id, check_out_method=request.check_out_method
+        )
 
     if not session:
         raise HTTPException(status_code=404, detail="Visit session not found")
@@ -614,15 +687,32 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Any:
             detail=f"Visitor is not currently checked in (status: {session.status})",
         )
 
+    now = int(time.time())
     updated = await update_visit_session(
         {"_id": ObjectId(session.id)},
         VisitSessionUpdate(
             status=VisitStatus.CHECKED_OUT,
             check_out_method=request.check_out_method,
-            check_out_time=int(time.time()),
+            check_out_time=now,
         ),
     )
-    return updated
+    timing = _build_checkout_timing(
+        eligible_since=updated.check_in_time,
+        checked_out_at=now,
+        expected_duration_minutes=None,
+    )
+    return CheckoutResult(
+        id=updated.id or "",
+        source_type="visit_session",
+        checkout_id=updated.id or "",
+        status=str(_enum_value(updated.status)),
+        eligible_since=updated.check_in_time,
+        eligible_since_field="check_in_time",
+        checked_out_at=now,
+        check_out_method=request.check_out_method,
+        visit_session=updated,
+        **timing,
+    )
 
 
 async def retrieve_active_visitors(tenant_id: str, department_id: Optional[str] = None):
