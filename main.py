@@ -761,6 +761,7 @@ from api.v1.tenant_enum_route import (
 )
 from api.v1.kyc_route import router as v1_kyc_route_router
 from api.v1.saved_view_route import router as v1_saved_view_route_router
+from api.v1.me_limitations_route import router as v1_me_limitations_route_router
 
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
@@ -835,6 +836,7 @@ app.include_router(v1_tenant_enum_public_router, prefix="/v1")
 # KYC (Dojah today, pluggable). Public kiosk + webhook routes.
 app.include_router(v1_kyc_route_router, prefix="/v1")
 app.include_router(v1_saved_view_route_router, prefix="/v1")
+app.include_router(v1_me_limitations_route_router, prefix="/v1")
 # App-mode payment simulator — deliberately NOT under /v1 so the URLs
 # match the checkout_url emitted by AppCheckoutPaymentProvider.
 app.include_router(app_payment_route_router)

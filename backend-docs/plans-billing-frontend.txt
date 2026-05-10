@@ -269,9 +269,33 @@ The backend rejects any plan field outside this allowlist with HTTP 400
 
 3.2  GET CURRENT SUBSCRIPTION
      GET /v1/subscriptions/tenant/{tenant_id}/active
-     Response: SubscriptionOut (or null if not provisioned yet).
-     The `plan_id` lets you cross-reference the plan catalogue.
-     Display the relevant tier badge + period_end.
+     Response: SubscriptionOut enriched with a ``plan`` summary and an
+     ``isFreeFallback`` boolean.
+
+         {
+           ...standard SubscriptionOut fields...,
+           "plan": {
+             "id": "...",
+             "name": "free" | "starter" | "premium" | "enterprise-acme",
+             "displayName": "Free",
+             "tier": "free" | "starter" | "premium" | "enterprise",
+             "basePriceMonthly": 0.0,
+             "basePriceYearly": 0.0,
+             "currency": "NGN"
+           },
+           "isFreeFallback": false
+         }
+
+     Read ``plan.tier`` and ``plan.name`` to render the tier badge —
+     do NOT cross-reference ``plan_id`` against a separate catalogue
+     fetch on every dashboard load.
+
+     ``isFreeFallback`` is ``true`` when the tenant is on Free AND the
+     subscription was auto-created by an immediate cancel or a dunning
+     drop (admin_notes begins with "Auto-downgraded"). Use it to render
+     "Plan cancelled, you're on Free" with a re-upgrade CTA, distinct
+     from a brand-new tenant who has never paid (``isFreeFallback ==
+     false`` because their notes say "Auto-provisioned free plan").
 
 3.3  GET TENANT CONTEXT (PLAN SUMMARY EMBEDDED)
      GET /v1/tenants/{tenant_id}        (super_admin scoped)
@@ -309,10 +333,33 @@ The backend rejects any plan field outside this allowlist with HTTP 400
 3.6  CANCEL SUBSCRIPTION
      POST /v1/subscriptions/cancel
      Body:
-       { "tenant_id": "...", "reason": "...", "immediate": false }
-     `immediate=true` drops to FREE right away.
+       { "tenantId": "...", "reason": "...", "immediate": false }
+     Auth: super_admin (own tenant only) OR application admin (any
+     tenant). super_admins trying to cancel another tenant get HTTP 403
+     AUTH_PERMISSION_DENIED.
+
+     `immediate=true` drops to FREE right away. The OLD paid subscription
+     is marked status=CANCELLED with `cancelledAt=now`, and a NEW Free
+     subscription is created. After the queued write succeeds, polling
+     `GET /v1/subscriptions/tenant/{id}/active` returns the NEW Free sub
+     with:
+         status: "active",
+         effectivePrice: 0,
+         plan.tier: "free",
+         isFreeFallback: true,
+         adminNotes: "Auto-downgraded to Free: Immediate cancellation"
+
+     This is intentional and is what "cancelled" looks like — the FE
+     should branch on `plan.tier === "free" && isFreeFallback === true`
+     rather than expecting `status === "cancelled"`. Every tenant always
+     has an active subscription (Free is the floor); see invariant I0.1.
+
      `immediate=false` flags for end-of-period; tenant keeps paid features
-     until `current_period_end`.
+     until `current_period_end`, then the renewal sweeper auto-drops them.
+     The `cancelledAt` field on the active subscription becomes set
+     immediately so the FE can render "cancelling on <date>" while
+     still showing paid-tier features.
+
      Frontend should show a confirmation modal explaining the difference
      and quoting the period end date in human form.
 

@@ -242,14 +242,55 @@ async def get_tenant_active_subscription_endpoint(
 
 
 async def _load_active_subscription(tenant_id: str) -> Any:
+    """Load the tenant's active subscription enriched with a plan summary.
+
+    Without the plan summary, a frontend looking at the response after a
+    cancel cannot tell that the tenant has been auto-downgraded to Free
+    (the response just shows ``status: active`` with a fresh subscription
+    id and effectivePrice 0.0). Embedding the plan name + tier here makes
+    the "you're on Free now" state directly readable, and the
+    ``isFreeFallback`` flag is a single boolean the FE can branch on to
+    render "Plan cancelled, you're on Free".
+    """
+    from bson import ObjectId as _BsonObjectId
+
+    from config.plan_tiers import FREE_PLAN_NAME
+    from repositories.plan_repo import get_plan
+
     sub = await retrieve_tenant_active_subscription(tenant_id)
     if not sub:
         return None
-    return (
+
+    payload: dict = (
         sub.model_dump(mode="json", by_alias=True)
         if hasattr(sub, "model_dump")
-        else sub
+        else dict(sub)
     )
+
+    plan_id_str = sub.plan_id if hasattr(sub, "plan_id") else payload.get("planId")
+    plan_summary: Optional[dict] = None
+    is_free_fallback = False
+    if plan_id_str and _BsonObjectId.is_valid(plan_id_str):
+        plan = await get_plan({"_id": _BsonObjectId(plan_id_str)})
+        if plan is not None:
+            plan_summary = {
+                "id": plan.id,
+                "name": plan.name,
+                "displayName": plan.display_name,
+                "tier": plan.tier.value
+                if hasattr(plan.tier, "value")
+                else plan.tier,
+                "basePriceMonthly": plan.base_price_monthly,
+                "basePriceYearly": plan.base_price_yearly,
+                "currency": plan.currency,
+            }
+            is_free_fallback = plan.name == FREE_PLAN_NAME and bool(
+                (sub.admin_notes or "").startswith("Auto-downgraded")
+            )
+
+    payload["plan"] = plan_summary
+    payload["isFreeFallback"] = is_free_fallback
+    return payload
 
 
 @router.get("/{subscription_id}")

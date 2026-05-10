@@ -1,0 +1,286 @@
+================================================================================
+VISICHEK — USAGE & QUOTA RENDERING (FRONTEND GUIDE)
+================================================================================
+
+This document describes how the frontend should fetch and render the
+tenant's current usage versus plan caps. It pairs with
+``limitations.txt`` (which describes WHAT is denied) and
+``plans-billing-frontend.txt`` (which describes WHO pays for what).
+
+This release fixes a bug where the tenant-side usage payload was empty
+for Free / Starter / Premium tenants because the old implementation
+only reported on plans that carried explicit ``crud_limits`` /
+``retrieval_quotas`` lists. Canonical plans express their numeric
+limits as ``tenant_caps`` (max_visitors_per_month, max_branches, ...)
+which the new implementation now reads and pairs with live DB counts.
+
+
+================================================================================
+0. WHEN TO USE WHICH ENDPOINT
+================================================================================
+
+  Use case                                     Endpoint
+  -------------------------------------------- ----------------------------------
+  Tenant dashboard "my usage" widget           GET /v1/usage/my-usage
+  Application admin viewing a specific tenant  GET /v1/usage/tenant/{id}/summary
+
+Both return the same ``TenantUsageSummary`` shape. The ``my-usage``
+variant infers the tenant from the auth token, the ``tenant/{id}``
+variant requires application admin auth and accepts an explicit id.
+
+
+================================================================================
+1. ENDPOINT
+================================================================================
+
+1.1  TENANT — GET /v1/usage/my-usage
+     Auth: any authenticated user with a tenant_id (super_admin,
+     dept_admin, receptionist, ...). Returns 4xx if no tenant is
+     associated with the token.
+     TTL: 120s (precomputed per tenant; refreshed on plan / write
+     events that affect counts).
+
+1.2  PLATFORM ADMIN — GET /v1/usage/tenant/{tenant_id}/summary
+     Auth: application admin only.
+     TTL: served via the entity cache; same payload shape.
+
+
+================================================================================
+2. RESPONSE SHAPE
+================================================================================
+
+Field names below are camelCase (camel/snake conversion middleware).
+Snake_case shown for clarity where useful.
+
+    {
+      "tenantId": "69e35ec9c27723b4b442bcb1",
+      "planName": "free",                    // singleton slug or enterprise slug
+      "planTier": "free",                    // free | starter | premium | enterprise
+      "subscriptionStatus": "active",
+      "period": "2026-04",                   // current monthly bucket key
+
+      "entityCounts": {
+        "branches": 1,
+        "departments": 1,
+        "system_users": 1,
+        "visitors_this_month": 12,           // visit_sessions created this month
+        "appointments_this_month": 0,        // 0 on Free (cap is 0)
+        "period_start": 1743465600,          // unix-seconds, start of current month UTC
+        "period_end":   1746057600           // unix-seconds, end of current month UTC
+      },
+
+      "entityCaps": {
+        "max_branches": 1,
+        "max_departments": 1,
+        "max_system_users": 1,
+        "max_visitors_per_month": 50,
+        "max_appointments_per_month": 0
+      },
+
+      "crudUsage": {
+        // Populated only when the plan carries explicit crud_limits.
+        // Empty {} for canonical Free/Starter/Premium tenants.
+        "<collection>": {
+          "create": { "used": 12, "limit": 50 },
+          "update": { "used":  0, "limit": null },
+          "delete": { "used":  0, "limit": null }
+        }
+      },
+
+      "retrievalUsage": {
+        // Same: only populated when plan ships retrieval_quotas.
+        "<collection>": { "read": { "used": 312, "limit": 1000 } }
+      },
+
+      "storage": {
+        "documents_used":   3,
+        "documents_limit": 50,            // null = unlimited
+        "storage_mb_used": null,          // populated when storage provider reports
+        "storage_mb_limit": 50,
+        "max_file_size_mb": 2
+      }
+    }
+
+
+================================================================================
+3. RENDERING RULES (PRIMARY)
+================================================================================
+
+The PRIMARY counters every tenant should see in their dashboard come
+from ``entityCounts`` × ``entityCaps``. Pair them like this:
+
+  Display label                | used                                  | limit
+  -----------------------------|---------------------------------------|-----------------------------
+  Locations                    | entityCounts.branches                 | entityCaps.max_branches
+  Departments                  | entityCounts.departments              | entityCaps.max_departments
+  Team members                 | entityCounts.system_users             | entityCaps.max_system_users
+  Visitors this month          | entityCounts.visitors_this_month      | entityCaps.max_visitors_per_month
+  Appointments this month      | entityCounts.appointments_this_month  | entityCaps.max_appointments_per_month
+  Documents stored             | storage.documents_used                | storage.documents_limit
+
+For each row:
+  * If ``limit === null`` render "Unlimited" (no progress bar).
+  * If ``limit === 0`` render the row as locked / disabled (this is how
+    Free signals "no appointments at all").
+  * If ``used >= limit`` render the bar at 100% with a red tint and a
+    "Limit reached, upgrade to do more" CTA.
+  * Otherwise render percent = used / limit × 100.
+
+Period reset hint:
+    secondsUntilReset = entityCounts.period_end - Date.now()/1000
+    show "Resets in N days" or a humanized countdown.
+
+
+================================================================================
+4. RENDERING RULES (SECONDARY)
+================================================================================
+
+The SECONDARY counters come from ``crudUsage`` and ``retrievalUsage``.
+These are empty for canonical-plan tenants and only populated when an
+admin has applied subscription overrides that ship explicit CRUD or
+retrieval quotas. Treat both as optional rendering — iterate the
+collection keys and render a row for each.
+
+When ``crudUsage`` and ``retrievalUsage`` are both empty objects, omit
+the "Detailed quotas" section from the dashboard entirely.
+
+
+================================================================================
+5. FREQUENCY & CACHING
+================================================================================
+
+The ``my-usage`` endpoint is precomputed per tenant with a 120s TTL.
+That's deliberate — usage moves on every visitor check-in and would
+hammer MongoDB if the FE polled aggressively.
+
+  * On dashboard mount: fetch once.
+  * On a write that affects a counter (e.g. registering a new visitor):
+    optimistically increment the local count by 1, then refetch on the
+    next dashboard navigation.
+  * Do NOT poll on a timer < 30s. The numbers don't change that fast
+    for human-visible flows.
+
+
+================================================================================
+6. EXAMPLES BY TIER
+================================================================================
+
+6.1  Free tenant who has used 12 visitors this month
+
+    {
+      "planName": "free", "planTier": "free", "subscriptionStatus": "active",
+      "entityCounts": {
+        "branches": 1, "departments": 1, "system_users": 1,
+        "visitors_this_month": 12, "appointments_this_month": 0,
+        "period_start": 1743465600, "period_end": 1746057600
+      },
+      "entityCaps": {
+        "max_branches": 1, "max_departments": 1, "max_system_users": 1,
+        "max_visitors_per_month": 50, "max_appointments_per_month": 0
+      },
+      "crudUsage": {}, "retrievalUsage": {},
+      "storage": {
+        "documents_used": 0, "documents_limit": 50,
+        "storage_mb_used": null, "storage_mb_limit": 50,
+        "max_file_size_mb": 2
+      }
+    }
+
+    Frontend renders:
+      Locations:           1 of 1
+      Departments:         1 of 1
+      Team members:        1 of 1
+      Visitors this month: 12 of 50         (24% bar, "Resets in N days")
+      Appointments:        Locked under Free plan
+      Documents:           0 of 50
+
+6.2  Premium tenant (multi-location)
+
+    {
+      "planName": "premium", "planTier": "premium",
+      "entityCounts": {
+        "branches": 4, "departments": 28, "system_users": 12,
+        "visitors_this_month": 1240, "appointments_this_month": 60,
+        ...
+      },
+      "entityCaps": {
+        "max_branches": null,                  // unlimited
+        "max_departments": 15,
+        "max_system_users": 50,
+        "max_visitors_per_month": 500,
+        "max_appointments_per_month": null
+      },
+      ...
+    }
+
+    Frontend renders:
+      Locations:           4 (Unlimited)
+      Departments:         28 of 15            ← over the per-location baseline;
+                                                 the admin should look at upgrading
+                                                 to enterprise or applying tenant
+                                                 cap overrides.
+      Team members:        12 of 50
+      Visitors this month: 1240 of 500          ← over the cap; show red bar +
+                                                  "Limit reached" CTA.
+      Appointments:        60 (Unlimited)
+
+6.3  Enterprise tenant
+
+    {
+      "planName": "enterprise-acme", "planTier": "enterprise",
+      "entityCaps": { "max_branches": null, ... },   // all null
+      ...
+    }
+
+    Frontend renders all rows as "Unlimited" — no bars.
+
+
+================================================================================
+7. KNOWN PITFALLS
+================================================================================
+
+7.1  The OLD payload was effectively empty for canonical-plan tenants.
+     If your client code paths only inspected ``crudUsage`` /
+     ``retrievalUsage``, switch to ``entityCounts`` × ``entityCaps``
+     for the primary numbers. Both fields are now populated.
+
+7.2  Visitor counts use ``visit_sessions`` first, then fall back to
+     ``visitors``. A tenant with legacy data who hasn't yet hit the
+     new check-in path will see a non-zero count from ``visitors``.
+
+7.3  ``appointments_this_month`` is purely a dashboard signal. The
+     enforcement gate lives in ``services.appointment_service`` (it
+     raises 403 BEFORE the cap check on Free with an explicit "Your
+     plan does not include appointments" message). Don't try to gate
+     the create button purely on the count — read
+     ``deniedFeatures.includes("appointments")`` from the limitations
+     payload instead.
+
+7.4  ``storage_mb_used`` is null until the storage provider exposes
+     a usage API. Render it as "—" or hide the row when null. The
+     ``storage_mb_limit`` is always populated from the plan.
+
+7.5  Departments and branches counts here count ACTIVE rows only.
+     Locked entities (see ``limitations.txt``) are NOT counted in
+     ``entityCounts`` — they're shown separately as locked rows on
+     the corresponding list pages, so the dashboard usage bar
+     reflects how much of the new plan's allowance the tenant is
+     ACTUALLY using.
+
+
+================================================================================
+8. ENDPOINTS RELATED TO USAGE (FOR CONTEXT)
+================================================================================
+
+  GET /v1/usage/my-usage                        — this document
+  GET /v1/usage/tenant/{id}/summary             — same shape, admin-only
+
+  GET /v1/me/limitations                        — feature gates & locked rows
+                                                  (see limitations.txt)
+
+  GET /v1/subscriptions/tenant/{id}/active      — plan record (see
+                                                  plans-billing-frontend.txt §3.2)
+
+================================================================================
+END OF DOCUMENT
+================================================================================

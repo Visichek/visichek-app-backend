@@ -103,12 +103,25 @@ async def get_tenant_usage_summary(
     subscription_id: str,
     plan_data: dict,
 ) -> TenantUsageSummary:
-    """Build a comprehensive usage summary for a tenant."""
+    """Build a comprehensive usage summary for a tenant.
+
+    The historical implementation only populated ``crud_usage`` /
+    ``retrieval_usage`` from the plan's ``crud_limits`` and
+    ``retrieval_quotas`` lists. Canonical plans (Free / Starter /
+    Premium) carry their numeric limits on ``tenant_caps`` instead, so
+    those tenants got back an empty ``crud_usage`` and the frontend had
+    nothing to render. This rewrite populates ``entity_counts`` and
+    ``storage`` from real DB counts so the FE can render the same
+    progress bars regardless of which surface a limit lives on.
+    """
+    from core.database import db
     from schemas.plan_schema import QuotaResetInterval
+    from services.plan_limits import get_month_bounds
 
     period_monthly = get_period_key(QuotaResetInterval.MONTHLY)
-    get_period_key(QuotaResetInterval.DAILY)
 
+    # ── Legacy crud_limits / retrieval_quotas usage (still populated
+    #    when a plan ships them — Enterprise overrides may add them).
     crud_usage: dict = {}
     for cl in plan_data.get("crud_limits", []):
         collection = cl["collection"]
@@ -141,6 +154,74 @@ async def get_tenant_usage_summary(
             "read": {"used": current, "limit": rq.get("max_reads")}
         }
 
+    # ── Live DB counts that EVERY tenant needs (independent of whether
+    #    the plan also carries crud_limits). The frontend renders these
+    #    as the primary "X of Y used" progress bars on the dashboard.
+    month_start, month_end = get_month_bounds()
+
+    branches_count = await db["branches"].count_documents(
+        {"tenant_id": tenant_id, "is_active": {"$ne": False}}
+    )
+    departments_count = await db["departments"].count_documents(
+        {"tenant_id": tenant_id, "is_active": {"$ne": False}}
+    )
+    system_users_count = await db["system_users"].count_documents(
+        {"tenant_id": tenant_id, "account_status": "ACTIVE"}
+    )
+
+    # Visitors-this-month: count visit_sessions created in the current
+    # calendar month. This matches the cap definition
+    # (``max_visitors_per_month``) which is enforced at session creation
+    # time. We fall back to the ``visitors`` collection if a tenant has
+    # legacy data without sessions yet.
+    visitors_this_month = await db["visit_sessions"].count_documents(
+        {
+            "tenant_id": tenant_id,
+            "date_created": {"$gte": month_start, "$lt": month_end},
+        }
+    )
+    if visitors_this_month == 0:
+        visitors_this_month = await db["visitors"].count_documents(
+            {
+                "tenant_id": tenant_id,
+                "date_created": {"$gte": month_start, "$lt": month_end},
+            }
+        )
+
+    appointments_this_month = await db["appointments"].count_documents(
+        {
+            "tenant_id": tenant_id,
+            "date_created": {"$gte": month_start, "$lt": month_end},
+        }
+    )
+
+    entity_counts: dict = {
+        "branches": branches_count,
+        "departments": departments_count,
+        "system_users": system_users_count,
+        "visitors_this_month": visitors_this_month,
+        "appointments_this_month": appointments_this_month,
+        # Keep month boundary on the response so the FE can render
+        # "resets in N days" without recomputing client-side.
+        "period_start": month_start,
+        "period_end": month_end,
+    }
+
+    # ── Storage (best-effort). We only count documents we know about
+    #    in MongoDB; bytes-on-disk comes from the storage provider and
+    #    is not always available in test envs.
+    documents_count = await db["documents"].count_documents(
+        {"tenant_id": tenant_id}
+    )
+    storage_caps = plan_data.get("storage_limits", {}) or {}
+    storage: dict = {
+        "documents_used": documents_count,
+        "documents_limit": storage_caps.get("max_documents"),
+        "storage_mb_used": None,  # populated by the storage manager when wired
+        "storage_mb_limit": storage_caps.get("max_storage_mb"),
+        "max_file_size_mb": storage_caps.get("max_file_size_mb"),
+    }
+
     return TenantUsageSummary(
         tenant_id=tenant_id,
         plan_name=plan_data.get("plan_name", "unknown"),
@@ -149,9 +230,9 @@ async def get_tenant_usage_summary(
         period=period_monthly,
         crud_usage=crud_usage,
         retrieval_usage=retrieval_usage,
-        entity_counts={},  # populated from actual DB counts if needed
-        entity_caps=plan_data.get("tenant_caps", {}),
-        storage={},  # populated from actual storage if needed
+        entity_counts=entity_counts,
+        entity_caps=plan_data.get("tenant_caps", {}) or {},
+        storage=storage,
     )
 
 

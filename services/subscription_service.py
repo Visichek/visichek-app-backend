@@ -756,9 +756,19 @@ async def transition_tenant_to_free_plan(
     )
     new_sub = await create_subscription(sub_data)
 
-    # 3. Lock down branches to HQ. Best-effort.
+    # 3. Lock down branches to HQ AND deactivate departments beyond the
+    # new plan's ``max_departments`` cap. Both are best-effort — a
+    # failure here doesn't block the downgrade because the access guards
+    # in ``branch_service`` / ``department_service`` will still enforce
+    # the cap dynamically on every read/write.
     try:
         await lock_down_to_hq(tenant_id)
+    except Exception:
+        pass
+    try:
+        from services.department_service import lock_down_to_department_cap
+
+        await lock_down_to_department_cap(tenant_id)
     except Exception:
         pass
 

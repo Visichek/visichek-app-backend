@@ -324,10 +324,22 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
             }
         )
 
+    # Plan-driven limitations are embedded so the settings page can hide
+    # sections (e.g. branding when on Free) without a second round trip.
+    # The same payload is also exposed at GET /v1/me/limitations for
+    # callers that don't need the full settings manifest.
+    try:
+        from services.me_limitations_service import build_me_limitations
+
+        limitations = await build_me_limitations(principal)
+    except Exception:
+        limitations = None
+
     return {
         "profile": profile,
         "is_primary_admin": is_primary,
         "sections": sections,
+        "limitations": limitations,
     }
 
 

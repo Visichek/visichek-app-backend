@@ -1,0 +1,371 @@
+================================================================================
+VISICHEK — PLAN LIMITATIONS API (FRONTEND GUIDE)
+================================================================================
+
+This document describes the limitations payload the frontend uses to
+decide WHAT TO RENDER and WHAT TO HIDE based on the calling tenant's
+current plan. It complements ``plans-billing-frontend.txt`` (which
+covers pricing, checkout, billing) and ``usage.txt`` (which covers live
+counters versus caps).
+
+Read this document before wiring any nav item, action button, or
+page-level guard to a plan-driven feature.
+
+
+================================================================================
+0. WHY THIS EXISTS
+================================================================================
+
+Without a single endpoint that lists every denial up-front, the
+frontend would have to either:
+
+  * try every endpoint and react to 403s (ugly, slow, leaks UI),
+  * hardcode plan-specific lists (drifts as soon as the backend tunes
+    a tier), or
+  * inspect plan.feature_rules manually (the FE shouldn't be parsing
+    backend gating logic).
+
+``GET /v1/me/limitations`` solves all three. It returns the resolved
+plan, the entity caps that apply, the locked entities that already
+exist on the tenant, and the list of denied endpoints with stable
+short feature keys the FE can map to nav items.
+
+
+================================================================================
+1. ENDPOINT
+================================================================================
+
+    GET /v1/me/limitations
+    Auth: any authenticated user (verify_any_token)
+
+The same payload is also embedded as ``limitations`` on the response
+of ``GET /v1/settings`` (see ``plans-billing-frontend.txt`` §3.x for
+the settings manifest).
+
+Application admins / application users (no tenant) get a stripped
+response (``tenantId: null``, empty arrays) — the platform admin
+surface is not gated by tenant plans.
+
+
+================================================================================
+2. RESPONSE SHAPE
+================================================================================
+
+    {
+      "tenantId": "69e35ec9c27723b4b442bcb1",
+
+      "plan": {
+        "id": "6a00791ca8f4e9d0998c8213",
+        "name": "free",
+        "displayName": "Free",
+        "tier": "free",
+        "isFreeFallback": true,
+        "subscriptionStatus": "active",
+        "currentPeriodEnd": 4932023042,
+        "billingCycle": "monthly",
+        "effectivePrice": 0.0,
+        "basePriceMonthly": 0.0,
+        "basePriceYearly": 0.0,
+        "currency": "NGN"
+      },
+
+      "caps": {
+        "maxBranches": 1,
+        "maxDepartments": 1,
+        "maxSystemUsers": 1,
+        "maxVisitorsPerMonth": 50,
+        "maxAppointmentsPerMonth": 0
+      },
+
+      "deniedEndpoints": [
+        {
+          "pattern": "/v1/appointments*",
+          "methods": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+          "description": "Appointments require Premium or Enterprise"
+        },
+        {
+          "pattern": "/v1/badges*",
+          "methods": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+          "description": "Badge printing requires Starter or higher"
+        },
+        // ... one entry per disabled feature_rule on the plan
+      ],
+
+      "deniedFeatures": [
+        "appointments", "badges", "branding", "kyc",
+        "csv_export", "host_email_notifications", "multi_location"
+      ],
+
+      "lockedEntities": {
+        "branches": ["68fa...", "68fb..."],     // non-HQ branches when on Free
+        "departments": ["68fc...", "68fd..."]   // departments above the cap
+      },
+
+      "enterprise": {
+        "isEnterprise": false,
+        "subAppPrefix": null
+      }
+    }
+
+
+================================================================================
+3. FIELD-BY-FIELD CONTRACT
+================================================================================
+
+3.1  plan
+     The same shape returned by ``/v1/subscriptions/tenant/{id}/active``
+     except ``isFreeFallback`` is the boolean to branch on after a
+     cancel: true → "Plan cancelled, you're on Free", false → "Welcome
+     to Free!". See ``plans-billing-frontend.txt`` §3.6 for the cancel
+     flow nuance.
+
+3.2  caps
+     camelCase mirror of the plan's ``tenant_caps``. ``null`` means
+     unlimited (Premium has no branch cap; Enterprise typically has
+     none on anything). Render progress bars next to the corresponding
+     usage counters (see ``usage.txt`` §2 for the matching usage payload).
+
+3.3  deniedEndpoints
+     Direct readout of the plan's ``feature_rules`` filtered to
+     ``enabled: false`` entries. Each entry carries:
+       * ``pattern`` — fnmatch URL pattern. Use it to test whether a
+         hypothetical request would be denied.
+       * ``methods`` — HTTP methods covered by the denial. A GET on a
+         pattern listed for POST only is still allowed.
+       * ``description`` — copy-paste-ready upsell message, written by
+         the backend so it always says the right tier ("requires
+         Premium or Enterprise").
+
+3.4  deniedFeatures
+     Stable short keys derived from ``deniedEndpoints``. Use these as
+     boolean feature flags on the FE side:
+
+       Key                          | Hide
+       -----------------------------|----------------------------------------
+       appointments                 | Appointments nav, "Schedule" buttons
+       badges                       | "Print badge" actions, badge list
+       branding                     | Branding settings page
+       kyc                          | "Run KYC" toggle on visitor flow
+       csv_export                   | Export buttons on dashboard / compliance
+       host_email_notifications     | Host email toggle in notifications prefs
+       multi_location               | "Add branch" button, branch picker
+       watchlist                    | Watchlist nav (Enterprise-only feature)
+       sso                          | SSO settings (Enterprise-only feature)
+
+     If a key is NOT in the list, the feature is available.
+
+3.5  lockedEntities
+     IDs of branches / departments that EXIST in the database but are
+     locked under the current plan. They show up in list responses
+     (`GET /v1/branches`, `GET /v1/departments`) so super_admins can
+     see "what they had" — the FE should render them as greyed-out
+     rows with a "Locked under Free" pill and no action buttons.
+
+     Why we don't auto-delete: the tenant may upgrade back next week.
+     We preserve the data and just block CRUD operations against
+     locked rows. ``GET /v1/departments/{locked_id}`` returns 403 with
+     a clear "upgrade or delete" message.
+
+3.6  enterprise
+     ``isEnterprise``: true when ``plan.tier === "enterprise"``.
+     ``subAppPrefix``: ``/v1/enterprise/<plan-name>`` when on
+     enterprise, otherwise null. Use it to gate enterprise-only
+     navigation entries — see ``plans-billing-frontend.txt`` §12 for
+     the sub-app contract.
+
+
+================================================================================
+4. HOW THE FRONTEND SHOULD CONSUME IT
+================================================================================
+
+4.1  WHEN TO FETCH
+
+     * Once on app load, after auth resolves.
+     * Again whenever the subscription changes (after a successful
+       checkout webhook lands or after cancel returns 202 + the job
+       polls to ``succeeded``).
+
+     The payload is small (≈1–3 KB) and idempotent — cache it in your
+     state container with a 60-second TTL or invalidate on plan-change
+     events.
+
+4.2  GLOBAL FEATURE FLAGS
+
+     Convert ``deniedFeatures`` into a simple set:
+
+         const denied = new Set(limitations.deniedFeatures);
+         const can = (key) => !denied.has(key);
+
+     Then guard nav and actions:
+
+         if (can("appointments")) renderAppointmentsNav();
+         if (can("branding")) renderBrandingSettings();
+         if (!can("badges")) hidePrintBadgeButton();
+
+4.3  CAP PROGRESS BARS
+
+     Cross-reference ``caps`` with ``GET /v1/usage/my-usage`` (see
+     ``usage.txt``). For each cap with a non-null limit, render:
+
+         <ProgressBar
+           label="Visitors this month"
+           used={usage.entityCounts.visitorsThisMonth}
+           limit={limitations.caps.maxVisitorsPerMonth}
+         />
+
+     When ``limit === null`` show "Unlimited" instead of a bar.
+
+4.4  LOCKED ENTITIES IN LISTS
+
+     On the Branches and Departments pages, after fetching the list,
+     mark each row whose id is in ``lockedEntities.branches`` /
+     ``lockedEntities.departments``:
+
+         row.isLocked = lockedSet.has(row.id);
+
+     Render locked rows with:
+       * Greyed style (opacity 0.5).
+       * "Locked" pill / badge.
+       * No edit / archive action buttons.
+       * A delete action IS allowed (lets the tenant clean up to come
+         back under the cap without upgrading).
+       * Tooltip: "Locked under Free — upgrade to Premium to unlock,
+         or delete to free up the slot."
+
+4.5  ENTERPRISE NAV
+
+     If ``enterprise.isEnterprise``, show the customer's bespoke nav
+     items pointing at ``${enterprise.subAppPrefix}/<route>``. Hide
+     them entirely otherwise — calls would 403 with
+     ``ENTERPRISE_PLAN_MISMATCH``.
+
+
+================================================================================
+5. EXAMPLE RESPONSES
+================================================================================
+
+5.1  Tenant on Free (after cancel-immediate from Premium)
+
+    {
+      "tenantId": "...",
+      "plan": {
+        "name": "free", "tier": "free",
+        "isFreeFallback": true,
+        "currency": "NGN", "effectivePrice": 0.0,
+        "currentPeriodEnd": 4932023042
+      },
+      "caps": {
+        "maxBranches": 1, "maxDepartments": 1,
+        "maxSystemUsers": 1, "maxVisitorsPerMonth": 50,
+        "maxAppointmentsPerMonth": 0
+      },
+      "deniedFeatures": [
+        "appointments", "badges", "branding", "kyc",
+        "csv_export", "host_email_notifications", "multi_location"
+      ],
+      "lockedEntities": {
+        "branches": ["68fa...", "68fb..."],   // 2 non-HQ branches from Premium era
+        "departments": ["68fc...", "68fd..."]  // 2 extra departments from Premium era
+      },
+      "enterprise": { "isEnterprise": false, "subAppPrefix": null }
+    }
+
+5.2  Tenant on Starter
+
+    {
+      "tenantId": "...",
+      "plan": { "name": "starter", "tier": "starter", "isFreeFallback": false, ... },
+      "caps": {
+        "maxBranches": 1, "maxDepartments": 3,
+        "maxSystemUsers": 5, "maxVisitorsPerMonth": 150,
+        "maxAppointmentsPerMonth": 0
+      },
+      "deniedFeatures": [
+        "appointments", "branding", "kyc",
+        "csv_export", "host_email_notifications", "multi_location"
+      ],
+      "lockedEntities": { "branches": [], "departments": [] },
+      "enterprise": { "isEnterprise": false, "subAppPrefix": null }
+    }
+
+5.3  Tenant on Enterprise (slug = "enterprise-acme")
+
+    {
+      "tenantId": "...",
+      "plan": { "name": "enterprise-acme", "tier": "enterprise", ... },
+      "caps": {
+        "maxBranches": null, "maxDepartments": null,
+        "maxSystemUsers": null, "maxVisitorsPerMonth": null,
+        "maxAppointmentsPerMonth": null
+      },
+      "deniedFeatures": [],
+      "lockedEntities": { "branches": [], "departments": [] },
+      "enterprise": {
+        "isEnterprise": true,
+        "subAppPrefix": "/v1/enterprise/enterprise-acme"
+      }
+    }
+
+
+================================================================================
+6. SERVER-SIDE ENFORCEMENT (for reference)
+================================================================================
+
+This is what the frontend doesn't need to implement — but knowing the
+backend's enforcement surface helps frontend devs reason about edge cases.
+
+6.1  URL gate (PlanEnforcementMiddleware)
+     fnmatch over each plan feature_rule. Disabled rules return 403
+     FEATURE_DISABLED with the same ``description`` field surfaced in
+     ``deniedEndpoints``.
+
+6.2  Service-layer skip (defense in depth)
+     Some flows have IMPLICIT paid side effects. Even if the URL is
+     allowed, the side effect is gated:
+
+       * ``checkin_service.review_checkin`` — Free skips badge creation,
+         returns ``{ state: "approved", badge: null }``.
+       * ``visit_session_service.confirm_check_in`` — Free skips PDF
+         generation, returns ``{ session, badge_pdf_base64: null,
+         badge_qr_token: null }``.
+       * ``appointment_service.add_appointment`` — Free raises 403
+         "Your plan does not include appointments." even before the
+         monthly cap check.
+
+6.3  Locked entity guard (department_service / branch_service)
+     ``enforce_department_access(tenant_id, department_id)`` and the
+     equivalent on branches walk the tenant's resources sorted by
+     ``date_created``, take the first ``cap`` of them as accessible,
+     and reject the rest with 403. Listings still return locked rows
+     so the FE can render them — only writes are blocked.
+
+6.4  Drop-to-free cascade
+     When a paid plan ends (cancel-immediate, dunning suspension):
+       * non-HQ branches auto-flip to ``status: inactive``,
+       * departments beyond ``maxDepartments`` auto-flip to
+         ``is_active: false``,
+       * the new free subscription goes live with effectivePrice=0
+         and ``adminNotes`` starting with "Auto-downgraded".
+
+
+================================================================================
+7. WHAT NOT TO BUILD
+================================================================================
+
+  * Hardcoded "if tier === free hide X" logic. The backend owns the
+    deny list; the FE just consumes ``deniedFeatures``.
+
+  * A second source of truth for caps. Read ``caps`` and pair with
+    usage; do not duplicate the cap numbers in FE constants.
+
+  * Polling /v1/me/limitations on a timer. Refresh on app load and
+    on subscription-change events (cancel succeeded, checkout
+    webhook landed, plan changed).
+
+  * Complaining UI when a user clicks something they don't have.
+    Hide it or render it as locked instead of letting the call fire
+    and showing a 403 toast.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

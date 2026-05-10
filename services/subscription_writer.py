@@ -217,7 +217,43 @@ async def _precompute_subscriptions_list(_tenant_id: str) -> List[Any]:
 
 @register_precompute("subscription.active", scope=PrecomputeScope.TENANT)
 async def _precompute_subscription_active(tenant_id: str) -> Any:
+    """Same enrichment as ``_load_active_subscription`` in the route.
+
+    Cache hits and cache misses MUST return the same shape, otherwise
+    the frontend's "is the tenant on the free fallback?" check breaks
+    intermittently depending on whether the precompute key is warm.
+    """
+    from bson import ObjectId as _BsonObjectId
+
+    from config.plan_tiers import FREE_PLAN_NAME
+    from repositories.plan_repo import get_plan
+
     sub = await retrieve_tenant_active_subscription(tenant_id)
     if not sub:
         return None
-    return sub.model_dump(mode="json", by_alias=True)
+
+    payload: dict[str, Any] = sub.model_dump(mode="json", by_alias=True)
+
+    plan_summary: Any = None
+    is_free_fallback = False
+    if sub.plan_id and _BsonObjectId.is_valid(sub.plan_id):
+        plan = await get_plan({"_id": _BsonObjectId(sub.plan_id)})
+        if plan is not None:
+            plan_summary = {
+                "id": plan.id,
+                "name": plan.name,
+                "displayName": plan.display_name,
+                "tier": plan.tier.value
+                if hasattr(plan.tier, "value")
+                else plan.tier,
+                "basePriceMonthly": plan.base_price_monthly,
+                "basePriceYearly": plan.base_price_yearly,
+                "currency": plan.currency,
+            }
+            is_free_fallback = plan.name == FREE_PLAN_NAME and bool(
+                (sub.admin_notes or "").startswith("Auto-downgraded")
+            )
+
+    payload["plan"] = plan_summary
+    payload["isFreeFallback"] = is_free_fallback
+    return payload
