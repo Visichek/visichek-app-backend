@@ -1187,20 +1187,31 @@ async def confirm_checkin(
         if not visitor:
             raise resource_not_found(resource="Visitor", resource_id=checkin.visitor_id)
 
-        # Create badge
         now = int(time.time())
         # Set expires_at to end of tenant's local day (for now use UTC end-of-day)
         expires_at = ((now // 86400) + 1) * 86400  # Next midnight UTC
 
-        qr_code_value = secrets.token_urlsafe(24)
-        badge_create = BadgeCreate(
+        # Plan gate — badge printing is denied on Free. Manual check-in
+        # still goes through (we transition the checkin to APPROVED
+        # below) but we skip the badge artifact entirely so the Free
+        # tenant gets visitor logging without paid-tier hardware.
+        from services.plan_limits import is_feature_enabled
+
+        badge = None
+        if await is_feature_enabled(
             tenant_id=tenant_id,
-            checkin_id=checkin_id,
-            qr_code_value=qr_code_value,
-            issued_at=now,
-            expires_at=expires_at,
-        )
-        badge = await create_badge(badge_create)
+            endpoint_pattern="/v1/badges",
+            method="POST",
+        ):
+            qr_code_value = secrets.token_urlsafe(24)
+            badge_create = BadgeCreate(
+                tenant_id=tenant_id,
+                checkin_id=checkin_id,
+                qr_code_value=qr_code_value,
+                issued_at=now,
+                expires_at=expires_at,
+            )
+            badge = await create_badge(badge_create)
 
         # Update checkin
         await update_checkin(
@@ -1219,7 +1230,7 @@ async def confirm_checkin(
             await notify_checkin_approved(
                 tenant_id=tenant_id,
                 checkin_id=checkin_id,
-                badge_id=badge.id or "",
+                badge_id=(badge.id if badge else None) or "",
                 visitor_name=visitor.full_name,
                 host_employee_id="",  # TODO: extract from context if available
                 approved_by_user_id=principal.user_id,
@@ -1229,18 +1240,22 @@ async def confirm_checkin(
 
             logging.warning(f"Failed to send approval notification: {e}")
 
-        # Build response
-        badge_payload = BadgePayload(
-            badge_id=badge.id or "",
-            qr_code_value=badge.qr_code_value,
-            visitor_name=visitor.full_name,
-            verified=visitor.verified,
-            portrait_url=visitor.portrait_url,
-            host_employee_name=None,  # TODO: resolve from context if available
-            purpose=checkin.purpose.purpose,
-            issued_at=badge.issued_at,
-            expires_at=badge.expires_at,
-        )
+        # Build response. On Free plan ``badge`` is None — return the
+        # approval without a badge artifact so the receptionist UI can
+        # render "approved, manual entry only".
+        badge_payload: BadgePayload | None = None
+        if badge is not None:
+            badge_payload = BadgePayload(
+                badge_id=badge.id or "",
+                qr_code_value=badge.qr_code_value,
+                visitor_name=visitor.full_name,
+                verified=visitor.verified,
+                portrait_url=visitor.portrait_url,
+                host_employee_name=None,  # TODO: resolve from context if available
+                purpose=checkin.purpose.purpose,
+                issued_at=badge.issued_at,
+                expires_at=badge.expires_at,
+            )
 
         return {
             "checkin_id": checkin_id,

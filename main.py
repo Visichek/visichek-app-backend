@@ -840,4 +840,22 @@ app.include_router(v1_saved_view_route_router, prefix="/v1")
 app.include_router(app_payment_route_router)
 # --- auto-routes-end ---
 
+# Enterprise sub-apps. Each Enterprise plan can ship its own APIRouter
+# mounted at /v1/enterprise/<slug>/*. Modules that define those routers
+# call ``register_enterprise_app(slug, router)`` at import time, so we
+# trigger their imports first (via core.enterprise_registrations) and
+# then include each registered router on the parent FastAPI instance.
+# See ``core/enterprise_apps.py`` for the contract and CLAUDE.md for
+# the MUST rule that governs implementing one.
+try:
+    import core.enterprise_registrations  # noqa: F401  side-effect imports
+except ImportError:
+    # No enterprise feature packs are installed in this deployment —
+    # that's fine, the registry simply stays empty.
+    pass
+
+from core.enterprise_apps import include_enterprise_apps
+
+include_enterprise_apps(app)
+
 apply_response_documentation(app)

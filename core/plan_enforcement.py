@@ -279,6 +279,42 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
                 request_id=getattr(request.state, "request_id", None),
             )
 
+        # 0. Enterprise sub-app gating — paths under /v1/enterprise/<slug>/*
+        # are only accessible to tenants whose active subscription points
+        # to an enterprise plan whose ``name`` equals the slug. This is
+        # checked BEFORE generic feature gating so the error message is
+        # specific ("you need the X enterprise plan") rather than a
+        # generic "feature disabled".
+        from core.enterprise_apps import (
+            extract_enterprise_slug,
+            is_enterprise_app_path,
+        )
+
+        if is_enterprise_app_path(path):
+            requested_slug = extract_enterprise_slug(path)
+            current_plan_name = plan_data.get("plan_name", "") or ""
+            current_tier = plan_data.get("tier", "") or ""
+            if (
+                not requested_slug
+                or current_tier != "enterprise"
+                or current_plan_name != requested_slug
+            ):
+                return error_response(
+                    status_code=403,
+                    message="Enterprise plan mismatch",
+                    data={
+                        "code": "ENTERPRISE_PLAN_MISMATCH",
+                        "details": (
+                            f"This endpoint is reserved for the '{requested_slug}' "
+                            "enterprise plan. Your current plan does not include it."
+                        ),
+                        "required_plan_name": requested_slug,
+                        "plan": plan_data.get("plan_display_name"),
+                        "tier": current_tier,
+                    },
+                    request_id=getattr(request.state, "request_id", None),
+                )
+
         # 1. Feature gating
         allowed, reason = _check_feature_access(
             path,

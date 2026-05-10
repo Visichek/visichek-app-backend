@@ -17,6 +17,7 @@ return silently instead of blocking. The middleware is the primary gate for
 subscription presence/status; these helpers only enforce the numeric caps.
 """
 
+import fnmatch
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -30,6 +31,68 @@ async def _get_plan_data(tenant_id: str) -> Optional[dict]:
         return await resolve_tenant_plan(tenant_id)
     except Exception:
         return None
+
+
+async def is_feature_enabled(
+    tenant_id: str,
+    endpoint_pattern: str,
+    method: str = "POST",
+) -> bool:
+    """Return True if a feature is enabled on the tenant's resolved plan.
+
+    Mirrors the fnmatch-based gate inside ``PlanEnforcementMiddleware``
+    but lives in the service layer so internal callers (workers, queued
+    write handlers, cross-service flows) can short-circuit paid-only
+    side effects without bouncing the request back through HTTP.
+
+    Fails OPEN when no plan can be resolved — the middleware is the
+    primary gate at the front door, and a Redis hiccup here should not
+    silently block paying customers from issuing badges.
+
+    Lookup rules: walks the plan's ``feature_rules`` in order, returning
+    the first rule whose ``endpoint_pattern`` matches and whose method
+    list contains ``method``. If no rule matches, the feature is allowed
+    by default (the middleware applies the same convention).
+    """
+    plan_data = await _get_plan_data(tenant_id)
+    if not plan_data:
+        return True
+    method_upper = method.upper()
+    for rule in plan_data.get("feature_rules", []):
+        pattern = rule.get("endpoint_pattern", "")
+        methods = rule.get("methods") or [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+        ]
+        if fnmatch.fnmatch(endpoint_pattern, pattern) and method_upper in methods:
+            return bool(rule.get("enabled", True))
+    return True
+
+
+async def enforce_feature_enabled(
+    tenant_id: str,
+    endpoint_pattern: str,
+    method: str = "POST",
+    *,
+    friendly_name: str = "this feature",
+) -> None:
+    """Raise HTTP 403 if the feature is denied on the tenant's plan.
+
+    Use at the top of a service function whenever the call has a
+    paid-only side effect (issuing a badge, creating an appointment,
+    enabling KYC, etc.). The route-layer middleware already gates the
+    public URL surface — this is defense-in-depth for code paths that
+    reach the side effect via a different URL (e.g. the implicit badge
+    issuance inside ``confirm_check_in``).
+    """
+    if not await is_feature_enabled(tenant_id, endpoint_pattern, method):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Your plan does not include {friendly_name}.",
+        )
 
 
 async def enforce_entity_cap(

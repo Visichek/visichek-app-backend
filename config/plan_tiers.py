@@ -36,19 +36,39 @@ from schemas.plan_schema import (
 )
 
 
-# Canonical plan slug names. ``add_plan`` keys plans by name, so these
+# Singleton plan slug names. ``add_plan`` keys plans by name, so these
 # are the durable identifiers across redeploys / migrations.
+#
+# These three plans are SINGLETONS — there is exactly one row per slug
+# in MongoDB and the bootstrap upserts them on every startup. Frontend
+# and backend both look them up by name.
 FREE_PLAN_NAME = "free"
 STARTER_PLAN_NAME = "starter"
 PREMIUM_PLAN_NAME = "premium"
-ENTERPRISE_PLAN_NAME = "enterprise"
 
-CANONICAL_PLAN_NAMES: Tuple[str, ...] = (
+SINGLETON_PLAN_NAMES: Tuple[str, ...] = (
     FREE_PLAN_NAME,
     STARTER_PLAN_NAME,
     PREMIUM_PLAN_NAME,
-    ENTERPRISE_PLAN_NAME,
 )
+
+# Enterprise plans, by contrast, are bespoke — sales/admin creates one
+# per customer with a unique slug (the plan ``name``) so each tenant on
+# Enterprise can have its own custom feature set, caps, and even its
+# own FastAPI sub-app of endpoints (see ``core.enterprise_apps``). The
+# frontend filters them out of the public catalogue and surfaces a
+# "Contact sales" CTA instead.
+#
+# A single placeholder template name is reserved so old data (legacy
+# ``"enterprise"`` plan rows) keeps resolving — but new plans should
+# adopt distinct slugs like ``"enterprise-acme"`` or ``"acme-corp"``.
+ENTERPRISE_TEMPLATE_NAME = "enterprise"
+
+# Backwards-compatible alias kept for callers that referenced the
+# legacy ``CANONICAL_PLAN_NAMES`` tuple. New code should prefer
+# ``SINGLETON_PLAN_NAMES`` — there is no canonical Enterprise slug
+# anymore.
+CANONICAL_PLAN_NAMES: Tuple[str, ...] = SINGLETON_PLAN_NAMES
 
 
 # Endpoint patterns we gate per tier. Anything NOT covered by a feature
@@ -306,9 +326,18 @@ PREMIUM_PLAN = CanonicalPlan(
     ),
 )
 
-# ── Enterprise ──────────────────────────────────────────────────────────
-ENTERPRISE_PLAN = CanonicalPlan(
-    name=ENTERPRISE_PLAN_NAME,
+# ── Enterprise template ─────────────────────────────────────────────────
+# This is the *template* used to seed sensible defaults when a sales /
+# admin user creates a new bespoke enterprise plan. It is NOT bootstrapped
+# into MongoDB on startup — there can be many enterprise plans and each
+# one is keyed by its own unique slug (e.g. ``"enterprise-acme"``).
+#
+# When the admin wires up a new enterprise plan they pick the slug,
+# starting from these defaults, and optionally register a FastAPI
+# sub-app of custom endpoints under ``/v1/enterprise/<slug>/*`` via
+# ``core.enterprise_apps.register_enterprise_app``.
+ENTERPRISE_TEMPLATE = CanonicalPlan(
+    name=ENTERPRISE_TEMPLATE_NAME,
     display_name="Enterprise",
     tier=PlanTier.ENTERPRISE,
     description=(
@@ -359,18 +388,34 @@ ENTERPRISE_PLAN = CanonicalPlan(
 )
 
 
+# Canonical singleton plans — these get auto-upserted on every startup.
+# Enterprise plans are NOT in this dict because there can be many of them.
 CANONICAL_PLANS: Dict[str, CanonicalPlan] = {
     FREE_PLAN_NAME: FREE_PLAN,
     STARTER_PLAN_NAME: STARTER_PLAN,
     PREMIUM_PLAN_NAME: PREMIUM_PLAN,
-    ENTERPRISE_PLAN_NAME: ENTERPRISE_PLAN,
 }
 
 
 def get_canonical_plan(name: str) -> Optional[CanonicalPlan]:
-    """Look up a canonical plan by slug name. Returns None for unknown names."""
+    """Look up a singleton canonical plan by slug. Returns None otherwise.
+
+    Enterprise plans are not in the canonical set (each one is bespoke);
+    callers that need enterprise editability rules should fall back to
+    ``ENTERPRISE_TEMPLATE`` for any plan with ``tier = PlanTier.ENTERPRISE``.
+    """
     return CANONICAL_PLANS.get(name)
 
 
 def is_canonical_plan_name(name: str) -> bool:
+    """Backwards-compatible alias for ``is_singleton_plan_name``."""
+    return name in CANONICAL_PLANS
+
+
+def is_singleton_plan_name(name: str) -> bool:
+    """True only for the three singleton plan slugs (free/starter/premium).
+
+    Singletons cannot be archived or deleted (it would break tenants on
+    the free fallback) and only one of each can ever be created.
+    """
     return name in CANONICAL_PLANS

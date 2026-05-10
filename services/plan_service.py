@@ -28,7 +28,65 @@ async def add_plan(
     *,
     preassigned_id: Optional[str] = None,
 ) -> PlanOut:
-    """Create a new subscription plan. Only application admins can do this."""
+    """Create a new subscription plan. Only application admins can do this.
+
+    Singleton enforcement:
+        * Free / Starter / Premium are SINGLETON tiers — at most one row
+          per tier may exist. Trying to create a second one returns 409.
+        * Enterprise is bespoke — many enterprise plans may coexist, each
+          with a unique slug ``name``. Use a stable slug like
+          ``"enterprise-acme"`` so it can be paired with a FastAPI sub-app
+          mounted at ``/v1/enterprise/<slug>/*`` (see
+          ``core.enterprise_apps``).
+    """
+    from config.plan_tiers import (
+        SINGLETON_PLAN_NAMES,
+        is_singleton_plan_name,
+    )
+
+    # Singleton tier guard — only one Free / Starter / Premium row.
+    plan_tier_value = (
+        plan_data.tier.value
+        if hasattr(plan_data.tier, "value")
+        else str(plan_data.tier)
+    )
+    if plan_tier_value in {"free", "starter", "premium"}:
+        existing_tier = await get_plan({"tier": plan_tier_value})
+        if existing_tier and existing_tier.name != plan_data.name:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"There can only be ONE {plan_tier_value} plan. "
+                    f"Existing plan: '{existing_tier.name}'. Edit it instead "
+                    f"of creating a new one."
+                ),
+            )
+
+    # Singleton slug guard — only the canonical name may take a singleton slot.
+    if plan_data.name in SINGLETON_PLAN_NAMES and (
+        plan_tier_value not in {"free", "starter", "premium"}
+        or plan_data.name != plan_tier_value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"The slug '{plan_data.name}' is reserved for the {plan_data.name} "
+                f"singleton plan. Pick a different slug for non-singleton plans."
+            ),
+        )
+
+    # Enterprise slug rules — must NOT collide with the legacy template
+    # slug or any singleton slug. ``"enterprise"`` itself is reserved as
+    # the template name.
+    if plan_tier_value == "enterprise" and is_singleton_plan_name(plan_data.name):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Enterprise plans must use a customer-specific slug, not a "
+                "singleton plan name. Try 'enterprise-<customer>' instead."
+            ),
+        )
+
     # Check for duplicate plan name
     existing = await get_plan({"name": plan_data.name})
     if existing:
@@ -155,15 +213,17 @@ async def archive_plan(plan_id: str) -> Optional[PlanOut]:
     Existing subscriptions still work until they expire — only new
     subscriptions to this plan are blocked (handled by subscribe_tenant).
     """
-    from config.plan_tiers import is_canonical_plan_name
+    from config.plan_tiers import is_singleton_plan_name
 
     existing = await retrieve_plan_by_id(plan_id)
-    if existing and existing.name and is_canonical_plan_name(existing.name):
+    if existing and existing.name and is_singleton_plan_name(existing.name):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"The {existing.display_name or existing.name} plan is canonical "
-                "and cannot be archived."
+                f"The {existing.display_name or existing.name} plan is a "
+                "singleton and cannot be archived. Tenants depend on Free as "
+                "the default fallback; Starter and Premium are platform "
+                "catalogue offerings."
             ),
         )
 

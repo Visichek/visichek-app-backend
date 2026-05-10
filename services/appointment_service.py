@@ -17,7 +17,11 @@ from schemas.appointment_schema import (
     AppointmentOut,
     AppointmentWithSummaryOut,
 )
-from services.plan_limits import enforce_entity_cap, get_month_bounds
+from services.plan_limits import (
+    enforce_entity_cap,
+    enforce_feature_enabled,
+    get_month_bounds,
+)
 
 
 async def add_appointment(
@@ -25,6 +29,18 @@ async def add_appointment(
     *,
     preassigned_id: Optional[str] = None,
 ) -> AppointmentOut:
+    # Hard feature gate — appointments are denied on Free / Starter via
+    # plan ``feature_rules``. This raises 403 with a clear message
+    # ("Your plan does not include appointments.") instead of letting
+    # the call fall through to the cap check (which on Free returns the
+    # less helpful "Monthly appointment limit reached (0)").
+    await enforce_feature_enabled(
+        tenant_id=appt_data.tenant_id,
+        endpoint_pattern="/v1/appointments",
+        method="POST",
+        friendly_name="appointments",
+    )
+
     # Enforce plan cap on appointments created this calendar month
     month_start, month_end = get_month_bounds()
     month_count = await count_appointments(

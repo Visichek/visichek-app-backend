@@ -24,10 +24,21 @@ I0.1  EVERY TENANT IS ALWAYS ON A PLAN.
       state for a logged-in super_admin. If `tenant.plan_summary` is
       missing, treat it as a transient bug and refetch.
 
-I0.2  THERE ARE EXACTLY 4 CANONICAL PLANS.
-      Slug names (durable identifiers): "free", "starter", "premium",
-      "enterprise". Anything else is legacy and is being archived. Do
-      NOT hardcode plan IDs in the frontend — fetch by `name` (slug).
+I0.2  PLAN PLURALITY: 3 SINGLETONS + N ENTERPRISES.
+      Free / Starter / Premium are SINGLETONS — exactly one row each in
+      MongoDB. Their slug names are durable: "free", "starter", "premium".
+      The platform admin cannot create a second Free plan or rename them.
+
+      Enterprise plans are bespoke — many can coexist, each with its own
+      unique slug (e.g. "enterprise-acme", "globex-corp"). The frontend
+      should treat the enterprise tier as a category that may have any
+      number of entries. Filter via `GET /v1/plans?tier=enterprise` to
+      list them; render each as a "Contact sales" tile rather than a
+      direct "Subscribe" button. Read `plan.name` as the durable slug —
+      that slug doubles as the URL prefix for that customer's custom
+      endpoints (see I0.6 below).
+
+      Do NOT hardcode plan IDs anywhere in the frontend.
 
 I0.3  WHEN PAYMENT FAILS, THE TENANT DROPS TO FREE — NOT TO "SUSPENDED".
       After dunning exhausts (default 5 attempts), the paid subscription
@@ -36,11 +47,12 @@ I0.3  WHEN PAYMENT FAILS, THE TENANT DROPS TO FREE — NOT TO "SUSPENDED".
       paid features (multi-location, branding, KYC, etc.). All non-HQ
       branches are flipped to `status=inactive` automatically.
 
-I0.4  CANONICAL PLAN FIELDS ARE TIER-LOCKED.
+I0.4  PLAN FIELDS ARE TIER-LOCKED FOR SINGLETONS.
       Application admins cannot toggle features that the tier denies
       (e.g. enable branding on Starter). The backend rejects any PATCH
-      that touches a non-allowlisted field with HTTP 400. The list of
-      adjustable fields per tier is described in section 2.
+      that touches a non-allowlisted field with HTTP 400. Enterprise
+      plans are NOT tier-locked — they're bespoke and fully editable.
+      The list of adjustable fields per singleton tier is in section 2.
 
 I0.5  IMMEDIATE CANCEL = DROP TO FREE. NOT-IMMEDIATE = EXPIRES AT PERIOD END.
       `POST /v1/subscriptions/cancel { immediate: true }` ends the paid
@@ -48,6 +60,26 @@ I0.5  IMMEDIATE CANCEL = DROP TO FREE. NOT-IMMEDIATE = EXPIRES AT PERIOD END.
       `POST /v1/subscriptions/cancel { immediate: false }` flags the sub
       for non-renewal — it stays ACTIVE until `current_period_end`, then
       the renewal sweeper drops it to FREE.
+
+I0.6  ENTERPRISE PLANS GET DEDICATED FASTAPI SUB-APPS.
+      Each Enterprise plan with slug `<slug>` may expose custom endpoints
+      under `/v1/enterprise/<slug>/*`. Only tenants whose active
+      subscription is on the plan with `name == <slug>` can call those
+      endpoints — anyone else (including other enterprise plans) gets
+      HTTP 403 `ENTERPRISE_PLAN_MISMATCH`.
+
+      In practice the frontend handles this in three places:
+
+        1. Public catalogue: enterprise plans are listed but their
+           feature description is bespoke (read it from `plan.description`).
+        2. Discovery: a tenant on `enterprise-acme` should see the custom
+           features for their plan in the dashboard nav. Today that nav
+           is hand-written per customer; in the future a manifest endpoint
+           may surface this dynamically. For now, hard-code per-customer
+           UI behind a `plan.name === '<slug>'` check.
+        3. Calls to enterprise endpoints follow the standard fetch
+           pattern — no extra headers needed; the auth token tells the
+           backend which tenant is calling.
 
 
 ================================================================================
@@ -64,16 +96,50 @@ I0.5  IMMEDIATE CANCEL = DROP TO FREE. NOT-IMMEDIATE = EXPIRES AT PERIOD END.
        * 50 visitors/month  (← admin-adjustable, see 2.1)
        * 0 appointments
      Features available:
-       * Manual check-in & checkout
+       * Manual check-in & checkout (receptionist types in visitor info,
+         no QR self-service, no badge artifact)
        * Searchable visitor logs
        * Encrypted database
-     Features denied (HTTP 403 FEATURE_DISABLED on hit):
+     Features denied (HTTP 403 FEATURE_DISABLED on direct call):
        * /v1/appointments*       — Appointments
        * /v1/branding*           — Custom branding
        * /v1/badges*             — Badge printing
        * /v1/kyc*                — ID verification
        * /v1/dashboard/export    — CSV export
        * /v1/branches POST/PUT   — Multi-location
+
+     MANUAL-ONLY ENFORCEMENT (Free is the only tier with this rule):
+       The platform enforces the "manual" character of Free in two layers:
+
+       Layer 1 — URL gate (PlanEnforcementMiddleware).
+         Direct calls to /v1/badges*, /v1/appointments*, /v1/branding*,
+         /v1/kyc*, /v1/dashboard/export*, etc. return HTTP 403
+         FEATURE_DISABLED with the tier-appropriate upsell message.
+
+       Layer 2 — Service-layer skip (defense in depth).
+         Some endpoints have implicit paid side effects. The check-in
+         approval flow normally creates a Badge record + uploads a PDF
+         badge to storage — on Free, the service layer SKIPS that step
+         even though the flow itself is allowed:
+
+           * services/checkin_service.py — review_checkin: returns
+             { state: "approved", badge: null } on Free (the visitor
+             is logged, no badge is created).
+           * services/visit_session_service.py — confirm_check_in:
+             returns { session, badge_pdf_base64: null,
+                       badge_qr_token: null } on Free.
+           * services/appointment_service.py — add_appointment: raises
+             403 with "Your plan does not include appointments." even
+             if the call somehow reaches the service directly.
+
+       Frontend implication: when the auth token resolves to a Free
+       tenant, render the receptionist UI in "manual mode":
+         * No "Print badge" button after approval — show "Approved,
+           manual entry" with the visitor's name + check-in time.
+         * No "Schedule appointment" button anywhere.
+         * No "Configure kiosk" / QR setup nav.
+         * The standard check-in / check-out workflow continues to work,
+           and the visitor log shows the same fields it always did.
 
 1.2  STARTER — ₦35,000/month
      Description: For small offices ready to get organized. Replace your
@@ -128,13 +194,29 @@ I0.5  IMMEDIATE CANCEL = DROP TO FREE. NOT-IMMEDIATE = EXPIRES AT PERIOD END.
      branch cap can be raised via the application admin via
      `tenant_cap_overrides` (see 4.4).
 
-1.4  ENTERPRISE — Custom pricing
-     Description: For organizations that need full control, compliance,
-     and integrations.
-     Limits: Unlimited (no caps).
-     Features: All of Premium plus watchlist, SSO, advanced integrations,
-     turnstiles/biometrics, custom forms, liveness check, dedicated SLA
-     (4h response), private cloud / on-premise.
+1.4  ENTERPRISE — Custom pricing (PLURAL — many enterprise plans coexist)
+     Each enterprise plan is a separate record in MongoDB with a unique
+     slug as `name` (e.g. "enterprise-acme"). The frontend should:
+
+       * Filter the public catalogue: GET /v1/plans?tier=enterprise
+         to list all currently-published enterprise plans.
+       * Render each as its own "Contact sales" tile with the plan's
+         own `display_name`, `description`, and feature highlights.
+       * Read the slug (`plan.name`) and use it to discover any custom
+         endpoints exposed under `/v1/enterprise/<slug>/*`. See section
+         12 for the full enterprise sub-app contract.
+
+     Default feature set (when the admin clones from the Enterprise
+     template):
+       Limits: Unlimited (no caps).
+       Features: All of Premium plus watchlist, SSO, advanced
+       integrations, turnstiles/biometrics, custom forms, liveness check,
+       dedicated SLA (4h response), private cloud / on-premise.
+
+     Each enterprise plan's actual features and limits are bespoke —
+     the admin tunes them per customer. ALWAYS read the live plan
+     record rather than assuming the template defaults.
+
      Onboarding: Sales-led. The frontend does NOT show a "Subscribe"
      button for Enterprise — instead show a "Contact sales" CTA that
      opens a contact form / email link.
@@ -348,6 +430,18 @@ without re-fetching the plan record on every page load.
      Render an inline upgrade prompt with the `details` string and a CTA
      to the upgrade flow.
 
+403  ENTERPRISE_PLAN_MISMATCH
+     The path is under `/v1/enterprise/<slug>/*` but the calling tenant
+     is not subscribed to the plan whose `name == <slug>`. Body:
+       { code: "ENTERPRISE_PLAN_MISMATCH",
+         details: "This endpoint is reserved for the 'enterprise-acme'
+                   enterprise plan. Your current plan does not include it.",
+         required_plan_name: "enterprise-acme",
+         plan: "Premium", tier: "premium" }
+     This typically means the frontend tried to call a custom enterprise
+     endpoint from a non-enterprise tenant. Hide that nav item / CTA
+     when `currentPlan.name !== <slug>` so the call never fires.
+
 429  QUOTA_EXCEEDED
      Numeric cap hit. Body:
        { code: "QUOTA_EXCEEDED",
@@ -500,7 +594,9 @@ Important nuances:
 11. CHANGE LOG (THIS RELEASE)
 ================================================================================
 
-  * 4 canonical plans introduced: free / starter / premium / enterprise.
+  * Plans split into THREE singletons + N enterprise plans:
+      * Singletons (one row each, name-locked): free / starter / premium.
+      * Enterprise: many rows, each with a unique slug (e.g. "enterprise-acme").
   * `professional` and `custom` legacy tiers archived; existing
     subscribers continue until expiry, then drop to FREE.
   * Dunning suspension replaced with drop-to-FREE.
@@ -510,8 +606,84 @@ Important nuances:
       * tenant bootstrap
       * lazy provisioning in PlanEnforcementMiddleware
       * one-shot bootstrap on app startup
-  * Per-tier editability lockdown on plan PATCH.
+  * Per-tier editability lockdown on singleton plan PATCH (Free/Starter/
+    Premium); enterprise plans remain fully editable per-customer.
   * Non-HQ branches auto-deactivated on drop-to-FREE.
+  * Enterprise sub-app contract: `/v1/enterprise/<slug>/*` routes are
+    gated by plan name match (HTTP 403 ENTERPRISE_PLAN_MISMATCH otherwise).
+    See section 12.
+  * Free-tier "manual only" enforcement hardened in TWO layers:
+    Layer 1 — URL gate via plan feature_rules (existing).
+    Layer 2 — Service-layer skip on implicit badge issuance during
+    check-in approval (`checkin_service.review_checkin`,
+    `visit_session_service.confirm_check_in`). On Free, the visitor
+    session still goes to APPROVED / CHECKED_IN but the badge artifact
+    is never created. Appointment creation also raises 403 at the
+    service layer with a clear "Your plan does not include appointments"
+    message instead of the generic cap-exceeded fallback. See §1.1.
+
+
+================================================================================
+12. ENTERPRISE SUB-APPS — `/v1/enterprise/<slug>/*`
+================================================================================
+
+Each Enterprise plan can have its own pack of custom endpoints mounted
+at `/v1/enterprise/<plan-slug>/*` where `<plan-slug>` equals the plan's
+`name` field. This is how customer-specific features (private dashboards,
+custom integrations, regulator exports, ...) ship without polluting the
+global API surface.
+
+12.1  WHO CAN CALL ENTERPRISE ENDPOINTS
+
+      Only tenants whose ACTIVE subscription points to the plan whose
+      `name == <slug>`. Anyone else (including tenants on other
+      enterprise plans) gets HTTP 403 `ENTERPRISE_PLAN_MISMATCH`. The
+      gating is enforced in `PlanEnforcementMiddleware` automatically —
+      the backend NEVER ships enterprise endpoints unprotected.
+
+12.2  HOW THE FRONTEND DISCOVERS THEM
+
+      Today: per-customer hardcoding. Render custom navigation when
+      `currentPlan.name === '<slug>'`. The slug is stable; the plan
+      record's `display_name` and `description` are written by the
+      admin and can be displayed verbatim.
+
+      Tomorrow (planned): a manifest endpoint at
+      `GET /v1/enterprise/<slug>/manifest` returning the nav entries
+      and feature flags for that pack. Until that ships, treat enterprise
+      navigation as a static asset shipped per-customer build.
+
+12.3  CALLING THEM
+
+      Same pattern as any other authenticated endpoint:
+
+          fetch(`/v1/enterprise/${slug}/<path>`, {
+            method: "GET" | "POST" | ...,
+            headers: { Authorization: `Bearer ${token}` },
+            ...
+          })
+
+      No special header. The backend reads the auth token, identifies
+      the tenant, resolves their active plan, and gates by name match.
+
+12.4  ERRORS YOU'LL SEE FROM THIS PATH
+
+      403 ENTERPRISE_PLAN_MISMATCH — wrong plan or no plan. Hide the
+                                     UI entry that triggers the call.
+      404                            — slug doesn't exist server-side
+                                     (no enterprise plan registered yet).
+      Standard 4xx/5xx for everything else.
+
+12.5  WHAT NOT TO DO
+
+      * Don't poll `/v1/enterprise/*` endpoints from non-enterprise
+        tenants "to see if they get a feature" — every call costs a
+        full middleware pass. Use plan name as the gate client-side.
+      * Don't assume the slug equals "enterprise". Each customer has
+        their own slug; read it from `plan.name`.
+      * Don't hardcode the slug in URL strings. Always interpolate
+        from the plan record so a customer-specific build picks up
+        the right value.
 
 ================================================================================
 END OF DOCUMENT

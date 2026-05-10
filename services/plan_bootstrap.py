@@ -180,15 +180,25 @@ async def ensure_canonical_plans() -> dict[str, str]:
 
 
 async def archive_legacy_plans() -> int:
-    """Archive any plan whose name is NOT in ``CANONICAL_PLAN_NAMES``.
+    """Archive any plan whose tier is NOT enterprise and whose name is
+    NOT a singleton (``"free"``, ``"starter"``, ``"premium"``).
 
-    Existing subscriptions to legacy plans continue to work until they
-    expire — only NEW subscriptions are blocked (``subscribe_tenant``
-    rejects archived plans). Returns the number of plans archived.
+    Enterprise plans are bespoke — many can coexist, each with a unique
+    slug — so they are NEVER auto-archived. Singletons must stay active
+    because every tenant transitively depends on the free plan. The
+    only thing this rule fires on is legacy / experimental plans like
+    the historical ``"professional"`` or any one-off draft.
+
+    Existing subscriptions on archived plans keep working until they
+    expire; ``subscribe_tenant`` simply blocks NEW subscriptions to
+    archived plans. Returns the number of plans archived.
     """
     archived_count = 0
     legacy_plans: List[PlanOut] = await get_plans(
-        filter_dict={"name": {"$nin": list(CANONICAL_PLAN_NAMES)}},
+        filter_dict={
+            "name": {"$nin": list(CANONICAL_PLAN_NAMES)},
+            "tier": {"$ne": "enterprise"},
+        },
         start=0,
         stop=1000,
     )

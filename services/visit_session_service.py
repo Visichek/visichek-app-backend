@@ -487,62 +487,84 @@ async def confirm_check_in(
     if not department:
         raise HTTPException(status_code=404, detail="Department not found")
 
-    # Fetch visitor photo if available
-    visitor_photo_bytes = None
-    if profile and profile.photo_object_key:
+    # Plan gate — badge printing is denied on Free. Manual check-in
+    # still completes (the session transitions to CHECKED_IN below)
+    # but we skip generating, uploading, and recording a badge so the
+    # Free tenant logs the visit without a paid-tier badge artifact.
+    from services.plan_limits import is_feature_enabled
+
+    badge_printing_enabled = await is_feature_enabled(
+        tenant_id=tenant_id,
+        endpoint_pattern="/v1/badges",
+        method="POST",
+    )
+
+    badge_pdf_bytes: Optional[bytes] = None
+    badge_token: Optional[str] = None
+    badge_object_key: Optional[str] = None
+
+    if badge_printing_enabled:
+        # Fetch visitor photo if available
+        visitor_photo_bytes = None
+        if profile and profile.photo_object_key:
+            try:
+                from core.storage.manager import DocumentStorageManager
+
+                storage_mgr = DocumentStorageManager.get_instance()
+                visitor_photo_bytes = await storage_mgr.provider.download_bytes(
+                    profile.photo_object_key
+                )
+            except Exception:
+                pass  # Photo is optional for badge
+
+        # Generate badge with signed QR token
+        badge_token = sign_badge_token(session.id or "", expiry_hours=24)
+        now = datetime.now(timezone.utc)
+        badge_pdf_bytes = generate_badge_pdf(
+            visitor_name=session.visitor_name_snapshot,
+            company=session.company_snapshot,
+            host_department=(
+                f"{session.host_name_snapshot or 'N/A'} / {department.name}"
+            ),
+            date_str=now.strftime("%Y-%m-%d"),
+            time_in_str=now.strftime("%H:%M"),
+            qr_data=badge_token,
+            badge_format=badge_format,
+            visitor_photo_bytes=visitor_photo_bytes,
+        )
+
+        # Upload badge PDF to storage
         try:
             from core.storage.manager import DocumentStorageManager
 
-            storage_mgr = DocumentStorageManager.get_instance()
-            visitor_photo_bytes = await storage_mgr.provider.download_bytes(
-                profile.photo_object_key
+            storage = DocumentStorageManager.get_instance()
+            badge_object_key = f"badges/{tenant_id}/{session.id}.pdf"
+            storage.provider.upload_bytes(
+                object_key=badge_object_key,
+                payload=badge_pdf_bytes,
+                mime_type="application/pdf",
             )
-        except Exception:
-            pass  # Photo is optional for badge
+        except Exception as e:
+            import logging
 
-    # Generate badge with signed QR token
-    badge_token = sign_badge_token(session.id or "", expiry_hours=24)
-    now = datetime.now(timezone.utc)
-    badge_pdf_bytes = generate_badge_pdf(
-        visitor_name=session.visitor_name_snapshot,
-        company=session.company_snapshot,
-        host_department=f"{session.host_name_snapshot or 'N/A'} / {department.name}",
-        date_str=now.strftime("%Y-%m-%d"),
-        time_in_str=now.strftime("%H:%M"),
-        qr_data=badge_token,
-        badge_format=badge_format,
-        visitor_photo_bytes=visitor_photo_bytes,
-    )
+            logging.getLogger(__name__).warning(
+                "Badge PDF storage failed: %s", e
+            )
+            badge_object_key = None
 
-    # Upload badge PDF to storage
-    badge_object_key = None
-    try:
-        from core.storage.manager import DocumentStorageManager
-
-        storage = DocumentStorageManager.get_instance()
-        badge_object_key = f"badges/{tenant_id}/{session.id}.pdf"
-        storage.provider.upload_bytes(
-            object_key=badge_object_key,
-            payload=badge_pdf_bytes,
-            mime_type="application/pdf",
-        )
-    except Exception as e:
-        import logging
-
-        logging.getLogger(__name__).warning("Badge PDF storage failed: %s", e)
-        badge_object_key = None
-
-    # Update session: set status to CHECKED_IN, add badge info
+    # Update session: set status to CHECKED_IN. On Free, the badge_*
+    # fields stay None so downstream code (badge fetch, badge expiry
+    # sweep, badge revocation) skips this session.
+    update_payload = VisitSessionUpdate(status=VisitStatus.CHECKED_IN)
+    if badge_printing_enabled:
+        update_payload.badge_qr_token = badge_token
+        update_payload.badge_format = BadgeFormat(badge_format)
+        update_payload.badge_generation_time = int(time.time())
+        update_payload.badge_expiry = int(time.time()) + 86400
+        update_payload.badge_pdf_object_key = badge_object_key
     updated_session = await update_visit_session(
         {"_id": ObjectId(session.id)},
-        VisitSessionUpdate(
-            status=VisitStatus.CHECKED_IN,
-            badge_qr_token=badge_token,
-            badge_format=BadgeFormat(badge_format),
-            badge_generation_time=int(time.time()),
-            badge_expiry=int(time.time()) + 86400,
-            badge_pdf_object_key=badge_object_key,
-        ),
+        update_payload,
     )
 
     # If the session was created from an appointment, mirror the badge
