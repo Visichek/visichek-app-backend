@@ -4,6 +4,12 @@ from schemas.imports import *
 from pydantic import Field
 import time
 
+from schemas.summary_schema import (
+    DiscountBriefSummary,
+    PlanBriefSummary,
+    TenantBriefSummary,
+)
+
 
 class SubscriptionStatus(str, Enum):
     ACTIVE = "active"
@@ -105,6 +111,15 @@ class SubscriptionOut(SubscriptionBase):
     id: Optional[str] = Field(default=None, alias="_id")
     date_created: Optional[int] = None
     last_updated: Optional[int] = None
+
+    # Embedded summaries for the foreign-key ids exposed on this payload.
+    # Resolved by the service layer so the frontend can render labels for
+    # tenant_id / plan_id / applied_discount_ids without follow-up requests.
+    tenant_summary: Optional[TenantBriefSummary] = None
+    plan_summary: Optional[PlanBriefSummary] = None
+    applied_discount_summaries: List[DiscountBriefSummary] = Field(
+        default_factory=list
+    )
 
     @model_validator(mode="before")
     @classmethod

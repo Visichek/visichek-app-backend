@@ -109,3 +109,12 @@ class InvoiceBriefSummary(BaseModel):
     status: Optional[str] = None
     total_minor: Optional[int] = None
     currency: Optional[str] = None
+
+
+class DiscountBriefSummary(BaseModel):
+    id: str
+    code: Optional[str] = None
+    name: Optional[str] = None
+    discount_type: Optional[str] = None
+    value: Optional[float] = None
+    status: Optional[str] = None

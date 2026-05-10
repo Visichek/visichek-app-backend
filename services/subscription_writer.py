@@ -18,10 +18,10 @@ from core.bulk import run_bulk_handlers
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
+from repositories.subscription_repo import get_subscription as _get_subscription_doc
 from services.subscription_service import (
     cancel_subscription,
     change_plan,
-    retrieve_subscription_by_id,
     retrieve_subscriptions_with_details,
     retrieve_tenant_active_subscription,
     subscribe_tenant,
@@ -176,9 +176,11 @@ async def _subscription_bulk_cancel(
 ) -> dict[str, Any]:
     """Bulk cancel by subscription_id.
 
-    Each id is resolved to its tenant via ``retrieve_subscription_by_id``
+    Each id is resolved to its tenant via the bare repo (``get_subscription``)
     and then cancelled via the standard ``cancel_subscription`` flow so
-    audit + plan-cache invalidation cascade correctly.
+    audit + plan-cache invalidation cascade correctly. The bulk path skips
+    the enriched read function deliberately — the per-id summary lookups
+    are pure waste for a write path that only needs the tenant id.
     """
     ids = list(data.get("ids", []))
     atomic = bool(data.get("atomic", False))
@@ -188,7 +190,11 @@ async def _subscription_bulk_cancel(
     tenants_seen: set[str] = set()
 
     async def _handle(subscription_id: str) -> dict[str, Any]:
-        sub = await retrieve_subscription_by_id(subscription_id)
+        from bson import ObjectId as _OID
+
+        if not _OID.is_valid(subscription_id):
+            raise ValueError("Subscription not found")
+        sub = await _get_subscription_doc({"_id": _OID(subscription_id)})
         if not sub or not sub.tenant_id:
             raise ValueError("Subscription not found")
         tenants_seen.add(sub.tenant_id)

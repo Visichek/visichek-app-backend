@@ -24,6 +24,7 @@ from schemas.summary_schema import (
     AppointmentBriefSummary,
     BranchBriefSummary,
     DepartmentBriefSummary,
+    DiscountBriefSummary,
     InvoiceBriefSummary,
     PlanBriefSummary,
     SubscriptionBriefSummary,
@@ -315,6 +316,34 @@ async def resolve_invoice_summary(
             status=invoice.status,
             total_minor=invoice.total_minor,
             currency=invoice.currency,
+        )
+    except Exception:
+        return None
+
+
+async def resolve_discount_summary(
+    discount_id: Optional[str],
+) -> Optional[DiscountBriefSummary]:
+    oid = _to_object_id(discount_id)
+    if oid is None:
+        return None
+    try:
+        from repositories.discount_repo import get_discount
+
+        discount = await get_discount({"_id": oid})
+        if not discount:
+            return None
+        return DiscountBriefSummary(
+            id=str(discount.id or ""),
+            code=discount.code,
+            name=discount.name,
+            discount_type=discount.discount_type.value
+            if hasattr(discount.discount_type, "value")
+            else discount.discount_type,
+            value=discount.value,
+            status=discount.status.value
+            if hasattr(discount.status, "value")
+            else discount.status,
         )
     except Exception:
         return None

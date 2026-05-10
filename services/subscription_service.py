@@ -31,6 +31,11 @@ from schemas.discount_schema import (
     DiscountStatus,
     DiscountType,
 )
+from schemas.summary_schema import (
+    DiscountBriefSummary,
+    PlanBriefSummary,
+    TenantBriefSummary,
+)
 from services.audit_service import record_audit_event
 
 
@@ -277,17 +282,81 @@ async def subscribe_tenant(
     return sub
 
 
+def _build_tenant_summary(tenant) -> TenantBriefSummary:
+    return TenantBriefSummary(
+        id=tenant.id or "",
+        company_name=tenant.company_name,
+        is_active=tenant.is_active,
+        country_of_hosting=tenant.country_of_hosting,
+    )
+
+
+def _build_plan_summary(plan) -> PlanBriefSummary:
+    return PlanBriefSummary(
+        id=plan.id or "",
+        name=plan.name,
+        display_name=plan.display_name,
+        tier=plan.tier.value if hasattr(plan.tier, "value") else plan.tier,
+    )
+
+
+def _build_discount_summary(discount) -> DiscountBriefSummary:
+    return DiscountBriefSummary(
+        id=discount.id or "",
+        code=discount.code,
+        name=discount.name,
+        discount_type=discount.discount_type.value
+        if hasattr(discount.discount_type, "value")
+        else discount.discount_type,
+        value=discount.value,
+        status=discount.status.value
+        if hasattr(discount.status, "value")
+        else discount.status,
+    )
+
+
+async def _enrich_subscription_summaries(
+    sub: SubscriptionOut,
+) -> SubscriptionOut:
+    """Populate ``tenant_summary`` / ``plan_summary`` / ``applied_discount_summaries``
+    on a single subscription. Best-effort — leaves a field unset on lookup failure.
+    """
+    import asyncio
+
+    from services.summary_resolver import (
+        resolve_discount_summary,
+        resolve_plan_summary,
+        resolve_tenant_summary,
+    )
+
+    tenant_s, plan_s = await asyncio.gather(
+        resolve_tenant_summary(sub.tenant_id),
+        resolve_plan_summary(sub.plan_id),
+    )
+    discount_results = await asyncio.gather(
+        *[resolve_discount_summary(d) for d in sub.applied_discount_ids]
+    )
+
+    sub.tenant_summary = tenant_s
+    sub.plan_summary = plan_s
+    sub.applied_discount_summaries = [d for d in discount_results if d is not None]
+    return sub
+
+
 async def retrieve_subscription_by_id(sub_id: str) -> Optional[SubscriptionOut]:
     if not ObjectId.is_valid(sub_id):
         return None
-    return await get_subscription({"_id": ObjectId(sub_id)})
+    sub = await get_subscription({"_id": ObjectId(sub_id)})
+    if sub is None:
+        return None
+    return await _enrich_subscription_summaries(sub)
 
 
 async def retrieve_tenant_active_subscription(
     tenant_id: str,
 ) -> Optional[SubscriptionOut]:
     """Get the tenant's current active/trialing subscription."""
-    return await get_subscription(
+    sub = await get_subscription(
         {
             "tenant_id": tenant_id,
             "status": {
@@ -298,6 +367,9 @@ async def retrieve_tenant_active_subscription(
             },
         }
     )
+    if sub is None:
+        return None
+    return await _enrich_subscription_summaries(sub)
 
 
 async def retrieve_subscriptions(
@@ -370,14 +442,19 @@ async def retrieve_subscriptions_with_details(
 
     tenant_oids: list[BsonObjectId] = []
     plan_oids: list[BsonObjectId] = []
+    discount_oids: list[BsonObjectId] = []
     for s in subs:
         if s.tenant_id and BsonObjectId.is_valid(s.tenant_id):
             tenant_oids.append(BsonObjectId(s.tenant_id))
         if s.plan_id and BsonObjectId.is_valid(s.plan_id):
             plan_oids.append(BsonObjectId(s.plan_id))
+        for did in s.applied_discount_ids or []:
+            if did and BsonObjectId.is_valid(did):
+                discount_oids.append(BsonObjectId(did))
 
     tenants_by_id: dict[str, Any] = {}
     plans_by_id: dict[str, Any] = {}
+    discounts_by_id: dict[str, Any] = {}
     if tenant_oids:
         from schemas.tenant_schema import TenantOut
 
@@ -398,6 +475,14 @@ async def retrieve_subscriptions_with_details(
                 continue
             if plan_model.id:
                 plans_by_id[plan_model.id] = plan_model
+    if discount_oids:
+        async for doc in db["discounts"].find({"_id": {"$in": discount_oids}}):
+            try:
+                discount_model = DiscountOut(**doc)
+            except Exception:
+                continue
+            if discount_model.id:
+                discounts_by_id[discount_model.id] = discount_model
 
     results: List[SubscriptionWithDetailsOut] = []
     for sub in subs:
@@ -406,6 +491,13 @@ async def retrieve_subscriptions_with_details(
         p = plans_by_id.get(sub.plan_id or "") if sub.plan_id else None
         data["tenant"] = _build_tenant_info(t) if t else None
         data["plan"] = _build_plan_info(p) if p else None
+        data["tenant_summary"] = _build_tenant_summary(t) if t else None
+        data["plan_summary"] = _build_plan_summary(p) if p else None
+        data["applied_discount_summaries"] = [
+            _build_discount_summary(discounts_by_id[d])
+            for d in (sub.applied_discount_ids or [])
+            if d in discounts_by_id
+        ]
         results.append(SubscriptionWithDetailsOut(**data))
     return results
 
