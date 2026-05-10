@@ -224,57 +224,6 @@ async def partial_accept_submission_endpoint(
     )
 
 
-@router.post("/{submission_id}/reject")
-@document_response(
-    message="Onboarding submission rejected",
-    description=(
-        "Mark a submission as rejected with a required note. The note is "
-        "passed to the rejection email template if email is configured."
-    ),
-    summary="Reject onboarding submission",
-    response_codes={
-        401: "Unauthorized",
-        403: "Insufficient permissions",
-        404: "Submission not found",
-        409: "Submission already accepted",
-    },
-)
-async def reject_submission_endpoint(
-    submission_id: str,
-    payload: OnboardingRejectRequest,
-    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-) -> OnboardingSubmissionOut:
-    return await reject_onboarding_submission(
-        submission_id=submission_id,
-        payload=payload,
-        actor_id=admin.id or "",  # type: ignore[arg-type]
-    )
-
-
-@router.post("/{submission_id}/archive")
-@document_response(
-    message="Onboarding submission archived",
-    description=(
-        "Hide a submission from default listings. Useful for spam / "
-        "duplicates that don't warrant a rejection email."
-    ),
-    summary="Archive onboarding submission",
-    response_codes={
-        401: "Unauthorized",
-        403: "Insufficient permissions",
-        404: "Submission not found",
-    },
-)
-async def archive_submission_endpoint(
-    submission_id: str,
-    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-) -> OnboardingSubmissionOut:
-    return await archive_onboarding_submission(
-        submission_id=submission_id,
-        actor_id=admin.id or "",  # type: ignore[arg-type]
-    )
-
-
 @router.post("/bulk/archive")
 @document_response(
     message="Bulk onboarding archive queued",
@@ -361,3 +310,54 @@ async def bulk_reject_submissions(
         status_code=status.HTTP_202_ACCEPTED,
     )
     return response
+
+
+@router.post("/{submission_id}/reject")
+@document_response(
+    message="Onboarding submission rejected",
+    description=(
+        "Mark a submission as rejected with a required note. The note is "
+        "passed to the rejection email template if email is configured."
+    ),
+    summary="Reject onboarding submission",
+    response_codes={
+        401: "Unauthorized",
+        403: "Insufficient permissions",
+        404: "Submission not found",
+        409: "Submission already accepted",
+    },
+)
+async def reject_submission_endpoint(
+    submission_id: str,
+    payload: OnboardingRejectRequest,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+) -> OnboardingSubmissionOut:
+    return await reject_onboarding_submission(
+        submission_id=submission_id,
+        payload=payload,
+        actor_id=admin.id or "",  # type: ignore[arg-type]
+    )
+
+
+@router.post("/{submission_id}/archive")
+@document_response(
+    message="Onboarding submission archived",
+    description=(
+        "Hide a submission from default listings. Useful for spam / "
+        "duplicates that don't warrant a rejection email."
+    ),
+    summary="Archive onboarding submission",
+    response_codes={
+        401: "Unauthorized",
+        403: "Insufficient permissions",
+        404: "Submission not found",
+    },
+)
+async def archive_submission_endpoint(
+    submission_id: str,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+) -> OnboardingSubmissionOut:
+    return await archive_onboarding_submission(
+        submission_id=submission_id,
+        actor_id=admin.id or "",  # type: ignore[arg-type]
+    )

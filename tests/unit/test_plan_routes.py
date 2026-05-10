@@ -360,6 +360,31 @@ class TestDiscountRoutes:
         assert mock_enqueue.await_args.kwargs["writer_key"] == "discount.disable"
 
     @patch("api.v1.discount_route.enqueue_write", new_callable=AsyncMock)
+    @patch("api.v1.discount_route.enqueue_bulk_write", new_callable=AsyncMock)
+    async def test_bulk_disable_discount_uses_bulk_writer(
+        self, mock_bulk_enqueue, mock_single_enqueue, client
+    ):
+        ids = [
+            "507f1f77bcf86cd799439011",
+            "507f1f77bcf86cd799439012",
+        ]
+        mock_bulk_enqueue.return_value = {
+            "id": "507f1f77bcf86cd799439099",
+            "job_id": "job-disc-bulk-disable",
+            "status": "queued",
+        }
+
+        resp = await client.post("/v1/discounts/bulk/disable", json={"ids": ids})
+
+        assert resp.status_code == 202
+        assert resp.json()["message"] == "Bulk discount disable queued"
+        assert resp.json()["data"]["jobId"] == "job-disc-bulk-disable"
+        mock_bulk_enqueue.assert_awaited_once()
+        mock_single_enqueue.assert_not_awaited()
+        assert mock_bulk_enqueue.await_args.kwargs["writer_key"] == "discount.bulk_disable"
+        assert mock_bulk_enqueue.await_args.kwargs["ids"] == ids
+
+    @patch("api.v1.discount_route.enqueue_write", new_callable=AsyncMock)
     async def test_delete_discount(self, mock_enqueue, client):
         mock_enqueue.return_value = {
             "id": "disc_test",

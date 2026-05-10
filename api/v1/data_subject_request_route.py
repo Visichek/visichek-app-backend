@@ -236,90 +236,6 @@ def _dsr_transition_payload(
     return body
 
 
-@router.post("/{dsr_id}/acknowledge")
-@document_response(
-    message="DSR acknowledge queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Acknowledge DSR (async)",
-)
-async def acknowledge_dsr_endpoint(
-    dsr_id: str,
-    request: Request,
-    principal: AuthPrincipal = Depends(_dpo_roles),
-):
-    tenant_id = principal.tenant_id or ""
-    return await enqueue_write(
-        writer_key="dsr.update",
-        payload=_dsr_transition_payload(tenant_id=tenant_id, new_status="in_progress"),
-        resource_type="dsr",
-        resource_id=dsr_id,
-        tenant_id=tenant_id,
-        actor_id=principal.user_id,
-        actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
-@router.post("/{dsr_id}/complete")
-@document_response(
-    message="DSR completion queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Mark DSR completed (async)",
-)
-async def complete_dsr_endpoint(
-    dsr_id: str,
-    request: Request,
-    payload: dict = Body(default_factory=dict),
-    principal: AuthPrincipal = Depends(_dpo_roles),
-):
-    tenant_id = principal.tenant_id or ""
-    extras: dict[str, Any] = {}
-    if "resolution" in payload:
-        extras["resolution"] = str(payload["resolution"])[:2000]
-    return await enqueue_write(
-        writer_key="dsr.update",
-        payload=_dsr_transition_payload(
-            tenant_id=tenant_id, new_status="completed", extras=extras
-        ),
-        resource_type="dsr",
-        resource_id=dsr_id,
-        tenant_id=tenant_id,
-        actor_id=principal.user_id,
-        actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
-@router.post("/{dsr_id}/reject")
-@document_response(
-    message="DSR reject queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Reject DSR (async)",
-)
-async def reject_dsr_endpoint(
-    dsr_id: str,
-    request: Request,
-    payload: dict = Body(default_factory=dict),
-    principal: AuthPrincipal = Depends(_dpo_roles),
-):
-    tenant_id = principal.tenant_id or ""
-    extras: dict[str, Any] = {}
-    if "reason" in payload:
-        extras["rejection_reason"] = str(payload["reason"])[:2000]
-    return await enqueue_write(
-        writer_key="dsr.update",
-        payload=_dsr_transition_payload(
-            tenant_id=tenant_id, new_status="rejected", extras=extras
-        ),
-        resource_type="dsr",
-        resource_id=dsr_id,
-        tenant_id=tenant_id,
-        actor_id=principal.user_id,
-        actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
 # ─── Bulk endpoints ───────────────────────────────────────────────────
 
 
@@ -413,3 +329,87 @@ async def bulk_reject_dsr(
         status_code=status.HTTP_202_ACCEPTED,
     )
     return response
+
+
+@router.post("/{dsr_id}/acknowledge")
+@document_response(
+    message="DSR acknowledge queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Acknowledge DSR (async)",
+)
+async def acknowledge_dsr_endpoint(
+    dsr_id: str,
+    request: Request,
+    principal: AuthPrincipal = Depends(_dpo_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    return await enqueue_write(
+        writer_key="dsr.update",
+        payload=_dsr_transition_payload(tenant_id=tenant_id, new_status="in_progress"),
+        resource_type="dsr",
+        resource_id=dsr_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+@router.post("/{dsr_id}/complete")
+@document_response(
+    message="DSR completion queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Mark DSR completed (async)",
+)
+async def complete_dsr_endpoint(
+    dsr_id: str,
+    request: Request,
+    payload: dict = Body(default_factory=dict),
+    principal: AuthPrincipal = Depends(_dpo_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    extras: dict[str, Any] = {}
+    if "resolution" in payload:
+        extras["resolution"] = str(payload["resolution"])[:2000]
+    return await enqueue_write(
+        writer_key="dsr.update",
+        payload=_dsr_transition_payload(
+            tenant_id=tenant_id, new_status="completed", extras=extras
+        ),
+        resource_type="dsr",
+        resource_id=dsr_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+@router.post("/{dsr_id}/reject")
+@document_response(
+    message="DSR reject queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Reject DSR (async)",
+)
+async def reject_dsr_endpoint(
+    dsr_id: str,
+    request: Request,
+    payload: dict = Body(default_factory=dict),
+    principal: AuthPrincipal = Depends(_dpo_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    extras: dict[str, Any] = {}
+    if "reason" in payload:
+        extras["rejection_reason"] = str(payload["reason"])[:2000]
+    return await enqueue_write(
+        writer_key="dsr.update",
+        payload=_dsr_transition_payload(
+            tenant_id=tenant_id, new_status="rejected", extras=extras
+        ),
+        resource_type="dsr",
+        resource_id=dsr_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )

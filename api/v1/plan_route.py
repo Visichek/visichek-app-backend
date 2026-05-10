@@ -229,140 +229,6 @@ async def update_plan_endpoint(
         request_id=getattr(request.state, "request_id", None),
     )
 
-
-@router.post("/{plan_id}/activate")
-@document_response(
-    message="Plan activation queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Activate plan (async)",
-)
-async def activate_plan_endpoint(
-    plan_id: str,
-    request: Request,
-    admin=Depends(check_admin_account_status_and_permissions),
-):
-    return await enqueue_write(
-        writer_key="plan.activate",
-        payload={},
-        resource_type="plan",
-        resource_id=plan_id,
-        actor_id=getattr(admin, "id", None),
-        actor_role="admin",
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
-@router.post("/{plan_id}/archive")
-@document_response(
-    message="Plan archival queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Archive plan (async)",
-)
-async def archive_plan_endpoint(
-    plan_id: str,
-    request: Request,
-    admin=Depends(check_admin_account_status_and_permissions),
-):
-    return await enqueue_write(
-        writer_key="plan.archive",
-        payload={},
-        resource_type="plan",
-        resource_id=plan_id,
-        actor_id=getattr(admin, "id", None),
-        actor_role="admin",
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
-@router.post("/{source_plan_id}/clone")
-@document_response(
-    message="Plan clone queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    description="Enqueue a plan clone. A new plan id is assigned by the worker.",
-    summary="Clone plan (async)",
-)
-async def clone_plan_endpoint(
-    source_plan_id: str,
-    request: Request,
-    new_name: str = Query(...),
-    new_display_name: str = Query(...),
-    admin=Depends(check_admin_account_status_and_permissions),
-):
-    return await enqueue_write(
-        writer_key="plan.clone",
-        payload={"new_name": new_name, "new_display_name": new_display_name},
-        resource_type="plan",
-        resource_id=source_plan_id,
-        actor_id=getattr(admin, "id", None),
-        actor_role="admin",
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
-@router.delete("/{plan_id}")
-@document_response(
-    message="Plan deletion queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Delete plan (async)",
-)
-async def delete_plan_endpoint(
-    plan_id: str,
-    request: Request,
-    admin=Depends(check_admin_account_status_and_permissions),
-):
-    return await enqueue_write(
-        writer_key="plan.delete",
-        payload={},
-        resource_type="plan",
-        resource_id=plan_id,
-        actor_id=getattr(admin, "id", None),
-        actor_role="admin",
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
-# ── Plan-feature toggles ─────────────────────────────────────────────
-#
-# Convenience endpoints over the togglable-feature catalog defined in
-# ``services.plan_feature_service``. The frontend renders the catalog
-# as a checklist on the plan editor page; toggling any item POSTs to
-# ``/{plan_id}/features/{feature_key}`` with ``{ enabled: bool }``.
-# This avoids the frontend having to PATCH the entire ``feature_rules``
-# array just to flip one flag.
-
-
-@router.get(
-    "/features/catalog",
-    response_model=List[PlanFeatureCatalogEntry],
-)
-@document_response(
-    message="Plan feature catalog retrieved",
-    description=(
-        "List the togglable features available on every plan. The "
-        "frontend renders this as a checklist on the plan editor "
-        "page. New features added in ``TOGGLEABLE_FEATURES`` "
-        "automatically surface here."
-    ),
-    summary="List togglable plan features",
-)
-async def list_plan_features_endpoint() -> List[PlanFeatureCatalogEntry]:
-    from services.plan_feature_service import get_feature_catalog
-
-    return [
-        PlanFeatureCatalogEntry(
-            key=spec.key,
-            label=spec.label,
-            description=spec.description,
-            endpoint_pattern=spec.endpoint_pattern,
-            methods=list(spec.methods),
-            default_enabled=spec.default_enabled,
-            requires_external_config=spec.requires_external_config,
-            external_config_hint=spec.external_config_hint,
-        )
-        for spec in get_feature_catalog()
-    ]
-
-
 # ─── Bulk endpoints ───────────────────────────────────────────────────
 
 
@@ -512,6 +378,138 @@ async def bulk_delete_plans(
     )
     return response
 
+
+@router.post("/{plan_id}/activate")
+@document_response(
+    message="Plan activation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Activate plan (async)",
+)
+async def activate_plan_endpoint(
+    plan_id: str,
+    request: Request,
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    return await enqueue_write(
+        writer_key="plan.activate",
+        payload={},
+        resource_type="plan",
+        resource_id=plan_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+@router.post("/{plan_id}/archive")
+@document_response(
+    message="Plan archival queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Archive plan (async)",
+)
+async def archive_plan_endpoint(
+    plan_id: str,
+    request: Request,
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    return await enqueue_write(
+        writer_key="plan.archive",
+        payload={},
+        resource_type="plan",
+        resource_id=plan_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+@router.post("/{source_plan_id}/clone")
+@document_response(
+    message="Plan clone queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a plan clone. A new plan id is assigned by the worker.",
+    summary="Clone plan (async)",
+)
+async def clone_plan_endpoint(
+    source_plan_id: str,
+    request: Request,
+    new_name: str = Query(...),
+    new_display_name: str = Query(...),
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    return await enqueue_write(
+        writer_key="plan.clone",
+        payload={"new_name": new_name, "new_display_name": new_display_name},
+        resource_type="plan",
+        resource_id=source_plan_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+@router.delete("/{plan_id}")
+@document_response(
+    message="Plan deletion queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Delete plan (async)",
+)
+async def delete_plan_endpoint(
+    plan_id: str,
+    request: Request,
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    return await enqueue_write(
+        writer_key="plan.delete",
+        payload={},
+        resource_type="plan",
+        resource_id=plan_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+# ── Plan-feature toggles ─────────────────────────────────────────────
+#
+# Convenience endpoints over the togglable-feature catalog defined in
+# ``services.plan_feature_service``. The frontend renders the catalog
+# as a checklist on the plan editor page; toggling any item POSTs to
+# ``/{plan_id}/features/{feature_key}`` with ``{ enabled: bool }``.
+# This avoids the frontend having to PATCH the entire ``feature_rules``
+# array just to flip one flag.
+
+
+@router.get(
+    "/features/catalog",
+    response_model=List[PlanFeatureCatalogEntry],
+)
+@document_response(
+    message="Plan feature catalog retrieved",
+    description=(
+        "List the togglable features available on every plan. The "
+        "frontend renders this as a checklist on the plan editor "
+        "page. New features added in ``TOGGLEABLE_FEATURES`` "
+        "automatically surface here."
+    ),
+    summary="List togglable plan features",
+)
+async def list_plan_features_endpoint() -> List[PlanFeatureCatalogEntry]:
+    from services.plan_feature_service import get_feature_catalog
+
+    return [
+        PlanFeatureCatalogEntry(
+            key=spec.key,
+            label=spec.label,
+            description=spec.description,
+            endpoint_pattern=spec.endpoint_pattern,
+            methods=list(spec.methods),
+            default_enabled=spec.default_enabled,
+            requires_external_config=spec.requires_external_config,
+            external_config_hint=spec.external_config_hint,
+        )
+        for spec in get_feature_catalog()
+    ]
 
 @router.post("/{plan_id}/features/{feature_key}")
 @document_response(

@@ -408,6 +408,293 @@ async def list_pending_sessions(
     )
 
 
+# ─── Bulk endpoints ───────────────────────────────────────────────────
+
+
+def _visitor_bulk_invocation(
+    *,
+    request: Request,
+    payload: dict,
+    idempotency_key: Optional[str],
+    principal: AuthPrincipal,
+    writer_key: str,
+    route_label: str,
+    extras: Optional[dict[str, Any]] = None,
+):
+    actor_id = principal.user_id
+    actor_role = principal.role
+    tenant_id = principal.tenant_id or ""
+    scope = actor_scope(actor_id, actor_role)
+    hit = check_idempotency(
+        key=idempotency_key, scope=scope, route=route_label, body=payload
+    )
+    if hit is not None:
+        return hit, actor_id, actor_role, tenant_id, scope
+    return None, actor_id, actor_role, tenant_id, scope
+
+
+@router.post("/sessions/bulk/host-approve")
+@document_response(
+    message="Bulk host-approve queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk host-approve pending visitors",
+)
+async def bulk_host_approve(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(_checkin_roles),
+):
+    cached, actor_id, actor_role, tenant_id, scope = _visitor_bulk_invocation(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        principal=principal,
+        writer_key="visitor.bulk_host_approve",
+        route_label="POST /v1/visitors/sessions/bulk/host-approve",
+    )
+    if cached is not None:
+        return cached.response
+    response = await enqueue_bulk_write(
+        writer_key="visitor.bulk_host_approve",
+        ids=payload.get("ids", []),
+        resource_type="visit_session",
+        extras={"tenant_scope": tenant_id, "host_id": actor_id},
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/visitors/sessions/bulk/host-approve",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/sessions/bulk/deny")
+@document_response(
+    message="Bulk deny queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk deny pending visitors",
+)
+async def bulk_deny(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(_checkin_roles),
+):
+    cached, actor_id, actor_role, tenant_id, scope = _visitor_bulk_invocation(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        principal=principal,
+        writer_key="visitor.bulk_deny",
+        route_label="POST /v1/visitors/sessions/bulk/deny",
+    )
+    if cached is not None:
+        return cached.response
+    response = await enqueue_bulk_write(
+        writer_key="visitor.bulk_deny",
+        ids=payload.get("ids", []),
+        resource_type="visit_session",
+        extras={
+            "tenant_scope": tenant_id,
+            "reason": str(payload.get("reason") or "")[:500],
+        },
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/visitors/sessions/bulk/deny",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/sessions/bulk/confirm")
+@document_response(
+    message="Bulk confirm queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Force-confirm pending visitors and issue their badges. "
+        "The job result includes a `bundleUrl` and per-id `badgePdfObjectKey`. "
+        "Pick `bundleUrl` for batch printing — the response never returns "
+        "raw PDF bytes inline (avoids ballooning the queue_job_log row)."
+    ),
+    summary="Bulk confirm pending visitors",
+)
+async def bulk_confirm(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(_checkin_roles),
+):
+    cached, actor_id, actor_role, tenant_id, scope = _visitor_bulk_invocation(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        principal=principal,
+        writer_key="visitor.bulk_confirm",
+        route_label="POST /v1/visitors/sessions/bulk/confirm",
+    )
+    if cached is not None:
+        return cached.response
+    badge_format = str(payload.get("badgeFormat") or "A7")
+    if badge_format not in ("A6", "A7"):
+        from core.errors import AppException, ErrorCode
+
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="badgeFormat must be 'A6' or 'A7'",
+        )
+    response = await enqueue_bulk_write(
+        writer_key="visitor.bulk_confirm",
+        ids=payload.get("ids", []),
+        resource_type="visit_session",
+        extras={"tenant_scope": tenant_id, "badge_format": badge_format},
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/visitors/sessions/bulk/confirm",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/sessions/bulk/badges")
+@document_response(
+    message="Bulk badge generation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Generate / re-fetch badges for the supplied sessions. The job "
+        "result includes a per-id `downloadUrl` for each PDF — clients "
+        "should stream them sequentially or use the `bundleUrl` if "
+        "present."
+    ),
+    summary="Bulk badge URLs",
+)
+async def bulk_badges(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(_checkin_roles),
+):
+    cached, actor_id, actor_role, tenant_id, scope = _visitor_bulk_invocation(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        principal=principal,
+        writer_key="visitor.bulk_badges",
+        route_label="POST /v1/visitors/sessions/bulk/badges",
+    )
+    if cached is not None:
+        return cached.response
+    badge_format = str(payload.get("badgeFormat") or "A7")
+    if badge_format not in ("A6", "A7"):
+        from core.errors import AppException, ErrorCode
+
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="badgeFormat must be 'A6' or 'A7'",
+        )
+    response = await enqueue_bulk_write(
+        writer_key="visitor.bulk_badges",
+        ids=payload.get("ids", []),
+        resource_type="visit_session",
+        extras={"tenant_scope": tenant_id, "badge_format": badge_format},
+        atomic=False,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/visitors/sessions/bulk/badges",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/sessions/bulk/check-out")
+@document_response(
+    message="Bulk check-out queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk check-out visitors",
+)
+async def bulk_check_out(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(_checkin_roles),
+):
+    cached, actor_id, actor_role, tenant_id, scope = _visitor_bulk_invocation(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        principal=principal,
+        writer_key="visitor.bulk_check_out",
+        route_label="POST /v1/visitors/sessions/bulk/check-out",
+    )
+    if cached is not None:
+        return cached.response
+    method = str(payload.get("method") or "manual")
+    if method not in ("qr_scan", "manual"):
+        from core.errors import AppException, ErrorCode
+
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="method must be 'qr_scan' or 'manual'",
+        )
+    response = await enqueue_bulk_write(
+        writer_key="visitor.bulk_check_out",
+        ids=payload.get("ids", []),
+        resource_type="visit_session",
+        extras={"tenant_scope": tenant_id, "method": method},
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/visitors/sessions/bulk/check-out",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
 @router.get("/sessions/{session_id}")
 @document_response(
     message="Visit session fetched successfully",
@@ -915,290 +1202,3 @@ async def download_badge(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=badge_{session_id}.pdf"},
     )
-
-
-# ─── Bulk endpoints ───────────────────────────────────────────────────
-
-
-def _visitor_bulk_invocation(
-    *,
-    request: Request,
-    payload: dict,
-    idempotency_key: Optional[str],
-    principal: AuthPrincipal,
-    writer_key: str,
-    route_label: str,
-    extras: Optional[dict[str, Any]] = None,
-):
-    actor_id = principal.user_id
-    actor_role = principal.role
-    tenant_id = principal.tenant_id or ""
-    scope = actor_scope(actor_id, actor_role)
-    hit = check_idempotency(
-        key=idempotency_key, scope=scope, route=route_label, body=payload
-    )
-    if hit is not None:
-        return hit, actor_id, actor_role, tenant_id, scope
-    return None, actor_id, actor_role, tenant_id, scope
-
-
-@router.post("/sessions/bulk/host-approve")
-@document_response(
-    message="Bulk host-approve queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Bulk host-approve pending visitors",
-)
-async def bulk_host_approve(
-    request: Request,
-    payload: dict = Body(...),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    principal: AuthPrincipal = Depends(_checkin_roles),
-):
-    cached, actor_id, actor_role, tenant_id, scope = _visitor_bulk_invocation(
-        request=request,
-        payload=payload,
-        idempotency_key=idempotency_key,
-        principal=principal,
-        writer_key="visitor.bulk_host_approve",
-        route_label="POST /v1/visitors/sessions/bulk/host-approve",
-    )
-    if cached is not None:
-        return cached.response
-    response = await enqueue_bulk_write(
-        writer_key="visitor.bulk_host_approve",
-        ids=payload.get("ids", []),
-        resource_type="visit_session",
-        extras={"tenant_scope": tenant_id, "host_id": actor_id},
-        atomic=bool(payload.get("atomic", False)),
-        tenant_id=tenant_id,
-        actor_id=actor_id,
-        actor_role=actor_role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-    store_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/visitors/sessions/bulk/host-approve",
-        body=payload,
-        response=response,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    return response
-
-
-@router.post("/sessions/bulk/deny")
-@document_response(
-    message="Bulk deny queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Bulk deny pending visitors",
-)
-async def bulk_deny(
-    request: Request,
-    payload: dict = Body(...),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    principal: AuthPrincipal = Depends(_checkin_roles),
-):
-    cached, actor_id, actor_role, tenant_id, scope = _visitor_bulk_invocation(
-        request=request,
-        payload=payload,
-        idempotency_key=idempotency_key,
-        principal=principal,
-        writer_key="visitor.bulk_deny",
-        route_label="POST /v1/visitors/sessions/bulk/deny",
-    )
-    if cached is not None:
-        return cached.response
-    response = await enqueue_bulk_write(
-        writer_key="visitor.bulk_deny",
-        ids=payload.get("ids", []),
-        resource_type="visit_session",
-        extras={
-            "tenant_scope": tenant_id,
-            "reason": str(payload.get("reason") or "")[:500],
-        },
-        atomic=bool(payload.get("atomic", False)),
-        tenant_id=tenant_id,
-        actor_id=actor_id,
-        actor_role=actor_role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-    store_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/visitors/sessions/bulk/deny",
-        body=payload,
-        response=response,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    return response
-
-
-@router.post("/sessions/bulk/confirm")
-@document_response(
-    message="Bulk confirm queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    description=(
-        "Force-confirm pending visitors and issue their badges. "
-        "The job result includes a `bundleUrl` and per-id `badgePdfObjectKey`. "
-        "Pick `bundleUrl` for batch printing — the response never returns "
-        "raw PDF bytes inline (avoids ballooning the queue_job_log row)."
-    ),
-    summary="Bulk confirm pending visitors",
-)
-async def bulk_confirm(
-    request: Request,
-    payload: dict = Body(...),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    principal: AuthPrincipal = Depends(_checkin_roles),
-):
-    cached, actor_id, actor_role, tenant_id, scope = _visitor_bulk_invocation(
-        request=request,
-        payload=payload,
-        idempotency_key=idempotency_key,
-        principal=principal,
-        writer_key="visitor.bulk_confirm",
-        route_label="POST /v1/visitors/sessions/bulk/confirm",
-    )
-    if cached is not None:
-        return cached.response
-    badge_format = str(payload.get("badgeFormat") or "A7")
-    if badge_format not in ("A6", "A7"):
-        from core.errors import AppException, ErrorCode
-
-        raise AppException(
-            status_code=400,
-            code=ErrorCode.VALIDATION_FAILED,
-            message="badgeFormat must be 'A6' or 'A7'",
-        )
-    response = await enqueue_bulk_write(
-        writer_key="visitor.bulk_confirm",
-        ids=payload.get("ids", []),
-        resource_type="visit_session",
-        extras={"tenant_scope": tenant_id, "badge_format": badge_format},
-        atomic=bool(payload.get("atomic", False)),
-        tenant_id=tenant_id,
-        actor_id=actor_id,
-        actor_role=actor_role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-    store_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/visitors/sessions/bulk/confirm",
-        body=payload,
-        response=response,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    return response
-
-
-@router.post("/sessions/bulk/badges")
-@document_response(
-    message="Bulk badge generation queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    description=(
-        "Generate / re-fetch badges for the supplied sessions. The job "
-        "result includes a per-id `downloadUrl` for each PDF — clients "
-        "should stream them sequentially or use the `bundleUrl` if "
-        "present."
-    ),
-    summary="Bulk badge URLs",
-)
-async def bulk_badges(
-    request: Request,
-    payload: dict = Body(...),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    principal: AuthPrincipal = Depends(_checkin_roles),
-):
-    cached, actor_id, actor_role, tenant_id, scope = _visitor_bulk_invocation(
-        request=request,
-        payload=payload,
-        idempotency_key=idempotency_key,
-        principal=principal,
-        writer_key="visitor.bulk_badges",
-        route_label="POST /v1/visitors/sessions/bulk/badges",
-    )
-    if cached is not None:
-        return cached.response
-    badge_format = str(payload.get("badgeFormat") or "A7")
-    if badge_format not in ("A6", "A7"):
-        from core.errors import AppException, ErrorCode
-
-        raise AppException(
-            status_code=400,
-            code=ErrorCode.VALIDATION_FAILED,
-            message="badgeFormat must be 'A6' or 'A7'",
-        )
-    response = await enqueue_bulk_write(
-        writer_key="visitor.bulk_badges",
-        ids=payload.get("ids", []),
-        resource_type="visit_session",
-        extras={"tenant_scope": tenant_id, "badge_format": badge_format},
-        atomic=False,
-        tenant_id=tenant_id,
-        actor_id=actor_id,
-        actor_role=actor_role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-    store_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/visitors/sessions/bulk/badges",
-        body=payload,
-        response=response,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    return response
-
-
-@router.post("/sessions/bulk/check-out")
-@document_response(
-    message="Bulk check-out queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Bulk check-out visitors",
-)
-async def bulk_check_out(
-    request: Request,
-    payload: dict = Body(...),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    principal: AuthPrincipal = Depends(_checkin_roles),
-):
-    cached, actor_id, actor_role, tenant_id, scope = _visitor_bulk_invocation(
-        request=request,
-        payload=payload,
-        idempotency_key=idempotency_key,
-        principal=principal,
-        writer_key="visitor.bulk_check_out",
-        route_label="POST /v1/visitors/sessions/bulk/check-out",
-    )
-    if cached is not None:
-        return cached.response
-    method = str(payload.get("method") or "manual")
-    if method not in ("qr_scan", "manual"):
-        from core.errors import AppException, ErrorCode
-
-        raise AppException(
-            status_code=400,
-            code=ErrorCode.VALIDATION_FAILED,
-            message="method must be 'qr_scan' or 'manual'",
-        )
-    response = await enqueue_bulk_write(
-        writer_key="visitor.bulk_check_out",
-        ids=payload.get("ids", []),
-        resource_type="visit_session",
-        extras={"tenant_scope": tenant_id, "method": method},
-        atomic=bool(payload.get("atomic", False)),
-        tenant_id=tenant_id,
-        actor_id=actor_id,
-        actor_role=actor_role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-    store_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/visitors/sessions/bulk/check-out",
-        body=payload,
-        response=response,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    return response

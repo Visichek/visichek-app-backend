@@ -382,42 +382,6 @@ async def delete_appointment_endpoint(
 
 # ─── Cancel + bulk endpoints ──────────────────────────────────────────
 
-
-@router.post("/{appointment_id}/cancel")
-@document_response(
-    message="Appointment cancellation queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Cancel appointment (async)",
-)
-async def cancel_appointment_endpoint(
-    appointment_id: str,
-    request: Request,
-    payload: dict = Body(default_factory=dict),
-    principal: AuthPrincipal = Depends(_admin_roles),
-):
-    tenant_id = principal.tenant_id or ""
-    request_id = getattr(request.state, "request_id", None)
-    enqueue_payload: dict[str, Any] = {
-        "tenant_id": tenant_id,
-        "status": "cancelled",
-        "_actor_id": principal.user_id,
-        "_actor_role": principal.role,
-        "_request_id": request_id,
-    }
-    if "reason" in payload:
-        enqueue_payload["cancellation_reason"] = str(payload["reason"])[:500]
-    return await enqueue_write(
-        writer_key="appointment.update",
-        payload=enqueue_payload,
-        resource_type="appointment",
-        resource_id=appointment_id,
-        tenant_id=tenant_id,
-        actor_id=principal.user_id,
-        actor_role=principal.role,
-        request_id=request_id,
-    )
-
-
 @router.post("/bulk/cancel")
 @document_response(
     message="Bulk cancel queued",
@@ -510,3 +474,37 @@ async def bulk_delete_appointments(
         status_code=status.HTTP_202_ACCEPTED,
     )
     return response
+
+@router.post("/{appointment_id}/cancel")
+@document_response(
+    message="Appointment cancellation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Cancel appointment (async)",
+)
+async def cancel_appointment_endpoint(
+    appointment_id: str,
+    request: Request,
+    payload: dict = Body(default_factory=dict),
+    principal: AuthPrincipal = Depends(_admin_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    request_id = getattr(request.state, "request_id", None)
+    enqueue_payload: dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "status": "cancelled",
+        "_actor_id": principal.user_id,
+        "_actor_role": principal.role,
+        "_request_id": request_id,
+    }
+    if "reason" in payload:
+        enqueue_payload["cancellation_reason"] = str(payload["reason"])[:500]
+    return await enqueue_write(
+        writer_key="appointment.update",
+        payload=enqueue_payload,
+        resource_type="appointment",
+        resource_id=appointment_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=request_id,
+    )

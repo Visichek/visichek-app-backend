@@ -246,6 +246,132 @@ async def admin_reply_on_support_case(
         request_id=getattr(request.state, "request_id", None),
     )
 
+# ─── Bulk endpoints ───────────────────────────────────────────────────
+
+
+@router.post("/bulk/assign")
+@document_response(
+    message="Bulk assign queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk assign cases",
+)
+async def bulk_assign_cases(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    actor_id = admin.id or ""
+    actor_role = "admin"
+    scope = actor_scope(actor_id, actor_role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/admins/support-cases/bulk/assign",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    assignee_id = str(payload.get("assigneeId") or "")[:64]
+    if not assignee_id:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="assigneeId is required",
+        )
+    response = await enqueue_bulk_write(
+        writer_key="support_case.bulk_assign",
+        ids=payload.get("ids", []),
+        resource_type="support_case",
+        extras={"assignee_id": assignee_id},
+        atomic=bool(payload.get("atomic", False)),
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/admins/support-cases/bulk/assign",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/bulk/status")
+@document_response(
+    message="Bulk status change queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk transition cases",
+)
+async def bulk_transition_cases(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    actor_id = admin.id or ""
+    actor_role = "admin"
+    scope = actor_scope(actor_id, actor_role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/admins/support-cases/bulk/status",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    target_status = str(payload.get("status") or "")
+    if target_status not in _SUPPORT_STATUSES:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="status is required and must be a valid SupportCaseStatus",
+            details={"allowed": sorted(_SUPPORT_STATUSES)},
+        )
+    response = await enqueue_bulk_write(
+        writer_key="support_case.bulk_transition",
+        ids=payload.get("ids", []),
+        resource_type="support_case",
+        extras={"status": target_status},
+        atomic=bool(payload.get("atomic", False)),
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/admins/support-cases/bulk/status",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/bulk/close")
+@document_response(
+    message="Bulk close queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk close cases",
+)
+async def bulk_close_cases(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    payload["status"] = "closed"
+    return await bulk_transition_cases(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        admin=admin,
+    )
+
 
 @router.post("/{case_id}/assign")
 @document_response(
@@ -401,133 +527,6 @@ async def admin_register_support_case_attachment(
         actor_id=admin.id,
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),
-    )
-
-
-# ─── Bulk endpoints ───────────────────────────────────────────────────
-
-
-@router.post("/bulk/assign")
-@document_response(
-    message="Bulk assign queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Bulk assign cases",
-)
-async def bulk_assign_cases(
-    request: Request,
-    payload: dict = Body(...),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-):
-    actor_id = admin.id or ""
-    actor_role = "admin"
-    scope = actor_scope(actor_id, actor_role)
-    hit = check_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/admins/support-cases/bulk/assign",
-        body=payload,
-    )
-    if hit is not None:
-        return hit.response
-    assignee_id = str(payload.get("assigneeId") or "")[:64]
-    if not assignee_id:
-        raise AppException(
-            status_code=400,
-            code=ErrorCode.VALIDATION_FAILED,
-            message="assigneeId is required",
-        )
-    response = await enqueue_bulk_write(
-        writer_key="support_case.bulk_assign",
-        ids=payload.get("ids", []),
-        resource_type="support_case",
-        extras={"assignee_id": assignee_id},
-        atomic=bool(payload.get("atomic", False)),
-        actor_id=actor_id,
-        actor_role=actor_role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-    store_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/admins/support-cases/bulk/assign",
-        body=payload,
-        response=response,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    return response
-
-
-@router.post("/bulk/status")
-@document_response(
-    message="Bulk status change queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Bulk transition cases",
-)
-async def bulk_transition_cases(
-    request: Request,
-    payload: dict = Body(...),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-):
-    actor_id = admin.id or ""
-    actor_role = "admin"
-    scope = actor_scope(actor_id, actor_role)
-    hit = check_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/admins/support-cases/bulk/status",
-        body=payload,
-    )
-    if hit is not None:
-        return hit.response
-    target_status = str(payload.get("status") or "")
-    if target_status not in _SUPPORT_STATUSES:
-        raise AppException(
-            status_code=400,
-            code=ErrorCode.VALIDATION_FAILED,
-            message="status is required and must be a valid SupportCaseStatus",
-            details={"allowed": sorted(_SUPPORT_STATUSES)},
-        )
-    response = await enqueue_bulk_write(
-        writer_key="support_case.bulk_transition",
-        ids=payload.get("ids", []),
-        resource_type="support_case",
-        extras={"status": target_status},
-        atomic=bool(payload.get("atomic", False)),
-        actor_id=actor_id,
-        actor_role=actor_role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-    store_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/admins/support-cases/bulk/status",
-        body=payload,
-        response=response,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    return response
-
-
-@router.post("/bulk/close")
-@document_response(
-    message="Bulk close queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Bulk close cases",
-)
-async def bulk_close_cases(
-    request: Request,
-    payload: dict = Body(...),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-):
-    payload["status"] = "closed"
-    return await bulk_transition_cases(
-        request=request,
-        payload=payload,
-        idempotency_key=idempotency_key,
-        admin=admin,
     )
 
 

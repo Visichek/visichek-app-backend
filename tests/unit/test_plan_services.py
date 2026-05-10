@@ -442,6 +442,31 @@ class TestDiscountService:
             await validate_discount_code("TEST50", "t1", "p1", 100.0)
         assert exc_info.value.status_code == 400
 
+    @patch("services.discount_service.update_discount_by_id", new_callable=AsyncMock)
+    async def test_disable_discount_not_found_raises_404(self, mock_update):
+        mock_update.return_value = None
+
+        from services.discount_service import disable_discount
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await disable_discount("507f1f77bcf86cd799439011")
+        assert exc_info.value.status_code == 404
+
+    @patch("services.discount_service.update_discount_by_id", new_callable=AsyncMock)
+    async def test_disable_discount_raises_when_status_did_not_change(
+        self, mock_update
+    ):
+        mock_update.return_value = _make_discount_out(status=DiscountStatus.ACTIVE.value)
+
+        from services.discount_service import disable_discount
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await disable_discount("507f1f77bcf86cd799439011")
+        assert exc_info.value.status_code == 500
+        assert "did not persist" in str(exc_info.value.detail).lower()
+
     @patch("services.discount_service.retrieve_discount_by_id", new_callable=AsyncMock)
     async def test_remove_active_discount_rejected(self, mock_get):
         mock_get.return_value = _make_discount_out(status=DiscountStatus.ACTIVE.value)

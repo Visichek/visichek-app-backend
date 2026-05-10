@@ -77,11 +77,27 @@ async def update_discount_by_id(
     return await update_discount({"_id": ObjectId(discount_id)}, data)
 
 
-async def disable_discount(discount_id: str) -> Optional[DiscountOut]:
-    return await update_discount_by_id(
+async def disable_discount(discount_id: str) -> DiscountOut:
+    """Disable a discount and fail loudly if no row was updated."""
+    discount = await update_discount_by_id(
         discount_id,
         DiscountUpdate(status=DiscountStatus.DISABLED),
     )
+    if not discount:
+        raise resource_not_found(resource="Discount", resource_id=discount_id)
+    if discount.status != DiscountStatus.DISABLED:
+        raise AppException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Discount disable did not persist",
+            details={
+                "discount_id": discount_id,
+                "status": discount.status.value
+                if hasattr(discount.status, "value")
+                else discount.status,
+            },
+        )
+    return discount
 
 
 async def validate_discount_code(

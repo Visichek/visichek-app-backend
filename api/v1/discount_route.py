@@ -221,29 +221,6 @@ async def update_discount_endpoint(
     )
 
 
-@router.post("/{discount_id}/disable")
-@document_response(
-    message="Discount disable queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    description="Enqueue disabling a discount code.",
-    summary="Disable discount (async)",
-)
-async def disable_discount_endpoint(
-    discount_id: str,
-    request: Request,
-    admin=Depends(check_admin_account_status_and_permissions),
-):
-    return await enqueue_write(
-        writer_key="discount.disable",
-        payload={},
-        resource_type="discount",
-        resource_id=discount_id,
-        actor_id=getattr(admin, "id", None),
-        actor_role="admin",
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
 @router.post("/validate")
 @document_response(
     message="Discount code is valid",
@@ -344,6 +321,29 @@ async def bulk_delete_discounts(
         status_code=status.HTTP_202_ACCEPTED,
     )
     return response
+
+
+@router.post("/{discount_id}/disable")
+@document_response(
+    message="Discount disable queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue disabling a discount code.",
+    summary="Disable discount (async)",
+)
+async def disable_discount_endpoint(
+    discount_id: str,
+    request: Request,
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    return await enqueue_write(
+        writer_key="discount.disable",
+        payload={},
+        resource_type="discount",
+        resource_id=discount_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.delete("/{discount_id}")

@@ -565,6 +565,58 @@ async def logout_system_user(request: Request):
     return response
 
 
+
+
+@router.post("/bulk/reset-password")
+@document_response(
+    message="Bulk password reset queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Force a password reset across multiple users. Each target's "
+        "tokens are revoked. The new password is generated server-side "
+        "and emailed to the user â€” the response never contains the "
+        "plaintext password."
+    ),
+    summary="Bulk force password reset",
+)
+async def bulk_reset_system_users_password(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+):
+    tenant_id = principal.tenant_id or ""
+    scope = actor_scope(principal.user_id, principal.role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/system-users/bulk/reset-password",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    response = await enqueue_bulk_write(
+        writer_key="system_user.bulk_reset_password",
+        ids=payload.get("ids", []),
+        resource_type="system_user",
+        extras=_su_bulk_extras(principal),
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/system-users/bulk/reset-password",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
 @router.post("/{user_id}/reset-password")
 @document_response(
     message="Password reset successfully",
@@ -1032,56 +1084,6 @@ async def bulk_deactivate_system_users(
         key=idempotency_key,
         scope=scope,
         route="POST /v1/system-users/bulk/deactivate",
-        body=payload,
-        response=response,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    return response
-
-
-@router.post("/bulk/reset-password")
-@document_response(
-    message="Bulk password reset queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    description=(
-        "Force a password reset across multiple users. Each target's "
-        "tokens are revoked. The new password is generated server-side "
-        "and emailed to the user — the response never contains the "
-        "plaintext password."
-    ),
-    summary="Bulk force password reset",
-)
-async def bulk_reset_system_users_password(
-    request: Request,
-    payload: dict = Body(...),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    principal: AuthPrincipal = Depends(verify_super_admin_token),
-):
-    tenant_id = principal.tenant_id or ""
-    scope = actor_scope(principal.user_id, principal.role)
-    hit = check_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/system-users/bulk/reset-password",
-        body=payload,
-    )
-    if hit is not None:
-        return hit.response
-    response = await enqueue_bulk_write(
-        writer_key="system_user.bulk_reset_password",
-        ids=payload.get("ids", []),
-        resource_type="system_user",
-        extras=_su_bulk_extras(principal),
-        atomic=bool(payload.get("atomic", False)),
-        tenant_id=tenant_id,
-        actor_id=principal.user_id,
-        actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-    store_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/system-users/bulk/reset-password",
         body=payload,
         response=response,
         status_code=status.HTTP_202_ACCEPTED,

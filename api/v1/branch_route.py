@@ -251,84 +251,6 @@ async def update_branch_endpoint(
     )
 
 
-@router.post("/{branch_id}/deactivate")
-@document_response(
-    message="Branch deactivation queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    description="Enqueue soft-deactivation. Last-active-branch protection runs inside the writer.",
-    summary="Deactivate branch (async)",
-    success_example={
-        "id": "507f1f77bcf86cd799439011",
-        "job_id": "c4e6f8a0-3456-4fab-9bcd-2345678901cd",
-        "status": "queued",
-    },
-    response_codes={
-        401: "Unauthorized",
-        403: "Forbidden",
-        404: "Branch not found",
-    },
-)
-async def deactivate_branch_endpoint(
-    branch_id: str,
-    request: Request,
-    principal: AuthPrincipal = Depends(_super_admin_dep),
-):
-    existing = await retrieve_branch_by_id(branch_id)
-    if not existing or existing.tenant_id != principal.tenant_id:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404, detail="Branch not found")
-    return await enqueue_write(
-        writer_key="branch.deactivate",
-        payload={"tenant_id": principal.tenant_id or ""},
-        resource_type="branch",
-        resource_id=branch_id,
-        tenant_id=principal.tenant_id,
-        actor_id=principal.user_id,
-        actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
-@router.delete("/{branch_id}")
-@document_response(
-    message="Branch deletion queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    description="Enqueue hard delete. Last-branch protection runs inside the writer.",
-    summary="Delete branch (async)",
-    success_example={
-        "id": "507f1f77bcf86cd799439011",
-        "job_id": "d5f7a9b1-4567-4abc-8def-3456789012de",
-        "status": "queued",
-    },
-    response_codes={
-        401: "Unauthorized",
-        403: "Forbidden",
-        404: "Branch not found",
-    },
-)
-async def delete_branch_endpoint(
-    branch_id: str,
-    request: Request,
-    principal: AuthPrincipal = Depends(_super_admin_dep),
-):
-    existing = await retrieve_branch_by_id(branch_id)
-    if not existing or existing.tenant_id != principal.tenant_id:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404, detail="Branch not found")
-    return await enqueue_write(
-        writer_key="branch.delete",
-        payload={"tenant_id": principal.tenant_id or ""},
-        resource_type="branch",
-        resource_id=branch_id,
-        tenant_id=principal.tenant_id,
-        actor_id=principal.user_id,
-        actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
 # ─── Bulk endpoints ───────────────────────────────────────────────────
 
 
@@ -422,3 +344,81 @@ async def bulk_delete_branches(
         status_code=status.HTTP_202_ACCEPTED,
     )
     return response
+
+
+@router.post("/{branch_id}/deactivate")
+@document_response(
+    message="Branch deactivation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue soft-deactivation. Last-active-branch protection runs inside the writer.",
+    summary="Deactivate branch (async)",
+    success_example={
+        "id": "507f1f77bcf86cd799439011",
+        "job_id": "c4e6f8a0-3456-4fab-9bcd-2345678901cd",
+        "status": "queued",
+    },
+    response_codes={
+        401: "Unauthorized",
+        403: "Forbidden",
+        404: "Branch not found",
+    },
+)
+async def deactivate_branch_endpoint(
+    branch_id: str,
+    request: Request,
+    principal: AuthPrincipal = Depends(_super_admin_dep),
+):
+    existing = await retrieve_branch_by_id(branch_id)
+    if not existing or existing.tenant_id != principal.tenant_id:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Branch not found")
+    return await enqueue_write(
+        writer_key="branch.deactivate",
+        payload={"tenant_id": principal.tenant_id or ""},
+        resource_type="branch",
+        resource_id=branch_id,
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+@router.delete("/{branch_id}")
+@document_response(
+    message="Branch deletion queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue hard delete. Last-branch protection runs inside the writer.",
+    summary="Delete branch (async)",
+    success_example={
+        "id": "507f1f77bcf86cd799439011",
+        "job_id": "d5f7a9b1-4567-4abc-8def-3456789012de",
+        "status": "queued",
+    },
+    response_codes={
+        401: "Unauthorized",
+        403: "Forbidden",
+        404: "Branch not found",
+    },
+)
+async def delete_branch_endpoint(
+    branch_id: str,
+    request: Request,
+    principal: AuthPrincipal = Depends(_super_admin_dep),
+):
+    existing = await retrieve_branch_by_id(branch_id)
+    if not existing or existing.tenant_id != principal.tenant_id:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Branch not found")
+    return await enqueue_write(
+        writer_key="branch.delete",
+        payload={"tenant_id": principal.tenant_id or ""},
+        resource_type="branch",
+        resource_id=branch_id,
+        tenant_id=principal.tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
