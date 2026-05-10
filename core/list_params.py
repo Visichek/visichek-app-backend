@@ -35,6 +35,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 from fastapi import Request
 
+from core.case_conversion import _to_snake
 from core.errors import AppException, ErrorCode
 
 DEFAULT_LIMIT = 25
@@ -227,6 +228,24 @@ def _parse_int(raw: Any, field_name: str, *, minimum: int = 0) -> int:
     return v
 
 
+def _resolve_allowlisted_field(field_name: str, allowlist: frozenset[str]) -> Optional[str]:
+    """Match ``field_name`` against ``allowlist`` accepting either case form.
+
+    Public query params follow the camelCase convention enforced for bodies
+    by ``CaseConversionMiddleware``, but list-spec allowlists are declared
+    in snake_case to match the underlying Mongo field paths. Try the literal
+    first (covers single-word names and explicitly camelCased filter keys),
+    then fall back to the snake_case translation so ``dateCreated`` resolves
+    to ``date_created`` without a 400.
+    """
+    if field_name in allowlist:
+        return field_name
+    snake = _to_snake(field_name)
+    if snake != field_name and snake in allowlist:
+        return snake
+    return None
+
+
 def _parse_sort(raw: Optional[str], spec: ListSpec) -> list[tuple[str, int]]:
     if not raw:
         return list(spec.default_sort)
@@ -244,9 +263,10 @@ def _parse_sort(raw: Optional[str], spec: ListSpec) -> list[tuple[str, int]]:
             direction = 1
         if not field_name:
             raise _invalid_sort(token)
-        if field_name not in spec.sortable_fields:
+        resolved = _resolve_allowlisted_field(field_name, spec.sortable_fields)
+        if resolved is None:
             raise _invalid_sort(field_name)
-        out.append((field_name, direction))
+        out.append((resolved, direction))
     if not out:
         return list(spec.default_sort)
     return out
@@ -387,9 +407,10 @@ def parse_list_query(request: Request, spec: ListSpec) -> ListQuery:
             cleaned = chunk.strip()
             if not cleaned:
                 continue
-            if cleaned not in spec.facet_fields:
+            resolved_facet = _resolve_allowlisted_field(cleaned, spec.facet_fields)
+            if resolved_facet is None:
                 raise _invalid_facet(cleaned)
-            facets.append(cleaned)
+            facets.append(resolved_facet)
 
     return ListQuery(
         skip=skip,
