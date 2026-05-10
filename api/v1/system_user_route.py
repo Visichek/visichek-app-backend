@@ -224,10 +224,16 @@ async def select_tenant_after_login(
         "tenant_login_url": "/v1/system-users/tenant/64f1a2b3c4d5e6f7a8b9c0d1/login",
     },
     description=(
-        "Dedicated login for tenant super admins. Since super_admin emails are "
-        "globally unique, no tenant_id is needed in the URL. Returns the user "
-        "profile plus tenant context info including the tenant-scoped login URL. "
-        "\n\n"
+        "Dedicated login for tenant super admins; no tenant_id is needed in the URL. "
+        "Returns the user profile plus tenant context info including the tenant-scoped "
+        "login URL.\n\n"
+        "Response can take three shapes — branch on the discriminator key:\n"
+        "1. **Login complete** — `{ user, tenant, tenant_login_url }` with tokens on `user`.\n"
+        "2. **2FA required** — `{ otp_required: true, otp_challenge_id }`. Continue at "
+        "`POST /v1/system-users/verify-otp`.\n"
+        "3. **Tenant selection required** — `{ tenant_selection_required: true, "
+        "selection_token, tenants: [...] }` when the same email exists as a super_admin "
+        "in more than one tenant. Continue at `POST /v1/system-users/select-tenant`.\n\n"
         "**Two login contexts for super admins:**\n"
         "1. **This endpoint** — administrative login. View tenant info, billing, "
         "manage payments, and get the tenant login URL.\n"
@@ -265,6 +271,19 @@ async def login_super_admin_global(request: Request, login_data: SystemUserLogin
             content=jsonable_encoder(
                 success_payload(
                     result, message="OTP verification required", request_id=request_id
+                )
+            ),
+        )
+
+    # Same email exists in more than one tenant — forward the selection
+    # challenge; the FE finishes at POST /v1/system-users/select-tenant.
+    if isinstance(result, dict) and result.get("tenant_selection_required"):
+        return JSONResponse(
+            content=jsonable_encoder(
+                success_payload(
+                    result,
+                    message="Tenant selection required",
+                    request_id=request_id,
                 )
             ),
         )

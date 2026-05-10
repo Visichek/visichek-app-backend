@@ -28,7 +28,7 @@ from schemas.system_user_schema import (
     SystemUserSignupRequest,
     SystemUserTenantLogin,
 )
-from schemas.imports import AccountStatus, SystemUserRole
+from schemas.imports import AccountStatus
 from security.hash import check_password
 from services.auth_helpers import issue_tokens_for_role
 from core.email_utils import normalize_email
@@ -126,33 +126,25 @@ async def _resolve_branch_ids_for_user_assignment(
 
 
 async def _check_email_uniqueness(email: str, role: str, tenant_id: str) -> None:
-    """Enforce email uniqueness rules:
+    """Enforce per-tenant email uniqueness for system users.
 
-    - super_admin: email must be globally unique across ALL system_users
-    - other roles: email must be unique within the tenant
+    The same address may legitimately exist across different tenants — at login
+    the tenant-selection challenge (``authenticate_system_user``) lets the user
+    pick which tenant to sign in to. This applies uniformly to every role,
+    including ``super_admin``.
     """
+    del role  # uniqueness scope is the tenant, not the role
     normalized = normalize_email(email)
 
-    if role == SystemUserRole.SUPER_ADMIN.value or role == "super_admin":
-        # Global uniqueness for super_admin
-        all_users = await get_system_users(filter_dict={}, start=0, stop=50000)
-        for user in all_users:
-            if normalize_email(user.email) == normalized:
-                raise HTTPException(
-                    status_code=409,
-                    detail="A user with this email already exists in the system",
-                )
-    else:
-        # Per-tenant uniqueness for other roles
-        tenant_users = await get_system_users(
-            filter_dict={"tenant_id": tenant_id}, start=0, stop=50000
-        )
-        for user in tenant_users:
-            if normalize_email(user.email) == normalized:
-                raise HTTPException(
-                    status_code=409,
-                    detail="A user with this email already exists in this tenant",
-                )
+    tenant_users = await get_system_users(
+        filter_dict={"tenant_id": tenant_id}, start=0, stop=50000
+    )
+    for user in tenant_users:
+        if normalize_email(user.email) == normalized:
+            raise HTTPException(
+                status_code=409,
+                detail="A user with this email already exists in this tenant",
+            )
 
 
 async def add_system_user(
@@ -493,7 +485,7 @@ async def complete_login_after_tenant_selection(
 
 
 async def authenticate_super_admin_global(login_data: SystemUserLogin) -> dict:
-    """Authenticate a super_admin via global login (unique email).
+    """Authenticate a super_admin via global (no-tenant) login.
 
     Returns the standard SystemUserOut plus tenant context info that the
     frontend needs to display the super_admin dashboard:
@@ -504,21 +496,22 @@ async def authenticate_super_admin_global(login_data: SystemUserLogin) -> dict:
     tenant metadata, billing, and the tenant login URL.  The tenant-scoped
     login at /system-users/tenant/{tenant_id}/login is used for managing
     the tenant itself (visitors, departments, branding, etc.).
+
+    Email uniqueness is per-tenant, so a super_admin may have the same email
+    across multiple tenants. When that happens this endpoint forwards the
+    standard tenant-selection challenge so the caller can resolve which
+    tenant they meant; the FE then completes via ``/select-tenant``.
     """
-    # Authenticate without tenant scoping — super_admin email is globally unique
     result = await authenticate_system_user(login_data=login_data)
 
     # If 2FA is required, bubble the OTP challenge up to the route
     if isinstance(result, dict) and result.get("otp_required"):
         return result
 
-    # Super_admin emails are globally unique, so the tenant-selection branch
-    # should never fire for them. Defensively reject it if it ever does.
+    # Multiple tenants share this email — forward the selection challenge so
+    # the FE can prompt the user. Stage 2 (/select-tenant) issues real tokens.
     if isinstance(result, dict) and result.get("tenant_selection_required"):
-        raise HTTPException(
-            status_code=409,
-            detail="Super admin emails must be globally unique; multiple matches found",
-        )
+        return result
 
     if not isinstance(result, SystemUserOut):
         raise HTTPException(status_code=500, detail="Unexpected authentication state")

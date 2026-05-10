@@ -155,9 +155,24 @@ Body:
 Validations:
   - Tenant must exist and be active. Inactive tenant → 400
     "Cannot add a super admin to an inactive tenant".
-  - Email must be GLOBALLY unique across system_users (super_admin emails
-    are globally unique by design; conflict → 409).
+  - Email must be unique WITHIN the target tenant (the same address may
+    legitimately exist as a super_admin across different tenants — at login
+    the user gets a tenant-selection prompt). Conflict → 409
+    "A user with this email already exists in this tenant".
   - Plan caps + branch validation apply just like a normal user invite.
+
+Login note:
+  When a super_admin email is shared across tenants, the global super-admin
+  login (`POST /v1/system-users/super-admin/login`) returns the standard
+  tenant-selection challenge:
+
+    { "tenant_selection_required": true,
+      "selection_token": "...",
+      "tenants": [ { tenant_id, company_name, role, full_name, mfa_enabled }, ... ] }
+
+  The FE then completes Stage 2 at `POST /v1/system-users/select-tenant`
+  with `{ selection_token, tenant_id }`, exactly as for the regular tenant
+  user login flow.
 
 Response (truncated):
 

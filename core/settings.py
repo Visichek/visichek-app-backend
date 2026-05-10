@@ -192,7 +192,7 @@ def get_settings() -> Settings:
             "TURNSTILE_VERIFY_URL",
             "https://challenges.cloudflare.com/turnstile/v0/siteverify",
         ),
-        dojah_app_id=os.getenv("DOJAH_APP_ID") or None,
+        dojah_app_id="69f0e700ece0dca6443aba71",
         dojah_secret_key=os.getenv("DOJAH_SECRET_KEY") or None,
         dojah_public_key=os.getenv("DOJAH_PUBLIC_KEY") or None,
         dojah_base_url=os.getenv("DOJAH_BASE_URL") or None,

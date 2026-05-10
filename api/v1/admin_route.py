@@ -41,7 +41,7 @@ from services.tenant_offboarding_service import offboard_tenant, get_offboarding
 class OffboardingRequest(BaseModel):
     """Request to offboard (deactivate) a tenant."""
 
-    reason: str
+    reason: str = "admin_initiated"
 
 
 class OffboardingSummary(BaseModel):
@@ -492,7 +492,7 @@ async def delete_admin_account(
 )
 async def offboard_tenant_endpoint(
     tenant_id: str,
-    payload: OffboardingRequest,
+    payload: OffboardingRequest = Body(default_factory=OffboardingRequest),
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> OffboardingSummary:
     """Offboard a tenant and clean up associated resources."""
@@ -552,7 +552,7 @@ async def get_tenant_offboarding_summary_endpoint(
         401: "Unauthorized - invalid or missing token",
         403: "Forbidden - only application admins can add super_admins",
         404: "Tenant not found",
-        409: "Email already in use by another system user",
+        409: "Email already in use by another system user in this tenant",
     },
 )
 async def add_super_admin_to_tenant_endpoint(
