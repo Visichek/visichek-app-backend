@@ -294,20 +294,38 @@ async def change_plan_endpoint(
 @document_response(
     message="Cancel subscription queued",
     status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Cancel a tenant's subscription. Tenant super_admins may cancel "
+        "their own tenant only (the path verifies ``principal.tenant_id == "
+        "payload.tenant_id``). Application admins may cancel any tenant. "
+        "Other roles get HTTP 403."
+    ),
     summary="Cancel subscription (async)",
 )
 async def cancel_subscription_endpoint(
     payload: CancelSubscriptionRequest,
     request: Request,
-    admin=Depends(check_admin_account_status_and_permissions),
+    principal: AuthPrincipal = Depends(verify_any_token),
 ):
+    # Authorisation: app admins → any tenant; super_admin → own tenant only.
+    if principal.role == "admin":
+        actor_role = "admin"
+    elif principal.role == "super_admin":
+        if not principal.tenant_id or principal.tenant_id != payload.tenant_id:
+            raise auth_permission_denied(permission_key="subscription.cancel")
+        actor_role = "super_admin"
+    else:
+        raise auth_role_mismatch(
+            required_role="admin", actual_role=principal.role
+        )
+
     return await enqueue_write(
         writer_key="subscription.cancel",
         payload=payload.model_dump(exclude_none=True),
         resource_type="subscription",
         tenant_id=payload.tenant_id,
-        actor_id=getattr(admin, "id", None),
-        actor_role="admin",
+        actor_id=principal.user_id,
+        actor_role=actor_role,
         request_id=getattr(request.state, "request_id", None),
     )
 
