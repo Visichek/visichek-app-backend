@@ -1,0 +1,750 @@
+================================================================================
+VisiChek Backend — Tables / Filters / Bulk Migration Guide for Frontend
+================================================================================
+
+Audience:        frontend engineers
+Backend author:  backend
+Date:            2026-05-10
+Status:          shipped on master — frontend may switch over
+
+This file documents what the backend now exposes for table-style endpoints,
+how to migrate from the old contract, and the security caveats you need to
+respect on the FE side. The original spec you sent (backend-docs/tables-spec.txt
+in the repo) was the input to this work. Item-level differences and the rare
+cases where backend chose a different shape than requested are flagged below.
+
+
+================================================================================
+0. CROSS-CUTTING CONTRACT (read first)
+================================================================================
+
+0.1  PAGINATION ENVELOPE  —  IMPLEMENTED
+─────────────────────────────────────────
+Every list endpoint now returns:
+
+    {
+      "success": true,
+      "message": "...",
+      "data": {
+        "items": [...],
+        "meta": {
+          "total":    1234,    // total rows matching the filter set
+          "skip":     0,
+          "limit":    25,
+          "hasMore":  true,
+          "facets":   {        // present only when ?facets= was passed
+            "status": { "active": 120, "inactive": 3, "all": 123 }
+          }
+        }
+      }
+    }
+
+  • `skip` / `limit` everywhere. Default limit = 25, hard cap = 200.
+  • `start` / `stop` are NOT supported on the new contract. Where the legacy
+    pair was previously accepted (visitors/sessions) they remain temporarily
+    for backward compat — please migrate when you can.
+  • A few endpoints don't paginate against a real `total` because the count
+    is too expensive (none today, but the helper supports `total: null` +
+    `hasMore: true` for infinite-scroll UIs).
+
+0.2  STABLE SORT  —  IMPLEMENTED
+─────────────────────────────────
+  • Pass `?sort=field,-field` (descending with `-` prefix).
+  • Backend appends `_id desc` as the final tiebreaker so two rows with the
+    same primary sort field always resolve to the same page.
+  • Unknown sort fields return:
+        400 { "code": "VALIDATION_FAILED",
+              "details": { "code": "INVALID_SORT_FIELD", "field": "x" } }
+    The allowed fields per resource are listed in §1–§3 below.
+
+0.3  SEARCH (`?q=`)  —  IMPLEMENTED
+────────────────────────────────────
+  • Single param `?q=<string>` per the spec.
+  • Whitespace trimmed, queries shorter than 2 chars are ignored (returns
+    everything matching the other filters).
+  • Backend regex-escapes the query before applying it. Combined with filters
+    using AND, never OR.
+
+0.4  FILTER NAMING  —  IMPLEMENTED (repeated-key form)
+──────────────────────────────────────────────────────
+  • Multi-value filters use repeated-key form preferentially, but CSV form
+    is also accepted for clients that find it easier to construct:
+        ?status=active&status=trialing      (preferred)
+        ?status=active,trialing             (also works)
+  • Date ranges always use unix epoch SECONDS. Naming pattern is
+    `<base>Gte` / `<base>Lte` (camelCase). E.g. `?createdAtGte=1712500000`.
+  • Booleans are literal `"true"` / `"false"`. `?isActive=1` is rejected.
+  • For "no value" filters the spec asked for `?planTier=none` style — backend
+    implements this exactly (see tenants list).
+  • Unknown filter keys are REJECTED with
+        400 { "details": { "code": "INVALID_FILTER_FIELD", "field": "x" } }
+    This is intentional: it stops anyone probing arbitrary Mongo paths.
+    If you find a filter you genuinely need is rejected, file a backend
+    ticket — don't try to smuggle it in via a different name.
+
+0.5  BULK ACTION ENDPOINTS  —  IMPLEMENTED (queued, not synchronous)
+─────────────────────────────────────────────────────────────────────
+  ⚠️  IMPORTANT BEHAVIOURAL DIFFERENCE FROM THE ORIGINAL SPEC: bulk endpoints
+      go through the existing queued write pipeline. They return
+      202 Accepted + { id, job_id, status: "queued" }, not the
+      synchronous { succeeded, failed } shape the original spec asked for.
+
+  Why: the codebase already routes every mutation through Celery workers for
+  cache invalidation, audit trail, and dirty-scope marking. Adding a synchronous
+  fan-out path would have created two parallel mutation pipelines, doubled the
+  surface area for bugs, and broken the "one audit row per bulk call" rule the
+  spec itself asked for.
+
+  How to consume on the FE:
+
+      1. POST /v1/<resource>/bulk/<action>
+         body:    { ids: string[], <action-specific extras>, atomic?: boolean }
+         headers: Idempotency-Key: <uuid>      (optional but recommended)
+         returns: 202 { id, job_id, status: "queued" }
+      2. POLL  GET /v1/jobs/{job_id}
+         returns: { ..., status: "succeeded" | "failed" | "processing",
+                    result: {
+                        succeeded: [ { id, result?: {...} }, ... ],
+                        failed:    [ { id, error: { code, message } }, ... ],
+                        atomic:    boolean
+                    } }
+
+  • `atomic: true` makes the worker stop at the first failure (the remaining
+    ids stay untouched). Defaults to false.
+  • The audit log gets ONE row per bulk call (with `details.ids` = the list)
+    rather than N rows.
+  • All list invalidations happen exactly once per bulk call.
+
+  The bulk endpoints implemented per resource are listed in §1–§3 below.
+
+0.5.1  BULK INPUT VALIDATION
+────────────────────────────
+  Backend rejects bulk requests with:
+    • Empty `ids` →                    400 BULK_IDS_EMPTY
+    • Non-string entry →               400 BULK_ID_INVALID
+    • Non-ObjectId hex →               400 BULK_ID_INVALID  (security: blocks
+                                       Mongo operator injection like {$ne:""})
+    • > 500 ids in one call →          400 BULK_BATCH_TOO_LARGE
+  Duplicates within `ids` are silently de-duplicated.
+
+  ⚠️  SECURITY: do NOT splice user-supplied strings into the ids array
+      without basic shape validation on your side. The backend will reject
+      malformed ids, but fail-closed on the FE first.
+
+0.6  CSV EXPORT  —  IMPLEMENTED for audit logs
+───────────────────────────────────────────────
+  • Audit logs gain a sibling endpoint:
+        GET /v1/audit-logs/csv?<same filters>     (tenant scope)
+    Streams an attachment up to 10 000 rows (XLSX exports stay capped at
+    10k / 50k via /v1/audit-logs/export).
+  • Values are escaped against CSV-formula injection (CWE-1236): cells
+    starting with `=` `+` `-` `@` `\t` `\r` are prefixed with `'` so Excel
+    treats them as text instead of formulas. This is a hard backend rule
+    even when the values come from user-controlled fields. You DO NOT
+    need to re-escape on the FE side.
+  • Filenames are sanitised (alnum / dash / underscore only, max 80 chars,
+    `.csv` extension forced).
+
+0.7  IDEMPOTENCY-KEY  —  IMPLEMENTED on every bulk POST
+────────────────────────────────────────────────────────
+  • Pass `Idempotency-Key: <uuid>` (8..200 chars, printable ASCII).
+  • Replays of the same key + same body within 24h return the cached
+    response (the original 202 + job_id), NOT a new job.
+  • Replays of the same key with a DIFFERENT body return:
+        409 { "code": "VALIDATION_FAILED",
+              "details": { "code": "IDEMPOTENCY_CONFLICT" } }
+  • Keys are scoped per actor (admin/system_user) AND per route — a key
+    leaked from another tenant cannot be replayed against your endpoint.
+
+  ⚠️  SECURITY: generate keys client-side with crypto.randomUUID() (or any
+      reasonably-unique source). Do NOT pass user-supplied strings as keys.
+      The backend rejects keys outside `^[A-Za-z0-9._\-:+/=]{8,200}$`.
+
+0.8  SAVED VIEWS  —  IMPLEMENTED (combined endpoint pair per resource)
+───────────────────────────────────────────────────────────────────────
+  Per-user saved filters and column preferences live under `/v1/me/`.
+  Authenticated as the current user (any role); the resource slug is opaque
+  to the backend (validated as `^[a-z][a-z0-9_\-]{0,40}$`).
+
+      GET    /v1/me/saved-filters?resource=tenants
+      POST   /v1/me/saved-filters?resource=tenants
+              body: { name, filters: <opaque dict>, is_default?: boolean }
+      PATCH  /v1/me/saved-filters/{filter_id}?resource=tenants
+              body: { name?, filters?, is_default? }
+      DELETE /v1/me/saved-filters/{filter_id}?resource=tenants
+
+      GET    /v1/me/column-prefs?resource=tenants
+      PUT    /v1/me/column-prefs?resource=tenants
+              body: { visible: string[], order: string[],
+                      pinned: string[], widths: { col: width } }
+
+  Limits per user per resource:
+    • 20 saved filters max
+    • 8 KB max per filter document
+    • 4 KB max per column-prefs document
+
+  ⚠️  SECURITY: `filters` is OPAQUE JSON — the backend round-trips it to
+      you without ever evaluating it server-side. NEVER assume the backend
+      will respect the `filters` blob as a Mongo expression. Always
+      reconstruct the URL query string from it client-side and re-submit
+      through the official query-string contract.
+
+
+================================================================================
+1. PLATFORM-ADMIN TABLES
+================================================================================
+
+1.1  /v1/tenants
+─────────────────
+GET /v1/tenants
+  Auth:               admin
+  Default sort:       -date_created
+  Sortable fields:    company_name, date_created, is_active, subscription_status
+  Search (`q=`):      company_name, dpo_contact_email
+                      (also matches `_id` directly when q is a hex24 ObjectId)
+  Filters:
+    status            active | inactive | all
+    planTier          free | starter | professional | enterprise | custom | none
+    subscriptionStatus active | trialing | past_due | cancelled | suspended | expired | none
+    isActive          true | false   (alias for status, useful in URLs)
+    createdAtGte/Lte  unix epoch s
+  Facets (`facets=`): status   →   { active, inactive, all }
+
+  Bulk:
+    POST /v1/tenants/bulk/offboard
+      body: { ids: string[], reason?: string, atomic?: boolean }
+
+1.2  /v1/plans
+───────────────
+GET /v1/plans
+  Auth:               admin (?public_only=true switches to public catalogue)
+  Default sort:       -date_created
+  Sortable fields:    display_name, name, base_price_monthly, date_created, status, tier
+  Search (`q=`):      name, display_name
+  Filters:
+    status            draft | active | archived | all
+    tier              free | starter | professional | enterprise | custom
+    includedFeature   <feature endpoint pattern>
+  Facets:             status   →   { active, draft, archived, all }
+
+  Bulk:
+    POST /v1/plans/bulk/activate     { ids[] }
+    POST /v1/plans/bulk/archive      { ids[] }
+    POST /v1/plans/bulk/delete       { ids[] }   (server enforces DRAFT-only)
+
+1.3  /v1/subscriptions
+───────────────────────
+GET /v1/subscriptions
+  Auth:               admin
+  Default sort:       -date_created
+  Sortable fields:    renews_at, current_period_end, date_created, status, effective_price
+  Search (`q=`):      tenant_id, plan_id
+  Filters:
+    tenantId
+    planId
+    status            active | trialing | past_due | cancelled | suspended | expired
+    billingCycle      monthly | yearly
+    renewsAtGte/Lte   unix epoch s   (maps to current_period_end)
+    createdAtGte/Lte
+  Facets:             status
+
+  Bulk:
+    POST /v1/subscriptions/bulk/cancel
+      body: { ids: string[], reason: string, immediate: boolean, atomic?: boolean }
+      ⚠️  Note: `reason` is ONE per bulk (per spec). The worker applies it to
+          every cancellation in the batch.
+
+1.4  /v1/invoices/admin
+────────────────────────
+GET /v1/invoices/admin
+  Auth:               admin
+  Default sort:       -issued_at
+  Sortable fields:    issued_at, amount, status, date_created, invoice_number
+  Search (`q=`):      invoice_number
+  Filters:
+    tenantId
+    status            draft | issued | paid | void | refunded
+    issuedAtGte/Lte   unix epoch s
+    amountGte         numeric
+    amountLte         numeric
+  Facets:             status
+
+  Bulk:
+    POST /v1/invoices/bulk/download
+      body: { ids: string[] }
+      result: per-id `{ downloadUrl }`. Backend returns presigned PDF URLs
+      one per id (no ZIP) — see explanation in §0.5 (queued model).
+    POST /v1/invoices/bulk/void
+      body: { ids: string[], reason?: string, atomic?: boolean }
+
+1.5  /v1/discounts
+───────────────────
+GET /v1/discounts
+  Auth:               admin
+  Default sort:       -date_created
+  Sortable fields:    date_created, expires_at, current_redemptions, code
+  Search (`q=`):      code, description
+  Filters:
+    status            active | expired | disabled | all
+    discountType      percentage | fixed
+    scope             global | tenant | plan
+    expiresAtGte/Lte  unix epoch s   (maps to valid_until)
+  Facets:             status
+
+  Bulk:
+    POST /v1/discounts/bulk/disable    { ids[] }
+    POST /v1/discounts/bulk/delete     { ids[] }
+
+1.6  /v1/tenants/onboarding
+────────────────────────────
+GET /v1/tenants/onboarding
+  Auth:               admin
+  Default sort:       -submitted_at
+  Sortable fields:    submitted_at, status, organization_name, date_created
+  Search (`q=`):      organization_name, full_name, email
+  Filters:
+    status            new | partial_accepted | completed | accepted | rejected | archived
+    turnstileVerified true | false
+    submittedAtGte/Lte
+  Facets:             status
+
+  Bulk:
+    POST /v1/tenants/onboarding/bulk/archive   { ids[] }
+    POST /v1/tenants/onboarding/bulk/reject    { ids[], notes?: string }
+
+1.7  /v1/admins/support-cases  (cross-tenant admin view)
+─────────────────────────────────────────────────────────
+GET /v1/admins/support-cases
+  Auth:               admin
+  Default sort:       -date_created
+  Sortable fields:    date_created, sla_deadline, priority, status, last_updated
+  Search (`q=`):      title, summary, case_number
+  Filters:
+    status            open | acknowledged | in_progress | awaiting_tenant | resolved | closed | reopened
+    priority          low | medium | high | critical
+    tenantId
+    assigneeId        (mapped to assigned_admin_id)
+    category
+    supportTier
+    slaState          on_track | at_risk | breached
+    createdAtGte/Lte
+  Facets:             status
+
+  Bulk:
+    POST /v1/admins/support-cases/bulk/assign  { ids[], assigneeId: string }
+    POST /v1/admins/support-cases/bulk/status  { ids[], status: <enum> }
+    POST /v1/admins/support-cases/bulk/close   { ids[] }
+
+
+================================================================================
+2. TENANT-SHELL TABLES
+================================================================================
+
+2.1  /v1/system-users
+──────────────────────
+GET /v1/system-users
+  Auth:               super_admin (tenant scoped to token)
+  Default sort:       -date_created
+  Sortable fields:    full_name, email, role, date_created, last_login_at
+  Search (`q=`):      full_name, email
+  Filters:
+    role              super_admin | dept_admin | receptionist | auditor | security_officer | dpo
+    branchId          (matches branch_ids array)
+    departmentId
+    accountStatus     ACTIVE | INACTIVE | SUSPENDED | all
+  Facets:             role, accountStatus
+
+  Bulk:
+    POST /v1/system-users/bulk/delete           { ids[] }
+    POST /v1/system-users/bulk/deactivate       { ids[] }
+    POST /v1/system-users/bulk/reset-password   { ids[] }
+      ⚠️  The backend GENERATES the new password server-side and emails it
+          to the target. The job result NEVER includes the plaintext.
+          Passwords leaked through the queue_job_log row would defeat the
+          point of generating them server-side.
+
+  ⚠️  SECURITY (server-enforced, but FE should pre-filter for UX):
+    • Cannot delete or deactivate yourself; backend returns
+      USER_DELETE_PROTECTED / USER_DEACTIVATE_PROTECTED in `failed[]`.
+    • Cannot delete a super_admin; backend returns USER_DELETE_PROTECTED.
+    • Cross-tenant attempts (somehow obtained another tenant's user_id)
+      are rejected per-id with USER_DELETE_PROTECTED / USER_DEACTIVATE_PROTECTED.
+
+2.2  /v1/departments
+─────────────────────
+GET /v1/departments
+  Auth:               super_admin or dept_admin (tenant scoped)
+  Default sort:       name asc
+  Sortable fields:    name, code, date_created
+  Search (`q=`):      name, code
+  Filters:
+    branchId
+  Facets:             (none today)
+
+  Bulk:
+    POST /v1/departments/bulk/delete   { ids[] }
+      Returns DEPARTMENT_HAS_USERS in `failed[]` for any department that
+      still has users assigned, per the spec.
+
+2.3  /v1/branches
+──────────────────
+GET /v1/branches
+  Auth:               super_admin (tenant scoped)
+  Default sort:       name asc
+  Sortable fields:    name, date_created, is_active, status
+  Search (`q=`):      name, address, city
+  Filters:
+    status            active | inactive | all
+    country, state, city
+  Facets:             status
+
+  Bulk:
+    POST /v1/branches/bulk/deactivate   { ids[] }
+    POST /v1/branches/bulk/delete       { ids[] }
+      Backend still enforces last-active-branch protection per id.
+
+2.4  /v1/appointments
+──────────────────────
+GET /v1/appointments
+  Auth:               receptionist | dept_admin | super_admin (tenant scoped;
+                      branch-scoped roles see only their branches)
+  Default sort:       -scheduled_datetime
+  Sortable fields:    scheduled_datetime, date_created, status, last_updated
+  Search (`q=`):      visitor_name_snapshot, host_name_snapshot, purpose
+  Filters:
+    status            scheduled | checked_in | checked_out | no_show | cancelled | fulfilled | missed
+    departmentId, hostId, branchId
+    scheduledAtGte/Lte unix epoch s
+  Facets:             status
+
+  Single-item:
+    POST /v1/appointments/{id}/cancel   { reason?: string }
+      Convenience over PATCH /{id} { status: "cancelled" }; emits the
+      same audit row.
+
+  Bulk:
+    POST /v1/appointments/bulk/cancel    { ids[], reason?: string }
+    POST /v1/appointments/bulk/delete    { ids[] }   (super_admin only)
+
+2.5  /v1/audit-logs
+────────────────────
+GET /v1/audit-logs
+  Auth:               super_admin | auditor | dpo (tenant scoped)
+  Default sort:       -timestamp
+  Sortable fields:    timestamp
+  Search (`q=`):      action, details_summary
+  Filters (NEW contract):
+    actorUserId, actorRole, operation, resourceType, resourceId, action
+    timestampGte / timestampLte (unix epoch s)
+  Default range:      LAST 7 DAYS unless `timestampGte` (or `timestampLte`)
+                      is explicitly supplied. This protects against
+                      unbounded scans on the audit collection.
+  Legacy fields (still accepted for the migration window): actor_id, action,
+  resource_type, resource_id, date_from, date_to, start, stop. Don't combine
+  legacy and new params in the same request.
+
+GET /v1/audit-logs/csv
+  Streaming CSV. Same filters as the list endpoint. Capped at 10 000 rows.
+  Columns: _id, timestamp, actor_id, actor_role, action, resource_type,
+           resource_id, tenant_id, request_id.
+
+GET /v1/audit-logs/export    (existing, unchanged — XLSX)
+GET /v1/audit-logs/admin/export (existing, unchanged — XLSX, admin only)
+
+2.6  /v1/invoices/tenant/{tenant_id}
+─────────────────────────────────────
+GET /v1/invoices/tenant/{tenant_id}
+  Auth:               super_admin (path tenant_id MUST match token tenant_id;
+                      cross-tenant access is rejected)
+  Default sort:       -issued_at
+  Sortable fields:    issued_at, amount, status, date_created, invoice_number
+  Filters:            status, amountGte, amountLte, issuedAtGte/Lte
+  Facets:             status
+
+  Bulk:
+    POST /v1/invoices/tenant/{tenant_id}/bulk/download   { ids[] }
+      Result: per-id `{ downloadUrl }`. Worker validates each invoice
+      belongs to the path tenant — cross-tenant ids land in `failed[]`.
+
+2.7  /v1/dsr
+─────────────
+GET /v1/dsr
+  Auth:               super_admin | dpo (tenant scoped)
+  Default sort:       -date_created
+  Sortable fields:    date_created, sla_deadline, status, type
+  Search (`q=`):      subject_email, subject_name, request_number
+  Filters:
+    status            pending | in_progress | completed | rejected
+    type              access | correction | deletion | consent_withdrawal
+    slaState          on_track | at_risk | breached
+    createdAtGte/Lte
+  Facets:             status
+
+  Single-item:
+    POST /v1/dsr/{id}/acknowledge      → status=in_progress
+    POST /v1/dsr/{id}/complete         → status=completed
+                                          body: { resolution?: string }
+    POST /v1/dsr/{id}/reject           → status=rejected
+                                          body: { reason?: string }
+    GET  /v1/dsr/{id}/package          (existing, unchanged — response file)
+
+  Bulk:
+    POST /v1/dsr/bulk/acknowledge   { ids[] }
+    POST /v1/dsr/bulk/reject        { ids[], reason?: string }
+
+2.8  /v1/incidents
+───────────────────
+GET /v1/incidents
+  Auth:               super_admin | security_officer (tenant scoped)
+  Default sort:       -date_created
+  Sortable fields:    date_created, notification_deadline, risk_level, status
+  Search (`q=`):      description, summary
+  Filters:
+    status            open | investigating | contained | reported_to_ndpc | closed
+    incidentType      data_breach | unauthorized_access | data_export_exposure |
+                      device_loss | misconfiguration | third_party
+    riskLevel         low | medium | high | critical
+    ndpcNotified      true | false
+    approachingDeadline true   (rows with notification_deadline within 24h)
+    dateCreatedGte/Lte
+  Facets:             status
+
+  Bulk:
+    POST /v1/incidents/bulk/mark-notified
+      body: { ids[], notificationSentAt?: unix-epoch-s }
+      (server defaults notificationSentAt to now)
+    POST /v1/incidents/bulk/status
+      body: { ids[], status: <enum> }
+
+2.9  /v1/support-cases   (tenant scope)
+────────────────────────────────────────
+GET /v1/support-cases
+  Auth:               any tenant role (auto-scoped to token tenant_id)
+  Default sort:       -date_created
+  Sortable fields:    date_created, sla_deadline, priority, status, last_updated
+  Search (`q=`):      title, summary, case_number
+  Filters:            status, priority, category, slaState
+  Facets:             status
+
+  (Single-item create / message / transition endpoints unchanged.)
+
+
+================================================================================
+3. NON-TABLE LIST VIEWS
+================================================================================
+
+3.1  Visitors — pending approvals
+──────────────────────────────────
+GET /v1/visitors/sessions/pending      (existing — accepts skip/limit; filter
+                                        contract not yet rewritten — see Note)
+
+  Bulk:
+    POST /v1/visitors/sessions/bulk/host-approve  { ids[] }
+    POST /v1/visitors/sessions/bulk/deny          { ids[], reason?: string }
+    POST /v1/visitors/sessions/bulk/confirm
+      body: { ids: string[], badgeFormat: "A6" | "A7" }
+      result: per-id `{ badgePdfObjectKey }`. Use the existing
+      `GET /v1/visitors/sessions/{id}/badge` to download the PDF for each
+      id, or wire S3 presigned URLs separately.
+      Backend never returns raw PDF bytes inline — the queue_job_log row
+      stores the result and inline blobs would balloon it.
+
+3.2  Visitors — active sessions
+────────────────────────────────
+GET /v1/visitors/sessions      (existing — accepts skip/limit + departmentId;
+                                filter contract not yet rewritten — see Note)
+
+  Bulk:
+    POST /v1/visitors/sessions/bulk/badges
+      body: { ids: string[], badgeFormat: "A6" | "A7" }
+      result: per-id `{ downloadPath, badgePdfObjectKey }`.
+    POST /v1/visitors/sessions/bulk/check-out
+      body: { ids: string[], method: "qr_scan" | "manual" }
+
+  Note (visitor sessions list):
+    The list endpoints for /sessions and /sessions/pending still take
+    legacy `start` / `stop` params and a flat `department_id` query. Filter
+    contract migration on these is NOT yet shipped — the new spec landed
+    on the bulk surface only. Open a backend ticket if you need the new
+    `q` / `sort` / `facets` / `slaState` etc. on visitor session lists; the
+    bulk endpoints are independent and can be used today.
+
+
+================================================================================
+4. /v1/me/* PER-USER VIEWS (Saved filters + column prefs)
+================================================================================
+
+See §0.8 above for the full contract.
+
+  • Saved filter `filters` blob is stored verbatim and returned to you on
+    GET. The backend NEVER evaluates it server-side as a Mongo expression
+    — you must rebuild the URL query string from it before submitting it
+    through the relevant list endpoint.
+  • If a user is on a tenant role, saved filters auto-isolate by user_id +
+    user_type ("system_user"). App admins get user_type "admin". You don't
+    need to pass user_id explicitly.
+
+
+================================================================================
+5. JOB POLLING (BULK FOLLOW-UP)
+================================================================================
+
+GET /v1/jobs/{job_id}
+  Returns the queue_job_log row:
+    {
+      task_id, task_key, status, result, error,
+      tenant_id, actor_id, request_id,
+      date_created, last_updated
+    }
+  When status == "succeeded", `result` carries the bulk shape:
+    {
+      succeeded: [ { id, result?: { ... } }, ... ],
+      failed:    [ { id, error: { code, message } }, ... ],
+      atomic:    boolean
+    }
+
+UI suggestion:
+  • Show an in-flight indicator while polling; backend never blocks.
+  • Highlight rows in `failed[]` with the error.code as a tag.
+  • If you need real-time progress, the queue exposes timestamps but no
+    SSE/websocket stream today.
+
+
+================================================================================
+6. ERROR CODES YOU MAY ENCOUNTER
+================================================================================
+
+400  INVALID_SORT_FIELD                    sort field not on the allowlist
+400  INVALID_FILTER_FIELD                  unknown filter param
+400  INVALID_FACET_FIELD                   facet field not on the allowlist
+400  BULK_IDS_EMPTY                        bulk ids array empty
+400  BULK_IDS_INVALID                      ids must be an array
+400  BULK_ID_INVALID                       a non-string or non-ObjectId id
+400  BULK_BATCH_TOO_LARGE                  >500 ids in one call
+400  IDEMPOTENCY_KEY_INVALID               key fails the regex
+409  IDEMPOTENCY_CONFLICT                  same key, different body
+409  USER_DELETE_PROTECTED                 self-delete / super_admin / cross-tenant
+409  USER_DEACTIVATE_PROTECTED             self-deactivate / cross-tenant
+409  DEPARTMENT_HAS_USERS                  bulk delete blocked by users
+402  SUBSCRIPTION_REQUIRED / INACTIVE      enforced by middleware
+429  QUOTA_EXCEEDED                        plan quota / dunning state
+
+
+================================================================================
+7. SECURITY — WHAT THE FE STILL OWNS
+================================================================================
+
+Backend defenses are in place, but a few hygiene rules belong on the FE:
+
+  • DO generate Idempotency-Key with crypto.randomUUID() (NOT user input).
+  • DO validate ids look like 24-char hex on the FE before submitting bulk
+    calls — fail-closed first, even though backend will also reject.
+  • DO NOT round-trip a saved-filter `filters` blob you didn't create —
+    treat it as opaque user input on display, but always rebuild the URL
+    query from known-safe fields when issuing the actual list request.
+  • DO NOT show the plaintext password from /bulk/reset-password — the
+    backend never returns it. The user gets it via email.
+  • CSV downloads from the backend already escape formula prefixes; you
+    do NOT need to re-escape.
+  • Bulk results come from a worker process; the actor_id in the audit row
+    is the original requester, but the request_id may not match if the FE
+    times out and retries with a new key. Use request_id for log
+    correlation, not for "did this exact request succeed".
+
+
+================================================================================
+8. ITEMS DEFERRED OR DIFFERENT FROM THE ORIGINAL SPEC
+================================================================================
+
+Differences worth flagging on the FE side:
+
+  1. Bulk endpoints return 202 + job_id (queued), not synchronous
+     {succeeded, failed}. See §0.5. This is the most material divergence
+     from the original spec — please plan UI accordingly (job-polling +
+     in-flight indicators).
+
+  2. Bulk invoice download returns per-id `downloadUrl`, NOT a single ZIP.
+     If you genuinely need a one-click ZIP, file a follow-up; the backend
+     can stream from a dedicated archiver later.
+
+  3. Bulk visitor confirm returns per-id `badgePdfObjectKey`. The original
+     spec asked for either inline base64 or a single ZIP — neither is
+     suitable for the queued model (inline blobs explode the audit row).
+     FE downloads each badge via the existing `/sessions/{id}/badge`
+     endpoint. We can add a ZIP variant if printing N at once is awkward.
+
+  4. Visitor session LISTING (§3.1, §3.2) still uses the legacy
+     start/stop/department_id contract — only the BULK actions on
+     visitor sessions ship in this batch.
+
+  5. Webhooks / SSE for long bulk jobs (§4 of the spec) are not
+     implemented. Use the polling model documented in §5.
+
+  6. The `support-cases/{id}/notes` and `support-cases/{id}/escalate`
+     single-item endpoints (mentioned in spec §1.7) reuse the existing
+     `messages` and `transition` paths today — no new dedicated routes.
+     If FE wants distinct routes for clarity, file a follow-up.
+
+
+================================================================================
+9. CHANGED FILES (BACKEND, FOR PR REVIEWERS)
+================================================================================
+
+New foundation modules:
+  core/list_params.py            ListSpec + parse_list_query + list_response
+  core/list_runner.py            run_list (filter+sort+page+count+facets)
+  core/bulk.py                   validate_bulk_ids, enqueue_bulk_write,
+                                 run_bulk_handlers
+  core/idempotency.py            Idempotency-Key replay protection
+  core/csv_export.py             csv_response + CSV-injection guard
+  schemas/saved_view_schema.py   SavedFilterEntry, ColumnPrefs, SavedViewRecord
+  repositories/saved_view_repo.py
+  services/saved_view_service.py
+  api/v1/saved_view_route.py     /v1/me/saved-filters + /v1/me/column-prefs
+
+New writer modules (bulk only — single-item flows unchanged):
+  services/invoice_writer.py
+  services/onboarding_writer.py
+  services/visitor_bulk_writer.py
+
+Changed routes (added filter/sort/q/facets/bulk):
+  api/v1/tenant_route.py
+  api/v1/plan_route.py
+  api/v1/subscription_route.py
+  api/v1/invoice_route.py
+  api/v1/discount_route.py
+  api/v1/admin_onboarding_route.py
+  api/v1/admin_support_case_route.py
+  api/v1/support_case_route.py
+  api/v1/system_user_route.py
+  api/v1/department_route.py
+  api/v1/branch_route.py
+  api/v1/appointment_route.py
+  api/v1/audit_route.py
+  api/v1/data_subject_request_route.py
+  api/v1/incident_route.py
+  api/v1/visitor_route.py
+
+Existing writers extended with bulk handlers:
+  services/tenant_writer.py
+  services/plan_writer.py
+  services/subscription_writer.py
+  services/discount_writer.py
+  services/system_user_writer.py
+  services/department_writer.py
+  services/branch_writer.py
+  services/appointment_writer.py
+  services/dsr_writer.py
+  services/incident_writer.py
+  services/support_case_writer.py
+
+Tests:
+  tests/unit/test_list_params.py    (foundation: parser, sort, filter,
+                                     facet, range, q, bulk validation,
+                                     CSV injection, idempotency key
+                                     validation, actor scope)
+
+
+================================================================================
+End of file.
+================================================================================

@@ -1,7 +1,14 @@
-from typing import Annotated, Any, List
+import time
+from typing import Any, List, Optional  # noqa: F401
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from bson import ObjectId
+from fastapi import APIRouter, Body, Depends, Header, Request, status
 
+from core.bulk import enqueue_bulk_write
+from core.database import db
+from core.idempotency import actor_scope, check_idempotency, store_idempotency
+from core.list_params import FilterDef, ListSpec, coerce_bool, parse_list_query
+from core.list_runner import run_list
 from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
@@ -17,6 +24,74 @@ from services.incident_service import (
 
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 _security_roles = verify_system_user_token("super_admin", "security_officer")
+
+
+_INCIDENT_STATUSES = frozenset(
+    {"open", "investigating", "contained", "reported_to_ndpc", "closed"}
+)
+_INCIDENT_TYPES = frozenset(
+    {"data_breach", "unauthorized_access", "data_export_exposure", "device_loss", "misconfiguration", "third_party"}
+)
+_RISK_LEVELS = frozenset({"low", "medium", "high", "critical"})
+
+_DEADLINE_WINDOW_SECONDS = 24 * 60 * 60
+
+
+def _approaching_builder(values):
+    if not values or values[0].lower() != "true":
+        return {}
+    now = int(time.time())
+    return {"notification_deadline": {"$gte": now, "$lte": now + _DEADLINE_WINDOW_SECONDS}}
+
+
+INCIDENTS_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset(
+        {"date_created", "notification_deadline", "risk_level", "status"}
+    ),
+    default_sort=(("date_created", -1),),
+    search_fields=("description", "summary"),
+    filters={
+        "status": FilterDef(name="status", multi=True, allowed_values=_INCIDENT_STATUSES),
+        "incidentType": FilterDef(
+            name="incidentType", mongo_field="incident_type", allowed_values=_INCIDENT_TYPES
+        ),
+        "riskLevel": FilterDef(name="riskLevel", mongo_field="risk_level", allowed_values=_RISK_LEVELS),
+        "ndpcNotified": FilterDef(name="ndpcNotified", mongo_field="ndpc_notified", coerce=coerce_bool),
+        "approachingDeadline": FilterDef(name="approachingDeadline", builder=_approaching_builder),
+    },
+    range_filters={"dateCreated": "date_created"},
+    facet_fields=frozenset({"status"}),
+)
+
+
+def _is_default_inc_listing(request: Request) -> bool:
+    qp = request.query_params
+    if any(qp.get(k) for k in ("q", "sort", "facets")):
+        return False
+    if any(k for k in qp.keys() if k not in {"skip", "limit"}):
+        return False
+    skip_raw = qp.get("skip", "0")
+    limit_raw = qp.get("limit", str(INCIDENTS_LIST_SPEC.default_limit))
+    return skip_raw in ("0", "") and limit_raw == str(INCIDENTS_LIST_SPEC.default_limit)
+
+
+def _map_inc_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def _inc_status_facet(
+    collection: Any, filter_doc: dict[str, Any], field: str
+) -> dict[str, int]:
+    if field != "status":
+        return {}
+    base = {k: v for k, v in filter_doc.items() if k != "status"}
+    out: dict[str, int] = {}
+    for v in _INCIDENT_STATUSES:
+        out[v] = await collection.count_documents({**base, "status": v})
+    out["all"] = sum(out.values())
+    return out
 
 
 @router.post("")
@@ -67,19 +142,38 @@ async def create_incident(
     },
 )
 async def list_incidents(
-    start: Annotated[int, Query(ge=0)] = 0,
-    stop: Annotated[int, Query(gt=0)] = 100,
+    request: Request,
     principal: AuthPrincipal = Depends(_security_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
-    if start == 0 and stop == 100 and tenant_id:
-        return await get_or_compute(
+    if not tenant_id:
+        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+    if _is_default_inc_listing(request):
+        cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
             resource="incidents.list",
             ttl=60,
             loader=lambda: _load_incidents_for_tenant(tenant_id),
         )
-    return await retrieve_incidents(tenant_id=tenant_id, start=start, stop=stop)
+        items = cached if isinstance(cached, list) else []
+        limited = items[: INCIDENTS_LIST_SPEC.default_limit]
+        return {
+            "items": limited,
+            "meta": {
+                "total": len(items),
+                "skip": 0,
+                "limit": INCIDENTS_LIST_SPEC.default_limit,
+                "hasMore": len(items) > INCIDENTS_LIST_SPEC.default_limit,
+            },
+        }
+    query = parse_list_query(request, INCIDENTS_LIST_SPEC)
+    return await run_list(
+        collection=db.incident_logs,
+        query=query,
+        base_filter={"tenant_id": tenant_id},
+        map_doc=_map_inc_doc,
+        facet_runner=_inc_status_facet,
+    )
 
 
 async def _load_incidents_for_tenant(tenant_id: str) -> List[Any]:
@@ -98,12 +192,14 @@ async def _load_incidents_for_tenant(tenant_id: str) -> List[Any]:
     include_meta=True,
 )
 async def get_approaching_deadline_incidents(
-    start: Annotated[int, Query(ge=0)] = 0,
-    stop: Annotated[int, Query(gt=0)] = 100,
+    request: Request,
     principal: AuthPrincipal = Depends(_security_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
-    if start == 0 and stop == 100 and tenant_id:
+    qp = request.query_params
+    skip = int(qp.get("skip", "0"))
+    limit = int(qp.get("limit", "100"))
+    if skip == 0 and limit == 100 and tenant_id:
         return await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
             resource="incidents.approaching_deadline",
@@ -111,7 +207,7 @@ async def get_approaching_deadline_incidents(
             loader=lambda: _load_approaching_deadline(tenant_id),
         )
     return await retrieve_incidents_approaching_deadline(
-        tenant_id=tenant_id, start=start, stop=stop
+        tenant_id=tenant_id, start=skip, stop=skip + limit
     )
 
 
@@ -185,3 +281,109 @@ async def update_incident(
         actor_role=principal.role,
         request_id=getattr(request.state, "request_id", None),
     )
+
+
+# ─── Bulk endpoints ───────────────────────────────────────────────────
+
+
+@router.post("/bulk/mark-notified")
+@document_response(
+    message="Bulk mark-notified queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk mark incidents as NDPC-notified",
+)
+async def bulk_mark_notified(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(_security_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    scope = actor_scope(principal.user_id, principal.role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/incidents/bulk/mark-notified",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    extras = {
+        "tenant_scope": tenant_id,
+        "notification_sent_at": int(payload.get("notificationSentAt") or time.time()),
+    }
+    response = await enqueue_bulk_write(
+        writer_key="incident.bulk_mark_notified",
+        ids=payload.get("ids", []),
+        resource_type="incident",
+        extras=extras,
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/incidents/bulk/mark-notified",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/bulk/status")
+@document_response(
+    message="Bulk incident status queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk transition incident status",
+)
+async def bulk_incident_status(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(_security_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    scope = actor_scope(principal.user_id, principal.role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/incidents/bulk/status",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    target_status = str(payload.get("status") or "")
+    if target_status not in _INCIDENT_STATUSES:
+        from core.errors import AppException, ErrorCode
+
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="status is required and must be a valid IncidentStatus",
+            details={"allowed": sorted(_INCIDENT_STATUSES)},
+        )
+    extras = {"tenant_scope": tenant_id, "status": target_status}
+    response = await enqueue_bulk_write(
+        writer_key="incident.bulk_status",
+        ids=payload.get("ids", []),
+        resource_type="incident",
+        extras=extras,
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/incidents/bulk/status",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response

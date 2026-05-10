@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, List
 
+from core.bulk import run_bulk_handlers
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
@@ -54,6 +55,54 @@ async def _dsr_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     )
     _enqueue_list_refresh(tenant_id)
     return {"id": result.id, "status": result.status}
+
+
+@write_handler("dsr.bulk_acknowledge", invalidates=["dsr.list"])
+async def _dsr_bulk_acknowledge(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    tenant_scope = str(extras.get("tenant_scope") or "")
+
+    async def _handle(dsr_id: str) -> dict[str, Any]:
+        upd = DSRUpdate(status="in_progress")  # type: ignore[arg-type]
+        result = await update_dsr_by_id(
+            dsr_id=dsr_id, tenant_id=tenant_scope, dsr_data=upd
+        )
+        return {"id": result.id if result else dsr_id, "status": "in_progress"}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    if tenant_scope:
+        _enqueue_list_refresh(tenant_scope)
+    return out
+
+
+@write_handler("dsr.bulk_reject", invalidates=["dsr.list"])
+async def _dsr_bulk_reject(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    tenant_scope = str(extras.get("tenant_scope") or "")
+    reason = str(extras.get("reason") or "")[:2000]
+
+    async def _handle(dsr_id: str) -> dict[str, Any]:
+        upd_payload: dict[str, Any] = {"status": "rejected"}
+        if reason:
+            upd_payload["rejection_reason"] = reason
+        upd = DSRUpdate(**upd_payload)
+        result = await update_dsr_by_id(
+            dsr_id=dsr_id, tenant_id=tenant_scope, dsr_data=upd
+        )
+        return {"id": result.id if result else dsr_id, "status": "rejected"}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    if tenant_scope:
+        _enqueue_list_refresh(tenant_scope)
+    return out
 
 
 @register_precompute("dsr.list", scope=PrecomputeScope.TENANT)

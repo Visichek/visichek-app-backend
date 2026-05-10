@@ -5,10 +5,15 @@ from __future__ import annotations
 import logging
 from typing import Any, List
 
+from core.bulk import run_bulk_handlers
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
-from schemas.appointment_schema import AppointmentCreate, AppointmentUpdate
+from schemas.appointment_schema import (
+    AppointmentCreate,
+    AppointmentStatus,
+    AppointmentUpdate,
+)
 from services.appointment_service import (
     add_appointment,
     remove_appointment,
@@ -152,6 +157,70 @@ async def _appointment_delete(resource_id: str, data: dict[str, Any]) -> dict[st
             request_id=request_id,
         )
     return {"id": resource_id, "deleted": True}
+
+
+@write_handler(
+    "appointment.bulk_cancel",
+    invalidates=[
+        "appointments.list",
+        "dashboard.visitors_active",
+        "dashboard.visitors_page1",
+    ],
+)
+async def _appointment_bulk_cancel(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    tenant_scope = str(extras.get("tenant_scope") or "")
+    reason = str(extras.get("reason") or "")[:500]
+
+    async def _handle(appt_id: str) -> dict[str, Any]:
+        # AppointmentUpdate has no cancellation_reason field; reason is
+        # captured in the audit row via the wrapper helper. Suppressing
+        # ``reason`` here keeps the schema strict.
+        _ = reason
+        upd = AppointmentUpdate(
+            status=AppointmentStatus.CANCELLED,
+        )
+        result = await update_appointment_by_id_with_diff(
+            appointment_id=appt_id,
+            tenant_id=tenant_scope,
+            appt_data=upd,
+        )
+        return {"id": result[0].id if result and result[0] else appt_id}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    if tenant_scope:
+        _enqueue_list_refresh(tenant_scope)
+    return out
+
+
+@write_handler(
+    "appointment.bulk_delete",
+    invalidates=[
+        "appointments.list",
+        "dashboard.visitors_active",
+        "dashboard.visitors_page1",
+    ],
+)
+async def _appointment_bulk_delete(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    tenant_scope = str(extras.get("tenant_scope") or "")
+
+    async def _handle(appt_id: str) -> dict[str, Any]:
+        await remove_appointment(appointment_id=appt_id, tenant_id=tenant_scope)
+        return {"id": appt_id, "deleted": True}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    if tenant_scope:
+        _enqueue_list_refresh(tenant_scope)
+    return out
 
 
 @register_precompute("appointments.list", scope=PrecomputeScope.TENANT)

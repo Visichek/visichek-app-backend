@@ -2,17 +2,22 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from bson import ObjectId
+from fastapi import APIRouter, Body, Depends, Header, Request, status
 from pydantic import BaseModel, Field
 
+from core.bulk import enqueue_bulk_write
+from core.database import db
 from core.errors import auth_permission_denied, auth_role_mismatch
+from core.idempotency import actor_scope, check_idempotency, store_idempotency
+from core.list_params import FilterDef, ListSpec, parse_list_query
+from core.list_runner import run_list
 from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.subscription_schema import (
     BillingCycle,
-    SubscriptionStatus,
 )
 from services.subscription_service import (
     retrieve_subscription_by_id,
@@ -24,6 +29,75 @@ from security.auth import verify_any_token
 from security.principal import AuthPrincipal
 
 router = APIRouter(prefix="/subscriptions", tags=["Subscriptions"])
+
+
+SUBS_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset(
+        {"renews_at", "current_period_end", "date_created", "status", "effective_price"}
+    ),
+    default_sort=(("date_created", -1),),
+    search_fields=("tenant_id", "plan_id"),
+    filters={
+        "tenantId": FilterDef(name="tenantId", mongo_field="tenant_id"),
+        "planId": FilterDef(name="planId", mongo_field="plan_id"),
+        "status": FilterDef(
+            name="status",
+            multi=True,
+            allowed_values=frozenset(
+                {"active", "trialing", "past_due", "cancelled", "suspended", "expired"}
+            ),
+        ),
+        "billingCycle": FilterDef(
+            name="billingCycle",
+            mongo_field="billing_cycle",
+            allowed_values=frozenset({"monthly", "yearly"}),
+        ),
+    },
+    range_filters={
+        "renewsAt": "current_period_end",
+        "createdAt": "date_created",
+    },
+    facet_fields=frozenset({"status"}),
+)
+
+
+def _is_default_sub_listing(request: Request) -> bool:
+    qp = request.query_params
+    if any(qp.get(k) for k in ("q", "sort", "facets")):
+        return False
+    if any(k for k in qp.keys() if k not in {"skip", "limit"}):
+        return False
+    skip_raw = qp.get("skip", "0")
+    limit_raw = qp.get("limit", str(SUBS_LIST_SPEC.default_limit))
+    return skip_raw in ("0", "") and limit_raw == str(SUBS_LIST_SPEC.default_limit)
+
+
+def _map_sub_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def _subs_status_facet(
+    collection: Any, filter_doc: dict[str, Any], field: str
+) -> dict[str, int]:
+    if field != "status":
+        return {}
+    base = {k: v for k, v in filter_doc.items() if k != "status"}
+    out: dict[str, int] = {}
+    for status_value in (
+        "active",
+        "trialing",
+        "past_due",
+        "cancelled",
+        "suspended",
+        "expired",
+    ):
+        out[status_value] = await collection.count_documents(
+            {**base, "status": status_value}
+        )
+    out["all"] = sum(out.values())
+    return out
 
 
 # --- Request bodies ---
@@ -94,31 +168,42 @@ async def create_subscription_endpoint(
 @router.get("")
 @document_response(
     message="Subscriptions retrieved successfully",
-    description="Unfiltered first page served from the global precompute cache.",
+    description=(
+        "Paginated subscription list with filters, sort, q, and optional "
+        "facets. Unfiltered first page is served from the global "
+        "precompute cache."
+    ),
     summary="List subscriptions",
     include_meta=True,
 )
 async def list_subscriptions_endpoint(
-    tenant_id: Optional[str] = Query(None, alias="tenantId"),
-    status_filter: Optional[SubscriptionStatus] = Query(None, alias="status"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
 ) -> Any:
-    unfiltered = not tenant_id and not status_filter
-    if unfiltered and skip == 0 and limit in (50, 100):
+    if _is_default_sub_listing(request):
         cached: List[Any] = await get_or_compute(
             scope_key=PrecomputeScope.GLOBAL.value,
             resource="subscriptions.list",
             ttl=60,
             loader=_load_subscriptions,
         )
-        return cached[:limit]
-    return await retrieve_subscriptions_with_details(
-        tenant_id=tenant_id,
-        status_filter=status_filter,
-        start=skip,
-        stop=skip + limit,
+        items = cached if isinstance(cached, list) else []
+        limited = items[: SUBS_LIST_SPEC.default_limit]
+        return {
+            "items": limited,
+            "meta": {
+                "total": len(items),
+                "skip": 0,
+                "limit": SUBS_LIST_SPEC.default_limit,
+                "hasMore": len(items) > SUBS_LIST_SPEC.default_limit,
+            },
+        }
+    query = parse_list_query(request, SUBS_LIST_SPEC)
+    return await run_list(
+        collection=db.subscriptions,
+        query=query,
+        map_doc=_map_sub_doc,
+        facet_runner=_subs_status_facet,
     )
 
 
@@ -225,6 +310,57 @@ async def cancel_subscription_endpoint(
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),
     )
+
+
+@router.post("/bulk/cancel")
+@document_response(
+    message="Bulk subscription cancel queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Cancel multiple subscriptions with one shared reason. The frontend "
+        "collects one reason per batch in a modal — backend does NOT accept "
+        "per-id reasons."
+    ),
+    summary="Bulk cancel subscriptions",
+)
+async def bulk_cancel_subscriptions(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    actor_id = getattr(admin, "id", None)
+    actor_role = "admin"
+    scope = actor_scope(actor_id, actor_role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/subscriptions/bulk/cancel",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    reason = str(payload.get("reason") or "")[:500]
+    immediate = bool(payload.get("immediate", False))
+    response = await enqueue_bulk_write(
+        writer_key="subscription.bulk_cancel",
+        ids=payload.get("ids", []),
+        resource_type="subscription",
+        extras={"reason": reason, "immediate": immediate},
+        atomic=bool(payload.get("atomic", False)),
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/subscriptions/bulk/cancel",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
 
 
 @router.put("/{subscription_id}/overrides")

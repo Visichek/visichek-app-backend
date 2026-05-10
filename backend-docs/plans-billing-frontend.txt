@@ -1,0 +1,518 @@
+================================================================================
+VISICHEK — PLANS, BILLING, CHECKOUT & HISTORY (FRONTEND GUIDE)
+================================================================================
+
+This document describes everything the frontend needs to render and operate
+for Plans, Subscriptions, Checkout, Billing/Invoices, and Plan history. It
+covers behaviour for both:
+
+  * TENANT users    — super_admin only (manages billing for their org)
+  * PLATFORM users  — application admins (manages all tenants)
+
+It is written against the canonical plan overhaul that landed in this PR.
+See `config/plan_tiers.py` for the source of truth on tier limits.
+
+
+================================================================================
+0. CORE INVARIANTS (read first)
+================================================================================
+
+I0.1  EVERY TENANT IS ALWAYS ON A PLAN.
+      The system auto-subscribes new tenants to the FREE plan and lazily
+      provisions FREE for any tenant that somehow ends up without an
+      active subscription. The frontend should NEVER see a "no plan"
+      state for a logged-in super_admin. If `tenant.plan_summary` is
+      missing, treat it as a transient bug and refetch.
+
+I0.2  THERE ARE EXACTLY 4 CANONICAL PLANS.
+      Slug names (durable identifiers): "free", "starter", "premium",
+      "enterprise". Anything else is legacy and is being archived. Do
+      NOT hardcode plan IDs in the frontend — fetch by `name` (slug).
+
+I0.3  WHEN PAYMENT FAILS, THE TENANT DROPS TO FREE — NOT TO "SUSPENDED".
+      After dunning exhausts (default 5 attempts), the paid subscription
+      is marked EXPIRED and a fresh FREE plan subscription is created.
+      The tenant continues to have working API access; they simply lose
+      paid features (multi-location, branding, KYC, etc.). All non-HQ
+      branches are flipped to `status=inactive` automatically.
+
+I0.4  CANONICAL PLAN FIELDS ARE TIER-LOCKED.
+      Application admins cannot toggle features that the tier denies
+      (e.g. enable branding on Starter). The backend rejects any PATCH
+      that touches a non-allowlisted field with HTTP 400. The list of
+      adjustable fields per tier is described in section 2.
+
+I0.5  IMMEDIATE CANCEL = DROP TO FREE. NOT-IMMEDIATE = EXPIRES AT PERIOD END.
+      `POST /v1/subscriptions/cancel { immediate: true }` ends the paid
+      sub right away and provisions FREE.
+      `POST /v1/subscriptions/cancel { immediate: false }` flags the sub
+      for non-renewal — it stays ACTIVE until `current_period_end`, then
+      the renewal sweeper drops it to FREE.
+
+
+================================================================================
+1. PLAN CATALOGUE
+================================================================================
+
+1.1  FREE — ₦0/month
+     Description: For trying things out. Best for testing before switching
+     from paper.
+     Limits (hardcoded gate):
+       * 1 location (HQ only)
+       * 1 admin user
+       * 1 department
+       * 50 visitors/month  (← admin-adjustable, see 2.1)
+       * 0 appointments
+     Features available:
+       * Manual check-in & checkout
+       * Searchable visitor logs
+       * Encrypted database
+     Features denied (HTTP 403 FEATURE_DISABLED on hit):
+       * /v1/appointments*       — Appointments
+       * /v1/branding*           — Custom branding
+       * /v1/badges*             — Badge printing
+       * /v1/kyc*                — ID verification
+       * /v1/dashboard/export    — CSV export
+       * /v1/branches POST/PUT   — Multi-location
+
+1.2  STARTER — ₦35,000/month
+     Description: For small offices ready to get organized. Replace your
+     paper logbook with a simple digital system.
+     Limits (hardcoded gate):
+       * 1 location
+       * Up to 150 visitors/month
+       * Up to 3 departments
+       * 5 system users
+     Features available:
+       * Everything in FREE
+       * QR check-in
+       * Manual checkout
+       * Visitor purpose tracking
+       * Badge printing
+     Features still denied:
+       * Appointments
+       * Custom branding
+       * KYC / ID verification
+       * CSV export
+       * Multi-location
+       * Host email notifications
+
+1.3  PREMIUM — ₦150,000/month/location
+     Description: For growing teams that need speed plus automation.
+     Limits (hardcoded gate; admin-adjustable per 2.3):
+       * Multi-location (unlimited)
+       * Up to 500 visitors/month/location (baseline)
+       * Up to 15 departments/location
+       * 50 system users
+     Features available:
+       * Everything in STARTER
+       * QR self check-in / self check-out
+       * Repeat visitor recognition
+       * Appointments scheduling
+       * Custom branding & badge branding
+       * Host email notifications
+       * CSV export
+       * ID verification (KYC)
+       * SLA support (24h response)
+       * API access (add-on)
+     Features denied:
+       * Watchlist / flagged visitors  (Enterprise only)
+       * SSO  (Enterprise only)
+
+     IMPORTANT — PER-LOCATION PRICING:
+     The catalog price (`base_price_monthly = 150000`) is the price for
+     ONE location. The frontend MUST collect a desired location count
+     during checkout and present a quoted total of `150,000 × N` for
+     `N` locations. The backend tracks this as a single subscription
+     with `effective_price` set to the multiplied amount; the actual
+     branch cap can be raised via the application admin via
+     `tenant_cap_overrides` (see 4.4).
+
+1.4  ENTERPRISE — Custom pricing
+     Description: For organizations that need full control, compliance,
+     and integrations.
+     Limits: Unlimited (no caps).
+     Features: All of Premium plus watchlist, SSO, advanced integrations,
+     turnstiles/biometrics, custom forms, liveness check, dedicated SLA
+     (4h response), private cloud / on-premise.
+     Onboarding: Sales-led. The frontend does NOT show a "Subscribe"
+     button for Enterprise — instead show a "Contact sales" CTA that
+     opens a contact form / email link.
+
+
+================================================================================
+2. WHICH FIELDS THE PLATFORM ADMIN CAN EDIT PER TIER
+================================================================================
+
+The backend rejects any plan field outside this allowlist with HTTP 400
+(detail: `These fields are tier-locked on the {Tier} plan ...`).
+
+2.1  FREE — adjustable_cap_fields = { "max_visitors_per_month" }
+     The platform admin can ONLY adjust the monthly visitor cap. No
+     other field on Free is editable. Show a single number input on
+     the admin plan-edit screen for Free; everything else read-only.
+
+2.2  STARTER — adjustable_cap_fields = {
+       "max_visitors_per_month", "max_departments", "max_system_users"
+     }
+     Three numeric controls.
+
+2.3  PREMIUM — adjustable_cap_fields = {
+       "max_visitors_per_month", "max_departments", "max_system_users",
+       "max_branches", "max_appointments_per_month"
+     }
+     adjustable_plan_fields = {
+       "base_price_monthly", "base_price_yearly", "sla_response_hours"
+     }
+     Numeric controls + price + SLA. Pricing on Premium is per-location
+     so editing this on the catalog is rare; per-tenant pricing should
+     instead use subscription `tenant_cap_overrides` + `feature_overrides`.
+
+2.4  ENTERPRISE — adjustable_cap_fields = {all 5 cap fields}
+     adjustable_plan_fields = {
+       "base_price_monthly", "base_price_yearly", "sla_response_hours",
+       "support_tier", "custom_branding", "api_access", "priority_support"
+     }
+     Bespoke. Show full edit UI.
+
+
+================================================================================
+3. ENDPOINTS — TENANT (super_admin)
+================================================================================
+
+3.1  LIST PLANS (PUBLIC CATALOGUE)
+     GET /v1/plans?public_only=true&status=active
+     Response: list of PlanOut. Use this to render the upgrade catalogue.
+     The free plan IS public — your "Current plan" badge identifies it.
+
+3.2  GET CURRENT SUBSCRIPTION
+     GET /v1/subscriptions/tenant/{tenant_id}/active
+     Response: SubscriptionOut (or null if not provisioned yet).
+     The `plan_id` lets you cross-reference the plan catalogue.
+     Display the relevant tier badge + period_end.
+
+3.3  GET TENANT CONTEXT (PLAN SUMMARY EMBEDDED)
+     GET /v1/tenants/{tenant_id}        (super_admin scoped)
+     Response: TenantWithSummaryOut, including `plan_summary` with:
+       * plan_id, plan_name, plan_display_name, plan_tier
+       * subscription_status (active / trialing / past_due / cancelled / expired)
+       * billing_cycle, effective_price, currency
+       * current_period_end, trial_ends_at
+       * entity_caps (the resolved tenant_caps after subscription overrides)
+
+3.4  CHECK OUT — START PAYMENT
+     POST /v1/checkout/sessions
+     Body:
+       {
+         "plan_id":        "<premium plan id>",
+         "billing_cycle":  "monthly"  | "yearly",
+         "discount_ids":   ["<optional discount ids>"],
+         "preferred_provider": "stripe" | "flutterwave" | null,
+         "trial_days":     0,
+         "metadata":       { "location_count": 3 }   // for premium
+       }
+     Response 201:
+       { "checkout_session_id": "...", "redirect_url": "https://...", "status": "pending" }
+     The frontend window.location.href = redirect_url, the user pays,
+     the provider redirects back, and the webhook flips the subscription
+     to ACTIVE. Poll `GET /v1/subscriptions/tenant/{tenant_id}/active`
+     after redirect-back to confirm.
+
+3.5  CHECKOUT HISTORY
+     GET  /v1/checkout/sessions?status=succeeded   — paid history
+     GET  /v1/checkout/sessions?status=pending     — in-flight
+     GET  /v1/checkout/sessions/{id}               — detail
+     POST /v1/checkout/sessions/{id}/cancel        — cancel pending session
+
+3.6  CANCEL SUBSCRIPTION
+     POST /v1/subscriptions/cancel
+     Body:
+       { "tenant_id": "...", "reason": "...", "immediate": false }
+     `immediate=true` drops to FREE right away.
+     `immediate=false` flags for end-of-period; tenant keeps paid features
+     until `current_period_end`.
+     Frontend should show a confirmation modal explaining the difference
+     and quoting the period end date in human form.
+
+3.7  INVOICES
+     GET  /v1/invoices/tenant/{tenant_id}    — list (super_admin)
+     GET  /v1/invoices/{invoice_id}          — detail
+     GET  /v1/invoices/{invoice_id}/pdf      — download URL
+     Each invoice has `status` (draft / issued / paid / void / refunded),
+     `pdf_object_key` (or null if PDF generation deferred), `total`,
+     `period_start`, `period_end`, `line_items[]`.
+
+3.8  USAGE / QUOTA
+     GET /v1/usage/tenant/{tenant_id}/summary
+     Response: TenantUsageSummary — counts vs caps for each metered
+     resource. Use this to render quota progress bars on the dashboard
+     ("83 / 150 visitors used this month").
+
+
+================================================================================
+4. ENDPOINTS — PLATFORM ADMIN
+================================================================================
+
+4.1  LIST ALL PLANS (INCLUDING ARCHIVED)
+     GET /v1/plans?status=active        — active only
+     GET /v1/plans?status=archived      — legacy/archived
+     GET /v1/plans                      — all
+     The frontend admin plan-management screen should default to
+     `status=active` and offer an "Include archived" toggle.
+
+4.2  EDIT A CANONICAL PLAN
+     PATCH /v1/plans/{plan_id}
+     Only fields listed in section 2 for that tier are accepted.
+     Sending any other field returns:
+       400 { detail: "These fields are tier-locked on the Starter plan
+                       and cannot be edited: feature_rules, custom_branding" }
+     The frontend admin form MUST gate inputs based on tier — read the
+     tier from the plan record and disable fields outside the allowlist.
+
+4.3  ARCHIVING / DELETING CANONICAL PLANS IS BLOCKED
+     POST   /v1/plans/{plan_id}/archive — returns 400 for canonical plans
+     DELETE /v1/plans/{plan_id}         — returns 400 for canonical plans
+     The frontend should hide these actions for canonical plans.
+
+4.4  PER-TENANT OVERRIDES
+     PUT /v1/subscriptions/{subscription_id}/overrides
+     Body:
+       {
+         "feature_overrides":        { "/v1/branding/*": { "enabled": true } },
+         "crud_limit_overrides":     { "visitors": { "max_create": 1000 } },
+         "retrieval_quota_overrides":{ "dashboard": { "max_reads": 5000 } },
+         "tenant_cap_overrides":     { "max_visitors_per_month": 1000,
+                                       "max_branches": 5 }
+       }
+     Use this to give a tenant something custom WITHOUT moving them to
+     a new plan. e.g. raise Premium's branch cap for a key account.
+     Per-tenant overrides MERGE with the plan defaults at request time.
+
+4.5  PLATFORM-WIDE BILLING REPORTING
+     GET /v1/admins/dashboard/billing?start={epoch}&end={epoch}
+       — revenue, MRR, new/cancelled/active subs, invoice counts
+     GET /v1/admins/dashboard/billing/discrepancies
+       — active subs missing invoices; payments without invoices
+
+4.6  WEBHOOK INSPECTION
+     GET  /v1/payments/webhooks/events            — list stored events
+     POST /v1/payments/webhooks/replay/{event_id} — re-process
+
+4.7  SUBSCRIPTIONS LIST + FILTERS
+     GET /v1/subscriptions?status=active&billingCycle=monthly&q=...&sort=...
+     Server-driven facets are available for the `status` field via
+     `&facets=status`.
+
+4.8  MIGRATION CLI (OPS ONLY)
+     `python -m scripts.migrate_to_canonical_plans`
+     This is also auto-fired on app startup. The frontend NEVER calls
+     this — documented here for completeness.
+
+
+================================================================================
+5. RESPONSE HEADERS YOU CAN TRUST
+================================================================================
+
+Every authenticated, plan-enforced response includes:
+
+  X-Plan-Tier             — "free" | "starter" | "premium" | "enterprise"
+  X-Subscription-Status   — "active" | "trialing" | "past_due"
+                            | "cancelled" | "suspended" | "expired"
+
+Use these for client-side fast-path checks (e.g. show "Upgrade" CTAs)
+without re-fetching the plan record on every page load.
+
+
+================================================================================
+6. ERROR CODES — WHAT TO RENDER
+================================================================================
+
+402  SUBSCRIPTION_REQUIRED
+     Tenant has no active sub at all. Should never happen post-bootstrap;
+     if it does, refresh the page and retry once. Then surface a
+     "Contact support" CTA — the auto-provisioning failed.
+
+402  SUBSCRIPTION_INACTIVE
+     status is one of suspended / cancelled / expired and somehow no
+     free fallback exists. Same advice as above.
+
+402  TRIAL_EXPIRED
+     Trial ended without payment.  Surface "Add payment method to continue"
+     CTA pointing at /v1/checkout/sessions.
+
+403  FEATURE_DISABLED
+     Tier doesn't allow this endpoint. Body:
+       { code: "FEATURE_DISABLED",
+         details: "Custom branding requires Premium or Enterprise",
+         plan: "Free", tier: "free" }
+     Render an inline upgrade prompt with the `details` string and a CTA
+     to the upgrade flow.
+
+429  QUOTA_EXCEEDED
+     Numeric cap hit. Body:
+       { code: "QUOTA_EXCEEDED",
+         details: { collection: "visitors", operation: "create",
+                    current: 50, limit: 50, reset_interval: "monthly" },
+         plan: "Free", tier: "free" }
+     Render a quota-progress component with reset date and an
+     "Upgrade for more" CTA.
+
+400  TIER_LOCKED (only on PATCH /v1/plans/{id} for canonical plans)
+     Detail string lists the locked fields. Surface inline form errors.
+
+
+================================================================================
+7. CHECKOUT UX — RECOMMENDED FLOW
+================================================================================
+
+  ┌────────────────┐
+  │ 1. Show plans  │  ← GET /v1/plans?public_only=true
+  └───────┬────────┘
+          │ user clicks "Upgrade" on Premium
+          ▼
+  ┌────────────────────────┐
+  │ 2. Configure: location │  ← per-location pricing for Premium
+  │    count, billing cycle│
+  │    monthly|yearly      │
+  └───────┬────────────────┘
+          │
+          ▼
+  ┌────────────────────────┐
+  │ 3. Apply discount      │  ← optional. validate via
+  │    (optional)          │    POST /v1/discounts/validate
+  └───────┬────────────────┘
+          │
+          ▼
+  ┌────────────────────────┐
+  │ 4. Review + Pay button │
+  └───────┬────────────────┘
+          │ POST /v1/checkout/sessions
+          │ → returns redirect_url
+          ▼
+  ┌────────────────────────┐
+  │ 5. Provider checkout   │  ← Stripe / Flutterwave UI
+  │    page (full redirect)│
+  └───────┬────────────────┘
+          │ provider redirects back to /billing?session=...
+          ▼
+  ┌────────────────────────┐
+  │ 6. Confirmation screen │  ← poll
+  │                        │  GET /v1/subscriptions/tenant/{id}/active
+  │                        │  GET /v1/checkout/sessions/{session_id}
+  └────────────────────────┘
+
+Important nuances:
+  * The backend webhook updates the subscription, not the redirect.
+    Polling for up to 60s on the confirmation screen is reasonable.
+  * If the user closes the tab during step 5, the session stays
+    "pending"; show it in checkout history (3.5) so they can return.
+  * For Enterprise, skip steps 2–6 entirely and show "Contact sales".
+
+
+================================================================================
+8. PLAN-CHANGE UX (UPGRADE / DOWNGRADE / CANCEL)
+================================================================================
+
+8.1  UPGRADE FROM FREE → STARTER/PREMIUM
+     Use the checkout flow (section 7). The backend auto-expires the
+     existing FREE subscription when the paid one provisions.
+
+8.2  UPGRADE FROM STARTER → PREMIUM
+     Use the checkout flow. The backend prorates via `change_plan`
+     when the checkout webhook lands (provision_plan_change_from_checkout).
+
+8.3  DOWNGRADE FROM PREMIUM → STARTER
+     POST /v1/subscriptions/change-plan
+     Body: { tenant_id, new_plan_id: "<starter id>" }
+     This is application admin only. Frontend for tenants should
+     surface a "Contact support to downgrade" link instead of a
+     self-service downgrade button — downgrades may delete data
+     (branches above the new cap, etc.) and need a confirmation step.
+
+8.4  DOWNGRADE TO FREE (= cancel)
+     POST /v1/subscriptions/cancel { immediate: true }
+     Or POST /v1/subscriptions/cancel { immediate: false } to wait
+     until period end. Confirm the user understands:
+       * Non-HQ branches will be deactivated
+       * Paid features stop working immediately (immediate=true)
+       * Visitor logs and configs are preserved
+       * They can re-upgrade at any time
+
+8.5  RE-ACTIVATING AFTER A DROP-TO-FREE
+     A tenant who got auto-downgraded (dunning failure) can simply
+     run the standard checkout flow again. The new paid sub replaces
+     the FREE one, branches stay deactivated until the super_admin
+     reactivates them via the Branches page.
+
+
+================================================================================
+9. BILLING DASHBOARD (PLATFORM ADMIN)
+================================================================================
+
+9.1  REVENUE / MRR
+     GET /v1/admins/dashboard/billing?start={epoch}&end={epoch}
+     Defaults to last 30 days. Render line chart for daily revenue,
+     headline numbers for MRR (monthly + annual/12 derived).
+
+9.2  PLATFORM-WIDE TENANT STATS
+     GET /v1/admins/dashboard/stats
+     Tenant counts, system user counts, subscription breakdowns by
+     status & tier, plan distribution, incident & visitor metrics,
+     revenue totals, recent signups.
+
+9.3  PLATFORM SUBSCRIPTION LIST
+     GET /v1/subscriptions
+     Application admin only. Use the standard list endpoint contract
+     (q / sort / facets / filters) to render an admin table.
+
+9.4  CROSS-CHECK / DISCREPANCIES
+     GET /v1/admins/dashboard/billing/discrepancies
+     Show as an alerts panel:
+       * "Active subscription has no invoice this period" — auto-fix
+         with a "Generate invoice" action (POST /v1/invoices ...).
+       * "Payment captured but no invoice exists" — manual review
+         link.
+
+
+================================================================================
+10. WHAT NOT TO BUILD ON THE FRONTEND
+================================================================================
+
+  * Plan creation UI for tenant users.  Plans are catalog-only and
+    application admin owned.
+
+  * "Suspend tenant" UI tied to dunning.  Dunning failures auto-drop
+    to FREE; there is no SUSPENDED state for the frontend to render
+    on a routine flow. Application admin offboarding is a separate
+    `/v1/admins/tenants/{id}/offboard` action — render that on the
+    admin tenant detail page only.
+
+  * Hardcoded plan names / ids / prices.  Always read from
+    `GET /v1/plans` so tier renames or price changes ship without
+    frontend work.
+
+  * "Disable a feature on Free" toggle for application admins.  The
+    feature gates are tier-locked; the API will reject the request.
+    Show the deny list as read-only metadata.
+
+
+================================================================================
+11. CHANGE LOG (THIS RELEASE)
+================================================================================
+
+  * 4 canonical plans introduced: free / starter / premium / enterprise.
+  * `professional` and `custom` legacy tiers archived; existing
+    subscribers continue until expiry, then drop to FREE.
+  * Dunning suspension replaced with drop-to-FREE.
+  * Cancel-immediate now drops to FREE instead of leaving the tenant
+    with no active subscription.
+  * Free-plan auto-subscribe wired into:
+      * tenant bootstrap
+      * lazy provisioning in PlanEnforcementMiddleware
+      * one-shot bootstrap on app startup
+  * Per-tier editability lockdown on plan PATCH.
+  * Non-HQ branches auto-deactivated on drop-to-FREE.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

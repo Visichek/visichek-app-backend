@@ -1,9 +1,15 @@
-from typing import Annotated
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from bson import ObjectId
+from fastapi import APIRouter, Body, Depends, Header, Request, status
 from fastapi.encoders import jsonable_encoder as _fastapi_jsonable_encoder
 from fastapi.responses import JSONResponse
 
+from core.bulk import enqueue_bulk_write
+from core.database import db
+from core.idempotency import actor_scope, check_idempotency, store_idempotency
+from core.list_params import FilterDef, ListSpec, parse_list_query
+from core.list_runner import run_list
 from core.response_envelope import document_response, success_payload
 from core.settings import get_settings
 from schemas.system_user_schema import (
@@ -695,15 +701,17 @@ async def get_my_profile(
     },
 )
 async def list_system_users(
-    start: Annotated[int, Query(ge=0)] = 0,
-    stop: Annotated[int, Query(gt=0)] = 100,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
     from core.queue.precompute import PrecomputeScope, get_or_compute
 
     tenant_id = principal.tenant_id or ""
-    if start == 0 and stop == 100 and tenant_id:
+    if not tenant_id:
+        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
 
+    spec = SYSTEM_USERS_LIST_SPEC
+    if _is_default_su_listing(request):
         async def _load() -> list:
             users = await retrieve_system_users(tenant_id=tenant_id, start=0, stop=100)
             return [
@@ -713,13 +721,104 @@ async def list_system_users(
                 for u in users
             ]
 
-        return await get_or_compute(
+        cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
             resource="system_users.list",
             ttl=60,
             loader=_load,
         )
-    return await retrieve_system_users(tenant_id=tenant_id, start=start, stop=stop)
+        items = cached if isinstance(cached, list) else []
+        limited = items[: spec.default_limit]
+        return {
+            "items": limited,
+            "meta": {
+                "total": len(items),
+                "skip": 0,
+                "limit": spec.default_limit,
+                "hasMore": len(items) > spec.default_limit,
+            },
+        }
+    query = parse_list_query(request, spec)
+    return await run_list(
+        collection=db.system_users,
+        query=query,
+        base_filter={"tenant_id": tenant_id},
+        map_doc=_map_su_doc,
+        facet_runner=_su_facet,
+    )
+
+
+_SU_ROLES = frozenset(
+    {"super_admin", "dept_admin", "receptionist", "auditor", "security_officer", "dpo"}
+)
+_SU_STATUSES = frozenset({"ACTIVE", "INACTIVE", "SUSPENDED"})
+
+
+def _su_status_builder(values):
+    if "all" in values:
+        return {}
+    if len(values) == 1:
+        return {"account_status": values[0]}
+    return {"account_status": {"$in": list(values)}}
+
+
+SYSTEM_USERS_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset(
+        {"full_name", "email", "role", "date_created", "last_login_at"}
+    ),
+    default_sort=(("date_created", -1),),
+    search_fields=("full_name", "email"),
+    filters={
+        "role": FilterDef(name="role", multi=True, allowed_values=_SU_ROLES),
+        "branchId": FilterDef(name="branchId", mongo_field="branch_ids"),
+        "departmentId": FilterDef(name="departmentId", mongo_field="department_id"),
+        "accountStatus": FilterDef(
+            name="accountStatus",
+            multi=True,
+            allowed_values=frozenset({"ACTIVE", "INACTIVE", "SUSPENDED", "all"}),
+            builder=_su_status_builder,
+        ),
+    },
+    facet_fields=frozenset({"role", "accountStatus"}),
+)
+
+
+def _is_default_su_listing(request: Request) -> bool:
+    qp = request.query_params
+    if any(qp.get(k) for k in ("q", "sort", "facets")):
+        return False
+    if any(k for k in qp.keys() if k not in {"skip", "limit"}):
+        return False
+    skip_raw = qp.get("skip", "0")
+    limit_raw = qp.get("limit", str(SYSTEM_USERS_LIST_SPEC.default_limit))
+    return skip_raw in ("0", "") and limit_raw == str(SYSTEM_USERS_LIST_SPEC.default_limit)
+
+
+def _map_su_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    # Strip password_hash defensively even though it's not normally returned.
+    doc.pop("password_hash", None)
+    return doc
+
+
+async def _su_facet(
+    collection: Any, filter_doc: dict[str, Any], field: str
+) -> dict[str, int]:
+    if field == "accountStatus":
+        base = {k: v for k, v in filter_doc.items() if k != "account_status"}
+        out: dict[str, int] = {}
+        for v in _SU_STATUSES:
+            out[v] = await collection.count_documents({**base, "account_status": v})
+        out["all"] = sum(out.values())
+        return out
+    if field == "role":
+        base = {k: v for k, v in filter_doc.items() if k != "role"}
+        out = {}
+        for v in _SU_ROLES:
+            out[v] = await collection.count_documents({**base, "role": v})
+        return out
+    return {}
 
 
 @router.patch("/{user_id}")
@@ -834,3 +933,157 @@ async def delete_system_user_endpoint(
         actor_role=principal.role,
         request_id=getattr(request.state, "request_id", None),
     )
+
+
+# ─── Bulk endpoints ───────────────────────────────────────────────────
+
+
+def _su_bulk_extras(principal: AuthPrincipal) -> dict[str, Any]:
+    """Wrap actor + tenant into the bulk writer's extras envelope.
+
+    The writer must enforce same-tenant scoping per id (defence in depth)
+    so we always pass `actor_user_id` (block self-mutation in delete) and
+    `tenant_scope` (block cross-tenant attempts).
+    """
+    return {
+        "actor_user_id": principal.user_id,
+        "tenant_scope": principal.tenant_id or "",
+    }
+
+
+@router.post("/bulk/delete")
+@document_response(
+    message="Bulk system-user delete queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk delete system users",
+)
+async def bulk_delete_system_users(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+):
+    tenant_id = principal.tenant_id or ""
+    scope = actor_scope(principal.user_id, principal.role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/system-users/bulk/delete",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    response = await enqueue_bulk_write(
+        writer_key="system_user.bulk_delete",
+        ids=payload.get("ids", []),
+        resource_type="system_user",
+        extras=_su_bulk_extras(principal),
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/system-users/bulk/delete",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/bulk/deactivate")
+@document_response(
+    message="Bulk system-user deactivate queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk deactivate system users",
+)
+async def bulk_deactivate_system_users(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+):
+    tenant_id = principal.tenant_id or ""
+    scope = actor_scope(principal.user_id, principal.role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/system-users/bulk/deactivate",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    response = await enqueue_bulk_write(
+        writer_key="system_user.bulk_deactivate",
+        ids=payload.get("ids", []),
+        resource_type="system_user",
+        extras=_su_bulk_extras(principal),
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/system-users/bulk/deactivate",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/bulk/reset-password")
+@document_response(
+    message="Bulk password reset queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Force a password reset across multiple users. Each target's "
+        "tokens are revoked. The new password is generated server-side "
+        "and emailed to the user — the response never contains the "
+        "plaintext password."
+    ),
+    summary="Bulk force password reset",
+)
+async def bulk_reset_system_users_password(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+):
+    tenant_id = principal.tenant_id or ""
+    scope = actor_scope(principal.user_id, principal.role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/system-users/bulk/reset-password",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    response = await enqueue_bulk_write(
+        writer_key="system_user.bulk_reset_password",
+        ids=payload.get("ids", []),
+        resource_type="system_user",
+        extras=_su_bulk_extras(principal),
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/system-users/bulk/reset-password",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response

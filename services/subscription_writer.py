@@ -14,12 +14,14 @@ from __future__ import annotations
 import logging
 from typing import Any, List
 
+from core.bulk import run_bulk_handlers
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
 from services.subscription_service import (
     cancel_subscription,
     change_plan,
+    retrieve_subscription_by_id,
     retrieve_subscriptions_with_details,
     retrieve_tenant_active_subscription,
     subscribe_tenant,
@@ -159,6 +161,49 @@ async def _subscription_update_overrides(
     tenant_id = result.tenant_id if result else ""
     _enqueue_refresh(tenant_id)
     return {"id": result.id if result else resource_id}
+
+
+@write_handler(
+    "subscription.bulk_cancel",
+    invalidates=[
+        "subscriptions.list",
+        "subscription.active",
+        "tenants.list",
+    ],
+)
+async def _subscription_bulk_cancel(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    """Bulk cancel by subscription_id.
+
+    Each id is resolved to its tenant via ``retrieve_subscription_by_id``
+    and then cancelled via the standard ``cancel_subscription`` flow so
+    audit + plan-cache invalidation cascade correctly.
+    """
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    reason = extras.get("reason") or None
+    immediate = bool(extras.get("immediate", False))
+    tenants_seen: set[str] = set()
+
+    async def _handle(subscription_id: str) -> dict[str, Any]:
+        sub = await retrieve_subscription_by_id(subscription_id)
+        if not sub or not sub.tenant_id:
+            raise ValueError("Subscription not found")
+        tenants_seen.add(sub.tenant_id)
+        result = await cancel_subscription(
+            tenant_id=sub.tenant_id, reason=reason, immediate=immediate
+        )
+        return {
+            "id": result.id if result else subscription_id,
+            "tenant_id": sub.tenant_id,
+        }
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    for tid in tenants_seen:
+        _enqueue_refresh(tid)
+    return out
 
 
 @register_precompute("subscriptions.list", scope=PrecomputeScope.GLOBAL)

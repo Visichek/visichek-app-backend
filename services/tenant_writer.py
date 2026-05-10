@@ -11,10 +11,12 @@ from __future__ import annotations
 import logging
 from typing import Any, List
 
+from core.bulk import run_bulk_handlers
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
 from schemas.tenant_schema import TenantCreate, TenantUpdate
+from services.tenant_offboarding_service import offboard_tenant
 from services.tenant_service import (
     add_tenant,
     retrieve_tenants_with_summary,
@@ -60,6 +62,38 @@ async def _tenant_update(resource_id: str, data: dict[str, Any]) -> dict[str, An
     result = await update_tenant_by_id(tenant_id=resource_id, tenant_data=upd)
     _enqueue_list_refresh()
     return {"id": result.id, "company_name": result.company_name}
+
+
+@write_handler(
+    "tenant.bulk_offboard",
+    invalidates=[
+        "tenants.list",
+        "subscriptions.list",
+        "invoices.admin_list",
+        "audit.admin_recent",
+    ],
+)
+async def _tenant_bulk_offboard(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Iterate over the supplied tenant ids and offboard each.
+
+    Per-id results are surfaced via ``queue_job_log.result`` as a
+    ``{succeeded, failed}`` payload so the frontend can highlight rows
+    that didn't process. Atomic mode stops at the first failure.
+    """
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    reason = str(extras.get("reason") or "bulk_offboard")
+    actor_id = str(extras.get("actor_id") or "")
+
+    async def _handle(tenant_id: str) -> dict[str, Any]:
+        return await offboard_tenant(
+            tenant_id=tenant_id, reason=reason, admin_id=actor_id
+        )
+
+    result = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    _enqueue_list_refresh()
+    return result
 
 
 @register_precompute("tenants.list", scope=PrecomputeScope.GLOBAL)

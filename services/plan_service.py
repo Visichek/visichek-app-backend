@@ -97,17 +97,81 @@ async def retrieve_plans(
 async def update_plan_by_id(plan_id: str, plan_data: PlanUpdate) -> Optional[PlanOut]:
     if not ObjectId.is_valid(plan_id):
         return None
+
+    # Per-tier editability lockdown for canonical plans. Free / Starter /
+    # Premium are intentionally narrow — admins may tune cap numerics
+    # (e.g. ``max_visitors_per_month``) but not flip features that the
+    # tier is supposed to deny. Enterprise is bespoke so anything goes.
+    existing = await get_plan({"_id": ObjectId(plan_id)})
+    if existing and existing.name:
+        from config.plan_tiers import get_canonical_plan
+
+        canonical = get_canonical_plan(existing.name)
+        if canonical is not None:
+            disallowed: list[str] = []
+            sent = plan_data.model_dump(exclude_unset=True, exclude_none=True)
+
+            # tenant_caps is a nested dict — only the fields listed in
+            # ``adjustable_cap_fields`` may be sent through.
+            tenant_caps = sent.pop("tenant_caps", None)
+            if tenant_caps:
+                bad_caps = [
+                    k
+                    for k in tenant_caps.keys()
+                    if k not in canonical.adjustable_cap_fields
+                ]
+                if bad_caps:
+                    disallowed.extend(f"tenant_caps.{k}" for k in bad_caps)
+
+            # Top-level fields outside the per-tier allowlist are blocked.
+            # ``last_updated`` is allowed implicitly because the schema
+            # always sets it.
+            allow_top_level = (
+                {"last_updated", "tenant_caps"}
+                | canonical.adjustable_plan_fields
+            )
+            for key in sent.keys():
+                if key not in allow_top_level:
+                    disallowed.append(key)
+
+            if disallowed:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "These fields are tier-locked on the "
+                        f"{existing.display_name or existing.name} plan and cannot "
+                        "be edited: " + ", ".join(sorted(set(disallowed)))
+                    ),
+                )
+
     return await update_plan({"_id": ObjectId(plan_id)}, plan_data)
 
 
 async def archive_plan(plan_id: str) -> Optional[PlanOut]:
     """Soft-delete: set status to archived and hide from public.
 
+    Canonical plans (Free / Starter / Premium / Enterprise) cannot be
+    archived — archiving Free in particular would break every tenant.
     Existing subscriptions still work until they expire — only new
     subscriptions to this plan are blocked (handled by subscribe_tenant).
     """
-    archived = await update_plan_by_id(
-        plan_id,
+    from config.plan_tiers import is_canonical_plan_name
+
+    existing = await retrieve_plan_by_id(plan_id)
+    if existing and existing.name and is_canonical_plan_name(existing.name):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"The {existing.display_name or existing.name} plan is canonical "
+                "and cannot be archived."
+            ),
+        )
+
+    # Bypass the tier-editability check below by writing the status flip
+    # directly through the repo — canonical plans were already rejected
+    # above, so this only fires for legacy plans.
+    archived = await update_plan(
+        {"_id": ObjectId(plan_id)},
         PlanUpdate(status=PlanStatus.ARCHIVED, is_public=False),
     )
 

@@ -325,6 +325,18 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("branch_backfill failed at startup", exc_info=True)
 
+    # Canonical plan bootstrap. Idempotent: upserts the four canonical plans
+    # (Free / Starter / Premium / Enterprise), archives any legacy plan, and
+    # auto-subscribes any tenant without an active subscription onto Free.
+    # See services/plan_bootstrap.py for the rationale.
+    try:
+        from services.plan_bootstrap import run_full_bootstrap
+
+        plan_bootstrap_summary = await run_full_bootstrap()
+        logger.info("plan_bootstrap summary: %s", plan_bootstrap_summary)
+    except Exception:
+        logger.warning("plan_bootstrap failed at startup", exc_info=True)
+
     # Schedule retention cleanup job
     from services.retention_service import run_retention_cleanup
 
@@ -748,6 +760,7 @@ from api.v1.tenant_enum_route import (
     router as v1_tenant_enum_route_router,
 )
 from api.v1.kyc_route import router as v1_kyc_route_router
+from api.v1.saved_view_route import router as v1_saved_view_route_router
 
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
@@ -821,6 +834,7 @@ app.include_router(v1_tenant_enum_route_router, prefix="/v1")
 app.include_router(v1_tenant_enum_public_router, prefix="/v1")
 # KYC (Dojah today, pluggable). Public kiosk + webhook routes.
 app.include_router(v1_kyc_route_router, prefix="/v1")
+app.include_router(v1_saved_view_route_router, prefix="/v1")
 # App-mode payment simulator — deliberately NOT under /v1 so the URLs
 # match the checkout_url emitted by AppCheckoutPaymentProvider.
 app.include_router(app_payment_route_router)

@@ -44,6 +44,7 @@ from services import user_location_writer as _user_location_writer  # noqa: F401
 
 # Cluster 4 — billing / plans / discounts
 from services import discount_writer as _discount_writer  # noqa: F401
+from services import invoice_writer as _invoice_writer  # noqa: F401
 from services import plan_writer as _plan_writer  # noqa: F401
 from services import subscription_writer as _subscription_writer  # noqa: F401
 from services import compliance_writer as _compliance_writer  # noqa: F401
@@ -54,5 +55,11 @@ from services import compliance_writer as _compliance_writer  # noqa: F401
 from services import support_case_service as _support_case_service  # noqa: F401
 from services import support_case_writer as _support_case_writer  # noqa: F401
 
+# Cluster 9 — onboarding submissions (bulk only; single-item flows stay sync)
+from services import onboarding_writer as _onboarding_writer  # noqa: F401
+
 # Cluster 8 — visitor check-in v2: tenant enums + KYC feed-throughs
 from services import tenant_enum_writer as _tenant_enum_writer  # noqa: F401
+
+# Cluster 10 — visitor bulk-action writers
+from services import visitor_bulk_writer as _visitor_bulk_writer  # noqa: F401

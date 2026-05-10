@@ -16,7 +16,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from core.bulk import run_bulk_handlers
 from core.queue.write_pipeline import write_handler
+from schemas.support_case_schema import SupportCaseStatus
 from services.support_case_service import (
     add_support_case,
     add_support_case_message,
@@ -144,3 +146,62 @@ async def _support_case_attachment_add(
         "case_id": msg.case_id,
         "attachments": len(msg.attachments),
     }
+
+
+@write_handler(
+    "support_case.bulk_assign",
+    invalidates=["support_cases.list", "support_cases.admin_list"],
+)
+async def _support_case_bulk_assign(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    assignee_id = str(extras.get("assignee_id") or "")
+    if not assignee_id:
+        return {"succeeded": [], "failed": [], "atomic": atomic}
+
+    async def _handle(case_id: str) -> dict[str, Any]:
+        result = await assign_support_case(
+            case_id=case_id,
+            admin_id=assignee_id,
+            actor_id=assignee_id,
+            actor_role="admin",
+        )
+        return {"id": result.id if result else case_id, "assigned_to": assignee_id}
+
+    return await run_bulk_handlers(ids, _handle, atomic=atomic)
+
+
+@write_handler(
+    "support_case.bulk_transition",
+    invalidates=["support_cases.list", "support_cases.admin_list"],
+)
+async def _support_case_bulk_transition(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    target_status = extras.get("status")
+    if not target_status:
+        return {"succeeded": [], "failed": [], "atomic": atomic}
+    try:
+        status_enum = SupportCaseStatus(target_status)
+    except ValueError:
+        return {"succeeded": [], "failed": [], "atomic": atomic}
+
+    async def _handle(case_id: str) -> dict[str, Any]:
+        result = await transition_support_case(
+            case_id=case_id,
+            new_status=status_enum,
+            actor_id="bulk",
+            actor_role="admin",
+        )
+        return {
+            "id": result.id if result else case_id,
+            "status": status_enum.value,
+        }
+
+    return await run_bulk_handlers(ids, _handle, atomic=atomic)

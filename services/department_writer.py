@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any, List
 
+from core.bulk import run_bulk_handlers
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
@@ -100,6 +101,46 @@ async def _department_delete(resource_id: str, data: dict[str, Any]) -> dict[str
     await remove_department(department_id=resource_id, tenant_id=tenant_id)
     _enqueue_list_refresh(tenant_id)
     return {"id": resource_id, "deleted": True}
+
+
+@write_handler(
+    "department.bulk_delete",
+    invalidates=[
+        "departments.list",
+        "system_users.list",
+        "appointments.list",
+        "incidents.list",
+    ],
+)
+async def _department_bulk_delete(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    """Bulk delete departments.
+
+    Per the frontend contract, deleting a department that still has
+    users returns ``DEPARTMENT_HAS_USERS`` (409) on the per-id row so
+    the FE can prompt the operator to reassign first. The single-item
+    delete already enforces this; the bulk handler surfaces it.
+    """
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    tenant_scope = str(extras.get("tenant_scope") or "")
+
+    async def _handle(department_id: str) -> dict[str, Any]:
+        try:
+            await remove_department(department_id=department_id, tenant_id=tenant_scope)
+        except Exception as exc:
+            text = str(exc)
+            if "users" in text.lower() or "assigned" in text.lower():
+                raise PermissionError(f"DEPARTMENT_HAS_USERS: {text[:160]}")
+            raise
+        return {"id": department_id, "deleted": True}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    if tenant_scope:
+        _enqueue_list_refresh(tenant_scope)
+    return out
 
 
 @register_precompute("departments.list", scope=PrecomputeScope.TENANT)

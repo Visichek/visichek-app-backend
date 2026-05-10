@@ -1,7 +1,13 @@
-from typing import Annotated, Any, List
+from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from bson import ObjectId
+from fastapi import APIRouter, Body, Depends, Header, Request, status
 
+from core.bulk import enqueue_bulk_write
+from core.database import db
+from core.idempotency import actor_scope, check_idempotency, store_idempotency
+from core.list_params import FilterDef, ListSpec, parse_list_query
+from core.list_runner import run_list
 from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
@@ -18,6 +24,34 @@ from services.department_service import (
     validate_department_create,
     validate_department_update,
 )
+
+
+DEPARTMENTS_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset({"name", "code", "date_created"}),
+    default_sort=(("name", 1),),
+    search_fields=("name", "code"),
+    filters={
+        "branchId": FilterDef(name="branchId", mongo_field="branch_id"),
+    },
+    facet_fields=frozenset(),
+)
+
+
+def _is_default_dept_listing(request: Request) -> bool:
+    qp = request.query_params
+    if any(qp.get(k) for k in ("q", "sort", "facets")):
+        return False
+    if any(k for k in qp.keys() if k not in {"skip", "limit"}):
+        return False
+    skip_raw = qp.get("skip", "0")
+    limit_raw = qp.get("limit", str(DEPARTMENTS_LIST_SPEC.default_limit))
+    return skip_raw in ("0", "") and limit_raw == str(DEPARTMENTS_LIST_SPEC.default_limit)
+
+
+def _map_dept_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    return doc
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
 
@@ -89,24 +123,36 @@ async def create_department_endpoint(
     response_codes={401: "Unauthorized", 403: "Insufficient permissions"},
 )
 async def list_departments(
-    start: Annotated[int, Query(ge=0)] = 0,
-    stop: Annotated[int, Query(gt=0)] = 100,
+    request: Request,
     principal: AuthPrincipal = Depends(_admin_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
-    # First-page requests are served from the precomputed cache which is
-    # refreshed by worker-precompute for every tenant with live traffic.
-    # Non-first pages hit the live service so the cache footprint stays
-    # bounded.
-    if start == 0 and stop == 100 and tenant_id:
-        return await get_or_compute(
+    if not tenant_id:
+        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+    if _is_default_dept_listing(request):
+        cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
             resource="departments.list",
             ttl=60,
             loader=lambda: _load_departments_for_tenant(tenant_id),
         )
-    return await retrieve_departments_with_summary(
-        tenant_id=tenant_id, start=start, stop=stop
+        items = cached if isinstance(cached, list) else []
+        limited = items[: DEPARTMENTS_LIST_SPEC.default_limit]
+        return {
+            "items": limited,
+            "meta": {
+                "total": len(items),
+                "skip": 0,
+                "limit": DEPARTMENTS_LIST_SPEC.default_limit,
+                "hasMore": len(items) > DEPARTMENTS_LIST_SPEC.default_limit,
+            },
+        }
+    query = parse_list_query(request, DEPARTMENTS_LIST_SPEC)
+    return await run_list(
+        collection=db.departments,
+        query=query,
+        base_filter={"tenant_id": tenant_id},
+        map_doc=_map_dept_doc,
     )
 
 
@@ -236,3 +282,47 @@ async def delete_department_endpoint(
         actor_role=principal.role,
         request_id=getattr(request.state, "request_id", None),
     )
+
+
+@router.post("/bulk/delete")
+@document_response(
+    message="Bulk department delete queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk delete departments",
+)
+async def bulk_delete_departments(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(verify_system_user_token("super_admin")),
+):
+    tenant_id = principal.tenant_id or ""
+    scope = actor_scope(principal.user_id, principal.role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/departments/bulk/delete",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    response = await enqueue_bulk_write(
+        writer_key="department.bulk_delete",
+        ids=payload.get("ids", []),
+        resource_type="department",
+        extras={"tenant_scope": tenant_id},
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/departments/bulk/delete",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response

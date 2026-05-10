@@ -8,8 +8,14 @@ import time
 class PlanTier(str, Enum):
     FREE = "free"
     STARTER = "starter"
-    PROFESSIONAL = "professional"
+    PREMIUM = "premium"
     ENTERPRISE = "enterprise"
+    # ── Legacy ──
+    # Kept for backwards compatibility with old subscription / plan
+    # documents written before the canonical tier overhaul. New plans
+    # MUST use one of the four canonical tiers above. The migration in
+    # ``services.plan_bootstrap`` archives any plan still using these.
+    PROFESSIONAL = "professional"
     CUSTOM = "custom"
 
 

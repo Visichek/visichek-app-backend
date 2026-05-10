@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import io
+import time
 from typing import Annotated, Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Query
+from bson import ObjectId
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
+from core.csv_export import csv_response
+from core.database import db
+from core.list_params import FilterDef, ListSpec, parse_list_query
+from core.list_runner import run_list
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.response_envelope import document_response
 from repositories.audit_log_repo import count_audit_logs
@@ -20,6 +26,46 @@ from services.export_service import export_audit_logs_xlsx
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 _audit_roles = verify_system_user_token("super_admin", "auditor", "dpo")
+
+
+_AUDIT_OPERATIONS = frozenset({"create", "read", "update", "delete"})
+
+
+AUDIT_LOG_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset({"timestamp"}),
+    default_sort=(("timestamp", -1),),
+    search_fields=("action", "details_summary"),
+    filters={
+        "actorUserId": FilterDef(name="actorUserId", mongo_field="actor_id"),
+        "actorRole": FilterDef(name="actorRole", mongo_field="actor_role"),
+        "operation": FilterDef(name="operation", allowed_values=_AUDIT_OPERATIONS),
+        "resourceType": FilterDef(name="resourceType", mongo_field="resource_type"),
+        "resourceId": FilterDef(name="resourceId", mongo_field="resource_id"),
+        "tenantId": FilterDef(name="tenantId", mongo_field="tenant_id"),
+        "action": FilterDef(name="action"),
+    },
+    range_filters={"timestamp": "timestamp"},
+    facet_fields=frozenset(),
+    default_limit=50,
+)
+
+
+_DEFAULT_RANGE_SECONDS = 7 * 24 * 60 * 60
+
+
+def _ensure_default_range(filter_doc: dict[str, Any]) -> dict[str, Any]:
+    """Tenant audit listings default to the last 7 days unless the
+    caller provides an explicit ``timestampGte``/``timestampLte`` pair.
+
+    Unbounded queries on ``audit_trail`` are slow and have caused page
+    timeouts in production. Forcing a window here means the worst case
+    is bounded by the index + the 7-day slice.
+    """
+    if "timestamp" in filter_doc:
+        return filter_doc
+    now = int(time.time())
+    filter_doc["timestamp"] = {"$gte": now - _DEFAULT_RANGE_SECONDS, "$lte": now}
+    return filter_doc
 
 
 def _build_filter(
@@ -115,21 +161,18 @@ def _build_filter(
     },
 )
 async def list_audit_logs(
-    actor_id: Optional[str] = None,
-    action: Optional[str] = None,
-    resource_type: Optional[str] = None,
-    resource_id: Optional[str] = None,
-    date_from: Optional[int] = None,
-    date_to: Optional[int] = None,
-    start: Annotated[int, Query(ge=0)] = 0,
-    stop: Annotated[int, Query(gt=0)] = 100,
+    request: Request,
     principal: AuthPrincipal = Depends(_audit_roles),
 ):
     tenant_id = principal.tenant_id or ""
-    unfiltered = not (
-        actor_id or action or resource_type or resource_id or date_from or date_to
-    )
-    if unfiltered and start == 0 and stop == 100 and tenant_id:
+    qp = request.query_params
+    legacy_keys = {"actor_id", "action", "resource_type", "resource_id", "date_from", "date_to", "start", "stop"}
+    new_keys = {"actorUserId", "actorRole", "operation", "resourceType", "resourceId", "tenantId", "timestampGte", "timestampLte", "q", "sort", "facets", "skip", "limit"}
+    has_new_param = any(k in qp for k in new_keys if qp.get(k))
+    has_legacy = any(k in qp for k in legacy_keys if qp.get(k))
+
+    # Fast-path precompute is only used for the default unfiltered view.
+    if not has_new_param and not has_legacy and tenant_id:
         return await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
             resource="audit.recent",
@@ -137,18 +180,42 @@ async def list_audit_logs(
             loader=lambda: _load_audit_recent_for_tenant(tenant_id),
         )
 
-    filter_dict = _build_filter(
-        {"tenant_id": tenant_id} if tenant_id else {},
-        actor_id=actor_id,
-        action=action,
-        resource_type=resource_type,
-        resource_id=resource_id,
-        date_from=date_from,
-        date_to=date_to,
+    # Legacy compatibility path — keep returning the old shape for clients
+    # that haven't migrated yet.
+    if has_legacy:
+        legacy_filter = _build_filter(
+            {"tenant_id": tenant_id} if tenant_id else {},
+            actor_id=qp.get("actor_id"),
+            action=qp.get("action"),
+            resource_type=qp.get("resource_type"),
+            resource_id=qp.get("resource_id"),
+            date_from=int(qp["date_from"]) if qp.get("date_from") else None,
+            date_to=int(qp["date_to"]) if qp.get("date_to") else None,
+        )
+        start = int(qp.get("start", "0"))
+        stop = int(qp.get("stop", "100"))
+        logs = await retrieve_audit_logs_with_summary(
+            legacy_filter, start=start, stop=stop
+        )
+        total = await count_audit_logs(legacy_filter)
+        return {"items": logs, "total": total}
+
+    query = parse_list_query(request, AUDIT_LOG_LIST_SPEC)
+    base_filter: dict[str, Any] = {}
+    if tenant_id:
+        base_filter["tenant_id"] = tenant_id
+    return await run_list(
+        collection=db.audit_trail,
+        query=query,
+        base_filter=base_filter,
+        map_doc=_map_audit_doc,
     )
-    logs = await retrieve_audit_logs_with_summary(filter_dict, start=start, stop=stop)
-    total = await count_audit_logs(filter_dict)
-    return {"items": logs, "total": total}
+
+
+def _map_audit_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    return doc
 
 
 @router.get("/admin")
@@ -243,6 +310,48 @@ def _audit_export_filename(prefix: str) -> str:
 
     stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%SZ")
     return f"{prefix}-{stamp}.xlsx"
+
+
+@router.get("/csv")
+async def export_tenant_audit_logs_csv(
+    request: Request,
+    principal: AuthPrincipal = Depends(_audit_roles),
+):
+    """Streaming CSV export — same filters as the list endpoint.
+
+    Returned columns are documented in tables.txt; values are escaped
+    against CSV-formula injection per OWASP CWE-1236.
+    """
+    tenant_id = principal.tenant_id or ""
+    query = parse_list_query(request, AUDIT_LOG_LIST_SPEC)
+    base_filter: dict[str, Any] = {}
+    if tenant_id:
+        base_filter["tenant_id"] = tenant_id
+    filter_doc = query.to_mongo(base_filter)
+    _ensure_default_range(filter_doc)
+    cursor = db.audit_trail.find(filter_doc).sort(query.mongo_sort()).limit(10000)
+
+    async def _row_iter():
+        async for doc in cursor:
+            doc["_id"] = str(doc["_id"]) if isinstance(doc.get("_id"), ObjectId) else doc.get("_id")
+            yield doc
+
+    columns = [
+        "_id",
+        "timestamp",
+        "actor_id",
+        "actor_role",
+        "action",
+        "resource_type",
+        "resource_id",
+        "tenant_id",
+        "request_id",
+    ]
+    return csv_response(
+        rows=_row_iter(),
+        columns=columns,
+        filename=f"audit-logs-{tenant_id or 'platform'}",
+    )
 
 
 @router.get("/export")

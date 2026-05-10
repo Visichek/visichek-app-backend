@@ -138,6 +138,32 @@ async def ensure_default_branch(tenant_id: str, company_name: str) -> BranchOut:
     return await create_branch(branch_data)
 
 
+async def lock_down_to_hq(tenant_id: str) -> int:
+    """Deactivate every non-HQ branch for a tenant.
+
+    Called when a tenant's subscription drops to the Free plan (which
+    only allows one location). The HQ branch is kept ACTIVE; everything
+    else is flipped to ``status=inactive`` so existing flows that filter
+    by status (visitors, kiosks, dashboards) naturally exclude them.
+
+    Returns the number of branches deactivated. Idempotent — branches
+    already inactive are skipped.
+    """
+    from core.database import db as _db
+    import time as _time
+
+    now = int(_time.time())
+    result = await _db["branches"].update_many(
+        {
+            "tenant_id": tenant_id,
+            "is_headquarters": {"$ne": True},
+            "status": "active",
+        },
+        {"$set": {"status": "inactive", "last_updated": now}},
+    )
+    return getattr(result, "modified_count", 0) or 0
+
+
 async def _enforce_branch_cap(tenant_id: str) -> None:
     """Check if tenant has reached their plan's max_branches limit."""
     try:

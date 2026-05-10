@@ -238,20 +238,54 @@ async def _increment_dunning_attempt(subscription: SubscriptionOut, now: int) ->
 
 async def _suspend_subscription(subscription: SubscriptionOut, now: int) -> None:
     """
-    Helper to suspend a subscription after max dunning attempts reached.
-    """
-    logger.info(f"Suspending subscription {subscription.id} after max dunning attempts")
+    Drop a tenant onto the Free plan after max dunning attempts.
 
-    update = SubscriptionUpdate(
-        status=SubscriptionStatus.SUSPENDED,
-        last_renewal_attempt_at=now,
-        last_updated=now,
+    Previous behaviour set ``status=SUSPENDED`` and left the tenant
+    with no usable subscription, which caused every API request to
+    return 402 SUBSCRIPTION_REQUIRED. We now downgrade to Free instead
+    so visitor logging keeps working — the tenant loses access to the
+    paid features they stopped paying for, but core operations stay
+    available. The ledger row is preserved (status flips to EXPIRED
+    inside ``transition_tenant_to_free_plan``) for billing reporting.
+    """
+    logger.info(
+        "Downgrading subscription %s to Free after max dunning attempts",
+        subscription.id,
     )
 
+    # Stamp the failed renewal attempt timestamp so the dunning log
+    # reflects the final attempt before drop-to-free.
     await update_subscription(
         filter_dict={"_id": ObjectId(subscription.id)},
-        sub_data=update,
+        sub_data=SubscriptionUpdate(
+            last_renewal_attempt_at=now,
+            last_updated=now,
+        ),
     )
+
+    try:
+        from services.subscription_service import transition_tenant_to_free_plan
+
+        await transition_tenant_to_free_plan(
+            tenant_id=subscription.tenant_id,
+            reason="Max dunning attempts reached",
+            actor_id="system",
+            actor_role="system",
+        )
+    except Exception:
+        logger.exception(
+            "Drop-to-free failed for subscription %s; leaving SUSPENDED",
+            subscription.id,
+        )
+        # Fall back to the legacy SUSPENDED status if the transition
+        # blows up so we at least mark the sub as no longer active.
+        await update_subscription(
+            filter_dict={"_id": ObjectId(subscription.id)},
+            sub_data=SubscriptionUpdate(
+                status=SubscriptionStatus.SUSPENDED,
+                last_updated=now,
+            ),
+        )
 
 
 async def _queue_dunning_email(

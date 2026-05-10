@@ -155,7 +155,9 @@ async def subscribe_tenant(
     if plan.status != PlanStatus.ACTIVE:
         raise HTTPException(status_code=400, detail="Plan is not active")
 
-    # Check if tenant already has an active subscription
+    # Check if tenant already has an active subscription. The free plan
+    # is the platform default — we auto-expire it here so the tenant can
+    # cleanly upgrade to a paid plan without first calling /cancel.
     existing = await get_subscription(
         {
             "tenant_id": tenant_id,
@@ -168,10 +170,34 @@ async def subscribe_tenant(
         }
     )
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Tenant already has an active subscription. Use change_plan or cancel first.",
-        )
+        from config.plan_tiers import FREE_PLAN_NAME
+
+        existing_plan = await get_plan({"_id": ObjectId(existing.plan_id)}) if (
+            existing.plan_id and ObjectId.is_valid(existing.plan_id)
+        ) else None
+        is_free_plan = bool(existing_plan and existing_plan.name == FREE_PLAN_NAME)
+
+        if not is_free_plan:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Tenant already has an active subscription. "
+                    "Use change_plan or cancel first."
+                ),
+            )
+
+        # Free → paid upgrade: expire the free sub so the new paid one
+        # becomes the single active subscription.
+        if existing.id:
+            await update_subscription(
+                {"_id": ObjectId(existing.id)},
+                SubscriptionUpdate(
+                    status=SubscriptionStatus.EXPIRED,
+                    cancelled_at=int(time.time()),
+                    cancellation_reason="Upgraded to paid plan",
+                    current_period_end=int(time.time()),
+                ),
+            )
 
     # Calculate pricing with discounts
     now = int(time.time())
@@ -552,24 +578,65 @@ async def cancel_subscription(
     reason: Optional[str] = None,
     immediate: bool = False,
 ) -> Optional[SubscriptionOut]:
-    """Cancel a tenant's subscription."""
+    """Cancel a tenant's subscription.
+
+    With ``immediate=True``, the tenant is downgraded to the Free plan
+    right away (so visitor logging keeps working — see
+    ``transition_tenant_to_free_plan`` for the exact side effects).
+
+    With ``immediate=False`` (default), the subscription is flagged as
+    cancelled but remains ACTIVE until ``current_period_end``. The
+    renewal scheduler will then refuse to renew it and the dunning
+    sweep eventually fires the drop-to-free transition naturally.
+    """
     current = await retrieve_tenant_active_subscription(tenant_id)
     if not current:
         raise HTTPException(status_code=404, detail="No active subscription to cancel")
 
-    now = int(time.time())
-    new_status = (
-        SubscriptionStatus.CANCELLED if immediate else SubscriptionStatus.ACTIVE
-    )
+    if immediate:
+        # The previous "set status=CANCELLED and stop" behaviour broke
+        # the tenant entirely (no active sub → 402 SUBSCRIPTION_REQUIRED
+        # on every request). Drop to Free instead so visitor logging
+        # remains available even after immediate cancellation.
+        await update_subscription(
+            {"_id": ObjectId(current.id)},
+            SubscriptionUpdate(
+                status=SubscriptionStatus.CANCELLED,
+                cancelled_at=int(time.time()),
+                cancellation_reason=reason,
+                current_period_end=int(time.time()),
+            ),
+        )
+        try:
+            await record_audit_event(
+                actor_id="system",
+                actor_role="admin",
+                action="subscription.cancelled",
+                resource_type="subscription",
+                resource_id=str(current.id),
+                tenant_id=tenant_id,
+                details={
+                    "reason": reason,
+                    "immediate": True,
+                    "plan_id": str(current.plan_id),
+                },
+            )
+        except Exception:
+            pass
 
+        return await transition_tenant_to_free_plan(
+            tenant_id=tenant_id,
+            reason=reason or "Immediate cancellation",
+        )
+
+    # Soft cancel — flag for end-of-period and let renewal handle the
+    # drop-to-free at expiry.
+    now = int(time.time())
     update_data = SubscriptionUpdate(
-        status=new_status,
+        status=SubscriptionStatus.ACTIVE,
         cancelled_at=now,
         cancellation_reason=reason,
     )
-    if immediate:
-        update_data.current_period_end = now
-
     updated = await update_subscription(
         {"_id": ObjectId(current.id)},
         update_data,
@@ -586,7 +653,7 @@ async def cancel_subscription(
             tenant_id=tenant_id,
             details={
                 "reason": reason,
-                "immediate": immediate,
+                "immediate": False,
                 "plan_id": str(current.plan_id),
             },
         )
@@ -598,6 +665,128 @@ async def cancel_subscription(
     await invalidate_tenant_plan_cache(tenant_id)
 
     return updated
+
+
+async def transition_tenant_to_free_plan(
+    tenant_id: str,
+    *,
+    reason: str,
+    actor_id: str = "system",
+    actor_role: str = "admin",
+) -> Optional[SubscriptionOut]:
+    """Drop a tenant onto the Free plan.
+
+    Used by:
+        * cancel-immediate (replaces the previous "set status=cancelled and
+          stop here" behaviour — tenants always retain a working free-tier
+          subscription)
+        * dunning suspension (replaces the previous "set status=SUSPENDED"
+          behaviour — tenants retain access to manual visitor logging)
+        * trial conversion failure
+        * scripted backfill / migrations
+
+    Side effects (in order):
+        1. Mark the tenant's current ACTIVE/TRIALING/PAST_DUE sub as
+           ``EXPIRED`` so historical reporting can tell when the paid
+           plan ended.
+        2. Create a fresh free-plan subscription (price 0, period set
+           100 years out so the renewal scheduler ignores it).
+        3. Lock down all non-HQ branches to ``inactive`` (Free is single-location).
+        4. Invalidate the tenant's plan cache.
+
+    Returns the new free-plan subscription, or None if the free plan
+    record is missing (which should never happen post-bootstrap).
+    """
+    from config.plan_tiers import FREE_PLAN_NAME
+    from repositories.plan_repo import get_plan
+    from services.branch_service import lock_down_to_hq
+    from services.plan_cache_service import invalidate_tenant_plan_cache
+
+    free_plan = await get_plan({"name": FREE_PLAN_NAME})
+    if not free_plan or not free_plan.id:
+        # The bootstrap has not run yet — nothing we can do here.
+        return None
+
+    now = int(time.time())
+
+    # 1. Expire any existing active / trialing / past_due / paused sub.
+    existing = await get_subscription(
+        {
+            "tenant_id": tenant_id,
+            "status": {
+                "$in": [
+                    SubscriptionStatus.ACTIVE.value,
+                    SubscriptionStatus.TRIALING.value,
+                    SubscriptionStatus.PAST_DUE.value,
+                    SubscriptionStatus.SUSPENDED.value,
+                ]
+            },
+        }
+    )
+    if existing and existing.id:
+        # Skip the expire step if we're already on the free plan.
+        if str(existing.plan_id) != str(free_plan.id):
+            await update_subscription(
+                {"_id": ObjectId(existing.id)},
+                SubscriptionUpdate(
+                    status=SubscriptionStatus.EXPIRED,
+                    cancelled_at=now,
+                    cancellation_reason=reason,
+                    current_period_end=now,
+                ),
+            )
+        else:
+            # Already on free — nothing to transition.
+            return existing
+
+    # 2. Create the fresh free subscription. ~100 years in the future
+    # keeps the renewal scheduler from picking it up.
+    far_future = now + (100 * 365 * 24 * 60 * 60)
+    sub_data = SubscriptionCreate(
+        tenant_id=tenant_id,
+        plan_id=free_plan.id,
+        status=SubscriptionStatus.ACTIVE,
+        billing_cycle=BillingCycle.MONTHLY,
+        effective_price=0.0,
+        currency="NGN",
+        trial_ends_at=None,
+        current_period_start=now,
+        current_period_end=far_future,
+        admin_notes=f"Auto-downgraded to Free: {reason}",
+    )
+    new_sub = await create_subscription(sub_data)
+
+    # 3. Lock down branches to HQ. Best-effort.
+    try:
+        await lock_down_to_hq(tenant_id)
+    except Exception:
+        pass
+
+    # 4. Invalidate plan cache so next request sees free-tier gates.
+    try:
+        await invalidate_tenant_plan_cache(tenant_id)
+    except Exception:
+        pass
+
+    # 5. Audit.
+    try:
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role,
+            action="subscription.downgraded_to_free",
+            resource_type="subscription",
+            resource_id=str(new_sub.id) if new_sub.id else "",
+            tenant_id=tenant_id,
+            details={
+                "reason": reason,
+                "previous_subscription_id": existing.id if existing else None,
+                "previous_plan_id": existing.plan_id if existing else None,
+            },
+        )
+    except Exception:
+        pass
+
+    return new_sub
 
 
 async def update_subscription_overrides(

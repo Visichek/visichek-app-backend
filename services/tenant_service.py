@@ -112,6 +112,24 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
         await delete_tenant({"_id": ObjectId(tenant.id)})
         raise
 
+    # 5b. Auto-subscribe the new tenant to the Free plan so plan
+    # enforcement has something to resolve from the very first request.
+    # Best-effort — a failure is logged but does not roll back the
+    # tenant; the periodic ``run_full_bootstrap`` re-runs and will
+    # backfill any tenant that slipped through.
+    try:
+        from services.plan_bootstrap import ensure_tenant_default_subscription
+
+        await ensure_tenant_default_subscription(tenant_id=tenant.id or "")
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "free-plan auto-subscribe failed for tenant_id=%s",
+            tenant.id,
+            exc_info=True,
+        )
+
     # 5. Seed tenant-configurable enums (purpose-of-visit, id_type, ...)
     # so the kiosk has a sensible default picker before the super_admin
     # ever touches the configuration UI. Best-effort — a seed failure

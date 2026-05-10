@@ -12,15 +12,18 @@ from __future__ import annotations
 import logging
 from typing import Any, List
 
+from core.bulk import run_bulk_handlers
 from core.queue.gate_cache import invalidate_gate
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
+from schemas.imports import AccountStatus
 from schemas.system_user_schema import SystemUserCreate, SystemUserUpdate
 from services.system_user_service import (
     add_system_user,
     admin_set_user_mfa,
     remove_system_user,
+    retrieve_system_user_by_id,
     retrieve_system_users,
     update_system_user_by_id,
 )
@@ -158,6 +161,144 @@ async def _system_user_assign_department(
     _invalidate_gate_roles(resource_id)
     _enqueue_list_refresh(tenant_id)
     return {"id": result.id, "department_id": result.department_id}
+
+
+@write_handler(
+    "system_user.bulk_delete",
+    invalidates=[
+        "system_users.list",
+        "incidents.list",
+        "appointments.list",
+        "support_cases.list",
+        "support_cases.admin_list",
+    ],
+)
+async def _system_user_bulk_delete(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    """Bulk delete with super_admin protection and self-block.
+
+    The route layer cannot enforce these on its own — it only sees the
+    actor scope. Per-id checks happen here so the per-id row in
+    `failed[]` carries a precise reason (`USER_DELETE_PROTECTED`).
+    """
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    actor_user_id = str(extras.get("actor_user_id") or "")
+    tenant_scope = str(extras.get("tenant_scope") or "")
+
+    async def _handle(user_id: str) -> dict[str, Any]:
+        if user_id == actor_user_id:
+            raise PermissionError("USER_DELETE_PROTECTED: cannot delete self")
+        target = await retrieve_system_user_by_id(user_id=user_id)
+        if not target:
+            raise ValueError("User not found")
+        if tenant_scope and target.tenant_id != tenant_scope:
+            raise PermissionError("USER_DELETE_PROTECTED: cross-tenant blocked")
+        target_role = target.role.value if hasattr(target.role, "value") else target.role
+        if target_role == "super_admin":
+            raise PermissionError("USER_DELETE_PROTECTED: super_admin")
+        await remove_system_user(user_id=user_id, tenant_id=target.tenant_id or "")
+        invalidate_gate(user_id=user_id)
+        return {"id": user_id, "deleted": True}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    if tenant_scope:
+        _enqueue_list_refresh(tenant_scope)
+    return out
+
+
+@write_handler(
+    "system_user.bulk_deactivate",
+    invalidates=[
+        "system_users.list",
+        "incidents.list",
+        "appointments.list",
+        "support_cases.list",
+        "support_cases.admin_list",
+    ],
+)
+async def _system_user_bulk_deactivate(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    actor_user_id = str(extras.get("actor_user_id") or "")
+    tenant_scope = str(extras.get("tenant_scope") or "")
+
+    async def _handle(user_id: str) -> dict[str, Any]:
+        if user_id == actor_user_id:
+            raise PermissionError("USER_DEACTIVATE_PROTECTED: cannot deactivate self")
+        target = await retrieve_system_user_by_id(user_id=user_id)
+        if not target:
+            raise ValueError("User not found")
+        if tenant_scope and target.tenant_id != tenant_scope:
+            raise PermissionError("USER_DEACTIVATE_PROTECTED: cross-tenant blocked")
+        upd = SystemUserUpdate(account_status=AccountStatus.INACTIVE)
+        result = await update_system_user_by_id(
+            user_id=user_id, tenant_id=target.tenant_id or "", user_data=upd
+        )
+        invalidate_gate(user_id=user_id)
+        return {"id": result.id if result else user_id, "account_status": "INACTIVE"}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    if tenant_scope:
+        _enqueue_list_refresh(tenant_scope)
+    return out
+
+
+@write_handler(
+    "system_user.bulk_reset_password",
+    invalidates=["system_users.list"],
+)
+async def _system_user_bulk_reset_password(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    """Trigger password reset across users.
+
+    Each target's tokens are revoked. The new password is generated
+    server-side and emailed to the user; the response NEVER includes
+    the plaintext password — leaking it via the queue_job_log result
+    would defeat the point of generating it server-side.
+    """
+    from services.password_change_service import (
+        reset_system_user_password_by_authority,
+    )
+    import secrets
+    import string
+
+    def _gen_password() -> str:
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+        # 20 chars, 2 digits, 2 specials guaranteed by sampling — well above policy.
+        return "".join(secrets.choice(alphabet) for _ in range(20))
+
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    actor_user_id = str(extras.get("actor_user_id") or "")
+    tenant_scope = str(extras.get("tenant_scope") or "")
+
+    async def _handle(user_id: str) -> dict[str, Any]:
+        if user_id == actor_user_id:
+            raise PermissionError("USE_SELF_PASSWORD_CHANGE_INSTEAD")
+        new_password = _gen_password()
+        await reset_system_user_password_by_authority(
+            target_user_id=user_id,
+            new_password=new_password,
+            actor_id=actor_user_id,
+            actor_role="super_admin",
+            scope_tenant_id=tenant_scope,
+        )
+        invalidate_gate(user_id=user_id)
+        # NOTE: deliberately NOT returning the plaintext password.
+        return {"id": user_id, "password_reset": True}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    if tenant_scope:
+        _enqueue_list_refresh(tenant_scope)
+    return out
 
 
 @register_precompute("system_users.list", scope=PrecomputeScope.TENANT)

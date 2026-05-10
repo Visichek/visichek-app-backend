@@ -9,9 +9,15 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from bson import ObjectId
+from fastapi import APIRouter, Body, Depends, Header, Query, Request, status
 
+from core.bulk import enqueue_bulk_write
+from core.database import db
 from core.errors import AppException, ErrorCode
+from core.idempotency import actor_scope, check_idempotency, store_idempotency
+from core.list_params import FilterDef, ListSpec, parse_list_query
+from core.list_runner import run_list
 from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
@@ -37,6 +43,66 @@ from services.support_case_service import (
     retrieve_support_cases,
 )
 
+
+_SUPPORT_STATUSES = frozenset(
+    {"open", "acknowledged", "in_progress", "awaiting_tenant", "resolved", "closed", "reopened"}
+)
+_SUPPORT_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
+
+
+SUPPORT_CASES_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset(
+        {"date_created", "sla_deadline", "priority", "status", "last_updated"}
+    ),
+    default_sort=(("date_created", -1),),
+    search_fields=("title", "summary", "case_number"),
+    filters={
+        "status": FilterDef(name="status", multi=True, allowed_values=_SUPPORT_STATUSES),
+        "priority": FilterDef(name="priority", multi=True, allowed_values=_SUPPORT_PRIORITIES),
+        "tenantId": FilterDef(name="tenantId", mongo_field="tenant_id"),
+        "assigneeId": FilterDef(name="assigneeId", mongo_field="assigned_admin_id"),
+        "category": FilterDef(name="category"),
+        "supportTier": FilterDef(name="supportTier", mongo_field="support_tier"),
+        "slaState": FilterDef(
+            name="slaState",
+            allowed_values=frozenset({"on_track", "at_risk", "breached"}),
+            builder=lambda vs: {"sla_state": vs[0]} if len(vs) == 1 else {"sla_state": {"$in": list(vs)}},
+        ),
+    },
+    range_filters={"createdAt": "date_created"},
+    facet_fields=frozenset({"status"}),
+)
+
+
+def _is_default_sc_listing(request: Request) -> bool:
+    qp = request.query_params
+    if any(qp.get(k) for k in ("q", "sort", "facets")):
+        return False
+    if any(k for k in qp.keys() if k not in {"skip", "limit"}):
+        return False
+    skip_raw = qp.get("skip", "0")
+    limit_raw = qp.get("limit", str(SUPPORT_CASES_LIST_SPEC.default_limit))
+    return skip_raw in ("0", "") and limit_raw == str(SUPPORT_CASES_LIST_SPEC.default_limit)
+
+
+def _map_sc_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def _sc_status_facet(
+    collection: Any, filter_doc: dict[str, Any], field: str
+) -> dict[str, int]:
+    if field != "status":
+        return {}
+    base = {k: v for k, v in filter_doc.items() if k != "status"}
+    out: dict[str, int] = {}
+    for v in _SUPPORT_STATUSES:
+        out[v] = await collection.count_documents({**base, "status": v})
+    out["all"] = sum(out.values())
+    return out
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admins/support-cases", tags=["Application Admin Support"])
@@ -58,42 +124,34 @@ async def _load_admin_cases(_: str) -> list:
     include_meta=True,
 )
 async def admin_list_support_cases(
-    start: Annotated[int, Query(ge=0)] = 0,
-    stop: Annotated[int, Query(gt=0)] = 100,
-    status_filter: Annotated[Optional[str], Query(alias="status")] = None,
-    priority: Annotated[Optional[str], Query()] = None,
-    category: Annotated[Optional[str], Query()] = None,
-    tenant_id: Annotated[Optional[str], Query()] = None,
-    assigned_admin_id: Annotated[Optional[str], Query()] = None,
-    support_tier: Annotated[Optional[str], Query()] = None,
+    request: Request,
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> Any:
     _ = admin
-    if (
-        start == 0
-        and stop == 100
-        and status_filter is None
-        and priority is None
-        and category is None
-        and tenant_id is None
-        and assigned_admin_id is None
-        and support_tier is None
-    ):
-        return await get_or_compute(
+    if _is_default_sc_listing(request):
+        cached = await get_or_compute(
             scope_key=PrecomputeScope.GLOBAL.value,
             resource="support_cases.admin_list",
             ttl=60,
             loader=lambda: _load_admin_cases(""),
         )
-    return await retrieve_support_cases(
-        tenant_id=tenant_id,
-        status=status_filter,
-        priority=priority,
-        category=category,
-        assigned_admin_id=assigned_admin_id,
-        support_tier=support_tier,
-        start=start,
-        stop=stop,
+        items = cached if isinstance(cached, list) else []
+        limited = items[: SUPPORT_CASES_LIST_SPEC.default_limit]
+        return {
+            "items": limited,
+            "meta": {
+                "total": len(items),
+                "skip": 0,
+                "limit": SUPPORT_CASES_LIST_SPEC.default_limit,
+                "hasMore": len(items) > SUPPORT_CASES_LIST_SPEC.default_limit,
+            },
+        }
+    query = parse_list_query(request, SUPPORT_CASES_LIST_SPEC)
+    return await run_list(
+        collection=db.support_cases,
+        query=query,
+        map_doc=_map_sc_doc,
+        facet_runner=_sc_status_facet,
     )
 
 
@@ -343,6 +401,133 @@ async def admin_register_support_case_attachment(
         actor_id=admin.id,
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),
+    )
+
+
+# ─── Bulk endpoints ───────────────────────────────────────────────────
+
+
+@router.post("/bulk/assign")
+@document_response(
+    message="Bulk assign queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk assign cases",
+)
+async def bulk_assign_cases(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    actor_id = admin.id or ""
+    actor_role = "admin"
+    scope = actor_scope(actor_id, actor_role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/admins/support-cases/bulk/assign",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    assignee_id = str(payload.get("assigneeId") or "")[:64]
+    if not assignee_id:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="assigneeId is required",
+        )
+    response = await enqueue_bulk_write(
+        writer_key="support_case.bulk_assign",
+        ids=payload.get("ids", []),
+        resource_type="support_case",
+        extras={"assignee_id": assignee_id},
+        atomic=bool(payload.get("atomic", False)),
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/admins/support-cases/bulk/assign",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/bulk/status")
+@document_response(
+    message="Bulk status change queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk transition cases",
+)
+async def bulk_transition_cases(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    actor_id = admin.id or ""
+    actor_role = "admin"
+    scope = actor_scope(actor_id, actor_role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/admins/support-cases/bulk/status",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    target_status = str(payload.get("status") or "")
+    if target_status not in _SUPPORT_STATUSES:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="status is required and must be a valid SupportCaseStatus",
+            details={"allowed": sorted(_SUPPORT_STATUSES)},
+        )
+    response = await enqueue_bulk_write(
+        writer_key="support_case.bulk_transition",
+        ids=payload.get("ids", []),
+        resource_type="support_case",
+        extras={"status": target_status},
+        atomic=bool(payload.get("atomic", False)),
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/admins/support-cases/bulk/status",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/bulk/close")
+@document_response(
+    message="Bulk close queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk close cases",
+)
+async def bulk_close_cases(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    payload["status"] = "closed"
+    return await bulk_transition_cases(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        admin=admin,
     )
 
 

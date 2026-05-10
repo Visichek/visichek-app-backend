@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, List
 
+from core.bulk import run_bulk_handlers
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
@@ -58,6 +59,38 @@ async def _discount_delete(resource_id: str, data: dict[str, Any]) -> dict[str, 
     await remove_discount(discount_id=resource_id)
     _enqueue_list_refresh()
     return {"id": resource_id, "deleted": True}
+
+
+@write_handler("discount.bulk_disable", invalidates=["discounts.list"])
+async def _discount_bulk_disable(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+
+    async def _handle(discount_id: str) -> dict[str, Any]:
+        result = await disable_discount(discount_id=discount_id)
+        return {"id": result.id if result else discount_id, "status": "disabled"}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    _enqueue_list_refresh()
+    return out
+
+
+@write_handler("discount.bulk_delete", invalidates=["discounts.list"])
+async def _discount_bulk_delete(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+
+    async def _handle(discount_id: str) -> dict[str, Any]:
+        await remove_discount(discount_id=discount_id)
+        return {"id": discount_id, "deleted": True}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    _enqueue_list_refresh()
+    return out
 
 
 @register_precompute("discounts.list", scope=PrecomputeScope.GLOBAL)

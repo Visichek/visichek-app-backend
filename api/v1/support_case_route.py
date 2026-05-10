@@ -12,11 +12,15 @@ breach-tracking log. "Support cases" are platform-level support threads.
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, List
 
+from bson import ObjectId
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.database import db
 from core.errors import AppException, ErrorCode
+from core.list_params import FilterDef, ListSpec, parse_list_query
+from core.list_runner import run_list
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
@@ -38,6 +42,63 @@ from services.support_case_service import (
     retrieve_support_case_by_id,
     retrieve_support_cases,
 )
+
+
+_SUPPORT_STATUSES = frozenset(
+    {"open", "acknowledged", "in_progress", "awaiting_tenant", "resolved", "closed", "reopened"}
+)
+_SUPPORT_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
+
+
+SUPPORT_CASES_TENANT_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset(
+        {"date_created", "sla_deadline", "priority", "status", "last_updated"}
+    ),
+    default_sort=(("date_created", -1),),
+    search_fields=("title", "summary", "case_number"),
+    filters={
+        "status": FilterDef(name="status", multi=True, allowed_values=_SUPPORT_STATUSES),
+        "priority": FilterDef(name="priority", multi=True, allowed_values=_SUPPORT_PRIORITIES),
+        "category": FilterDef(name="category"),
+        "slaState": FilterDef(
+            name="slaState",
+            allowed_values=frozenset({"on_track", "at_risk", "breached"}),
+            builder=lambda vs: {"sla_state": vs[0]} if len(vs) == 1 else {"sla_state": {"$in": list(vs)}},
+        ),
+    },
+    range_filters={"createdAt": "date_created"},
+    facet_fields=frozenset({"status"}),
+)
+
+
+def _is_default_sc_listing(request: Request) -> bool:
+    qp = request.query_params
+    if any(qp.get(k) for k in ("q", "sort", "facets")):
+        return False
+    if any(k for k in qp.keys() if k not in {"skip", "limit"}):
+        return False
+    skip_raw = qp.get("skip", "0")
+    limit_raw = qp.get("limit", str(SUPPORT_CASES_TENANT_LIST_SPEC.default_limit))
+    return skip_raw in ("0", "") and limit_raw == str(SUPPORT_CASES_TENANT_LIST_SPEC.default_limit)
+
+
+def _map_sc_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def _sc_status_facet(
+    collection: Any, filter_doc: dict[str, Any], field: str
+) -> dict[str, int]:
+    if field != "status":
+        return {}
+    base = {k: v for k, v in filter_doc.items() if k != "status"}
+    out: dict[str, int] = {}
+    for v in _SUPPORT_STATUSES:
+        out[v] = await collection.count_documents({**base, "status": v})
+    out["all"] = sum(out.values())
+    return out
 
 logger = logging.getLogger(__name__)
 
@@ -142,37 +203,38 @@ async def open_support_case(
     include_meta=True,
 )
 async def list_my_support_cases(
-    start: Annotated[int, Query(ge=0)] = 0,
-    stop: Annotated[int, Query(gt=0)] = 100,
-    status_filter: Annotated[Optional[str], Query(alias="status")] = None,
-    priority: Annotated[Optional[str], Query()] = None,
-    category: Annotated[Optional[str], Query()] = None,
+    request: Request,
     principal: AuthPrincipal = Depends(_tenant_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
-    if (
-        start == 0
-        and stop == 100
-        and status_filter is None
-        and priority is None
-        and category is None
-        and tenant_id
-    ):
-        return await get_or_compute(
+    if not tenant_id:
+        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+    if _is_default_sc_listing(request):
+        cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
             resource="support_cases.list",
             ttl=60,
             loader=lambda: _load_tenant_cases(tenant_id),
         )
-    cases = await retrieve_support_cases(
-        tenant_id=tenant_id,
-        status=status_filter,
-        priority=priority,
-        category=category,
-        start=start,
-        stop=stop,
+        items = cached if isinstance(cached, list) else []
+        limited = items[: SUPPORT_CASES_TENANT_LIST_SPEC.default_limit]
+        return {
+            "items": limited,
+            "meta": {
+                "total": len(items),
+                "skip": 0,
+                "limit": SUPPORT_CASES_TENANT_LIST_SPEC.default_limit,
+                "hasMore": len(items) > SUPPORT_CASES_TENANT_LIST_SPEC.default_limit,
+            },
+        }
+    query = parse_list_query(request, SUPPORT_CASES_TENANT_LIST_SPEC)
+    return await run_list(
+        collection=db.support_cases,
+        query=query,
+        base_filter={"tenant_id": tenant_id},
+        map_doc=_map_sc_doc,
+        facet_runner=_sc_status_facet,
     )
-    return cases
 
 
 @router.get("/{case_id}")

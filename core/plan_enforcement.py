@@ -199,10 +199,35 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
             # No tenant association — can't enforce, let it through
             return await call_next(request)
 
-        # Resolve the tenant's plan (cached)
+        # Resolve the tenant's plan (cached). Every tenant should have at
+        # least a Free-plan subscription (see services.plan_bootstrap).
+        # If we still find nothing here, lazily provision Free instead
+        # of breaking the request — this protects new tenants whose
+        # bootstrap auto-subscribe failed and migrated tenants the
+        # backfill missed.
         from services.plan_cache_service import resolve_tenant_plan
 
         plan_data = await resolve_tenant_plan(tenant_id)
+        if not plan_data:
+            request_id = getattr(request.state, "request_id", None)
+            logger.info(
+                "plan_enforcement: lazy free-plan provision tenant_id=%s path=%s",
+                tenant_id,
+                path,
+            )
+            try:
+                from services.plan_bootstrap import (
+                    ensure_tenant_default_subscription,
+                )
+
+                await ensure_tenant_default_subscription(tenant_id)
+                plan_data = await resolve_tenant_plan(tenant_id)
+            except Exception:
+                logger.exception(
+                    "lazy free-plan provision failed tenant_id=%s",
+                    tenant_id,
+                )
+
         if not plan_data:
             request_id = getattr(request.state, "request_id", None)
             logger.warning(

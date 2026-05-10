@@ -1,7 +1,13 @@
-from typing import Annotated, Any, List
+from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from bson import ObjectId
+from fastapi import APIRouter, Body, Depends, Header, Request, status
 
+from core.bulk import enqueue_bulk_write
+from core.database import db
+from core.idempotency import actor_scope, check_idempotency, store_idempotency
+from core.list_params import FilterDef, ListSpec, parse_list_query
+from core.list_runner import run_list
 from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
@@ -22,6 +28,58 @@ from services.visit_session_service import check_in_from_appointment
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
 
 _admin_roles = verify_system_user_token("dept_admin", "super_admin", "receptionist")
+
+
+_APPT_STATUSES = frozenset(
+    {"scheduled", "checked_in", "checked_out", "no_show", "cancelled", "fulfilled", "missed"}
+)
+
+
+APPOINTMENTS_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset(
+        {"scheduled_datetime", "date_created", "status", "last_updated"}
+    ),
+    default_sort=(("scheduled_datetime", -1),),
+    search_fields=("visitor_name_snapshot", "host_name_snapshot", "purpose"),
+    filters={
+        "status": FilterDef(name="status", multi=True, allowed_values=_APPT_STATUSES),
+        "departmentId": FilterDef(name="departmentId", mongo_field="department_id"),
+        "hostId": FilterDef(name="hostId", mongo_field="host_id"),
+        "branchId": FilterDef(name="branchId", mongo_field="branch_id"),
+    },
+    range_filters={"scheduledAt": "scheduled_datetime"},
+    facet_fields=frozenset({"status"}),
+)
+
+
+def _is_default_appt_listing(request: Request) -> bool:
+    qp = request.query_params
+    if any(qp.get(k) for k in ("q", "sort", "facets")):
+        return False
+    if any(k for k in qp.keys() if k not in {"skip", "limit"}):
+        return False
+    skip_raw = qp.get("skip", "0")
+    limit_raw = qp.get("limit", str(APPOINTMENTS_LIST_SPEC.default_limit))
+    return skip_raw in ("0", "") and limit_raw == str(APPOINTMENTS_LIST_SPEC.default_limit)
+
+
+def _map_appt_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def _appt_status_facet(
+    collection: Any, filter_doc: dict[str, Any], field: str
+) -> dict[str, int]:
+    if field != "status":
+        return {}
+    base = {k: v for k, v in filter_doc.items() if k != "status"}
+    out: dict[str, int] = {}
+    for v in _APPT_STATUSES:
+        out[v] = await collection.count_documents({**base, "status": v})
+    out["all"] = sum(out.values())
+    return out
 
 
 @router.post("")
@@ -77,20 +135,42 @@ async def create_appointment_endpoint(
     },
 )
 async def list_appointments(
-    start: Annotated[int, Query(ge=0)] = 0,
-    stop: Annotated[int, Query(gt=0)] = 100,
+    request: Request,
     principal: AuthPrincipal = Depends(_admin_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
-    if start == 0 and stop == 100 and tenant_id:
-        return await get_or_compute(
+    if not tenant_id:
+        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+    if _is_default_appt_listing(request):
+        cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
             resource="appointments.list",
             ttl=60,
             loader=lambda: _load_appointments_for_tenant(tenant_id),
         )
-    return await retrieve_appointments_with_summary(
-        tenant_id=tenant_id, start=start, stop=stop
+        items = cached if isinstance(cached, list) else []
+        limited = items[: APPOINTMENTS_LIST_SPEC.default_limit]
+        return {
+            "items": limited,
+            "meta": {
+                "total": len(items),
+                "skip": 0,
+                "limit": APPOINTMENTS_LIST_SPEC.default_limit,
+                "hasMore": len(items) > APPOINTMENTS_LIST_SPEC.default_limit,
+            },
+        }
+    query = parse_list_query(request, APPOINTMENTS_LIST_SPEC)
+    base_filter: dict[str, Any] = {"tenant_id": tenant_id}
+    if principal.is_branch_scoped:
+        branch_filter = principal.branch_filter()
+        if branch_filter:
+            base_filter.update(branch_filter)
+    return await run_list(
+        collection=db.appointments,
+        query=query,
+        base_filter=base_filter,
+        map_doc=_map_appt_doc,
+        facet_runner=_appt_status_facet,
     )
 
 
@@ -298,3 +378,135 @@ async def delete_appointment_endpoint(
         actor_role=principal.role,
         request_id=request_id,
     )
+
+
+# ─── Cancel + bulk endpoints ──────────────────────────────────────────
+
+
+@router.post("/{appointment_id}/cancel")
+@document_response(
+    message="Appointment cancellation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Cancel appointment (async)",
+)
+async def cancel_appointment_endpoint(
+    appointment_id: str,
+    request: Request,
+    payload: dict = Body(default_factory=dict),
+    principal: AuthPrincipal = Depends(_admin_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    request_id = getattr(request.state, "request_id", None)
+    enqueue_payload: dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "status": "cancelled",
+        "_actor_id": principal.user_id,
+        "_actor_role": principal.role,
+        "_request_id": request_id,
+    }
+    if "reason" in payload:
+        enqueue_payload["cancellation_reason"] = str(payload["reason"])[:500]
+    return await enqueue_write(
+        writer_key="appointment.update",
+        payload=enqueue_payload,
+        resource_type="appointment",
+        resource_id=appointment_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=request_id,
+    )
+
+
+@router.post("/bulk/cancel")
+@document_response(
+    message="Bulk cancel queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk cancel appointments",
+)
+async def bulk_cancel_appointments(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(_admin_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    scope = actor_scope(principal.user_id, principal.role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/appointments/bulk/cancel",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    extras = {
+        "reason": str(payload.get("reason") or "")[:500],
+        "tenant_scope": tenant_id,
+    }
+    response = await enqueue_bulk_write(
+        writer_key="appointment.bulk_cancel",
+        ids=payload.get("ids", []),
+        resource_type="appointment",
+        extras=extras,
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/appointments/bulk/cancel",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/bulk/delete")
+@document_response(
+    message="Bulk delete queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk delete appointments",
+)
+async def bulk_delete_appointments(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("dept_admin", "super_admin")
+    ),
+):
+    tenant_id = principal.tenant_id or ""
+    scope = actor_scope(principal.user_id, principal.role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/appointments/bulk/delete",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    response = await enqueue_bulk_write(
+        writer_key="appointment.bulk_delete",
+        ids=payload.get("ids", []),
+        resource_type="appointment",
+        extras={"tenant_scope": tenant_id},
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/appointments/bulk/delete",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response

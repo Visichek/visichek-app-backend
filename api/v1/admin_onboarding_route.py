@@ -16,14 +16,19 @@ Available actions on a submission:
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from bson import ObjectId
+from fastapi import APIRouter, Body, Depends, Header, Request, status
 
+from core.bulk import enqueue_bulk_write
+from core.database import db
+from core.idempotency import actor_scope, check_idempotency, store_idempotency
+from core.list_params import FilterDef, ListSpec, coerce_bool, parse_list_query
+from core.list_runner import run_list
 from core.queue.entity_cache import get_or_compute_entity
 from core.response_envelope import document_response
 from schemas.admin_schema import AdminOut
-from schemas.imports import OnboardingStatus
 from schemas.onboarding_submission_schema import (
     OnboardingAcceptOut,
     OnboardingAcceptRequest,
@@ -37,13 +42,57 @@ from services.onboarding_submission_service import (
     accept_onboarding_submission,
     archive_onboarding_submission,
     list_marketing_opt_in_emails,
-    list_onboarding_submissions,
     partial_accept_onboarding_submission,
     reject_onboarding_submission,
     retrieve_onboarding_submission,
 )
 
 router = APIRouter(prefix="/tenants/onboarding", tags=["Tenant Onboarding"])
+
+
+_ONBOARDING_STATUSES = frozenset(
+    {"new", "partial_accepted", "completed", "accepted", "rejected", "archived"}
+)
+
+
+ONBOARDING_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset({"submitted_at", "status", "organization_name", "date_created"}),
+    default_sort=(("submitted_at", -1),),
+    search_fields=("organization_name", "full_name", "email"),
+    filters={
+        "status": FilterDef(
+            name="status",
+            multi=True,
+            allowed_values=_ONBOARDING_STATUSES,
+        ),
+        "turnstileVerified": FilterDef(
+            name="turnstileVerified",
+            mongo_field="turnstile_verified",
+            coerce=coerce_bool,
+        ),
+    },
+    range_filters={"submittedAt": "submitted_at"},
+    facet_fields=frozenset({"status"}),
+)
+
+
+def _map_onboarding_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def _onboarding_status_facet(
+    collection: Any, filter_doc: dict[str, Any], field: str
+) -> dict[str, int]:
+    if field != "status":
+        return {}
+    base = {k: v for k, v in filter_doc.items() if k != "status"}
+    out: dict[str, int] = {}
+    for v in _ONBOARDING_STATUSES:
+        out[v] = await collection.count_documents({**base, "status": v})
+    out["all"] = sum(out.values())
+    return out
 
 
 @router.get("")
@@ -58,21 +107,16 @@ router = APIRouter(prefix="/tenants/onboarding", tags=["Tenant Onboarding"])
     response_codes={401: "Unauthorized", 403: "Insufficient permissions"},
 )
 async def list_submissions_endpoint(
-    status: Annotated[
-        Optional[OnboardingStatus],
-        Query(description="Filter by submission status"),
-    ] = None,
-    skip: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(gt=0, le=200)] = 50,
+    request: Request,
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> Any:
-    items, total = await list_onboarding_submissions(
-        status=status, skip=skip, limit=limit
+    query = parse_list_query(request, ONBOARDING_LIST_SPEC)
+    return await run_list(
+        collection=db.onboarding_submissions,
+        query=query,
+        map_doc=_map_onboarding_doc,
+        facet_runner=_onboarding_status_facet,
     )
-    return {
-        "items": [item.model_dump(mode="json", by_alias=True) for item in items],
-        "total": total,
-    }
 
 
 @router.get("/marketing-opt-ins")
@@ -229,3 +273,91 @@ async def archive_submission_endpoint(
         submission_id=submission_id,
         actor_id=admin.id or "",  # type: ignore[arg-type]
     )
+
+
+@router.post("/bulk/archive")
+@document_response(
+    message="Bulk onboarding archive queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk archive onboarding submissions",
+)
+async def bulk_archive_submissions(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    actor_id = admin.id or ""
+    actor_role = "admin"
+    scope = actor_scope(actor_id, actor_role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/tenants/onboarding/bulk/archive",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    response = await enqueue_bulk_write(
+        writer_key="onboarding.bulk_archive",
+        ids=payload.get("ids", []),
+        resource_type="onboarding_submission",
+        atomic=bool(payload.get("atomic", False)),
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/tenants/onboarding/bulk/archive",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/bulk/reject")
+@document_response(
+    message="Bulk onboarding reject queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk reject onboarding submissions",
+)
+async def bulk_reject_submissions(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    actor_id = admin.id or ""
+    actor_role = "admin"
+    scope = actor_scope(actor_id, actor_role)
+    hit = check_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/tenants/onboarding/bulk/reject",
+        body=payload,
+    )
+    if hit is not None:
+        return hit.response
+    notes = str(payload.get("notes") or "")[:1000]
+    response = await enqueue_bulk_write(
+        writer_key="onboarding.bulk_reject",
+        ids=payload.get("ids", []),
+        resource_type="onboarding_submission",
+        extras={"notes": notes},
+        atomic=bool(payload.get("atomic", False)),
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/tenants/onboarding/bulk/reject",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response

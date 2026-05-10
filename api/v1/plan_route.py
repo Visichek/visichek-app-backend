@@ -2,23 +2,95 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from bson import ObjectId
+from fastapi import APIRouter, Body, Depends, Header, Query, Request, status
 from pydantic import BaseModel
 
+from core.bulk import enqueue_bulk_write
+from core.database import db
+from core.idempotency import actor_scope, check_idempotency, store_idempotency
+from core.list_params import FilterDef, ListSpec, parse_list_query
+from core.list_runner import run_list
 from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.plan_schema import (
     PlanCreate,
-    PlanStatus,
-    PlanTier,
     PlanUpdate,
 )
 from services.plan_service import retrieve_plan_by_id, retrieve_plans
 from security.account_status_check import check_admin_account_status_and_permissions
 
 router = APIRouter(prefix="/plans", tags=["Plans"])
+
+
+def _plan_status_builder(values):
+    if "all" in values:
+        return {}
+    if len(values) == 1:
+        return {"status": values[0]}
+    return {"status": {"$in": list(values)}}
+
+
+PLANS_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset(
+        {"display_name", "name", "base_price_monthly", "date_created", "status", "tier"}
+    ),
+    default_sort=(("date_created", -1),),
+    search_fields=("name", "display_name"),
+    filters={
+        "status": FilterDef(
+            name="status",
+            multi=True,
+            allowed_values=frozenset({"draft", "active", "archived", "all"}),
+            builder=_plan_status_builder,
+        ),
+        "tier": FilterDef(
+            name="tier",
+            multi=True,
+            allowed_values=frozenset({"free", "starter", "professional", "enterprise", "custom"}),
+        ),
+        "includedFeature": FilterDef(
+            name="includedFeature",
+            mongo_field="feature_rules.endpoint_pattern",
+        ),
+    },
+    facet_fields=frozenset({"status"}),
+)
+
+
+def _is_default_plan_listing(request: Request) -> bool:
+    qp = request.query_params
+    if any(qp.get(k) for k in ("q", "sort", "facets")):
+        return False
+    extra = {k for k in qp.keys() if k not in {"skip", "limit", "public_only"}}
+    if extra:
+        return False
+    skip_raw = qp.get("skip", "0")
+    limit_raw = qp.get("limit", str(PLANS_LIST_SPEC.default_limit))
+    return skip_raw in ("0", "") and limit_raw == str(PLANS_LIST_SPEC.default_limit)
+
+
+def _map_plan_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def _plans_status_facet(
+    collection: Any, filter_doc: dict[str, Any], field: str
+) -> dict[str, int]:
+    if field != "status":
+        return {}
+    base = {k: v for k, v in filter_doc.items() if k != "status"}
+    out: dict[str, int] = {}
+    for status_value in ("active", "draft", "archived"):
+        out[status_value] = await collection.count_documents(
+            {**base, "status": status_value}
+        )
+    out["all"] = sum(out.values())
+    return out
 
 
 class PlanFeatureToggleRequest(BaseModel):
@@ -65,18 +137,19 @@ async def create_plan_endpoint(
 @router.get("")
 @document_response(
     message="Plans retrieved successfully",
-    description="Plan catalogue. Unfiltered requests hit the global precompute cache.",
+    description=(
+        "Paginated plan catalogue with filters, sort, q, and optional "
+        "facets. The unfiltered first page (no status/tier/q/sort/facets) "
+        "is served from the global precompute cache."
+    ),
     summary="List plans",
     include_meta=True,
 )
 async def list_plans_endpoint(
-    status_filter: Optional[PlanStatus] = Query(None, alias="status"),
-    tier: Optional[PlanTier] = Query(None),
+    request: Request,
     public_only: bool = Query(False),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
 ) -> Any:
-    if skip == 0 and limit in (50, 100) and not status_filter and not tier:
+    if _is_default_plan_listing(request):
         resource = "plans.public_list" if public_only else "plans.list"
         cached: List[Any] = await get_or_compute(
             scope_key=PrecomputeScope.GLOBAL.value,
@@ -84,13 +157,31 @@ async def list_plans_endpoint(
             ttl=120,
             loader=lambda: _load_plans(public_only),
         )
-        return cached[:limit]
-    return await retrieve_plans(
-        status_filter=status_filter,
-        tier_filter=tier,
-        public_only=public_only,
-        start=skip,
-        stop=skip + limit,
+        items = cached if isinstance(cached, list) else []
+        limited = items[: PLANS_LIST_SPEC.default_limit]
+        return {
+            "items": limited,
+            "meta": {
+                "total": len(items),
+                "skip": 0,
+                "limit": PLANS_LIST_SPEC.default_limit,
+                "hasMore": len(items) > PLANS_LIST_SPEC.default_limit,
+            },
+        }
+
+    query = parse_list_query(request, PLANS_LIST_SPEC)
+    base_filter: dict[str, Any] = {}
+    if public_only:
+        base_filter["is_public"] = True
+        # public_only callers also exclude archived implicitly
+        if "status" not in query.filters:
+            base_filter["status"] = {"$ne": "archived"}
+    return await run_list(
+        collection=db.plans,
+        query=query,
+        base_filter=base_filter,
+        map_doc=_map_plan_doc,
+        facet_runner=_plans_status_facet,
     )
 
 
@@ -270,6 +361,156 @@ async def list_plan_features_endpoint() -> List[PlanFeatureCatalogEntry]:
         )
         for spec in get_feature_catalog()
     ]
+
+
+# ─── Bulk endpoints ───────────────────────────────────────────────────
+
+
+def _bulk_response_for(
+    *,
+    request: Request,
+    payload: dict,
+    idempotency_key: Optional[str],
+    admin: Any,
+    writer_key: str,
+    extras: Optional[dict] = None,
+    route_label: str,
+):
+    actor_id = getattr(admin, "id", None)
+    actor_role = "admin"
+    scope = actor_scope(actor_id, actor_role)
+    hit = check_idempotency(
+        key=idempotency_key, scope=scope, route=route_label, body=payload
+    )
+    if hit is not None:
+        return hit, actor_id, actor_role, scope
+    return None, actor_id, actor_role, scope
+
+
+@router.post("/bulk/activate")
+@document_response(
+    message="Bulk plan activation queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk activate plans",
+)
+async def bulk_activate_plans(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    cached, actor_id, actor_role, scope = _bulk_response_for(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        admin=admin,
+        writer_key="plan.bulk_activate",
+        route_label="POST /v1/plans/bulk/activate",
+    )
+    if cached is not None:
+        return cached.response
+    response = await enqueue_bulk_write(
+        writer_key="plan.bulk_activate",
+        ids=payload.get("ids", []),
+        resource_type="plan",
+        atomic=bool(payload.get("atomic", False)),
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/plans/bulk/activate",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/bulk/archive")
+@document_response(
+    message="Bulk plan archive queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk archive plans",
+)
+async def bulk_archive_plans(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    cached, actor_id, actor_role, scope = _bulk_response_for(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        admin=admin,
+        writer_key="plan.bulk_archive",
+        route_label="POST /v1/plans/bulk/archive",
+    )
+    if cached is not None:
+        return cached.response
+    response = await enqueue_bulk_write(
+        writer_key="plan.bulk_archive",
+        ids=payload.get("ids", []),
+        resource_type="plan",
+        atomic=bool(payload.get("atomic", False)),
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/plans/bulk/archive",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/bulk/delete")
+@document_response(
+    message="Bulk plan delete queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk delete plans (DRAFT only — server enforces)",
+)
+async def bulk_delete_plans(
+    request: Request,
+    payload: dict = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    cached, actor_id, actor_role, scope = _bulk_response_for(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        admin=admin,
+        writer_key="plan.bulk_delete",
+        route_label="POST /v1/plans/bulk/delete",
+    )
+    if cached is not None:
+        return cached.response
+    response = await enqueue_bulk_write(
+        writer_key="plan.bulk_delete",
+        ids=payload.get("ids", []),
+        resource_type="plan",
+        atomic=bool(payload.get("atomic", False)),
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route="POST /v1/plans/bulk/delete",
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
 
 
 @router.post("/{plan_id}/features/{feature_key}")

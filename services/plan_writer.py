@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any, List
 
+from core.bulk import run_bulk_handlers
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
@@ -215,6 +216,78 @@ async def _plan_set_feature(
         "feature_key": feature_key,
         "enabled": enabled,
     }
+
+
+@write_handler(
+    "plan.bulk_activate",
+    invalidates=[
+        "plans.list",
+        "plans.public_list",
+        "subscriptions.list",
+        "subscription.active",
+    ],
+)
+async def _plan_bulk_activate(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+
+    async def _handle(plan_id: str) -> dict[str, Any]:
+        result = await activate_plan(plan_id=plan_id)
+        _enqueue_plan_cache_fanout(plan_id)
+        return {"id": result.id if result else plan_id}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    _enqueue_list_refresh()
+    return out
+
+
+@write_handler(
+    "plan.bulk_archive",
+    invalidates=[
+        "plans.list",
+        "plans.public_list",
+        "subscriptions.list",
+        "subscription.active",
+    ],
+)
+async def _plan_bulk_archive(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+
+    async def _handle(plan_id: str) -> dict[str, Any]:
+        result = await archive_plan(plan_id=plan_id)
+        _enqueue_plan_cache_fanout(plan_id)
+        return {"id": result.id if result else plan_id}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    _enqueue_list_refresh()
+    return out
+
+
+@write_handler(
+    "plan.bulk_delete",
+    invalidates=[
+        "plans.list",
+        "plans.public_list",
+        "subscriptions.list",
+        "subscription.active",
+    ],
+)
+async def _plan_bulk_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Iterate plan deletes. ``remove_plan`` rejects non-DRAFT plans
+    server-side, so attempts against active/archived plans surface as
+    per-id failures with a structured error."""
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+
+    async def _handle(plan_id: str) -> dict[str, Any]:
+        await remove_plan(plan_id=plan_id)
+        _enqueue_plan_cache_fanout(plan_id)
+        return {"id": plan_id, "deleted": True}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    _enqueue_list_refresh()
+    return out
 
 
 @register_precompute("plans.list", scope=PrecomputeScope.GLOBAL)

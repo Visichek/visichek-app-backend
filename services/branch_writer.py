@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any, List
 
+from core.bulk import run_bulk_handlers
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
@@ -19,6 +20,7 @@ from services.branch_service import (
     add_branch,
     deactivate_branch,
     remove_branch,
+    retrieve_branch_by_id,
     retrieve_branches_for_tenant,
     update_branch_by_id,
 )
@@ -99,6 +101,65 @@ async def _branch_delete(resource_id: str, data: dict[str, Any]) -> dict[str, An
     await remove_branch(branch_id=resource_id)
     _enqueue_list_refresh(tenant_id)
     return {"id": resource_id, "deleted": True}
+
+
+def _branch_bulk_invalidates() -> list[str]:
+    return [
+        "branches.list",
+        "system_users.list",
+        "departments.list",
+        "appointments.list",
+    ]
+
+
+@write_handler("branch.bulk_deactivate", invalidates=_branch_bulk_invalidates())
+async def _branch_bulk_deactivate(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    tenant_scope = str(extras.get("tenant_scope") or "")
+
+    async def _handle(branch_id: str) -> dict[str, Any]:
+        existing = await retrieve_branch_by_id(branch_id)
+        if not existing:
+            raise ValueError("Branch not found")
+        if tenant_scope and existing.tenant_id != tenant_scope:
+            raise PermissionError("BRANCH_TENANT_MISMATCH")
+        result = await deactivate_branch(branch_id=branch_id)
+        if not result:
+            raise ValueError("Cannot deactivate branch")
+        return {"id": result.id, "status": result.status}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    if tenant_scope:
+        _enqueue_list_refresh(tenant_scope)
+    return out
+
+
+@write_handler("branch.bulk_delete", invalidates=_branch_bulk_invalidates())
+async def _branch_bulk_delete(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    ids = list(data.get("ids", []))
+    atomic = bool(data.get("atomic", False))
+    extras = data.get("extras", {}) or {}
+    tenant_scope = str(extras.get("tenant_scope") or "")
+
+    async def _handle(branch_id: str) -> dict[str, Any]:
+        existing = await retrieve_branch_by_id(branch_id)
+        if not existing:
+            raise ValueError("Branch not found")
+        if tenant_scope and existing.tenant_id != tenant_scope:
+            raise PermissionError("BRANCH_TENANT_MISMATCH")
+        await remove_branch(branch_id=branch_id)
+        return {"id": branch_id, "deleted": True}
+
+    out = await run_bulk_handlers(ids, _handle, atomic=atomic)
+    if tenant_scope:
+        _enqueue_list_refresh(tenant_scope)
+    return out
 
 
 @register_precompute("branches.list", scope=PrecomputeScope.TENANT)
