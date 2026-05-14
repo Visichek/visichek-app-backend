@@ -49,6 +49,12 @@ class CheckoutCreateRequest(BaseModel):
     preferred_provider: Optional[CheckoutProvider] = None
     # Optional trial override; defaults to 0 (no trial for a paid checkout).
     trial_days: int = 0
+    # When set, the checkout redeems the tenant's one-time trial code.
+    # The server forces amount_minor=0 and uses the trial's snapshot length;
+    # the code is only marked USED once the $0 checkout actually clears.
+    # Mutually exclusive with ``discount_ids`` — a trial is itself a
+    # full-value discount and the server rejects combining the two.
+    trial_code: Optional[str] = None
     # Optional admin-supplied metadata to attach to the session record.
     metadata: Optional[dict] = None
 
@@ -56,6 +62,10 @@ class CheckoutCreateRequest(BaseModel):
     def _validate(self):
         if self.trial_days < 0:
             raise ValueError("trial_days must be non-negative")
+        if self.trial_code and self.discount_ids:
+            raise ValueError(
+                "trial_code cannot be combined with discount_ids"
+            )
         return self
 
 
@@ -98,6 +108,10 @@ class CheckoutSessionBase(BaseModel):
     failure_reason: Optional[str] = None
     metadata: Optional[dict] = None
     trial_days: int = 0
+    # Set when this checkout is redeeming a trial code. The string here is
+    # the literal code value (not the row id) so the completion path can
+    # look up + mark it USED without an extra round trip.
+    trial_code: Optional[str] = None
 
 
 class CheckoutSessionCreate(CheckoutSessionBase):

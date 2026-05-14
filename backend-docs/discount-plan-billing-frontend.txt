@@ -1,0 +1,388 @@
+================================================================================
+Discounts, Trials & Billing — Frontend Integration Guide
+================================================================================
+
+Audience: frontend engineers building the tenant super_admin billing UI.
+
+This doc covers the *two* code-driven checkout paths a tenant can hit:
+
+  1. Discount codes  — arbitrary admin-issued codes that reduce the
+                       checkout amount by either a percentage or a fixed
+                       value. Many can exist; a tenant may use the same
+                       code more than once if redemptions allow.
+
+  2. Trial codes     — one-time-per-tenant codes that force the checkout
+                       amount to 0 and start a TRIALING subscription.
+                       Each tenant gets ONE redemption across their whole
+                       platform lifetime; once consumed, that's it.
+
+Both share the same critical rule:
+
+    A code is only consumed when the payment actually clears, not when
+    the checkout is created.
+
+That means hitting `POST /v1/checkout/sessions` with a code does NOT
+burn the redemption — only `complete_checkout(outcome="success")` does.
+This matches user expectation that a checkout left open or cancelled is
+NOT a "used" code.
+
+
+================================================================================
+1. PLAN SCHEMA — trial_days
+================================================================================
+
+`PlanBase.trial_days: int = 0`
+
+* `0`  — the plan does NOT offer a trial. `POST /v1/trials/claim` for
+         this plan returns 400 TRIAL_NOT_SUPPORTED.
+* `>0` — the plan offers a trial of N days. Tenants can claim a code via
+         `POST /v1/trials/claim?plan_id=...`.
+
+Mutable via `PUT /v1/plans/{id}` with `{"trial_days": N}`. Changing the
+value AFTER a tenant has claimed a code does NOT change that tenant's
+outstanding trial length — `trial_days_snapshot` is frozen at claim
+time so an admin edit can't shorten or lengthen an in-flight trial.
+
+Validation: `trial_days` must be >= 0 at create time. The plan can be
+swapped between offering and not offering a trial freely.
+
+
+================================================================================
+2. DISCOUNT CODES
+================================================================================
+
+2.1 Code lifecycle (admin-issued)
+-----------------------------------
+
+Admin creates the discount via `POST /v1/discounts` with one of three
+scopes:
+
+  * `global`  — every tenant may use it
+  * `tenant`  — pinned to a specific tenant_id
+  * `plan`    — only valid when paired with one of these plan ids
+
+…plus an optional validity window (`valid_from`, `valid_until`), a
+`max_redemptions` cap, and a `discount_type` of `percentage` (0-100) or
+`fixed` (amount of currency).
+
+`current_redemptions` starts at 0 and is **only incremented when a
+checkout completes successfully**.
+
+
+2.2 Tenant-facing preview — `GET /v1/discounts/preview`
+--------------------------------------------------------
+
+Use this on the billing page when the user types a discount code.
+Returns the discounted price breakdown WITHOUT consuming the code.
+
+Auth:   super_admin token (tenant_id inferred from JWT)
+Query:
+    code           required   the discount code the user entered
+    plan_id        required   the plan the user wants to subscribe to
+    billing_cycle  optional   "monthly" (default) or "yearly"
+
+200 response shape:
+
+    {
+        "discount": { …full DiscountOut… },
+        "plan": {
+            "id": "...",
+            "name": "starter",
+            "display_name": "Starter",
+            "tier": "starter",
+            "currency": "NGN",
+            "base_price_monthly": 100.0,
+            "base_price_yearly": 1000.0,
+            "trial_days": 0
+        },
+        "billing_cycle": "monthly",
+        "base_price": 100.0,
+        "discount_amount": 20.0,
+        "final_price": 80.0,
+        "currency": "NGN"
+    }
+
+Error codes you can render directly:
+
+    DISCOUNT_INVALID       — code is disabled / expired / wrong scope /
+                             below min_subscription_value
+    RESOURCE_NOT_FOUND     — no such code or no such plan
+    VALIDATION_FAILED      — invalid plan_id / plan not active
+
+The endpoint is tenant-scoped via the JWT — a tenant cannot probe
+codes that are pinned to OTHER tenants. The legacy admin-only
+`POST /v1/discounts/validate` still exists for application admins.
+
+
+2.3 Using a discount code at checkout
+--------------------------------------
+
+The checkout-create payload accepts `discount_ids: List[str]` (the
+DiscountOut.id values returned by the preview). The validate /
+preview round trip happens client-side; the checkout server re-runs
+the same validation defensively before issuing the payment intent.
+
+Example flow:
+
+    1. User types "LAUNCH50".
+    2. FE → GET /v1/discounts/preview?code=LAUNCH50&plan_id=...
+       Renders the new base_price / discount_amount / final_price.
+    3. User clicks "Subscribe".
+    4. FE → POST /v1/checkout/sessions
+            { "plan_id": "...", "discount_ids": ["<id from preview>"] }
+       Server validates again, returns the checkout_url + amount_minor.
+    5. User pays via the provider.
+    6. Provider webhook / app-mode simulator hits
+       `complete_checkout(outcome="success")`.
+    7. THIS is the moment `current_redemptions` increments and the
+       subscription is provisioned with the discount applied.
+
+
+================================================================================
+3. TRIAL CODES (NEW)
+================================================================================
+
+3.1 The contract
+-----------------
+
+* Each tenant has at most ONE redeemed trial across their lifetime.
+* The trial code is per-tenant — sharing it does nothing, the
+  `tenant_id` is bound to the code.
+* The trial code reserves a redemption for the tenant. It can be
+  re-fetched idempotently from `/v1/trials/claim` (same tenant + same
+  plan = same code returned).
+* The trial code is only marked `used` once the matching $0 checkout
+  succeeds (subscription is provisioned). Cancelling the checkout
+  before completion releases the code.
+* Trials cannot stack with discount codes — passing both is a 400.
+
+
+3.2 Endpoints
+--------------
+
+All three require the super_admin token. `tenant_id` is read from the
+JWT, never the URL — there is no way for the FE to spoof a tenant.
+
+  GET  /v1/trials/me?plan_id=<optional>
+       Returns the tenant's outstanding pending trial row, or `null`.
+       Use on mount to decide whether to show "Resume trial" vs
+       "Start trial" CTAs.
+
+  POST /v1/trials/claim?plan_id=...
+       Returns a TrialClaimResponse the FE can render:
+
+           {
+             "code": "TRIAL-AB12CD-7F3A9C12",
+             "plan_id": "...",
+             "plan_name": "starter",
+             "plan_display_name": "Starter",
+             "trial_days": 14,
+             "trial_ends_at_preview": 1715817600,
+             "base_price_monthly": 100.0,
+             "base_price_yearly": 1000.0,
+             "currency": "NGN",
+             "status": "pending"
+           }
+
+       Idempotent for the same (tenant, plan). Switching to a
+       DIFFERENT plan implicitly cancels the previous pending code
+       and issues a fresh one — tenants are never locked into the
+       first plan they chose.
+
+       Errors:
+           400 TRIAL_NOT_SUPPORTED  — plan.trial_days == 0
+           400 VALIDATION_FAILED    — invalid / inactive plan
+           404 RESOURCE_NOT_FOUND   — no such plan
+           409 TRIAL_ALREADY_USED   — tenant has already redeemed
+                                      a trial in the past
+
+  GET  /v1/trials/preview?code=...&plan_id=...
+       Read-only. Used to re-render the trial summary if the FE
+       holds onto the code across navigation. Same response shape
+       as /claim. Does NOT mutate anything.
+
+       Errors:
+           400 TRIAL_INVALID        — wrong plan_id, not pending,
+                                      bad code
+           403 TRIAL_INVALID        — code is for a different tenant
+           404 RESOURCE_NOT_FOUND   — no such code
+           409 TRIAL_ALREADY_USED   — tenant has redeemed already
+
+
+3.3 Using a trial code at checkout
+-----------------------------------
+
+  POST /v1/checkout/sessions
+       {
+         "plan_id": "<plan>",
+         "trial_code": "TRIAL-AB12CD-7F3A9C12",
+         "billing_cycle": "monthly"
+       }
+
+The server:
+  - Re-validates the trial code (same checks as /v1/trials/preview).
+  - Forces `amount_minor = 0` and ignores any `discount_ids`.
+  - Snapshots `trial_days` from the trial row (NOT from the live plan,
+    so admin edits to `plan.trial_days` don't retroactively change
+    in-flight trials).
+  - Returns a normal CheckoutSessionOut with `amount_minor: 0`,
+    `trial_code: "<the code>"`, `trial_days: <snapshot>`, and the
+    provider-issued `checkout_url`.
+
+Critically, the trial row stays `status=pending` until checkout
+completes. Cancelling the pending session
+(`POST /v1/checkout/sessions/{id}/cancel`) releases the code — the
+tenant can claim again without burning their one-shot entitlement.
+
+On successful completion:
+  - A TRIALING subscription is provisioned via `subscribe_tenant(...)`
+    with `trial_ends_at = now + trial_days_snapshot * 86400`.
+  - The trial code transitions to `status=used`, recording
+    `subscription_id` and `used_at`.
+  - An audit row `trial.redeemed` is written.
+
+
+3.4 What happens at trial expiry
+---------------------------------
+
+APScheduler runs `services.renewal_service:convert_expiring_trials`
+hourly. For every subscription with `status=TRIALING` and
+`trial_ends_at <= now` it tries to charge the tenant's saved payment
+method:
+
+  - **Payment succeeds** → subscription becomes ACTIVE, period extended
+                           by one full billing cycle, invoice generated.
+  - **Payment fails / no payment method / plan missing / etc.**
+                        → tenant is dropped onto the Free plan via
+                          `transition_tenant_to_free_plan(...)`.
+                          The old subscription is marked EXPIRED with
+                          `cancellation_reason="Trial payment failed: ..."`.
+                          Non-HQ branches lock down and
+                          departments past the Free cap are
+                          deactivated. The tenant keeps a working
+                          subscription — they just lose the paid
+                          features.
+
+This is a deliberate change from the older "set PAST_DUE and let
+dunning sweep eventually drop them" behaviour: trials never had a
+payment commitment, so there is nothing to retry.
+
+FE consequence: a tenant whose trial just expired will see their
+plan reflect either:
+  * ACTIVE on the previously-trialed plan, OR
+  * ACTIVE on the Free plan (i.e. their previous plan is gone).
+
+There is no transient PAST_DUE state from trial expiry. Use the
+`subscription_summary` on the tenant context endpoint to detect
+which path the renewal took.
+
+
+================================================================================
+4. CHECKOUT CONTRACT (full)
+================================================================================
+
+  POST /v1/checkout/sessions
+  Body (CheckoutCreateRequest):
+      plan_id            required
+      billing_cycle      optional   "monthly" (default) or "yearly"
+      discount_ids       optional   list of DiscountOut.id values
+      preferred_provider optional   "stripe" | "flutterwave" | "app"
+      trial_days         optional   ignored when trial_code is set
+      trial_code         optional   trial code from /v1/trials/claim
+      metadata           optional   admin-supplied dict
+
+  Rules enforced at request validation:
+      * trial_code and discount_ids are MUTUALLY EXCLUSIVE.
+        Combining them returns a 422 from Pydantic.
+      * trial_days >= 0.
+
+  Rules enforced at the service layer:
+      * plan must exist and be `status=active`.
+      * if trial_code is set: trial must be `status=pending`, belong to
+        this tenant, and target THIS plan_id.
+      * if discount_ids are set: each is re-validated against the
+        scope, plan, tenant, validity window, max_redemptions.
+
+  Response (CheckoutSessionOut):
+      { id, tenant_id, plan_id, billing_cycle, currency,
+        amount_minor, provider, status: "pending", checkout_url,
+        provider_reference, breakdown: {…}, applied_discount_ids: [...],
+        trial_days, trial_code, expires_at, … }
+
+
+================================================================================
+5. REDEMPTION RULES SUMMARY
+================================================================================
+
+  Event                                Discount counter   Trial code status
+  ----------------------------------   ----------------   -------------------
+  POST /v1/checkout/sessions           unchanged          unchanged (pending)
+  POST /sessions/{id}/cancel           unchanged          → cancelled (re-claimable)
+  Session expires (TTL hit)            unchanged          stays pending
+  complete_checkout(success)           +1                 → used
+  complete_checkout(failure)           unchanged          stays pending
+
+
+================================================================================
+6. ERROR CODES (machine-readable)
+================================================================================
+
+  TRIAL_NOT_SUPPORTED    400   Plan does not offer a trial.
+  TRIAL_INVALID          400   Trial code is wrong plan / non-pending /
+                               unknown / wrong tenant.
+                         403   (when the tenant_id mismatch is the
+                               specific reason.)
+  TRIAL_ALREADY_USED     409   Tenant already redeemed a trial in the
+                               past. Returned both at claim time and at
+                               checkout-create time as a defence in
+                               depth.
+  DISCOUNT_INVALID       400   Discount code is wrong scope / expired /
+                               exhausted / below minimum.
+  RESOURCE_NOT_FOUND     404   No such plan / discount / trial code.
+  VALIDATION_FAILED      400   Invalid plan_id / plan not active /
+                               trial_days negative.
+
+
+================================================================================
+7. MONGODB COLLECTIONS (new in this iteration)
+================================================================================
+
+  trial_codes
+      { _id, code, tenant_id, plan_id, status,
+        trial_days_snapshot, subscription_id, used_at,
+        date_created, last_updated }
+      Recommended indexes:
+        - unique on `code`
+        - (tenant_id, status)  for the redemption-check lookups
+
+
+================================================================================
+8. UX RECIPE
+================================================================================
+
+  Billing page mount:
+    1. GET /v1/subscription/me                — current sub
+    2. GET /v1/trials/me                      — outstanding pending trial?
+    3. GET /v1/plans                          — plan catalogue
+
+  Plan selected, user enters a code:
+    - If code starts with "TRIAL-":
+        GET /v1/trials/preview?code=...&plan_id=...
+    - Else:
+        GET /v1/discounts/preview?code=...&plan_id=...
+
+  Both endpoints return enough info to render the summary card and
+  the final price. Neither consumes the code.
+
+  User clicks "Pay":
+    POST /v1/checkout/sessions with either
+      { plan_id, trial_code }     (for trials, $0)
+      { plan_id, discount_ids }   (for discounts)
+      { plan_id }                 (for full-price subscription)
+    → redirect to `checkout_url`.
+
+  User pays. Provider webhook calls complete_checkout. The next
+  page mount picks up the new ACTIVE / TRIALING subscription via
+  the existing subscription endpoint. NO additional FE call is
+  needed to "redeem" anything — the server does it atomically
+  with the subscription provisioning.

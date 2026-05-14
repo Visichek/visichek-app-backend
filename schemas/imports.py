@@ -308,3 +308,59 @@ class OnboardingStatus(str, Enum):
     # Tenant filled in the requested missing fields — terminal happy path.
     COMPLETED = "completed"
     ARCHIVED = "archived"
+
+
+# --- Tenant Form Builder ---
+
+
+class FormTargetType(str, Enum):
+    """What user-facing flow a tenant form attaches to."""
+
+    APPOINTMENT = "appointment"
+    CHECKIN = "checkin"
+    VISIT_SESSION = "visit_session"
+
+
+class FormStatus(str, Enum):
+    """Lifecycle of a tenant form row.
+
+    ``active``      — the live published version for this (tenant, target).
+    ``archived``    — retired by super_admin; submissions still resolve.
+    ``superseded``  — older published version, kept so historical
+                      submissions remain interpretable.
+    ``draft``       — only-draft row that has never been published.
+    """
+
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    SUPERSEDED = "superseded"
+    DRAFT = "draft"
+
+
+class FormFieldType(str, Enum):
+    """Supported field types on a tenant form definition."""
+
+    TEXT = "text"
+    LONG_TEXT = "long_text"
+    EMAIL = "email"
+    PHONE = "phone"
+    URL = "url"
+    NUMBER = "number"
+    INTEGER = "integer"
+    BOOLEAN = "boolean"
+    DATE = "date"
+    TIME = "time"
+    DATETIME = "datetime"
+    SELECT = "select"
+    MULTI_SELECT = "multi_select"
+    COUNTRY = "country"
+    ADDRESS = "address"
+    FILE = "file"
+    IMAGE = "image"
+    SIGNATURE = "signature"
+    CONSENT_CHECKBOX = "consent_checkbox"
+    RATING = "rating"
+    ID_DOCUMENT = "id_document"
+    HOST_PICKER = "host_picker"
+    VISITOR_PICKER = "visitor_picker"
+    CALCULATED = "calculated"

@@ -747,6 +747,7 @@ from api.v1.visitor_verification_route import (
 )
 from api.v1.checkin_submit_route import router as v1_checkin_submit_route_router
 from api.v1.checkout_route import router as v1_checkout_route_router
+from api.v1.trial_route import router as v1_trial_route_router
 from api.v1.app_payment_route import router as app_payment_route_router
 from api.v1.job_route import router as v1_job_route_router
 from api.v1.support_case_route import router as v1_support_case_route_router
@@ -762,6 +763,10 @@ from api.v1.tenant_enum_route import (
 from api.v1.kyc_route import router as v1_kyc_route_router
 from api.v1.saved_view_route import router as v1_saved_view_route_router
 from api.v1.me_limitations_route import router as v1_me_limitations_route_router
+from api.v1.tenant_form_route import (
+    router as v1_tenant_form_route_router,
+    public_router as v1_tenant_form_public_router,
+)
 
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
@@ -823,6 +828,7 @@ app.include_router(v1_face_crop_route_router, prefix="/v1")
 app.include_router(v1_visitor_verification_route_router, prefix="/v1")
 app.include_router(v1_checkin_submit_route_router, prefix="/v1")
 app.include_router(v1_checkout_route_router, prefix="/v1")
+app.include_router(v1_trial_route_router, prefix="/v1")
 app.include_router(v1_job_route_router, prefix="/v1")
 app.include_router(v1_support_case_route_router, prefix="/v1")
 app.include_router(v1_admin_support_case_route_router, prefix="/v1")
@@ -837,6 +843,9 @@ app.include_router(v1_tenant_enum_public_router, prefix="/v1")
 app.include_router(v1_kyc_route_router, prefix="/v1")
 app.include_router(v1_saved_view_route_router, prefix="/v1")
 app.include_router(v1_me_limitations_route_router, prefix="/v1")
+# Tenant form builder — authenticated CRUD + kiosk-public read endpoints.
+app.include_router(v1_tenant_form_route_router, prefix="/v1")
+app.include_router(v1_tenant_form_public_router, prefix="/v1")
 # App-mode payment simulator — deliberately NOT under /v1 so the URLs
 # match the checkout_url emitted by AppCheckoutPaymentProvider.
 app.include_router(app_payment_route_router)

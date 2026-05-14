@@ -51,6 +51,11 @@ from services.subscription_service import (
     retrieve_tenant_active_subscription,
     subscribe_tenant,
 )
+from services.trial_code_service import (
+    mark_trial_code_cancelled,
+    mark_trial_code_used,
+    validate_trial_code_for_checkout,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -170,10 +175,20 @@ async def create_checkout_session(
     discount_ids: Optional[List[str]] = None,
     preferred_provider: Optional[CheckoutProvider] = None,
     trial_days: int = 0,
+    trial_code: Optional[str] = None,
     metadata: Optional[dict] = None,
     customer_email: Optional[str] = None,
 ) -> CheckoutSessionOut:
-    """Create a provider-agnostic checkout session for a tenant."""
+    """Create a provider-agnostic checkout session for a tenant.
+
+    When ``trial_code`` is set, the checkout is forced to a $0 amount and
+    snapshots the trial length onto the session. The trial code is only
+    consumed (marked USED) once the matching $0 payment completes — see
+    ``complete_checkout``. Discount codes follow the same delayed
+    redemption contract: validated here, but ``current_redemptions`` is
+    incremented only at completion via ``subscribe_tenant`` /
+    ``provision_plan_change_from_checkout``.
+    """
     if not ObjectId.is_valid(plan_id):
         raise HTTPException(status_code=400, detail="Invalid plan_id")
 
@@ -182,6 +197,24 @@ async def create_checkout_session(
         raise resource_not_found(resource="Plan", resource_id=plan_id)
     if plan.status != PlanStatus.ACTIVE:
         raise HTTPException(status_code=400, detail="Plan is not active")
+
+    # ── Trial-code path ────────────────────────────────────────────────
+    # A valid trial code overrides the price (forced to 0), forbids
+    # combining with discount codes (already enforced at the request
+    # layer), and overrides ``trial_days`` with the snapshot from the
+    # trial row so a later admin edit to ``plan.trial_days`` does not
+    # retroactively change an outstanding trial.
+    resolved_trial_code: Optional[str] = None
+    if trial_code:
+        trial = await validate_trial_code_for_checkout(
+            code=trial_code,
+            tenant_id=tenant_id,
+            plan_id=plan_id,
+        )
+        trial_days = trial.trial_days_snapshot
+        resolved_trial_code = trial.code
+        # Discounts are mutually exclusive with trials.
+        discount_ids = None
 
     base_price = (
         plan.base_price_monthly
@@ -195,6 +228,18 @@ async def create_checkout_session(
         )
 
     breakdown = await _build_breakdown(plan, billing_cycle, valid_discounts)
+    # Trial overrides the price entirely.
+    if resolved_trial_code:
+        breakdown = PriceBreakdown(
+            base_price=breakdown.base_price,
+            billing_cycle=breakdown.billing_cycle,
+            currency=breakdown.currency,
+            applied_discount_ids=[],
+            total_percentage_off=100.0,
+            total_fixed_off=0.0,
+            final_price=0.0,
+            amount_minor=0,
+        )
 
     # One reference value used both as the provider's correlation key and as
     # the {id} path segment of the app-mode checkout URL.
@@ -212,6 +257,7 @@ async def create_checkout_session(
                 "tenant_id": tenant_id,
                 "plan_id": plan_id,
                 "billing_cycle": billing_cycle.value,
+                **({"trial_code": resolved_trial_code} if resolved_trial_code else {}),
                 **(metadata or {}),
             },
         ),
@@ -235,6 +281,7 @@ async def create_checkout_session(
         created_by_user_id=created_by_user_id,
         expires_at=now + ttl,
         trial_days=trial_days,
+        trial_code=resolved_trial_code,
         metadata=metadata,
     )
 
@@ -254,6 +301,8 @@ async def create_checkout_session(
                 "amount_minor": breakdown.amount_minor,
                 "currency": breakdown.currency,
                 "discount_ids": breakdown.applied_discount_ids,
+                "trial_code": resolved_trial_code,
+                "trial_days": trial_days,
             },
         )
     except Exception:
@@ -308,6 +357,15 @@ async def cancel_checkout(
     )
     if not updated:
         raise resource_not_found(resource="CheckoutSession", resource_id=checkout_id)
+    # If this checkout was holding a trial code, release it so the tenant
+    # can claim again without burning their one-shot entitlement.
+    if session.trial_code:
+        try:
+            await mark_trial_code_cancelled(
+                code=session.trial_code, tenant_id=tenant_id
+            )
+        except Exception:
+            pass
     try:
         await record_audit_event(
             actor_id=cancelled_by_user_id,
@@ -452,6 +510,25 @@ async def complete_checkout(
         )
         raise
 
+    # Once the underlying subscription is provisioned, redeem the trial
+    # code (if any). This is the moment the trial actually counts against
+    # the tenant's one-time entitlement — creating the checkout earlier
+    # only RESERVED the code. Fire-and-forget: a failure here must not
+    # block reporting the checkout as succeeded.
+    if session.trial_code and subscription.id:
+        try:
+            await mark_trial_code_used(
+                code=session.trial_code,
+                subscription_id=subscription.id,
+                tenant_id=session.tenant_id,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to mark trial code USED after successful checkout %s: %s",
+                checkout_id,
+                e,
+            )
+
     updated = await _mark_succeeded(session, subscription.id or "")
     try:
         await record_audit_event(
@@ -465,6 +542,7 @@ async def complete_checkout(
                 "provider": session.provider.value,
                 "subscription_id": subscription.id,
                 "amount_minor": session.amount_minor,
+                "trial_code": session.trial_code,
             },
         )
     except Exception:

@@ -14,13 +14,17 @@ from repositories.discount_repo import (
     update_discount,
     delete_discount,
 )
+from repositories.plan_repo import get_plan
 from schemas.discount_schema import (
     DiscountCreate,
     DiscountUpdate,
     DiscountOut,
     DiscountScope,
     DiscountStatus,
+    DiscountType,
 )
+from schemas.plan_schema import PlanStatus
+from schemas.subscription_schema import BillingCycle
 
 
 async def add_discount(
@@ -189,6 +193,93 @@ async def validate_discount_code(
         )
 
     return discount
+
+
+async def preview_discount_for_plan(
+    *,
+    code: str,
+    tenant_id: str,
+    plan_id: str,
+    billing_cycle: BillingCycle = BillingCycle.MONTHLY,
+) -> dict:
+    """Validate a discount code against a plan + return the discounted price.
+
+    Returns a price-breakdown payload the FE can drop straight into a
+    summary card:
+
+    ::
+
+        {
+            "discount": {<DiscountOut>},
+            "plan": { id, name, display_name, currency,
+                      base_price_monthly, base_price_yearly },
+            "billing_cycle": "monthly",
+            "base_price": 100.0,
+            "discount_amount": 20.0,
+            "final_price": 80.0,
+            "currency": "NGN"
+        }
+
+    Read-only — does NOT increment redemption counters. Discount usage
+    is recorded only after the matching checkout completes successfully,
+    matching the trial-code redemption contract.
+    """
+    if not ObjectId.is_valid(plan_id):
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Invalid plan_id",
+            details={"plan_id": plan_id},
+        )
+    plan = await get_plan({"_id": ObjectId(plan_id)})
+    if not plan:
+        raise resource_not_found(resource="Plan", resource_id=plan_id)
+    if plan.status != PlanStatus.ACTIVE:
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Plan is not active",
+            details={"plan_id": plan_id, "status": plan.status.value},
+        )
+
+    base_price = (
+        plan.base_price_monthly
+        if billing_cycle == BillingCycle.MONTHLY
+        else plan.base_price_yearly
+    )
+
+    discount = await validate_discount_code(
+        code=code,
+        tenant_id=tenant_id,
+        plan_id=plan_id,
+        subscription_value=base_price,
+    )
+
+    if discount.discount_type == DiscountType.PERCENTAGE:
+        discount_amount = round(base_price * (discount.value / 100.0), 2)
+    else:
+        discount_amount = round(discount.value, 2)
+    discount_amount = min(discount_amount, base_price)
+    final_price = max(round(base_price - discount_amount, 2), 0.0)
+
+    return {
+        "discount": discount,
+        "plan": {
+            "id": plan.id,
+            "name": plan.name,
+            "display_name": plan.display_name,
+            "tier": plan.tier.value if hasattr(plan.tier, "value") else plan.tier,
+            "currency": plan.currency,
+            "base_price_monthly": plan.base_price_monthly,
+            "base_price_yearly": plan.base_price_yearly,
+            "trial_days": plan.trial_days,
+        },
+        "billing_cycle": billing_cycle.value,
+        "base_price": base_price,
+        "discount_amount": discount_amount,
+        "final_price": final_price,
+        "currency": plan.currency,
+    }
 
 
 async def remove_discount(discount_id: str) -> bool:

@@ -19,12 +19,17 @@ from schemas.discount_schema import (
     DiscountUpdate,
 )
 from services.discount_service import (
+    preview_discount_for_plan,
     retrieve_discount_by_id,
     retrieve_discount_by_code,
     retrieve_discounts,
     validate_discount_code,
 )
+from schemas.subscription_schema import BillingCycle
 from security.account_status_check import check_admin_account_status_and_permissions
+from security.auth import verify_super_admin_token
+from security.principal import AuthPrincipal
+from core.errors import auth_permission_denied
 
 router = APIRouter(prefix="/discounts", tags=["Discounts"])
 
@@ -235,6 +240,35 @@ async def validate_discount_endpoint(
     admin=Depends(check_admin_account_status_and_permissions),
 ) -> Any:
     return await validate_discount_code(code, tenant_id, plan_id, subscription_value)
+
+
+@router.get("/preview")
+@document_response(
+    message="Discount preview retrieved",
+    description=(
+        "Validate a discount code against the caller's tenant + a plan and "
+        "return the discounted price breakdown. Read-only — the redemption "
+        "counter is only incremented after the matching checkout completes. "
+        "Tenant super_admin only — uses the JWT's tenant_id to scope the "
+        "validation, so the tenant cannot probe codes scoped to other tenants."
+    ),
+    summary="Preview discount for plan",
+)
+async def preview_discount_endpoint(
+    code: str = Query(..., description="Discount code to validate"),
+    plan_id: str = Query(..., description="Plan the discount will apply to"),
+    billing_cycle: BillingCycle = Query(BillingCycle.MONTHLY),
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+) -> Any:
+    tenant_id = getattr(principal, "tenant_id", None)
+    if not tenant_id:
+        raise auth_permission_denied(permission_key="discounts.preview")
+    return await preview_discount_for_plan(
+        code=code,
+        tenant_id=tenant_id,
+        plan_id=plan_id,
+        billing_cycle=billing_cycle,
+    )
 
 
 @router.post("/bulk/disable")

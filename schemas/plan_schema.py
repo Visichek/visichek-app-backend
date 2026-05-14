@@ -112,6 +112,12 @@ class PlanBase(BaseModel):
     custom_branding: bool = False
     api_access: bool = False
 
+    # Trial period in days. ``0`` means the plan does not offer a trial.
+    # When > 0, tenants can claim a one-time trial code via
+    # ``POST /v1/trials/claim?plan_id=...`` and start a $0 checkout that
+    # converts to ACTIVE (or downgrades back to free) at ``trial_ends_at``.
+    trial_days: int = 0
+
     # Support-case tier — controls admin paging on support threads.
     # NONE: admins only see the case in the dashboard, no email blast.
     # STANDARD: admin emails on case-open + SLA breaches.
@@ -135,6 +141,8 @@ class PlanCreate(PlanBase):
             raise ValueError("base_price_monthly must be non-negative")
         if self.base_price_yearly < 0:
             raise ValueError("base_price_yearly must be non-negative")
+        if self.trial_days < 0:
+            raise ValueError("trial_days must be non-negative")
         # Ensure plan name is URL-safe slug
         if not self.name.replace("-", "").replace("_", "").isalnum():
             raise ValueError(
@@ -164,6 +172,7 @@ class PlanUpdate(BaseModel):
     support_tier: Optional[SupportTier] = None
     is_public: Optional[bool] = None
     sort_order: Optional[int] = None
+    trial_days: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

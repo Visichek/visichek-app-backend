@@ -7,7 +7,6 @@ from bson import ObjectId
 
 from core.payments import PaymentIntentRequest, PaymentManager
 from core.errors import AppException, ErrorCode
-from core.settings import get_settings
 from repositories.subscription_repo import (
     get_subscriptions,
     update_subscription,
@@ -343,12 +342,20 @@ async def convert_expiring_trials() -> dict:
 
 async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
     """
-    Internal function to convert a trial subscription to ACTIVE or PAST_DUE.
+    Internal function to convert an expiring trial subscription.
 
-    On success: sets status=ACTIVE.
-    On failure: sets status=PAST_DUE and schedules first retry.
+    Two outcomes:
 
-    Returns True if status=ACTIVE, False if status=PAST_DUE.
+    * **Payment succeeds** → ``status=ACTIVE``, period extended, invoice
+      generated. Returns ``True``.
+    * **Payment fails / no payment method** → drop straight to the Free
+      plan via ``transition_tenant_to_free_plan``. Returns ``False``.
+
+    The previous behaviour for failures was to set ``PAST_DUE`` and wait
+    for dunning to eventually downgrade. That is wrong for trials because
+    the tenant never committed payment in the first place: there is
+    nothing to retry. The simpler rule the product wants is "renew or go
+    back to free" at trial expiry.
     """
     logger.info(f"Converting trial subscription {subscription.id} to paid")
     now = int(time.time())
@@ -357,11 +364,17 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
         # Fetch the plan
         if not ObjectId.is_valid(subscription.plan_id):
             logger.error(f"Invalid plan_id {subscription.plan_id}")
+            await _downgrade_trial_to_free(
+                subscription, reason="Invalid plan on trial expiry"
+            )
             return False
 
         plan = await get_plan({"_id": ObjectId(subscription.plan_id)})
         if not plan:
             logger.error(f"Plan not found: {subscription.plan_id}")
+            await _downgrade_trial_to_free(
+                subscription, reason="Plan not found on trial expiry"
+            )
             return False
 
         # Try to create payment intent
@@ -369,8 +382,9 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
             payment_manager = PaymentManager.get_instance()
         except RuntimeError as e:
             logger.error(f"Payment manager not configured: {str(e)}")
-            # Set to PAST_DUE for later retry
-            await _set_past_due_with_retry(subscription, now)
+            await _downgrade_trial_to_free(
+                subscription, reason="Payment manager unavailable at trial expiry"
+            )
             return False
 
         # Determine provider based on tenant's payment settings
@@ -386,7 +400,10 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
                 f"Failed to determine payment provider for tenant: {str(e)}",
                 exc_info=True,
             )
-            await _set_past_due_with_retry(subscription, now)
+            await _downgrade_trial_to_free(
+                subscription,
+                reason="No usable payment provider at trial expiry",
+            )
             return False
 
         # Calculate period
@@ -415,7 +432,10 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
             logger.warning(
                 f"Payment intent creation failed for trial {subscription.id}: {str(e)}"
             )
-            await _set_past_due_with_retry(subscription, now)
+            await _downgrade_trial_to_free(
+                subscription,
+                reason=f"Trial payment failed: {e}",
+            )
             return False
 
         # Payment succeeded, update to ACTIVE
@@ -470,31 +490,35 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
         logger.error(
             f"Trial conversion error for {subscription.id}: {str(e)}", exc_info=True
         )
-        await _set_past_due_with_retry(subscription, now)
+        await _downgrade_trial_to_free(
+            subscription, reason=f"Unhandled error at trial expiry: {e}"
+        )
         return False
 
 
-async def _set_past_due_with_retry(subscription: SubscriptionOut, now: int) -> None:
-    """
-    Helper to set subscription to PAST_DUE with next retry scheduled.
-    Used when trial conversion payment fails.
-    """
-    settings = get_settings()
-    next_retry = (
-        now + (settings.dunning_retry_days[0] * 86400)
-        if settings.dunning_retry_days
-        else now + 86400
-    )
+async def _downgrade_trial_to_free(
+    subscription: SubscriptionOut, *, reason: str
+) -> None:
+    """Drop an expired-trial subscription onto the Free plan.
 
-    update = SubscriptionUpdate(
-        status=SubscriptionStatus.PAST_DUE,
-        renewal_attempts=1,
-        last_renewal_attempt_at=now,
-        next_retry_at=next_retry,
-        last_updated=now,
-    )
+    Imported lazily because ``subscription_service`` imports from this
+    module via the renewal scheduler boot, so a top-level import would
+    create a circular dependency on web-process startup.
+    """
+    from services.subscription_service import transition_tenant_to_free_plan
 
-    await update_subscription(
-        filter_dict={"_id": ObjectId(subscription.id)},
-        sub_data=update,
-    )
+    try:
+        await transition_tenant_to_free_plan(
+            tenant_id=subscription.tenant_id,
+            reason=reason,
+        )
+        logger.info(
+            f"Downgraded expired-trial subscription {subscription.id} to Free: {reason}"
+        )
+    except Exception as e:
+        logger.error(
+            f"Failed to downgrade trial {subscription.id} to Free: {e}",
+            exc_info=True,
+        )
+
+

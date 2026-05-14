@@ -74,6 +74,7 @@ async def create_checkout_endpoint(
         discount_ids=payload.discount_ids or [],
         preferred_provider=payload.preferred_provider,
         trial_days=payload.trial_days,
+        trial_code=payload.trial_code,
         metadata=payload.metadata,
         customer_email=email,
     )
