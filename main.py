@@ -776,7 +776,6 @@ from blog.routes.admin_media_route import router as v1_blog_media_admin_router
 from blog.routes.admin_compat_route import router as v1_blog_admin_compat_router
 from blog.routes.public_articles_route import router as blog_public_articles_router
 from blog.routes.public_media_route import router as blog_public_media_router
-from blog.routes.video_route import router as blog_video_router
 
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
@@ -875,10 +874,25 @@ app.include_router(v1_blog_admin_compat_router, prefix="/v1")
 # request ids) with the rest of the API.
 app.include_router(blog_public_articles_router, prefix="/api/v1")
 app.include_router(blog_public_media_router, prefix="/api/v1")
-# Video streaming sits at the root because emitted media URLs have
-# the form ``/videos/{id}``.
-app.include_router(blog_video_router)
 # --- auto-routes-end ---
+
+# Serve blog uploads from local disk when Cloudflare R2 isn't configured.
+# The blog upload service (``blog/services/r2_upload.py``) writes files to
+# ``{STORAGE_LOCAL_ROOT}/blog-uploads/`` and returns ``/blog-uploads/{name}``
+# URLs in that mode — this mount makes those URLs resolvable.
+from pathlib import Path as _Path
+
+from fastapi.staticfiles import StaticFiles
+
+from blog.services.r2_upload import LOCAL_SUBDIR as _BLOG_LOCAL_SUBDIR
+
+_blog_uploads_dir = _Path(settings.storage_local_root) / _BLOG_LOCAL_SUBDIR
+_blog_uploads_dir.mkdir(parents=True, exist_ok=True)
+app.mount(
+    f"/{_BLOG_LOCAL_SUBDIR}",
+    StaticFiles(directory=str(_blog_uploads_dir)),
+    name="blog-uploads",
+)
 
 # Enterprise sub-apps. Each Enterprise plan can ship its own APIRouter
 # mounted at /v1/enterprise/<slug>/*. Modules that define those routers

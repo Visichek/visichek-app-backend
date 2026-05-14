@@ -1,14 +1,12 @@
-"""Cloudflare R2 image upload service.
+"""Media upload service — Cloudflare R2 with a local filesystem fallback.
 
-Ported from ``visichek-blog-backend/services/r2_upload.py``. Differences:
+Both images and videos go through the same path: bytes go to R2 when
+the R2 environment variables are set, otherwise they are written to
+``{STORAGE_LOCAL_ROOT}/blog-uploads/`` and served via the static-file
+mount in ``main.py`` (relative URL ``/blog-uploads/{name}``).
 
-* Reads config from ``core.settings.get_settings()`` instead of
-  ``os.environ``, matching the host backend's frozen-dataclass pattern.
-* Adds a small in-process client cache so repeated uploads (especially
-  from the queued ``media.upload_image`` writer) don't rebuild the
-  boto3 client every call.
-* The blocking ``put_object`` runs via ``asyncio.to_thread`` so it
-  doesn't stall the event loop in either web or celery context.
+The blocking ``put_object`` / file write runs via ``asyncio.to_thread``
+so it doesn't stall the event loop in either web or celery context.
 """
 
 from __future__ import annotations
@@ -16,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import mimetypes
 import uuid
+from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import boto3
 from botocore.client import BaseClient
@@ -26,35 +26,29 @@ from fastapi import HTTPException, UploadFile, status
 
 from core.settings import Settings, get_settings
 
+LOCAL_SUBDIR = "blog-uploads"
+LOCAL_URL_PREFIX = f"/{LOCAL_SUBDIR}"
+
 _R2_CLIENT: Optional[BaseClient] = None
 
 
-def _config_or_raise() -> Settings:
-    settings = get_settings()
-    missing = [
-        name
-        for name, value in (
-            ("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
-            ("R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key),
-            ("R2_ENDPOINT_URL", settings.r2_endpoint_url),
-            ("R2_BUCKET", settings.r2_bucket),
+def _r2_is_configured(settings: Settings) -> bool:
+    return all(
+        (
+            settings.r2_access_key_id,
+            settings.r2_secret_access_key,
+            settings.r2_endpoint_url,
+            settings.r2_bucket,
+            settings.public_base_url,
         )
-        if not value
-    ]
-    if missing:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"R2 storage is not configured (missing env vars: {', '.join(missing)}).",
-        )
-    return settings
+    )
 
 
-def _get_client() -> BaseClient:
+def _get_client(settings: Settings) -> BaseClient:
     """Build (or reuse) the boto3 S3 client pointed at R2."""
     global _R2_CLIENT
     if _R2_CLIENT is not None:
         return _R2_CLIENT
-    settings = _config_or_raise()
     _R2_CLIENT = boto3.client(
         "s3",
         endpoint_url=settings.r2_endpoint_url,
@@ -74,21 +68,23 @@ def _make_key(filename: Optional[str], content_type: Optional[str]) -> str:
     return f"uploads/{uuid.uuid4().hex}{ext}"
 
 
-def _public_url(key: str) -> str:
-    settings = get_settings()
-    if not settings.public_base_url:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="PUBLIC_BASE_URL is not configured.",
-        )
+def _make_local_name(filename: Optional[str], content_type: Optional[str]) -> str:
+    ext = ""
+    if filename and "." in filename:
+        ext = "." + filename.rsplit(".", 1)[-1].lower()
+    elif content_type:
+        ext = mimetypes.guess_extension(content_type) or ""
+    return f"{uuid.uuid4().hex}{ext}"
+
+
+def _r2_public_url(settings: Settings, key: str) -> str:
     return f"{settings.public_base_url}/{key}"
 
 
 def _put_object_sync(
-    key: str, body: bytes, content_type: Optional[str]
+    settings: Settings, key: str, body: bytes, content_type: Optional[str]
 ) -> None:
-    client = _get_client()
-    settings = get_settings()
+    client = _get_client(settings)
     extra = {"ContentType": content_type} if content_type else {}
     try:
         client.put_object(Bucket=settings.r2_bucket, Key=key, Body=body, **extra)
@@ -99,23 +95,50 @@ def _put_object_sync(
         )
 
 
+def _write_local_sync(root: Path, name: str, body: bytes) -> None:
+    target_dir = root / LOCAL_SUBDIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / name).write_bytes(body)
+
+
+async def upload_media_bytes(
+    file_bytes: bytes, filename: str, content_type: str
+) -> str:
+    """Upload raw bytes to R2 (preferred) or local disk (fallback).
+
+    Returns a public URL suitable for serving directly to clients. R2
+    URLs are absolute (built from ``PUBLIC_BASE_URL``); local URLs are
+    relative (``/blog-uploads/{name}``) — the frontend resolves them
+    against the API base.
+    """
+    settings = get_settings()
+    if _r2_is_configured(settings):
+        key = _make_key(filename, content_type)
+        await asyncio.to_thread(
+            _put_object_sync, settings, key, file_bytes, content_type
+        )
+        return _r2_public_url(settings, key)
+
+    name = _make_local_name(filename, content_type)
+    root = Path(settings.storage_local_root)
+    await asyncio.to_thread(_write_local_sync, root, name, file_bytes)
+    return f"{LOCAL_URL_PREFIX}/{quote(name)}"
+
+
 async def upload_image_service_from_bytes(
     file_bytes: bytes, filename: str, content_type: str
 ) -> str:
-    """Upload raw bytes to R2 and return a public URL."""
-    _config_or_raise()  # fail fast if mis-configured
-    key = _make_key(filename, content_type)
-    await asyncio.to_thread(_put_object_sync, key, file_bytes, content_type)
-    return _public_url(key)
+    """Backwards-compatible alias for :func:`upload_media_bytes`."""
+    return await upload_media_bytes(file_bytes, filename, content_type)
 
 
 async def upload_image_service(file: UploadFile) -> str:
-    """Read an ``UploadFile`` and upload it to R2."""
+    """Read an ``UploadFile`` and upload it via :func:`upload_media_bytes`."""
     try:
         file_content = await file.read()
     finally:
         await file.close()
-    return await upload_image_service_from_bytes(
+    return await upload_media_bytes(
         file_content,
         file.filename or "",
         file.content_type or "application/octet-stream",

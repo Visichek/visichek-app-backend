@@ -10,9 +10,9 @@ the pipeline.
 
 Key insight for performance: the original sync upload endpoints
 (``/v1/media/upload-image``, ``/v1/media/upload-video``) blocked the
-request thread for the full duration of the R2 PUT / GridFS stream.
-Switching to ``enqueue_write`` returns ``202 + job_id`` in <50ms; the
-heavy work runs on ``worker-writes`` and the client polls
+request thread for the full duration of the R2 PUT. Switching to
+``enqueue_write`` returns ``202 + job_id`` in <50ms; the heavy work
+runs on ``worker-writes`` and the client polls
 ``/v1/jobs/{job_id}``.
 """
 
@@ -20,9 +20,8 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import Any, List
+from typing import Any, List, Literal
 
-from blog.repositories.media_repo import save_video_to_mongodb_from_bytes
 from blog.schemas.media_schema import MediaUpdate
 from blog.services.media_service import (
     add_media_from_bytes,
@@ -30,7 +29,7 @@ from blog.services.media_service import (
     remove_media,
     retrieve_media,
 )
-from blog.services.r2_upload import upload_image_service_from_bytes
+from blog.services.r2_upload import upload_media_bytes
 from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
@@ -112,7 +111,7 @@ async def _media_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any
 
 @write_handler("media.upload_image", invalidates=_MEDIA_INVALIDATIONS)
 async def _media_upload_image(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
-    """Upload an image to R2 without creating a media row.
+    """Upload an image to R2 (or local) without creating a media row.
 
     Used by ``POST /v1/media/upload-image`` and
     ``POST /v1/media/upload-media`` (image branch) — both of which just
@@ -121,24 +120,18 @@ async def _media_upload_image(resource_id: str, data: dict[str, Any]) -> dict[st
     file_bytes = _decode_b64(data["file_b64"])
     filename = data.get("filename") or ""
     content_type = data.get("content_type") or "application/octet-stream"
-    url = await upload_image_service_from_bytes(
-        file_bytes, filename, content_type
-    )
+    url = await upload_media_bytes(file_bytes, filename, content_type)
     return {"id": resource_id, "url": url}
 
 
 @write_handler("media.upload_video", invalidates=_MEDIA_INVALIDATIONS)
 async def _media_upload_video(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
-    """Stream a video into GridFS without creating a media row."""
+    """Upload a video to R2 (or local) without creating a media row."""
     file_bytes = _decode_b64(data["file_b64"])
     filename = data.get("filename") or ""
     content_type = data.get("content_type") or "video/mp4"
-    request_base_url = (data.get("request_base_url") or "").rstrip("/")
-    path = await save_video_to_mongodb_from_bytes(
-        file_bytes, filename, content_type
-    )
-    full_url = (request_base_url + path) if request_base_url else path
-    return {"id": resource_id, "url": full_url, "path": path}
+    url = await upload_media_bytes(file_bytes, filename, content_type)
+    return {"id": resource_id, "url": url}
 
 
 @write_handler("media.update_category", invalidates=_MEDIA_INVALIDATIONS)
@@ -186,7 +179,6 @@ async def _media_append_to_blog(
     filename = data.get("filename") or ""
     content_type = (data.get("content_type") or "").lower()
     caption = data.get("caption") or ""
-    request_base_url = (data.get("request_base_url") or "").rstrip("/")
 
     image_types = {
         "image/jpeg",
@@ -205,23 +197,20 @@ async def _media_append_to_blog(
 
     blog = await retrieve_blog_by_blog_id(blog_id)
 
+    media_type: Literal["image", "video"]
     if content_type in image_types:
-        url = await upload_image_service_from_bytes(
-            file_bytes, filename, content_type
-        )
-        block = generate_media_json(file_url=url, caption=caption, media_type="image")
+        media_type = "image"
     elif content_type in video_types:
-        path = await save_video_to_mongodb_from_bytes(
-            file_bytes, filename, content_type
-        )
-        url = (request_base_url + path) if request_base_url else path
-        block = generate_media_json(file_url=url, caption=caption, media_type="video")
+        media_type = "video"
     else:
         return {
             "id": blog_id,
             "appended": False,
             "error": f"Unsupported file type: {content_type}",
         }
+
+    url = await upload_media_bytes(file_bytes, filename, content_type)
+    block = generate_media_json(file_url=url, caption=caption, media_type=media_type)
 
     new_body = list(blog.currentPageBody or [])
     new_body.append(block)

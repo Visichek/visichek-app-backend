@@ -4,9 +4,9 @@ Listing style follows the host backend's tables contract — see
 ``BLOGS_LIST_SPEC`` in ``admin_blog_route.py`` for the same shape.
 
 All mutations and uploads route through ``enqueue_write`` and return
-``202 + job_id``. The R2 PUT / GridFS stream runs on the
-``worker-writes`` queue; clients poll ``/v1/jobs/{job_id}`` for the
-final URL.
+``202 + job_id``. The R2 PUT (or local-disk write, when R2 isn't
+configured) runs on the ``worker-writes`` queue; clients poll
+``/v1/jobs/{job_id}`` for the final URL.
 """
 
 from __future__ import annotations
@@ -114,8 +114,8 @@ def _is_video_content_type(content_type: str) -> bool:
     status_code=status.HTTP_202_ACCEPTED,
     description=(
         "Upload an image or video. The route detects the file type from its "
-        "MIME header, enqueues an R2 upload (images) or GridFS stream (videos), "
-        "and returns a `job_id` to poll for the final URL."
+        "MIME header, enqueues an upload to R2 (or local disk when R2 isn't "
+        "configured), and returns a `job_id` to poll for the final URL."
     ),
     summary="Upload media (queued)",
 )
@@ -514,97 +514,4 @@ async def append_media_to_blog(
         actor_id=getattr(admin, "id", None),
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),
-    )
-return item
-
-
-@router.patch("/{media_id}", status_code=status.HTTP_202_ACCEPTED)
-@document_response(
-    message="Media category update queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Update media category (queued)",
-)
-async def update_media_category_endpoint(
-    payload: MediaUpdate,
-    request: Request,
-    media_id: str = Path(...),
-    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-) -> dict:
-    if not ObjectId.is_valid(media_id):
-        raise HTTPException(status_code=400, detail="Invalid media id format")
-    return await enqueue_write(
-        writer_key="media.update_category",
-        payload=payload.model_dump(mode="json"),
-        resource_type="media",
-        resource_id=media_id,
-        actor_id=getattr(admin, "id", None),
-        actor_role="admin",
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
-@router.delete("/{media_id}", status_code=status.HTTP_202_ACCEPTED)
-@document_response(
-    message="Media deletion queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Delete media (queued)",
-)
-async def delete_media_endpoint(
-    request: Request,
-    media_id: str = Path(...),
-    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-) -> dict:
-    return await enqueue_write(
-        writer_key="media.delete",
-        payload={},
-        resource_type="media",
-        resource_id=media_id,
-        actor_id=getattr(admin, "id", None),
-        actor_role="admin",
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Append media block to a blog — preserved from blog backend
-# ---------------------------------------------------------------------------
-
-
-@router.post("/{blog_id}", status_code=status.HTTP_202_ACCEPTED)
-@document_response(
-    message="Media append queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    description=(
-        "Upload an image or video, then append a BlockNote media block "
-        "to the blog's ``currentPageBody``. Returns ``202 + job_id``; "
-        "poll ``/v1/jobs/{job_id}`` for the appended URL."
-    ),
-    summary="Append media block to blog (queued)",
-)
-async def append_media_to_blog(
-    request: Request,
-    blog_id: str = Path(..., description="Blog id"),
-    caption: str = Form(..., description="Caption for the embedded block"),
-    file: UploadFile = File(..., description="Image or video file"),
-    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
-) -> dict:
-    if not ObjectId.is_valid(blog_id):
-        raise HTTPException(status_code=400, detail="Invalid blog id format")
-    file_bytes = await file.read()
-    return await enqueue_write(
-        writer_key="media.append_to_blog",
-        payload={
-            "file_b64": base64.b64encode(file_bytes).decode("ascii"),
-            "filename": file.filename or "",
-            "content_type": (file.content_type or "").lower(),
-            "caption": caption,
-            "request_base_url": str(request.base_url).rstrip("/"),
-        },
-        resource_type="blog",
-        resource_id=blog_id,
-        actor_id=getattr(admin, "id", None),
-        actor_role="admin",
-        request_id=getattr(request.state, "request_id", None),
-    )
-),
     )

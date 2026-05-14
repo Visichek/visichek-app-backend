@@ -1,6 +1,6 @@
-"""Media business logic — composes repo + R2 + GridFS.
+"""Media business logic — composes repo + storage layer.
 
-Heavy work (R2 upload, GridFS streaming) happens on the celery
+Heavy work (R2 upload, local-disk writes) happens on the celery
 ``worker-writes`` queue via ``blog.writers.media_writer``. These
 functions are the implementation those writers call.
 
@@ -20,7 +20,6 @@ from blog.repositories.media_repo import (
     delete_media,
     get_media,
     get_media_files,
-    save_video_to_mongodb_from_bytes,
     update_media_category,
 )
 from blog.schemas.media_schema import (
@@ -29,7 +28,7 @@ from blog.schemas.media_schema import (
     MediaOut,
     MediaUpdate,
 )
-from blog.services.r2_upload import upload_image_service_from_bytes
+from blog.services.r2_upload import upload_media_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -75,27 +74,18 @@ async def add_media_from_bytes(
     *,
     preassigned_id: Optional[str] = None,
 ) -> MediaOut:
-    """Upload bytes to R2 (images) or GridFS (videos), then insert media row.
+    """Upload bytes to R2 (or local fallback), then insert the media row.
 
-    Mirrors ``celery_worker.create_media_task`` from the blog backend.
+    Both images and videos go through the same upload path.
     """
     media = MediaBase(**media_dict)
-    if media.mediaType == "image":
-        url = await upload_image_service_from_bytes(
-            file_bytes, filename, content_type
-        )
-        media_data = MediaCreate(**media_dict, url=url, name=filename)
-    elif media.mediaType == "video":
-        path = await save_video_to_mongodb_from_bytes(
-            file_bytes, filename, content_type
-        )
-        full_url = (media.requestUrl or "") + path
-        media_data = MediaCreate(**media_dict, url=full_url, name=filename)
-    else:  # pragma: no cover - schema literal guards this
+    if media.mediaType not in ("image", "video"):  # pragma: no cover
         raise HTTPException(
             status_code=400, detail=f"Unsupported mediaType: {media.mediaType}"
         )
 
+    url = await upload_media_bytes(file_bytes, filename, content_type)
+    media_data = MediaCreate(**media_dict, url=url, name=filename)
     return await create_media(media_data, preassigned_id=preassigned_id)
 
 
