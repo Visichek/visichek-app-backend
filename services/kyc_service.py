@@ -445,9 +445,22 @@ async def process_webhook_event(
         # opened) — recorded but no state change.
         return {"accepted": True, "status": "noop"}
 
+    # Pull the visichek-side correlator we encoded in initiate's
+    # metadata. Dojah echoes it back verbatim, and ``finalize_kyc``
+    # uses it as a fallback when its lookup by ``reference_id`` misses
+    # (which it always does on the first webhook — we persist the
+    # checkin_id placeholder until the real Dojah ref arrives).
+    metadata_checkin_id: Optional[str] = None
+    raw_checkin_id = event.metadata.get("checkin_id") if event.metadata else None
+    if raw_checkin_id:
+        candidate = str(raw_checkin_id)
+        if ObjectId.is_valid(candidate):
+            metadata_checkin_id = candidate
+
     finalised = await finalize_kyc(
         reference_id=event.reference_id,
         details=event.details,
+        fallback_checkin_id=metadata_checkin_id,
     )
     return {"accepted": True, "status": finalised.status.value}
 
@@ -456,13 +469,40 @@ async def finalize_kyc(
     *,
     reference_id: str,
     details: KYCVerificationDetails,
+    fallback_checkin_id: Optional[str] = None,
 ) -> KYCVerificationOut:
     """Apply provider results to the verification row + check-in.
 
     Pure inputs/outputs so the polling fallback (``GET /v1/kyc/status``)
     can call this with the polled details too.
+
+    ``fallback_checkin_id`` is the visichek-side correlator from the
+    webhook metadata. Used to recover the verification row when the
+    provider-issued ``reference_id`` doesn't match the one we persisted
+    on initiate — Dojah, for example, only mints the real reference_id
+    inside the widget, so the row carries the checkin_id placeholder
+    until the first webhook lands. When matched via this fallback we
+    rewrite the row's ``reference_id`` to the provider value so later
+    webhooks / polling on that ref resolve directly.
     """
     record = await get_kyc_by_reference(reference_id)
+    if record is None and fallback_checkin_id:
+        record = await get_kyc_by_checkin(fallback_checkin_id)
+        if record is not None and record.reference_id != reference_id:
+            relinked = await update_kyc_verification(
+                {"checkin_id": fallback_checkin_id},
+                KYCVerificationUpdate(reference_id=reference_id),
+            )
+            if relinked is not None:
+                record = relinked
+            logger.info(
+                "finalize_kyc: relinked verification checkin_id=%s "
+                "placeholder_ref=%s real_ref=%s",
+                fallback_checkin_id,
+                record.reference_id if record else None,
+                reference_id,
+            )
+
     if record is None:
         # Webhook arrived before the kiosk's initiate completed (rare
         # — Dojah's widget creates the verification client-side). Drop

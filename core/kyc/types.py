@@ -73,7 +73,15 @@ class KYCVerificationDetails:
 
 @dataclass(frozen=True)
 class KYCWebhookEvent:
-    """Normalised webhook payload after provider-specific parsing."""
+    """Normalised webhook payload after provider-specific parsing.
+
+    ``metadata`` is the provider's echo of the ``metadata`` block we
+    sent in ``initiate`` (Dojah forwards it verbatim on the webhook).
+    Carries the visichek-side correlators — most importantly
+    ``checkin_id`` — that let ``finalize_kyc`` link a webhook to the
+    originating check-in even when the provider-issued ``reference_id``
+    doesn't match the one we persisted on initiate.
+    """
 
     provider: str
     event_id: str
@@ -83,3 +91,4 @@ class KYCWebhookEvent:
     raw_payload: dict[str, Any]
     signature_valid: bool
     details: Optional[KYCVerificationDetails] = None
+    metadata: dict[str, Any] = field(default_factory=dict)

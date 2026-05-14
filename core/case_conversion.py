@@ -68,6 +68,33 @@ def _convert_keys(obj: Any, converter: Any) -> Any:
 # ── middleware ────────────────────────────────────────────────────────
 
 
+def _is_signed_webhook(path: str, method: str) -> bool:
+    """Return ``True`` for POSTs whose raw body is HMAC-signed by the
+    sender (Dojah KYC, Stripe / Flutterwave payments).
+
+    The case conversion middleware MUST NOT rewrite these bodies — the
+    handler computes an HMAC over the raw bytes and compares it to the
+    sender's signature header. Re-serialising the JSON would change the
+    byte sequence (key order, whitespace, snake-case rewrite) and the
+    signature would fail every time.
+    """
+    if method != "POST":
+        return False
+    if path == "/v1/kyc/webhook":
+        return True
+    # ``POST /v1/payments/webhooks/{provider}`` — single trailing
+    # segment. The admin-facing replay endpoint
+    # (``/v1/payments/webhooks/replay/{event_id}``) has two segments
+    # and is fine to convert; the events list is a GET so it never
+    # reaches this branch.
+    prefix = "/v1/payments/webhooks/"
+    if path.startswith(prefix):
+        suffix = path[len(prefix):]
+        if suffix and "/" not in suffix:
+            return True
+    return False
+
+
 class CaseConversionMiddleware(BaseHTTPMiddleware):
     """
     Middleware that:
@@ -75,15 +102,19 @@ class CaseConversionMiddleware(BaseHTTPMiddleware):
        so Pydantic models always receive snake_case keys.
     2. Converts outgoing JSON response bodies to camelCase (default) or
        snake_case if the client sends  X-Response-Case: snake.
+
+    Signed-webhook receivers (Dojah KYC, Stripe / Flutterwave payments)
+    are exempt from the inbound rewrite — those handlers verify an HMAC
+    over the raw request bytes and any mutation breaks verification.
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[override]
         # ── Normalise inbound body ───────────────────────────────────
         content_type = request.headers.get("content-type", "")
-        if "application/json" in content_type and request.method in (
-            "POST",
-            "PUT",
-            "PATCH",
+        if (
+            "application/json" in content_type
+            and request.method in ("POST", "PUT", "PATCH")
+            and not _is_signed_webhook(request.url.path, request.method)
         ):
             body = await request.body()
             if body:

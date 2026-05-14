@@ -182,6 +182,19 @@ class DojahKYCProvider:
             or _hash_payload(body)
         )
 
+        # Dojah echoes our ``initiate`` metadata back in the webhook —
+        # usually under ``data.metadata``, occasionally at the root.
+        # ``finalize_kyc`` uses ``metadata.checkin_id`` as a fallback
+        # correlator when its lookup by reference_id misses (which it
+        # always does on the first webhook because we persist the
+        # checkin_id placeholder until the real Dojah ref arrives).
+        metadata_raw = (
+            data.get("metadata")
+            if isinstance(data, dict)
+            else None
+        ) or payload.get("metadata") or {}
+        metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+
         details = (
             _entity_to_details(reference_id=reference_id, entity=data)
             if reference_id
@@ -197,6 +210,7 @@ class DojahKYCProvider:
             raw_payload=payload if isinstance(payload, dict) else {},
             signature_valid=signature_valid,
             details=details,
+            metadata=metadata,
         )
 
     # ── Helpers ──────────────────────────────────────────────────────
