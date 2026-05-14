@@ -67,3 +67,8 @@ from services import visitor_bulk_writer as _visitor_bulk_writer  # noqa: F401
 # Cluster 11 — tenant form builder (precompute-only; mutations stay sync
 # because the autosave / publish UX needs the result in the response).
 from services import tenant_form_writer as _tenant_form_writer  # noqa: F401
+
+# Cluster 12 — blog backend port (writers + precomputes live under
+# blog/writers/). Imports the modules for their decorator side-effects.
+from blog.writers import blog_writer as _blog_writer  # noqa: F401
+from blog.writers import media_writer as _media_writer  # noqa: F401

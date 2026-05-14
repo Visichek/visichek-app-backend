@@ -62,6 +62,14 @@ EXEMPT_PATH_PREFIXES = (
     # the plan's feature_rules — we don't need (and shouldn't have)
     # the middleware blocking the kiosk before it can decide.
     "/v1/kyc/",
+    # Blog backend port — admin content tooling + public website.
+    # Blogs aren't a per-tenant quota concept; they're managed by
+    # application admins and read by anonymous website visitors.
+    "/v1/blogs/",
+    "/v1/media/",
+    "/api/v1/articles/",
+    "/api/v1/media/",
+    "/videos/",
 )
 
 # Map HTTP methods to operation types for quota checking

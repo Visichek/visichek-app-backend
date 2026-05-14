@@ -100,6 +100,27 @@ class Settings:
     # configuration.
     dojah_require_v1_signature: bool = True
 
+    # ------------------------------------------------------------------
+    # Blog backend (merged from visichek-blog-backend)
+    # ------------------------------------------------------------------
+    # Cloudflare R2 — primary object store for blog images uploaded
+    # through the admin editor. When unset, the R2 service raises a
+    # 500 at upload time (matches blog backend's behaviour).
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_endpoint_url: str | None = None
+    r2_bucket: str | None = None
+    # Public URL prefix used to build absolute media URLs (e.g.
+    # ``https://media.visichek.app``). Trailing slash is stripped.
+    public_base_url: str = ""
+    # Optional Unsplash search key — when set, blogs without a feature
+    # image fall back to a topic-matched Unsplash photo.
+    unsplash_access_key: str | None = None
+    # Optional FreeImage.Host key — legacy host used by the
+    # ``upload_to_freeimage_service`` helper. R2 is preferred; this is
+    # retained so the path stays functional during transition.
+    freeimage_api_key: str | None = None
+
     @property
     def is_production(self) -> bool:
         return self.env.lower() == "production"
@@ -200,5 +221,12 @@ def get_settings() -> Settings:
             "DOJAH_REQUIRE_V1_SIGNATURE", "true"
         ).lower()
         in {"1", "true", "yes"},
+        r2_access_key_id=os.getenv("R2_ACCESS_KEY_ID") or None,
+        r2_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY") or None,
+        r2_endpoint_url=os.getenv("R2_ENDPOINT_URL") or None,
+        r2_bucket=os.getenv("R2_BUCKET") or None,
+        public_base_url=(os.getenv("PUBLIC_BASE_URL") or "").rstrip("/"),
+        unsplash_access_key=os.getenv("UNSPLASH_ACCESS_KEY") or None,
+        freeimage_api_key=os.getenv("FREEIMAGE_API_KEY") or None,
     )
     return settings

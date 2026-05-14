@@ -767,6 +767,16 @@ from api.v1.tenant_form_route import (
     router as v1_tenant_form_route_router,
     public_router as v1_tenant_form_public_router,
 )
+# Blog backend port (visichek-blog-backend merged in). Admin routers
+# live under /v1 alongside the existing /v1/admins admin surface;
+# public website routers live under /api/v1; video streaming sits at
+# the FastAPI root because saved video URLs have the form `/videos/{id}`.
+from blog.routes.admin_blog_route import router as v1_blog_admin_router
+from blog.routes.admin_media_route import router as v1_blog_media_admin_router
+from blog.routes.admin_compat_route import router as v1_blog_admin_compat_router
+from blog.routes.public_articles_route import router as blog_public_articles_router
+from blog.routes.public_media_route import router as blog_public_media_router
+from blog.routes.video_route import router as blog_video_router
 
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
@@ -849,6 +859,25 @@ app.include_router(v1_tenant_form_public_router, prefix="/v1")
 # App-mode payment simulator — deliberately NOT under /v1 so the URLs
 # match the checkout_url emitted by AppCheckoutPaymentProvider.
 app.include_router(app_payment_route_router)
+
+# ----- Blog backend port -----
+# Admin blog routes (/v1/blogs, /v1/media) — authenticated via the
+# host's `check_admin_account_status_and_permissions` dep.
+app.include_router(v1_blog_admin_router, prefix="/v1")
+app.include_router(v1_blog_media_admin_router, prefix="/v1")
+# Blog-admin compatibility aliases (/v1/admins/me, /v1/admins/invite,
+# /v1/admins/login/verify-otp, /v1/admins/mfa/*). These coexist with
+# the host's /v1/admins/* router and never shadow its paths.
+app.include_router(v1_blog_admin_compat_router, prefix="/v1")
+# Public-website article + media reads. The original blog backend
+# mounted these as a sub-app at /api/v1; here they're plain
+# APIRouters so they share middleware (rate limiting, http cache,
+# request ids) with the rest of the API.
+app.include_router(blog_public_articles_router, prefix="/api/v1")
+app.include_router(blog_public_media_router, prefix="/api/v1")
+# Video streaming sits at the root because emitted media URLs have
+# the form ``/videos/{id}``.
+app.include_router(blog_video_router)
 # --- auto-routes-end ---
 
 # Enterprise sub-apps. Each Enterprise plan can ship its own APIRouter
