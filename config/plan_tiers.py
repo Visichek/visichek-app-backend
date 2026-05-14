@@ -86,6 +86,15 @@ def _deny(pattern: str, description: str, methods: Optional[List[str]] = None) -
     )
 
 
+def _allow(pattern: str, description: str, methods: Optional[List[str]] = None) -> FeatureRule:
+    return FeatureRule(
+        endpoint_pattern=pattern,
+        methods=methods or ["GET", "POST", "PUT", "PATCH", "DELETE"],
+        enabled=True,
+        description=description,
+    )
+
+
 # Feature gates (denials) per tier. Order matters: a feature listed
 # here is BLOCKED for that tier. We list the FREE denials then layer
 # Starter as ``FREE_DENIALS - <stuff Starter unlocks>``, and so on.
@@ -175,6 +184,10 @@ STARTER_DENIED_FEATURES: List[FeatureRule] = [
 
 # Premium: only locks out enterprise-only features (SSO, advanced
 # integrations, watchlist). API access is an add-on but baked-in here.
+# We also carry an explicit allow rule for ``/v1/kyc/*`` so the plan
+# data is self-documenting — ``services.kyc_service`` decides KYC
+# availability from these rules (deny-list semantics, same as the
+# middleware), so the allow rule is documentation, not a gate.
 PREMIUM_DENIED_FEATURES: List[FeatureRule] = [
     # Watchlist / flagged visitors — Enterprise only
     _deny("/v1/watchlist*", "Watchlist requires Enterprise"),
@@ -182,10 +195,16 @@ PREMIUM_DENIED_FEATURES: List[FeatureRule] = [
     # SSO — Enterprise only
     _deny("/v1/sso*", "SSO requires Enterprise"),
     _deny("/v1/sso/*", "SSO requires Enterprise"),
+    # ID verification (Dojah KYC) — included in Premium
+    _allow("/v1/kyc/*", "ID verification included"),
 ]
 
-# Enterprise: no denies — everything available.
-ENTERPRISE_DENIED_FEATURES: List[FeatureRule] = []
+# Enterprise: no denies — everything available. The explicit KYC allow
+# rule mirrors Premium so the catalogue payload makes the entitlement
+# obvious to the frontend / admin UI.
+ENTERPRISE_DENIED_FEATURES: List[FeatureRule] = [
+    _allow("/v1/kyc/*", "ID verification included"),
+]
 
 
 @dataclass(frozen=True)

@@ -47,7 +47,10 @@ from schemas.subscription_schema import (
     SubscriptionCreate,
     SubscriptionStatus,
 )
-from services.plan_cache_service import invalidate_tenant_plan_cache
+from services.plan_cache_service import (
+    invalidate_plan_cache,
+    invalidate_tenant_plan_cache,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +171,11 @@ async def ensure_canonical_plans() -> dict[str, str]:
                         {"_id": ObjectId(existing.id)},
                         {"$set": update_dict},
                     )
+                    # Drop any tenant_plan cache entries pinned to this
+                    # plan so feature_rules / cap changes shipped in the
+                    # canonical config take effect on the next request
+                    # instead of waiting out the 5-min TTL.
+                    await invalidate_plan_cache(existing.id)
                     logger.info(
                         "plan_bootstrap: refreshed canonical plan %s id=%s",
                         name,

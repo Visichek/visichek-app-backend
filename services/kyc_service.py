@@ -59,29 +59,34 @@ logger = logging.getLogger(__name__)
 
 # ── Plan / settings gating ───────────────────────────────────────────
 
-KYC_FEATURE_PATTERN = "/v1/kyc/*"
-"""Plan feature_rule pattern that must be enabled for a tenant to use
-KYC. Application-admin plans set ``enabled=True`` on this pattern for
-tiers that include KYC; everything else gets ``enabled=False`` (and
-the call to :func:`initiate_kyc_for_checkin` raises 402)."""
+KYC_SAMPLE_PATH = "/v1/kyc/checkins/x/initiate"
+"""Representative request path used to decide whether a plan's
+feature_rules deny KYC. ``_kyc_enabled_in_plan`` runs this through
+``fnmatch`` against every ``enabled=False`` rule — if any rule matches,
+the plan blocks KYC; otherwise the plan grants it."""
 
 
 def _kyc_enabled_in_plan(plan_data: dict) -> bool:
     """Return ``True`` if the tenant's resolved plan grants KYC.
 
-    Convention: a feature_rule with ``endpoint_pattern == "/v1/kyc/*"``
-    and ``enabled = True`` opts the plan into KYC. Plans without the
-    rule are treated as not granting access — this matches the
-    PlanEnforcementMiddleware semantic that "no rule" means "default
-    closed for KYC" (it's a chargeable feature).
+    Mirrors :class:`PlanEnforcementMiddleware` semantics: a plan grants
+    KYC unless it carries a feature_rule whose ``endpoint_pattern``
+    matches a KYC request AND has ``enabled=False``. "No matching rule"
+    means allowed — the same default the middleware applies to every
+    other endpoint (see ``config/plan_tiers.py``).
+
+    Free / Starter plans deny ``/v1/kyc*`` and ``/v1/kyc/*`` explicitly,
+    so they resolve to ``False`` here. Premium / Enterprise carry no
+    KYC deny rule and resolve to ``True``.
     """
+    import fnmatch
+
     for rule in plan_data.get("feature_rules", []) or []:
-        if (
-            rule.get("endpoint_pattern") == KYC_FEATURE_PATTERN
-            and rule.get("enabled") is True
+        if rule.get("enabled") is False and fnmatch.fnmatch(
+            KYC_SAMPLE_PATH, rule.get("endpoint_pattern", "")
         ):
-            return True
-    return False
+            return False
+    return True
 
 
 async def kyc_available_for_tenant(
