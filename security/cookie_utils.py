@@ -7,6 +7,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 
 from core.response_envelope import success_payload
+from core.settings import get_settings
 
 ACCESS_TOKEN_COOKIE = "access_token"
 REFRESH_TOKEN_COOKIE = "refresh_token"
@@ -32,8 +33,6 @@ def set_auth_cookies(
     response: Response,
     access_token: str,
     refresh_token: str,
-    *,
-    is_production: bool = False,
 ) -> None:
     """Set httpOnly auth cookies on the response.
 
@@ -41,7 +40,12 @@ def set_auth_cookies(
     sees the same auth. In non-production we omit the ``Domain`` attribute
     entirely — the browser then scopes the cookie to whatever host served
     the request (e.g. ``localhost``), which is what local dev needs.
+
+    Environment is read from ``ENV`` via ``get_settings().is_production`` —
+    callers do NOT pass it in. This prevents accidental mismatches between
+    set/clear sites and keeps the cookie posture driven solely by .env.
     """
+    is_production = get_settings().is_production
     domain = AUTH_COOKIE_DOMAIN if is_production else None
     response.set_cookie(
         key=ACCESS_TOKEN_COOKIE,
@@ -111,7 +115,6 @@ def build_auth_response(
     request: Request,
     payload: Any,
     message: str,
-    is_production: bool,
     status_code: int = 200,
     access_token: str | None = None,
     refresh_token: str | None = None,
@@ -156,23 +159,22 @@ def build_auth_response(
         response,
         resolved_access or "",
         resolved_refresh or "",
-        is_production=is_production,
     )
     return response
 
 
-def clear_auth_cookies(
-    response: Response,
-    *,
-    is_production: bool = False,
-) -> None:
+def clear_auth_cookies(response: Response) -> None:
     """Delete auth cookies from the response.
 
     ``domain`` must match the value used at set time — browsers key cookies
     by ``(name, domain, path)``, so deleting without the domain set would
     leave the shared-parent cookie alive. In non-production we never set a
     Domain at write time, so we must not set one here either.
+
+    Environment is read from ``ENV`` via ``get_settings().is_production`` —
+    callers do NOT pass it in (see ``set_auth_cookies``).
     """
+    is_production = get_settings().is_production
     domain = AUTH_COOKIE_DOMAIN if is_production else None
     response.delete_cookie(
         key=ACCESS_TOKEN_COOKIE,

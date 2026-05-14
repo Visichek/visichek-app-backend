@@ -1,0 +1,556 @@
+================================================================================
+BLOG & MEDIA — FULL ENDPOINT REFERENCE
+================================================================================
+
+Three routers, two surfaces:
+
+  Admin (auth, /v1/*)              Public website (no auth, /api/v1/*)
+  ─────────────────────            ───────────────────────────────────
+  /v1/blogs/*                      /api/v1/articles/content/*
+  /v1/media/*                      /api/v1/media/*
+
+All admin mutations (create / update / delete / upload) go through the
+queued-write pipeline. They respond 202 with `{ id, job_id }`; clients
+poll `GET /v1/jobs/{job_id}` for the real result. The 202 `id` is
+speculative for resources where the worker assigns its own id — trust
+the job result over the 202 body.
+
+All admin endpoints require an application admin bearer token
+(`check_admin_account_status_and_permissions`). All public endpoints
+are unauthenticated.
+
+All responses are wrapped in the envelope:
+
+  { success, message, data, meta?, requestId? }
+
+List endpoints additionally honour the tables contract:
+  ?skip=  &limit=  &sort=field,-field  &q=...  &facets=a,b
+  + per-route allow-listed filters (rejected with 400 otherwise)
+
+The unfiltered first page of admin/public lists is served from the
+Redis precompute cache (keys: `blogs.list_admin`, `blogs.list_published`,
+`media.list`). TTL 300s, invalidated on each matching write.
+
+Uploads: bytes go to Cloudflare R2 when `R2_*` + `PUBLIC_BASE_URL` are
+set; otherwise to local disk under `{STORAGE_LOCAL_ROOT}/blog-uploads/`,
+served back via `/blog-uploads/{name}` (StaticFiles mount).
+
+
+================================================================================
+1.  BLOG — ADMIN  (/v1/blogs/*)
+================================================================================
+
+router file:  blog/routes/admin_blog_route.py
+schema file:  blog/schemas/blog_schema.py
+writer file:  blog/writers/blog_writer.py
+
+
+--------------------------------------------------------------------------------
+1.1  GET  /v1/blogs                                              List blogs
+--------------------------------------------------------------------------------
+
+Paginated admin list. Default first page is precomputed.
+
+Query params:
+  skip          int, default 0
+  limit         int, default from ListSpec
+  sort          comma list, prefix `-` for desc
+                allowed: date_created, last_updated, publishDate,
+                         title, state, blogType
+  q             free-text; matches title, excerpt, author.name
+  state         filter; multi; allowed: draft, published
+  blogType      filter; multi; allowed: editors pick, featured story,
+                                        hero section, normal
+  category      filter; multi; matches category.slug
+  author        filter; matches author.name
+  facets        comma list; allowed: state, blogType
+  createdAt     range filter on date_created   (gte / lte syntax)
+  updatedAt     range filter on last_updated
+
+Response:
+  data.items[]  list of BlogOutLessDetail-shaped rows
+  data.meta     { total, skip, limit, hasMore } (or full facets when asked)
+
+
+--------------------------------------------------------------------------------
+1.2  GET  /v1/blogs/recent                                Recent (shortcut)
+--------------------------------------------------------------------------------
+
+Same as GET /v1/blogs but with limit defaulted to 50 and sort defaulted
+to -date_created. Accepts the same query params.
+
+
+--------------------------------------------------------------------------------
+1.3  GET  /v1/blogs/{blog_id}                             Get single blog
+--------------------------------------------------------------------------------
+
+Admin view — includes drafts. Returns the full BlogOut shape.
+
+Errors:
+  404  blog id does not exist
+
+
+--------------------------------------------------------------------------------
+1.4  POST /v1/blogs                                Create blog (queued)
+--------------------------------------------------------------------------------
+
+Body: BlogBase (see schema below). Pre-allocates an id and returns 202.
+
+Request body (BlogBase + auto fields from BlogCreate):
+  {
+    "title":          str   (required)
+    "author":         { "name": str, "avatarUrl": str|null }   (required)
+    "category":       { "name": <CategoryNameEnum>,
+                        "slug": <CategorySlugEnum> }            (required)
+    "blogType":       "editors pick" | "featured story"
+                      | "hero section" | "normal"  (default "normal")
+    "featureImage":   { "url": str, "altText": str } | null
+    "pages":          [ { "pageNumber": int, "pageBody": [...] } ] | null
+    "currentPageBody":[ <BlockNote block>, ... ] | null
+    // EXACTLY ONE of `pages` or `currentPageBody` must be supplied
+  }
+
+Server-assigned at write:
+  state         "draft"        (default)
+  slug          generated from title if missing
+  excerpt       generated from first 200 chars of body text
+  publishDate   set to now if state == "published" at create
+  date_created  unix seconds
+  last_updated  unix seconds
+
+Response (202):
+  { id: "<preassigned ObjectId>", job_id, status: "queued" }
+
+
+--------------------------------------------------------------------------------
+1.5  PATCH /v1/blogs/{blog_id}                     Update blog (queued)
+--------------------------------------------------------------------------------
+
+Body: BlogUpdate — every field optional. Sending an empty
+`currentPageBody: []` is treated as "no update" (responds 202 with
+detail "No update made", no work queued).
+
+Request body (any subset):
+  {
+    "state":           "draft" | "published",
+    "title":           str,
+    "author":          { name, avatarUrl },
+    "publishDate":     int (unix seconds),
+    "category":        { name, slug },
+    "featureImage":    { url, altText } | null,
+    "excerpt":         str,
+    "pages":           [ Page, ... ],          // mutually exclusive
+    "currentPageBody": [ Block, ... ],         // mutually exclusive
+    "blogType":        "<BlogType>",
+    "slug":            str
+  }
+
+Auto-applied by validator on update:
+  excerpt        regenerated if blank AND currentPageBody supplied
+  publishDate    set to now if transitioning to "published" with no date
+  last_updated   stamped server-side
+
+Audit:
+  Writer emits a `blog.updated` audit event with a field-level `changes`
+  diff. Don't try to log changes from the route.
+
+Response (202): { job_id, status: "queued" }
+
+
+--------------------------------------------------------------------------------
+1.6  DELETE /v1/blogs/{blog_id}                    Delete blog (queued)
+--------------------------------------------------------------------------------
+
+Response (202): { job_id, status: "queued" }
+Writer emits a `blog.deleted` audit event.
+
+
+================================================================================
+2.  BLOG — PUBLIC WEBSITE  (/api/v1/articles/content/*)
+================================================================================
+
+router file:  blog/routes/public_articles_route.py
+
+No auth. `state == "published"` is locked into base_filter — drafts are
+never exposed regardless of query string.
+
+
+--------------------------------------------------------------------------------
+2.1  GET  /api/v1/articles/content                  List published blogs
+--------------------------------------------------------------------------------
+
+Same shape as the admin list but:
+  • `state` filter is forced to "published" and not user-overridable
+  • output rows use BlogOutLessDetailUserVersion (id only, no internals)
+  • sort allow-list: date_created, last_updated, publishDate, title, blogType
+  • facet allow-list: blogType, category.slug
+  • range filter: publishedAt -> publishDate
+
+
+--------------------------------------------------------------------------------
+2.2  GET  /api/v1/articles/content/categories          List categories
+--------------------------------------------------------------------------------
+
+Static enum-driven list — no DB hit. Returns:
+  { listOfCategories: [ { imageUrl, name, slug, itemIndex } ],
+    totalItems }
+
+
+--------------------------------------------------------------------------------
+2.3  GET  /api/v1/articles/content/by-blog-type/{blog_type}    (shortcut)
+--------------------------------------------------------------------------------
+
+`blog_type` is a *slug* (PublicBlogType): hero-section, editors-pick,
+featured, normal. Translates internally to the BlogType enum value.
+
+Accepts same query params as the main list.
+
+
+--------------------------------------------------------------------------------
+2.4  GET  /api/v1/articles/content/by-category-slug/{slug}     (shortcut)
+--------------------------------------------------------------------------------
+
+`slug` is a CategorySlugEnum value. Locks `category.slug` to it.
+
+
+--------------------------------------------------------------------------------
+2.5  GET  /api/v1/articles/content/by-author-name              (shortcut)
+--------------------------------------------------------------------------------
+
+Query param `author_name` (string, required) locks `author.name`.
+
+
+--------------------------------------------------------------------------------
+2.6  GET  /api/v1/articles/content/{blog_id}        Get single (public)
+--------------------------------------------------------------------------------
+
+Returns BlogOutUserVersion. 404 if the blog is not published.
+
+
+--------------------------------------------------------------------------------
+2.7  GET  /api/v1/articles/content/search/                Legacy search
+--------------------------------------------------------------------------------
+
+Query params: `title` and/or `author` (regex, case-insensitive).
+Returns ListOfBlogs. Kept for backward-compat; new clients should use
+?q= on the main list endpoint.
+
+
+================================================================================
+3.  MEDIA — ADMIN  (/v1/media/*)
+================================================================================
+
+router file:  blog/routes/admin_media_route.py
+schema file:  blog/schemas/media_schema.py
+writer file:  blog/writers/media_writer.py
+
+Storage backend: R2 if `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
+`R2_ENDPOINT_URL`, `R2_BUCKET`, and `PUBLIC_BASE_URL` are all set,
+otherwise local disk under `{STORAGE_LOCAL_ROOT}/blog-uploads/`. Videos
+are no longer stored in MongoDB GridFS — both image and video bytes
+take the same path.
+
+
+--------------------------------------------------------------------------------
+3.1  POST /v1/media/upload-media                  Auto-detect + upload
+--------------------------------------------------------------------------------
+
+multipart/form-data:
+  file:  UploadFile
+
+Detects image/* vs video/* from the file's MIME header and routes to
+the matching queued writer (`media.upload_image` or
+`media.upload_video`). Returns 202 + job_id; the job result is
+`{ id, url }` — no `media` row is created (use 3.2 for that).
+
+Errors:
+  400  Unsupported file type (neither image/* nor video/*)
+
+
+--------------------------------------------------------------------------------
+3.2  POST /v1/media                          Upload + create media row
+--------------------------------------------------------------------------------
+
+multipart/form-data:
+  category:  CategoryNameEnum  (Form field)
+  file:      UploadFile
+
+Equivalent to the legacy `create_media_task`. Uploads the file AND
+inserts a row in the `media` collection with:
+  { mediaType, category, url, name, date_created, last_updated }
+
+Response (202): { id, job_id }
+Job result:     { id, url, mediaType, category }
+
+Errors:
+  400  Unsupported file type
+
+
+--------------------------------------------------------------------------------
+3.3  POST /v1/media/upload-image                       Image only
+--------------------------------------------------------------------------------
+
+Same shape as 3.1 but skips the type sniffing — assumes image. No
+`media` row created. Returns 202 + job_id; job result is { id, url }.
+
+
+--------------------------------------------------------------------------------
+3.4  POST /v1/media/upload-video                       Video only
+--------------------------------------------------------------------------------
+
+Same shape as 3.1 but skips the type sniffing — assumes video. No
+`media` row created. Returns 202 + job_id; job result is { id, url }.
+
+
+--------------------------------------------------------------------------------
+3.5  GET  /v1/media                                       List media
+--------------------------------------------------------------------------------
+
+Paginated. Default first page is precomputed.
+
+Query params:
+  skip, limit, sort         (sort allow-list: date_created, last_updated,
+                             name, category, mediaType)
+  q                         matches name, category
+  mediaType                 multi; allowed: image, video
+  category                  multi; allowed values from CategoryNameEnum
+  facets                    allowed: mediaType, category
+  createdAt / updatedAt     range filters
+
+
+--------------------------------------------------------------------------------
+3.6  GET  /v1/media/recent                          Recent (shortcut)
+--------------------------------------------------------------------------------
+
+Same query params as 3.5 but `limit` defaults to 50.
+
+
+--------------------------------------------------------------------------------
+3.7  GET  /v1/media/by-type/{media_type}             Shortcut by type
+--------------------------------------------------------------------------------
+
+`media_type` is "image" or "video"; locks the filter to it.
+
+
+--------------------------------------------------------------------------------
+3.8  GET  /v1/media/by-category/{category}       Shortcut by category
+--------------------------------------------------------------------------------
+
+`category` is a CategoryNameEnum display name. Locks the filter to it.
+
+
+--------------------------------------------------------------------------------
+3.9  GET  /v1/media/{media_id}                       Get single media
+--------------------------------------------------------------------------------
+
+Returns MediaOut. 404 if not found.
+
+
+--------------------------------------------------------------------------------
+3.10 PATCH /v1/media/{media_id}          Update media category (queued)
+--------------------------------------------------------------------------------
+
+Body: MediaUpdate
+  { "category": <CategoryNameEnum> }       (required)
+
+Note: only `category` is currently mutable — the upload bytes / url /
+type are immutable on an existing row. If you need a different image,
+upload a new one and delete the old.
+
+Response (202): { job_id }
+
+
+--------------------------------------------------------------------------------
+3.11 DELETE /v1/media/{media_id}             Delete media row (queued)
+--------------------------------------------------------------------------------
+
+Deletes the metadata row. The R2/local object is currently not
+garbage-collected (a sweeper job will handle orphans).
+
+Response (202): { job_id }
+
+
+--------------------------------------------------------------------------------
+3.12 POST /v1/media/{blog_id}        Append media block to blog (queued)
+--------------------------------------------------------------------------------
+
+multipart/form-data:
+  blog_id:   path param (Blog id)
+  caption:   Form, required
+  file:      UploadFile (image or video)
+
+Uploads the file and appends a BlockNote media block to the blog's
+`currentPageBody`. Does NOT create a separate `media` row — the URL is
+embedded directly in the block.
+
+Supported MIME types:
+  Image: image/jpeg, image/png, image/gif, image/webp, image/bmp
+  Video: video/mp4, video/quicktime, video/x-msvideo, video/x-matroska,
+         video/webm
+
+Response (202): { job_id }
+Job result:      { id, appended: true, url, block }
+                 or { id, appended: false, error } for unsupported MIME
+
+
+================================================================================
+4.  MEDIA — PUBLIC WEBSITE  (/api/v1/media/*)
+================================================================================
+
+router file:  blog/routes/public_media_route.py
+
+No auth. Rows are returned as MediaOutUser which coerces all
+http://… string fields to https://….
+
+
+--------------------------------------------------------------------------------
+4.1  GET  /api/v1/media                       List public media
+4.2  GET  /api/v1/media/recent                Recent (shortcut, limit 50)
+4.3  GET  /api/v1/media/by-type/{type}        Shortcut by type
+4.4  GET  /api/v1/media/by-category/{slug}    Shortcut by category slug
+4.5  GET  /api/v1/media/{media_id}            Get single (public)
+--------------------------------------------------------------------------------
+
+Same query/filter contract as the admin list (3.5). by-category here
+takes a CategorySlugEnum (the URL slug), unlike the admin shortcut
+which takes the display name. by-type accepts "image" or "video".
+
+
+================================================================================
+5.  SCHEMAS  (full field reference)
+================================================================================
+
+--------------------------------------------------------------------------------
+5.1  BlogBase / BlogCreate / BlogUpdate / BlogOut
+--------------------------------------------------------------------------------
+
+Author:
+  { name: str, avatarUrl: str|null }
+
+Category:
+  { name: CategoryNameEnum, slug: CategorySlugEnum,
+    imageUrl: str|null, itemIndex: int|null }
+
+MediaAsset:
+  { url: str, altText: str }
+
+Page:
+  { pageNumber: int, pageBody: [ <BlockNote block>, ... ] }
+
+CategoryNameEnum / CategorySlugEnum — see blog/schemas/imports.py for
+the full bidirectional mapping. Examples:
+  "Physical Security"       <-> "physical-security"
+  "Access Control"          <-> "access-control"
+  "Data Privacy & Compliance" <-> "data-privacy-and-compliance"
+  "Workplace Management"    <-> "workplace-management"
+  "Front Desk Operations"   <-> "front-desk-operations"
+
+BlogType (stored):
+  "editors pick" | "featured story" | "hero section" | "normal"
+
+PublicBlogType (URL slug, used only in /by-blog-type/{} path):
+  "editors-pick" | "featured" | "hero-section" | "normal"
+
+BlogStatus:
+  "draft" | "published"
+
+Validators of note:
+  • BlogBase / BlogUpdate: `pages` and `currentPageBody` are mutually
+    exclusive (one xor the other). BlogBase requires exactly one;
+    BlogUpdate allows neither (means "don't touch the body").
+  • BlogCreate.set_defaults: auto-generates slug from title, excerpt
+    from first 200 chars of text content, and publishDate when state
+    is "published".
+
+
+--------------------------------------------------------------------------------
+5.2  MediaBase / MediaCreate / MediaUpdate / MediaOut / MediaOutUser
+--------------------------------------------------------------------------------
+
+MediaBase:
+  mediaType:  "image" | "video"
+  category:   CategoryNameEnum
+  requestUrl: str|null    (deprecated — was used to prefix the legacy
+                           GridFS path; now ignored)
+
+MediaCreate (built server-side by the writer):
+  inherits MediaBase + { url, name, date_created, last_updated }
+
+MediaUpdate (only mutable field on an existing row):
+  { category: CategoryNameEnum }
+
+MediaOut / MediaOutUser: serialization shape, id as string, dateCreated
+and lastUpdated camelCased. MediaOutUser additionally rewrites http →
+https across every string field.
+
+ImageUploadResponse / VideoUploadResponse:
+  { url: str }    — used as the `data` shape for raw upload endpoints
+                    that don't create a media row.
+
+
+================================================================================
+6.  WRITER KEYS  (queued-write registry)
+================================================================================
+
+File: blog/writers/blog_writer.py and blog/writers/media_writer.py
+Registered via `@write_handler(...)`; dispatched by `enqueue_write`.
+
+  blog.create             → POST   /v1/blogs
+  blog.update             → PATCH  /v1/blogs/{blog_id}
+  blog.delete             → DELETE /v1/blogs/{blog_id}
+
+  media.upload_image      → POST   /v1/media/upload-image
+                                   /v1/media/upload-media (image branch)
+  media.upload_video      → POST   /v1/media/upload-video
+                                   /v1/media/upload-media (video branch)
+  media.create            → POST   /v1/media
+  media.update_category   → PATCH  /v1/media/{media_id}
+  media.delete            → DELETE /v1/media/{media_id}
+  media.append_to_blog    → POST   /v1/media/{blog_id}
+
+Each writer is bundled with the precompute resources it invalidates so
+hot reads refresh themselves after a write:
+
+  blog.* writers          invalidate  blogs.list_admin, blogs.list_published
+  media.* writers         invalidate  media.list
+  media.append_to_blog    invalidates blogs.list_admin, blogs.list_published,
+                                       media.list
+
+
+================================================================================
+7.  JOB POLLING
+================================================================================
+
+Every 202 response carries:
+  { id, job_id, status: "queued" }
+
+Poll the host backend's queue audit endpoint:
+
+  GET /v1/jobs/{job_id}
+
+  → { task_id, task_key, actor, tenant_id|null, resource_id, status,
+      result, error, queued_at, started_at, finished_at }
+
+  status: "queued" | "processing" | "succeeded" | "failed"
+  result: writer return value (e.g. { id, url, ... })
+  error:  populated when status == "failed"
+
+The 202's `id` is the pre-allocated resource id for creates that
+control their own id (e.g. blog.create, media.create). For other
+writers (uploads that don't create a row), the meaningful id is in
+`result.id` of the job entry.
+
+
+================================================================================
+8.  REMOVED / DECOMMISSIONED
+================================================================================
+
+  GET /videos/{video_id}    — Removed. Was a GridFS streamer. All
+                              videos now resolve via their R2 (or
+                              `/blog-uploads/{name}`) URL directly.
+
+  save_video_to_mongodb*    — Removed from blog/repositories/media_repo.py.
+                              Videos go to the same storage path as
+                              images.
+
+  blog/routes/video_route.py — Deleted.

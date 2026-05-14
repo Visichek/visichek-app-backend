@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 from core.errors import auth_invalid_token
 from core.response_envelope import document_response
-from core.settings import get_settings
 from schemas.admin_schema import AdminRefresh
 from schemas.session_schema import (
     ChangePasswordRequest,
@@ -299,10 +298,8 @@ async def refresh_tokens(
         # verify_any_refresh_token already guarantees this is unreachable, but be explicit.
         raise auth_invalid_token(details={"role": principal.role})
 
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=result,
         message="Tokens refreshed successfully",
-        is_production=is_prod,
     )

@@ -11,7 +11,6 @@ from core.idempotency import actor_scope, check_idempotency, store_idempotency
 from core.list_params import FilterDef, ListSpec, parse_list_query
 from core.list_runner import run_list
 from core.response_envelope import document_response, success_payload
-from core.settings import get_settings
 from schemas.system_user_schema import (
     SystemUserSignupRequest,
     SystemUserTenantLogin,
@@ -138,12 +137,10 @@ async def login_system_user(request: Request, login_data: SystemUserLogin):
         )
 
     user = result
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=user,
         message="Login successful",
-        is_production=is_prod,
         access_token=_attr_or_key(user, "access_token") or "",
         refresh_token=_attr_or_key(user, "refresh_token") or "",
     )
@@ -198,12 +195,10 @@ async def select_tenant_after_login(
         )
 
     user = result
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=user,
         message="Login successful",
-        is_production=is_prod,
         access_token=_attr_or_key(user, "access_token") or "",
         refresh_token=_attr_or_key(user, "refresh_token") or "",
     )
@@ -295,12 +290,10 @@ async def login_super_admin_global(request: Request, login_data: SystemUserLogin
         )
 
     user = result["user"]
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=result,
         message="Super admin login successful",
-        is_production=is_prod,
         access_token=_attr_or_key(user, "access_token") or "",
         refresh_token=_attr_or_key(user, "refresh_token") or "",
     )
@@ -374,12 +367,10 @@ async def login_system_user_by_tenant(
         )
 
     user = result
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=user,
         message="Login successful",
-        is_production=is_prod,
         access_token=_attr_or_key(user, "access_token") or "",
         refresh_token=_attr_or_key(user, "refresh_token") or "",
     )
@@ -492,12 +483,10 @@ async def refresh_tokens(
         expired_access_token=principal.access_token_id,
     )
 
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=user,
         message="Tokens refreshed successfully",
-        is_production=is_prod,
         access_token=_attr_or_key(user, "access_token") or "",
         refresh_token=_attr_or_key(user, "refresh_token") or "",
     )
@@ -516,12 +505,10 @@ async def refresh_tokens(
 async def verify_system_user_otp_endpoint(request: Request, otp_data: OtpVerifyRequest):
     user = await verify_system_user_otp(otp_data.otp_challenge_id, otp_data.otp_code)
 
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=user,
         message="OTP verified, login successful",
-        is_production=is_prod,
         access_token=_attr_or_key(user, "access_token") or "",
         refresh_token=_attr_or_key(user, "refresh_token") or "",
     )
@@ -552,7 +539,6 @@ async def toggle_my_mfa(
     summary="System user logout",
 )
 async def logout_system_user(request: Request):
-    is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
         content=jsonable_encoder(
@@ -561,7 +547,7 @@ async def logout_system_user(request: Request):
             )
         ),
     )
-    clear_auth_cookies(response, is_production=is_prod)
+    clear_auth_cookies(response)
     return response
 
 

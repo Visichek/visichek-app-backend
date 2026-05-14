@@ -6,7 +6,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from core.response_envelope import document_response, success_payload
-from core.settings import get_settings
 from schemas.admin_schema import (
     AdminLogin,
     AdminOut,
@@ -323,12 +322,10 @@ async def login_admin(request: Request, admin_data: AdminLogin):
     # only when the caller sends ``X-Auth-Include-Tokens: 1`` (see
     # security/cookie_utils.build_auth_response).
     admin = result
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=admin,
         message="Admin login successful",
-        is_production=is_prod,
     )
 
 
@@ -373,12 +370,10 @@ async def refresh_admin_tokens(
     )
     admin.password = ""
 
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=admin,
         message="Admin tokens refreshed successfully",
-        is_production=is_prod,
     )
 
 
@@ -395,12 +390,10 @@ async def refresh_admin_tokens(
 async def verify_admin_otp_endpoint(request: Request, otp_data: OtpVerifyRequest):
     admin = await verify_admin_otp(otp_data.otp_challenge_id, otp_data.otp_code)
 
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=admin,
         message="OTP verified, login successful",
-        is_production=is_prod,
     )
 
 
@@ -411,7 +404,6 @@ async def verify_admin_otp_endpoint(request: Request, otp_data: OtpVerifyRequest
     summary="Admin logout",
 )
 async def logout_admin(request: Request):
-    is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
         content=jsonable_encoder(
@@ -420,7 +412,7 @@ async def logout_admin(request: Request):
             )
         ),
     )
-    clear_auth_cookies(response, is_production=is_prod)
+    clear_auth_cookies(response)
     return response
 
 

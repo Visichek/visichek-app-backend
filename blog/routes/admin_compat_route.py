@@ -28,7 +28,6 @@ from pydantic import BaseModel, EmailStr, Field
 
 from core.errors import auth_invalid_token
 from core.response_envelope import document_response, success_payload
-from core.settings import get_settings
 from schemas.admin_schema import AdminOut, AdminSignupRequest
 from schemas.otp_schema import OtpVerifyRequest
 from schemas.session_schema import (
@@ -84,12 +83,10 @@ async def get_current_admin(
 )
 async def verify_admin_otp_alias(request: Request, otp_data: OtpVerifyRequest):
     admin = await verify_admin_otp(otp_data.otp_challenge_id, otp_data.otp_code)
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=admin,
         message="OTP verified, login successful",
-        is_production=is_prod,
     )
 
 

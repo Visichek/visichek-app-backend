@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
 
 from fastapi.responses import Response
 
@@ -16,6 +17,19 @@ from security.cookie_utils import (
     set_auth_cookies,
     tokens_requested_in_body,
 )
+
+
+@contextmanager
+def _env(is_production: bool):
+    """Patch ``get_settings().is_production`` for the cookie helpers.
+
+    ``is_production`` is no longer a parameter — the helpers read it from
+    ``core.settings.get_settings()`` so we patch the source.
+    """
+    fake = MagicMock()
+    fake.is_production = is_production
+    with patch("security.cookie_utils.get_settings", return_value=fake):
+        yield
 
 
 def _fake_request(headers: dict | None = None):
@@ -33,7 +47,8 @@ def _fake_request(headers: dict | None = None):
 def test_set_auth_cookies_emits_visichek_domain() -> None:
     assert AUTH_COOKIE_DOMAIN == ".visichek.app"
     resp = Response()
-    set_auth_cookies(resp, "at", "rt", is_production=True)
+    with _env(is_production=True):
+        set_auth_cookies(resp, "at", "rt")
 
     raw = [v.decode() for k, v in resp.headers.raw if k == b"set-cookie"]
     assert len(raw) == 2
@@ -53,7 +68,8 @@ def test_set_auth_cookies_emits_visichek_domain() -> None:
 
 def test_set_auth_cookies_omits_secure_in_non_production() -> None:
     resp = Response()
-    set_auth_cookies(resp, "at", "rt", is_production=False)
+    with _env(is_production=False):
+        set_auth_cookies(resp, "at", "rt")
     raw = [v.decode() for k, v in resp.headers.raw if k == b"set-cookie"]
     # Non-production: no Domain attribute — cookie is scoped to the
     # request host (e.g. localhost) so local dev works.
@@ -63,7 +79,8 @@ def test_set_auth_cookies_omits_secure_in_non_production() -> None:
 
 def test_clear_auth_cookies_omits_domain_in_non_production() -> None:
     resp = Response()
-    clear_auth_cookies(resp, is_production=False)
+    with _env(is_production=False):
+        clear_auth_cookies(resp)
     raw = [v.decode() for k, v in resp.headers.raw if k == b"set-cookie"]
     assert len(raw) == 2
     assert all("domain=" not in v.lower() for v in raw)
@@ -75,7 +92,8 @@ def test_clear_auth_cookies_matches_set_domain() -> None:
     # matching Domain attribute leaves the parent-domain cookie alive —
     # this test pins the helper against that regression.
     resp = Response()
-    clear_auth_cookies(resp, is_production=True)
+    with _env(is_production=True):
+        clear_auth_cookies(resp)
 
     raw = [v.decode() for k, v in resp.headers.raw if k == b"set-cookie"]
     assert len(raw) == 2
@@ -103,12 +121,12 @@ def test_tokens_requested_in_body_falsy_values() -> None:
 
 
 def _build_auth_body(request_headers: dict | None, payload) -> dict:
-    resp = build_auth_response(
-        request=_fake_request(request_headers),
-        payload=payload,
-        message="ok",
-        is_production=False,
-    )
+    with _env(is_production=False):
+        resp = build_auth_response(
+            request=_fake_request(request_headers),
+            payload=payload,
+            message="ok",
+        )
     return json.loads(bytes(resp.body))
 
 
@@ -170,15 +188,15 @@ def test_build_auth_response_always_sets_cookies() -> None:
     """Cookies MUST be set regardless of the opt-in header — that's the whole
     point of the shift (cookies are the primary auth channel)."""
     for headers in (None, {"X-Auth-Include-Tokens": "1"}):
-        resp = build_auth_response(
-            request=_fake_request(headers),
-            payload={
-                "access_token": "A",
-                "refresh_token": "R",
-            },
-            message="ok",
-            is_production=True,
-        )
+        with _env(is_production=True):
+            resp = build_auth_response(
+                request=_fake_request(headers),
+                payload={
+                    "access_token": "A",
+                    "refresh_token": "R",
+                },
+                message="ok",
+            )
         raw = [v.decode() for k, v in resp.headers.raw if k == b"set-cookie"]
         joined = " ".join(raw)
         assert "access_token=A" in joined

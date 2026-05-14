@@ -3,7 +3,6 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from core.response_envelope import document_response, success_payload
-from core.settings import get_settings
 from schemas.user_schema import (
     LoginType,
     UserBase,
@@ -230,12 +229,10 @@ async def signup_new_user(signup_data: UserSignupRequest):
 async def login_user(request: Request, login_data: UserLogin):
     user = await authenticate_user(login_data=login_data)
 
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=user,
         message="Login successful",
-        is_production=is_prod,
     )
 
 
@@ -287,12 +284,10 @@ async def refresh_user_tokens(
         expired_access_token=principal.access_token_id,
     )
 
-    is_prod = get_settings().env == "production"
     return build_auth_response(
         request=request,
         payload=user,
         message="Tokens refreshed successfully",
-        is_production=is_prod,
     )
 
 
@@ -303,7 +298,6 @@ async def refresh_user_tokens(
     summary="User logout",
 )
 async def logout_user(request: Request):
-    is_prod = get_settings().env == "production"
     request_id = getattr(request.state, "request_id", None)
     response = JSONResponse(
         content=jsonable_encoder(
@@ -312,7 +306,7 @@ async def logout_user(request: Request):
             )
         ),
     )
-    clear_auth_cookies(response, is_production=is_prod)
+    clear_auth_cookies(response)
     return response
 
 
