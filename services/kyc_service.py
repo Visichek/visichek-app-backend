@@ -17,6 +17,7 @@ machine. Three things live here:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -37,11 +38,13 @@ from repositories.checkin_repo import (
 )
 from repositories.kyc_repo import (
     create_kyc_verification,
+    find_latest_webhook_event_for_checkin,
     get_kyc_by_checkin,
     get_kyc_by_reference,
     is_webhook_event_processed,
     record_webhook_event,
     update_kyc_verification,
+    update_webhook_event_status,
 )
 from schemas.checkin_schema import CheckinUpdate
 from schemas.imports import CheckinState, KYCStatus
@@ -385,6 +388,30 @@ async def process_webhook_event(
     settings = get_settings()
     provider = KYCManager.get_instance().get_provider("dojah")
 
+    # Diagnostic: confirm which signature headers Dojah actually sent
+    # and how big the body is at the moment we hand it to the provider.
+    # If the case-conversion bypass didn't take effect, the body length
+    # / hash will visibly drift between requests, and at most one of
+    # ``v1_present`` / ``v2_present`` will be true.
+    import hashlib as _hashlib
+
+    sig_headers_present = {
+        h: bool(headers.get(h))
+        for h in (
+            "x-dojah-signature",
+            "x-dojah-signature-v2",
+            "x-dojah-event",
+            "user-agent",
+            "content-type",
+        )
+    }
+    logger.info(
+        "dojah webhook: received body_len=%d body_sha8=%s headers=%s",
+        len(body or b""),
+        _hashlib.sha256(body or b"").hexdigest()[:8],
+        sig_headers_present,
+    )
+
     event: KYCWebhookEvent = provider.parse_webhook(body=body, headers=headers)
 
     # Reject events that don't carry the body-bound signature when
@@ -405,9 +432,14 @@ async def process_webhook_event(
                 error="Missing or invalid x-dojah-signature",
             )
             logger.warning(
-                "dojah webhook: rejected (signature) event=%s ref=%s",
+                "dojah webhook: rejected (signature/v1-required) event=%s ref=%s "
+                "v1_present=%s v2_present=%s sig_valid=%s require_v1=%s",
                 event.event_id,
                 event.reference_id,
+                bool(v1),
+                bool(headers.get("x-dojah-signature-v2")),
+                event.signature_valid,
+                settings.dojah_require_v1_signature,
             )
             return {"accepted": False, "reason": "invalid_signature"}
 
@@ -421,6 +453,14 @@ async def process_webhook_event(
             signature_valid=False,
             processing_status="rejected_signature",
             error="No matching signature header",
+        )
+        logger.warning(
+            "dojah webhook: rejected (no valid signature) event=%s ref=%s "
+            "v1_present=%s v2_present=%s",
+            event.event_id,
+            event.reference_id,
+            bool(headers.get("x-dojah-signature")),
+            bool(headers.get("x-dojah-signature-v2")),
         )
         return {"accepted": False, "reason": "invalid_signature"}
 
@@ -675,6 +715,108 @@ async def _emit_pending_notification(checkin, *, verified: bool) -> None:
             getattr(checkin, "id", None),
             exc_info=True,
         )
+
+
+# ── Manual replay (super_admin recovery) ────────────────────────────
+
+async def replay_stored_kyc_webhook_for_checkin(
+    *,
+    checkin_id: str,
+    actor_id: str,
+    actor_role: str,
+    tenant_id_scope: Optional[str] = None,
+) -> KYCStatusOut:
+    """Re-apply the most recent stored webhook for a check-in.
+
+    Recovery path when the live webhook landed but was rejected at
+    signature time (mis-configured secret, body mutated by middleware,
+    etc.) — the event is sitting in ``kyc_webhook_events`` with its
+    ``raw_payload`` intact, so we can re-run it through ``finalize_kyc``
+    without asking Dojah to resend.
+
+    ``tenant_id_scope`` is the calling principal's tenant id; the
+    function refuses to replay events whose stored ``raw_payload``
+    metadata points at a different tenant. Mirrors the IDOR defence
+    we use for queued writers.
+    """
+    if not ObjectId.is_valid(checkin_id):
+        raise resource_not_found(resource="Checkin", resource_id=checkin_id)
+
+    checkin = await get_checkin({"_id": checkin_id})
+    if checkin is None:
+        raise resource_not_found(resource="Checkin", resource_id=checkin_id)
+    if tenant_id_scope and checkin.tenant_id != tenant_id_scope:
+        raise resource_not_found(resource="Checkin", resource_id=checkin_id)
+
+    event_doc = await find_latest_webhook_event_for_checkin(checkin_id)
+    if not event_doc:
+        raise AppException(
+            status_code=404,
+            code=ErrorCode.RESOURCE_NOT_FOUND,
+            message=(
+                "No stored Dojah webhook event references this check-in. "
+                "Either the webhook never reached this server, or Dojah's "
+                "metadata.checkin_id was not preserved."
+            ),
+        )
+
+    raw_payload = event_doc.get("raw_payload") or {}
+    provider = KYCManager.get_instance().get_provider("dojah")
+    # Re-derive the normalised event details from the stored payload
+    # so we don't need to keep the original bytes around.
+    # The original body wasn't preserved verbatim — re-encode the
+    # stored dict so ``parse_webhook`` can run its normal pipeline.
+    # Signature validity is irrelevant here because we trust the row
+    # (it survived earlier persistence) and intentionally bypass the
+    # signature gate by calling ``parse_webhook`` directly.
+    body = json.dumps(raw_payload).encode("utf-8")
+    event: KYCWebhookEvent = provider.parse_webhook(body=body, headers={})
+
+    if not event.reference_id or not event.details:
+        raise AppException(
+            status_code=422,
+            code=ErrorCode.VALIDATION_FAILED,
+            message=(
+                "Stored webhook payload does not carry a verification "
+                "reference_id / details — nothing to replay."
+            ),
+        )
+
+    finalised = await finalize_kyc(
+        reference_id=event.reference_id,
+        details=event.details,
+        fallback_checkin_id=checkin_id,
+    )
+
+    # Stamp the audit row + the webhook event itself so we can tell
+    # later that this came from a manual replay, not Dojah's retry.
+    stored_event_id = event_doc.get("event_id") or event.event_id
+    await update_webhook_event_status(
+        event_id=stored_event_id,
+        provider=event_doc.get("provider") or "dojah",
+        processing_status="replayed_manually",
+        error=None,
+    )
+    await record_audit_event(
+        actor_id=actor_id,
+        actor_role=actor_role,
+        action="kyc.webhook_replayed",
+        resource_type="checkin",
+        resource_id=checkin_id,
+        tenant_id=checkin.tenant_id,
+        details={
+            "event_id": stored_event_id,
+            "reference_id": event.reference_id,
+            "new_status": finalised.status.value,
+        },
+    )
+
+    return KYCStatusOut(
+        checkin_id=checkin_id,
+        reference_id=finalised.reference_id,
+        status=finalised.status,
+        failure_reason=finalised.failure_reason,
+    )
 
 
 # ── Status polling ──────────────────────────────────────────────────

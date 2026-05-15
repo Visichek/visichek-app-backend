@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from core.response_envelope import document_response
 from schemas.kyc_schema import (
@@ -11,10 +11,13 @@ from schemas.kyc_schema import (
     KYCSkipRequestIn,
     KYCStatusOut,
 )
+from security.auth import verify_super_admin_token
+from security.principal import AuthPrincipal
 from services.kyc_service import (
     get_kyc_status_for_checkin,
     initiate_kyc_for_checkin,
     process_webhook_event,
+    replay_stored_kyc_webhook_for_checkin,
     skip_kyc_for_checkin,
 )
 
@@ -65,6 +68,38 @@ async def initiate_kyc_endpoint(
 async def skip_kyc_endpoint(payload: KYCSkipRequestIn) -> KYCStatusOut:
     return await skip_kyc_for_checkin(
         checkin_id=payload.checkin_id, reason=payload.reason
+    )
+
+
+@router.post("/replay/{checkin_id}", status_code=status.HTTP_200_OK)
+@document_response(
+    message="KYC webhook replayed",
+    description=(
+        "Super-admin recovery. Re-applies the most recent stored Dojah "
+        "webhook for a check-in by running it back through "
+        "``finalize_kyc`` with the stored ``raw_payload``. Bypasses live "
+        "signature verification because the event has already been "
+        "persisted under audit. Use when the webhook landed but was "
+        "rejected at signature time (wrong secret, body mutated by "
+        "middleware, etc.) or when an internal exception prevented the "
+        "state machine from advancing. Confined to check-ins in the "
+        "caller's tenant."
+    ),
+    summary="Replay latest stored KYC webhook",
+    response_codes={
+        404: "Check-in not found, or no stored webhook references this check-in",
+        422: "Stored webhook payload lacks reference_id / details — nothing to apply",
+    },
+)
+async def replay_kyc_webhook_endpoint(
+    checkin_id: str,
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+) -> KYCStatusOut:
+    return await replay_stored_kyc_webhook_for_checkin(
+        checkin_id=checkin_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        tenant_id_scope=principal.tenant_id,
     )
 
 

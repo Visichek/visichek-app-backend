@@ -56,6 +56,7 @@ class DojahKYCProvider:
         public_key: Optional[str] = None,
         base_url: str = DOJAH_SANDBOX_BASE,
         timeout_seconds: float = 10.0,
+        webhook_secret: Optional[str] = None,
     ) -> None:
         if not app_id or not secret_key:
             raise ValueError(
@@ -66,6 +67,13 @@ class DojahKYCProvider:
         self._public_key = public_key
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
+        # Dojah's reference implementation uses the private
+        # ``secret_key`` as the webhook signing key (see their docs:
+        # ``hmac.new(secret, payload, sha256)`` for v1 and
+        # ``sha256(secret)`` for v2). ``webhook_secret`` is an override
+        # hatch for bespoke deployments that provisioned a separate
+        # signing key; the common case is to leave it unset.
+        self._webhook_secret = webhook_secret or secret_key
 
     # ── Public surface ───────────────────────────────────────────────
 
@@ -229,20 +237,70 @@ class DojahKYCProvider:
         v2 = headers.get("x-dojah-signature-v2") or headers.get(
             "X-Dojah-Signature-V2"
         )
+        body_sha8 = hashlib.sha256(body or b"").hexdigest()[:8]
+        webhook_secret = self._webhook_secret
+        secret_is_separate = webhook_secret != self._secret_key
         if v1:
             expected = hmac.new(
-                self._secret_key.encode("utf-8"),
+                webhook_secret.encode("utf-8"),
                 msg=body,
                 digestmod=hashlib.sha256,
             ).hexdigest()
-            return hmac.compare_digest(expected, v1)
+            ok = hmac.compare_digest(expected, v1)
+            logger.info(
+                "dojah signature(v1): ok=%s body_len=%d body_sha8=%s "
+                "received_prefix=%s expected_prefix=%s "
+                "received_len=%d secret_len=%d using_webhook_secret=%s",
+                ok,
+                len(body or b""),
+                body_sha8,
+                v1[:16],
+                expected[:16],
+                len(v1),
+                len(webhook_secret or ""),
+                secret_is_separate,
+            )
+            return ok
         if v2:
-            expected = hmac.new(
-                self._secret_key.encode("utf-8"),
-                msg=self._secret_key.encode("utf-8"),
+            # Dojah's published docs describe v2 as "HMAC SHA256 of
+            # secret only" in the summary and just "SHA256, Input:
+            # Secret key only" in the method block — those two
+            # readings produce different digests. Accept either so a
+            # subtle change in Dojah's library doesn't strand
+            # verifications. Both candidates are derived purely from
+            # the webhook secret so no attacker can choose which
+            # branch validates.
+            expected_hmac = hmac.new(
+                webhook_secret.encode("utf-8"),
+                msg=webhook_secret.encode("utf-8"),
                 digestmod=hashlib.sha256,
             ).hexdigest()
-            return hmac.compare_digest(expected, v2)
+            expected_plain = hashlib.sha256(
+                webhook_secret.encode("utf-8")
+            ).hexdigest()
+            ok_hmac = hmac.compare_digest(expected_hmac, v2)
+            ok_plain = hmac.compare_digest(expected_plain, v2)
+            ok = ok_hmac or ok_plain
+            logger.info(
+                "dojah signature(v2): ok=%s matched=%s "
+                "received_prefix=%s expected_hmac_prefix=%s "
+                "expected_plain_prefix=%s received_len=%d "
+                "secret_len=%d using_webhook_secret=%s",
+                ok,
+                "hmac" if ok_hmac else ("plain" if ok_plain else "none"),
+                v2[:16],
+                expected_hmac[:16],
+                expected_plain[:16],
+                len(v2),
+                len(webhook_secret or ""),
+                secret_is_separate,
+            )
+            return ok
+        logger.info(
+            "dojah signature: no header found — header_keys=%s body_len=%d",
+            sorted(headers.keys()),
+            len(body or b""),
+        )
         return False
 
 

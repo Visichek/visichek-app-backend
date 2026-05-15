@@ -87,6 +87,59 @@ async def is_webhook_event_processed(
     return doc is not None
 
 
+async def find_latest_webhook_event_for_checkin(
+    checkin_id: str,
+) -> Optional[dict[str, Any]]:
+    """Return the most recent stored webhook whose echoed metadata
+    points at this check-in.
+
+    Used by the manual replay path when a webhook was captured but
+    rejected at signature time — the raw_payload is trusted enough for
+    a super_admin to re-apply once the underlying cause is fixed (or
+    bypassed via this endpoint). Handles both snake_case and camelCase
+    metadata key variants and both common payload roots so a small
+    change in Dojah's envelope doesn't strand stuck check-ins.
+    """
+    return await db[WEBHOOK_EVENT_COLLECTION].find_one(
+        {
+            "$or": [
+                {"raw_payload.data.metadata.checkin_id": checkin_id},
+                {"raw_payload.data.metadata.checkinId": checkin_id},
+                {"raw_payload.metadata.checkin_id": checkin_id},
+                {"raw_payload.metadata.checkinId": checkin_id},
+            ]
+        },
+        sort=[("received_at", -1)],
+    )
+
+
+async def update_webhook_event_status(
+    *,
+    event_id: str,
+    provider: str,
+    processing_status: str,
+    error: Optional[str] = None,
+) -> None:
+    """Stamp the processing_status / error on a stored event.
+
+    No-ops silently if the event isn't found — the replay flow uses
+    this for audit, not control-flow.
+    """
+    try:
+        await db[WEBHOOK_EVENT_COLLECTION].update_one(
+            {"provider": provider, "event_id": event_id},
+            {
+                "$set": {
+                    "processing_status": processing_status,
+                    "error": error,
+                    "last_replayed_at": int(time.time()),
+                }
+            },
+        )
+    except Exception:
+        pass
+
+
 async def record_webhook_event(
     *,
     provider: str,

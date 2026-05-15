@@ -55,6 +55,7 @@ class KYCManager:
                     secret_key=settings.dojah_secret_key,
                     public_key=settings.dojah_public_key,
                     base_url=base_url,
+                    webhook_secret=settings.dojah_webhook_secret,
                 )
             except Exception as exc:
                 logger.warning("Dojah provider unavailable: %s", exc)

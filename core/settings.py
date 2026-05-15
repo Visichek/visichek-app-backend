@@ -94,6 +94,13 @@ class Settings:
     dojah_secret_key: str | None = None
     dojah_public_key: str | None = None
     dojah_base_url: str | None = None
+    # Override hatch — Dojah's standard design uses the private
+    # ``secret_key`` as the webhook signing key (see their reference
+    # implementation: `hmac.new(secret, payload, sha256)`). Leave this
+    # unset to use ``dojah_secret_key`` (the normal case). Only set
+    # this if an operator has explicitly provisioned a separate
+    # signing secret for webhooks (rare; some bespoke deployments).
+    dojah_webhook_secret: str | None = None
     # When true (production default) we reject webhooks that don't carry
     # the body-bound v1 signature, even if v2 is present. Set to "false"
     # in dev when working against the Dojah sandbox without webhook
@@ -217,6 +224,7 @@ def get_settings() -> Settings:
         dojah_secret_key=os.getenv("DOJAH_SECRET_KEY") or None,
         dojah_public_key=os.getenv("DOJAH_PUBLIC_KEY") or None,
         dojah_base_url=os.getenv("DOJAH_BASE_URL") or None,
+        dojah_webhook_secret=os.getenv("DOJAH_WEBHOOK_SECRET") or None,
         dojah_require_v1_signature=os.getenv(
             "DOJAH_REQUIRE_V1_SIGNATURE", "true"
         ).lower()

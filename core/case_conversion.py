@@ -18,12 +18,15 @@ Usage in main.py:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+
+logger = logging.getLogger(__name__)
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -111,21 +114,35 @@ class CaseConversionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[override]
         # ── Normalise inbound body ───────────────────────────────────
         content_type = request.headers.get("content-type", "")
+        path = request.url.path
         if (
             "application/json" in content_type
             and request.method in ("POST", "PUT", "PATCH")
-            and not _is_signed_webhook(request.url.path, request.method)
         ):
-            body = await request.body()
-            if body:
-                try:
-                    parsed = json.loads(body)
-                    normalised = _convert_keys(parsed, _to_snake)
-                    encoded = json.dumps(normalised).encode("utf-8")
-                    # Swap the receive channel so downstream reads our modified body
-                    request._body = encoded  # type: ignore[attr-defined]
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    pass  # Let FastAPI's own validation surface the error
+            signed = _is_signed_webhook(path, request.method)
+            # Trace the bypass decision for any path that smells like a
+            # webhook so we can confirm signed receivers stay verbatim.
+            if signed or "webhook" in path.lower() or "/kyc/" in path:
+                logger.info(
+                    "case_conversion: path=%s method=%s signed_webhook=%s "
+                    "body_will_be_rewritten=%s",
+                    path,
+                    request.method,
+                    signed,
+                    not signed,
+                )
+            if not signed:
+                body = await request.body()
+                if body:
+                    try:
+                        parsed = json.loads(body)
+                        normalised = _convert_keys(parsed, _to_snake)
+                        encoded = json.dumps(normalised).encode("utf-8")
+                        # Swap the receive channel so downstream reads
+                        # our modified body.
+                        request._body = encoded  # type: ignore[attr-defined]
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        pass  # Let FastAPI's own validation surface the error
 
         # ── Determine desired response casing ────────────────────────
         prefer = request.headers.get("X-Response-Case", "camel").strip().lower()
