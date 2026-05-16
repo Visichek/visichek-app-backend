@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 
@@ -154,6 +154,73 @@ async def _load_admin_attention() -> Any:
         if hasattr(result, "model_dump")
         else result
     )
+
+
+# ─── Email outbox (Phase B3 — Issue 6) ─────────────────────────────
+
+
+@router.get("/email-outbox")
+@document_response(
+    message="Email outbox rows fetched successfully",
+    description=(
+        "Recent email-send attempts written by the central notification "
+        "dispatch (Issue 6). Every notification that supplies a template + "
+        "preference flag produces one row: status is one of `sent` | `queued` "
+        "| `skipped` | `failed`, and `skipped_reason` carries a stable enum "
+        "string when status is `skipped`. Drives the frontend email "
+        "diagnostics card's 'recent attempts' panel.\n\n"
+        "Filters:\n"
+        "  - `status` — narrow to one outcome.\n"
+        "  - `template_key` — narrow to one template (e.g. `notif_incident_deadline`).\n"
+        "  - `tenant_id` — narrow to one tenant's traffic.\n"
+        "  - `skip` / `limit` — pagination (limit capped at 200)."
+    ),
+    summary="List recent email dispatch attempts",
+    include_meta=True,
+    response_codes={401: "Unauthorized"},
+)
+async def list_email_outbox(
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+    status: Annotated[
+        Optional[str],
+        Query(
+            description=(
+                "Filter rows by outcome. One of `sent` | `queued` | "
+                "`skipped` | `failed`."
+            )
+        ),
+    ] = None,
+    template_key: Annotated[
+        Optional[str],
+        Query(description="Filter rows by mounted template key."),
+    ] = None,
+    tenant_id: Annotated[
+        Optional[str],
+        Query(description="Filter rows by tenant id."),
+    ] = None,
+    skip: Annotated[int, Query(ge=0, description="Offset")] = 0,
+    limit: Annotated[
+        int, Query(ge=1, le=200, description="Page size — hard-capped at 200")
+    ] = 50,
+) -> Any:
+    from repositories.email_outbox_repo import (
+        count_email_outbox_rows,
+        list_email_outbox_rows,
+    )
+
+    rows = await list_email_outbox_rows(
+        status=status,
+        template_key=template_key,
+        tenant_id=tenant_id,
+        skip=skip,
+        limit=limit,
+    )
+    total = await count_email_outbox_rows(
+        status=status,
+        template_key=template_key,
+        tenant_id=tenant_id,
+    )
+    return {"items": rows, "total": total}
 
 
 @router.get("/billing")

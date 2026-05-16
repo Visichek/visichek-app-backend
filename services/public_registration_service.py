@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+from typing import Optional
+
 from bson import ObjectId
 from fastapi import HTTPException
 
@@ -65,6 +67,7 @@ async def register_visitor_public(
     # If a signed registration token is supplied, its scope overrides any
     # client-supplied department_id. Tokens are bound to a single tenant.
     token_scope = None
+    registration_token_id: Optional[str] = None
     if request.registration_token:
         token_scope = verify_registration_token(request.registration_token)
         if not token_scope or token_scope.get("tenant_id") != tenant_id:
@@ -73,6 +76,15 @@ async def register_visitor_public(
             )
         if token_scope.get("department_id"):
             request.department_id = token_scope["department_id"]
+        # Phase A3 (Issue 5 audit follow-up). Stable, non-reversible
+        # identifier so we can record which QR shaped this registration
+        # on the audit trail without persisting the replayable token
+        # itself.
+        import hashlib
+
+        registration_token_id = hashlib.sha256(
+            request.registration_token.encode("utf-8")
+        ).hexdigest()[:16]
 
     # Returning-visitor shortcut: if profile_id is supplied it must match the
     # phone. full_name can then be omitted and is pulled from the profile.
@@ -194,6 +206,41 @@ async def register_visitor_public(
         lawful_basis_at_time=lawful_basis,
     )
     session = await create_visit_session(session_data)
+
+    # Phase A3 audit hook (Issue 5). When a registration QR shaped the
+    # visit, record a focused event tying the resulting visit session
+    # to the token id and resolved scope. We hold the raw token in a
+    # one-way hash so the audit log doesn't contain replayable
+    # secrets. Fire-and-forget — an audit failure must not roll back
+    # an otherwise-successful registration.
+    if token_scope and registration_token_id:
+        try:
+            from services.audit_service import record_audit_event
+
+            await record_audit_event(
+                actor_id=profile.id or "",
+                actor_role="public_visitor",
+                action="visit_session.registered_via_qr",
+                resource_type="visit_session",
+                resource_id=session.id or "",
+                tenant_id=tenant_id,
+                details={
+                    "registration_token_id": registration_token_id,
+                    "registration_token_scope": {
+                        "department_id": token_scope.get("department_id"),
+                        "branch_id": token_scope.get("branch_id"),
+                    },
+                },
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "visit_session.registered_via_qr audit record failed "
+                "for session %s",
+                session.id,
+                exc_info=True,
+            )
 
     return PublicRegistrationResponse(
         session_id=session.id or "",

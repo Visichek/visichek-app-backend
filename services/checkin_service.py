@@ -291,6 +291,20 @@ async def _upsert_visitor_profile_from_submit(
     await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
 
 
+def _registration_token_id(token: str) -> str:
+    """Stable, non-reversible identifier for a registration QR token.
+
+    Phase A3 (Issue 5 audit follow-up). The raw token is HMAC-signed
+    and we don't want to persist it on the audit trail — anyone with
+    read access to the audit log could otherwise replay the QR.
+    Truncated SHA-256 is one-way and collision-resistant enough for
+    "which token was scanned for this check-in?" queries.
+    """
+    import hashlib
+
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
 def _enforce_registration_token_scope(
     *,
     tenant_id: str,
@@ -312,8 +326,10 @@ def _enforce_registration_token_scope(
         different department just because they typed it. The override
         happens silently — that's exactly the security property the
         token is meant to provide.
-      - Returns the verified scope dict so the caller can stash the
-        ``token_id`` (or department/branch) onto the audit row.
+      - Returns the verified scope dict plus a non-reversible
+        ``token_id`` (sha256 prefix of the raw token) so the caller
+        can record which QR shaped each registration on the audit
+        trail without storing the replayable token itself.
 
     Returns ``None`` when no token was provided (anonymous check-in
     path). Raises 400 ``INVALID_REGISTRATION_TOKEN`` for any structural
@@ -347,6 +363,10 @@ def _enforce_registration_token_scope(
         tenant_specific_data["department_id"] = scope["department_id"]
     if scope.get("branch_id"):
         tenant_specific_data["branch_id"] = scope["branch_id"]
+
+    # Attach a stable, non-reversible token id so the caller can land
+    # it on the audit row.
+    scope = {**scope, "token_id": _registration_token_id(registration_token)}
 
     return scope
 
@@ -394,13 +414,13 @@ async def submit_verified_checkin(
 
     # Enforce token scope BEFORE we hit visitor upserts so a mismatch
     # never leaves partial state behind.
-    _enforce_registration_token_scope(
+    token_scope = _enforce_registration_token_scope(
         tenant_id=config.tenant_id,
         tenant_specific_data=tenant_specific_data,
         registration_token=registration_token,
     )
 
-    return await _submit_verified_checkin_core(
+    checkin = await _submit_verified_checkin_core(
         tenant_id=config.tenant_id,
         checkin_config_id=checkin_config_id,
         required_field_keys={f.key for f in config.required_fields},
@@ -416,6 +436,42 @@ async def submit_verified_checkin(
         visitor_lng=visitor_lng,
         kyc_reference_id=kyc_reference_id,
     )
+
+    # Phase A3 audit hook (Issue 5). Land a focused event on the
+    # check-in whenever a QR token shaped the registration. Carries
+    # the token id (sha256 prefix — not the raw token) and the
+    # resolved scope so support can trace "which QR scanned this
+    # visitor in" without exposing replayable secrets. Fire-and-forget
+    # — an audit failure must not roll back a successful check-in.
+    if token_scope:
+        try:
+            from services.audit_service import record_audit_event
+
+            await record_audit_event(
+                actor_id=checkin.visitor_id,
+                actor_role="kiosk_visitor",
+                action="checkin.registered_via_qr",
+                resource_type="checkin",
+                resource_id=checkin.id or "",
+                tenant_id=config.tenant_id,
+                details={
+                    "registration_token_id": token_scope.get("token_id"),
+                    "registration_token_scope": {
+                        "department_id": token_scope.get("department_id"),
+                        "branch_id": token_scope.get("branch_id"),
+                    },
+                },
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "checkin.registered_via_qr audit record failed for checkin %s",
+                checkin.id,
+                exc_info=True,
+            )
+
+    return checkin
 
 
 async def submit_returning_visitor_checkin_by_id(
@@ -843,6 +899,15 @@ async def _submit_verified_checkin_core(
         initial_state = CheckinState.PENDING_VERIFICATION
     else:
         initial_state = CheckinState.PENDING_APPROVAL
+    logger.info(
+        "checkin submit: kyc decision tenant=%s visitor=%s "
+        "kyc_available=%s kyc_reference_present=%s initial_state=%s",
+        tenant_id,
+        visitor_id,
+        kyc_available,
+        bool(kyc_reference_id),
+        initial_state.value,
+    )
 
     # 6. Create check-in
     create_data = CheckinCreate(
@@ -914,6 +979,14 @@ async def _submit_verified_checkin_core(
             )
         except Exception as e:
             logger.warning("Failed to send checkin notification: %s", e)
+    else:
+        logger.info(
+            "checkin notification: skipped pending approval notification "
+            "tenant=%s checkin=%s initial_state=%s reason=awaiting_kyc",
+            tenant_id,
+            checkin.id,
+            initial_state.value,
+        )
 
     return checkin
 
@@ -988,6 +1061,14 @@ async def submit_checkin(
     initial_state = (
         CheckinState.PENDING_VERIFICATION if kyc_available else CheckinState.PENDING_APPROVAL
     )
+    logger.info(
+        "legacy checkin submit: kyc decision tenant=%s visitor=%s "
+        "kyc_available=%s initial_state=%s",
+        tenant_id,
+        visitor_id,
+        kyc_available,
+        initial_state.value,
+    )
 
     # Create checkin
     create_data = CheckinCreate(
@@ -1017,6 +1098,14 @@ async def submit_checkin(
             )
         except Exception as e:
             logger.warning("Failed to send checkin notification: %s", e)
+    else:
+        logger.info(
+            "checkin notification: skipped pending approval notification "
+            "tenant=%s checkin=%s initial_state=%s reason=awaiting_kyc",
+            tenant_id,
+            checkin.id,
+            initial_state.value,
+        )
 
     return checkin
 
@@ -1313,9 +1402,9 @@ async def _send_visitor_badge_email_if_enabled(
             from core.storage.manager import DocumentStorageManager
 
             storage = DocumentStorageManager.get_instance()
-            badge_url = storage.provider.get_signed_download_url(
-                badge_pdf_object_key,
-                expires_in_seconds=24 * 3600,
+            badge_url = storage.provider.download_url(
+                object_key=badge_pdf_object_key,
+                expires_in=24 * 3600,
             ) or ""
         except Exception:
             badge_url = ""

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import base64
 from typing import Optional
 
 from bson import ObjectId
@@ -411,8 +412,25 @@ async def process_webhook_event(
         _hashlib.sha256(body or b"").hexdigest()[:8],
         sig_headers_present,
     )
+    if settings.dojah_debug_log_full_payload:
+        _log_dojah_webhook_forensics(body=body, headers=headers)
 
     event: KYCWebhookEvent = provider.parse_webhook(body=body, headers=headers)
+    if settings.dojah_debug_log_full_payload:
+        logger.info(
+            "dojah webhook/full: normalized event=%s",
+            {
+                "provider": event.provider,
+                "event_id": event.event_id,
+                "event_type": event.event_type,
+                "reference_id": event.reference_id,
+                "signature_valid": event.signature_valid,
+                "metadata": event.metadata,
+                "details": (
+                    event.details.__dict__ if event.details is not None else None
+                ),
+            },
+        )
 
     # Reject events that don't carry the body-bound signature when
     # required. ``signature_valid`` is true for either v1 or v2 in
@@ -503,6 +521,38 @@ async def process_webhook_event(
         fallback_checkin_id=metadata_checkin_id,
     )
     return {"accepted": True, "status": finalised.status.value}
+
+
+def _log_dojah_webhook_forensics(
+    *,
+    body: bytes,
+    headers: dict[str, str],
+) -> None:
+    body_bytes = body or b""
+    body_text = body_bytes.decode("utf-8", errors="replace")
+    try:
+        parsed_body = json.loads(body_text) if body_text else None
+    except Exception as exc:
+        parsed_body = {"json_parse_error": str(exc)}
+
+    logger.info(
+        "dojah webhook/full: headers=%s signature_headers=%s",
+        headers,
+        {
+            "x-dojah-signature": headers.get("x-dojah-signature"),
+            "x-dojah-signature-v2": headers.get("x-dojah-signature-v2"),
+            "x-dojah-event": headers.get("x-dojah-event"),
+        },
+    )
+    logger.info(
+        "dojah webhook/full: body_utf8=%s",
+        body_text,
+    )
+    logger.info(
+        "dojah webhook/full: body_base64=%s",
+        base64.b64encode(body_bytes).decode("ascii"),
+    )
+    logger.info("dojah webhook/full: parsed_body=%s", parsed_body)
 
 
 async def finalize_kyc(

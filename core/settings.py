@@ -106,6 +106,10 @@ class Settings:
     # in dev when working against the Dojah sandbox without webhook
     # configuration.
     dojah_require_v1_signature: bool = True
+    # Extremely verbose webhook diagnostics. When enabled, Dojah webhook
+    # logs include full request headers, signatures, and body bytes.
+    # Use only during active debugging because KYC payloads contain PII.
+    dojah_debug_log_full_payload: bool = False
 
     # ------------------------------------------------------------------
     # Blog backend (merged from visichek-blog-backend)
@@ -227,6 +231,10 @@ def get_settings() -> Settings:
         dojah_webhook_secret=os.getenv("DOJAH_WEBHOOK_SECRET") or None,
         dojah_require_v1_signature=os.getenv(
             "DOJAH_REQUIRE_V1_SIGNATURE", "true"
+        ).lower()
+        in {"1", "true", "yes"},
+        dojah_debug_log_full_payload=os.getenv(
+            "DOJAH_DEBUG_LOG_FULL_PAYLOAD", "false"
         ).lower()
         in {"1", "true", "yes"},
         r2_access_key_id=os.getenv("R2_ACCESS_KEY_ID") or None,

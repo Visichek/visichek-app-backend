@@ -42,8 +42,37 @@ async def send_notification(
     type: str = "info",
     link: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    *,
+    email_template_key: Optional[str] = None,
+    email_context: Optional[dict] = None,
+    preference_flag: Optional[str] = None,
 ) -> NotificationOut:
-    """Create and deliver a notification to a user. Fire-and-forget safe."""
+    """Create and deliver a notification to a user. Fire-and-forget safe.
+
+    Phase B1 (Issue 6 fan-out): when the caller supplies
+    ``email_template_key`` AND ``preference_flag``, this function ALSO
+    attempts to send an email. The email is sent only when:
+
+      1. The user's master ``email_notifications`` toggle (from
+         ``user_settings``) is on.
+      2. The user's per-event preference (``preference_flag`` on
+         ``notification_preferences``) is on.
+      3. The user has an email address on file.
+      4. The platform's SMTP is configured.
+
+    All four checks are best-effort: the in-app notification ALWAYS
+    lands regardless of email outcome, so the bell-icon badge updates
+    even when SMTP is offline.
+
+    Callers identify the gating preference by name, not by reading
+    the preferences themselves — this keeps the dispatch logic in one
+    place. Known flag names mirror ``NotificationPreferencesBase``:
+
+      ``email_on_incident`` | ``email_on_visitor_check_in`` |
+      ``email_on_appointment_reminder`` | ``email_on_dsr_received`` |
+      ``email_on_subscription_alert`` | ``email_on_new_user`` |
+      ``email_on_support_case``.
+    """
     data = NotificationCreate(
         user_id=user_id,
         user_type=user_type,
@@ -53,7 +82,298 @@ async def send_notification(
         link=link,
         tenant_id=tenant_id,
     )
-    return await create_notification(data)
+    notification = await create_notification(data)
+
+    # Issue 6 fan-out: optionally dispatch email. Never blocks the
+    # in-app notification — if email fails, we log and move on.
+    if email_template_key and preference_flag:
+        try:
+            await _dispatch_email_for_notification(
+                notification=notification,
+                user_id=user_id,
+                user_type=user_type,
+                email_template_key=email_template_key,
+                email_context=email_context or {},
+                preference_flag=preference_flag,
+                fallback_title=title,
+                fallback_body=body,
+                link=link,
+            )
+        except Exception:
+            logger.warning(
+                "send_notification: email fan-out failed for user_id=%s template=%s",
+                user_id,
+                email_template_key,
+                exc_info=True,
+            )
+
+    return notification
+
+
+async def _dispatch_email_for_notification(
+    *,
+    notification: NotificationOut,
+    user_id: str,
+    user_type: str,
+    email_template_key: str,
+    email_context: dict,
+    preference_flag: str,
+    fallback_title: str,
+    fallback_body: str,
+    link: Optional[str],
+) -> None:
+    """Resolve preferences + recipient and ship the email.
+
+    Phase B1 (Issue 6). Records the dispatch outcome on the
+    ``email_outbox`` collection so admins can debug "where did my
+    email go?" without reading server logs. Always best-effort —
+    every failure mode (no email on file, SMTP off, provider error)
+    produces an outbox row rather than raising.
+    """
+    from bson import ObjectId
+
+    # ── Resolve master email toggle from user settings ────────────
+    email_master_enabled = True
+    try:
+        from repositories.user_settings_repo import get_user_settings
+
+        settings_row = await get_user_settings(
+            {"user_id": user_id, "user_type": user_type}
+        )
+        if settings_row is not None:
+            email_master_enabled = bool(
+                getattr(settings_row, "email_notifications", True)
+            )
+    except Exception:
+        # Missing user_settings row is fine — defaults to "enabled".
+        pass
+
+    if not email_master_enabled:
+        await _record_email_outbox_skip(
+            notification=notification,
+            template_key=email_template_key,
+            recipient_email=None,
+            reason="master_email_disabled",
+        )
+        return
+
+    # ── Per-event preference check ────────────────────────────────
+    try:
+        prefs = await retrieve_or_create_notification_preferences(
+            user_id, user_type
+        )
+        per_event_enabled = bool(getattr(prefs, preference_flag, True))
+        channel_enabled = bool(getattr(prefs, "email_enabled", True))
+        if not channel_enabled or not per_event_enabled:
+            await _record_email_outbox_skip(
+                notification=notification,
+                template_key=email_template_key,
+                recipient_email=None,
+                reason=(
+                    "channel_disabled"
+                    if not channel_enabled
+                    else f"event_disabled:{preference_flag}"
+                ),
+            )
+            return
+    except Exception:
+        logger.warning(
+            "send_notification: failed to resolve preferences; "
+            "defaulting to send for user_id=%s",
+            user_id,
+            exc_info=True,
+        )
+
+    # ── Resolve recipient email + name ────────────────────────────
+    recipient_email: Optional[str] = None
+    recipient_name: Optional[str] = None
+    try:
+        if user_type == "admin":
+            from repositories.admin_repo import get_admin
+
+            if ObjectId.is_valid(user_id):
+                admin = await get_admin({"_id": ObjectId(user_id)})
+                if admin:
+                    recipient_email = admin.email
+                    recipient_name = admin.full_name
+        elif user_type == "system_user":
+            from repositories.system_user_repo import get_system_user
+
+            if ObjectId.is_valid(user_id):
+                system_user = await get_system_user({"_id": ObjectId(user_id)})
+                if system_user:
+                    recipient_email = system_user.email
+                    recipient_name = system_user.full_name
+        elif user_type == "user":
+            from repositories.user_repo import get_user
+
+            if ObjectId.is_valid(user_id):
+                app_user = await get_user({"_id": ObjectId(user_id)})
+                if app_user:
+                    recipient_email = app_user.email
+                    recipient_name = (
+                        getattr(app_user, "full_name", None) or app_user.email
+                    )
+    except Exception:
+        logger.warning(
+            "send_notification: recipient lookup failed for %s/%s",
+            user_type,
+            user_id,
+            exc_info=True,
+        )
+
+    if not recipient_email:
+        await _record_email_outbox_skip(
+            notification=notification,
+            template_key=email_template_key,
+            recipient_email=None,
+            reason="missing_recipient_email",
+        )
+        return
+
+    # ── SMTP configuration check ──────────────────────────────────
+    from core.settings import get_settings
+
+    settings = get_settings()
+    if not getattr(settings, "email_host", None):
+        await _record_email_outbox_skip(
+            notification=notification,
+            template_key=email_template_key,
+            recipient_email=recipient_email,
+            reason="smtp_not_configured",
+        )
+        return
+
+    # ── Dispatch ─────────────────────────────────────────────────
+    from core.email.manager import EmailManager
+    from core.email.types import EmailDispatchRequest
+
+    context = {
+        "recipient_name": recipient_name or recipient_email,
+        "title": fallback_title,
+        "body": fallback_body,
+        "link": link or "",
+        "tenant_name": getattr(settings, "platform_name", "VisiChek"),
+        **email_context,
+    }
+
+    try:
+        manager = EmailManager.get_instance()
+        result = await manager.send_template(
+            EmailDispatchRequest(
+                to_email=recipient_email,
+                template_key=email_template_key,
+                context=context,
+                dispatch="auto",
+            )
+        )
+        await _record_email_outbox_send(
+            notification=notification,
+            template_key=email_template_key,
+            recipient_email=recipient_email,
+            status=result.status,
+            task_id=getattr(result, "task_id", None),
+            attempts=getattr(result, "attempts", 0),
+        )
+    except Exception as exc:
+        await _record_email_outbox_send(
+            notification=notification,
+            template_key=email_template_key,
+            recipient_email=recipient_email,
+            status="failed",
+            task_id=None,
+            attempts=0,
+            error=str(exc),
+        )
+        raise
+
+
+# ── Email outbox helpers (Phase B3) ─────────────────────────────────
+
+
+async def _record_email_outbox_skip(
+    *,
+    notification: NotificationOut,
+    template_key: str,
+    recipient_email: Optional[str],
+    reason: str,
+) -> None:
+    """Write a 'skipped' row to the email outbox.
+
+    Reason values are human-readable but stable so the admin diagnostics
+    page can group / count them: ``master_email_disabled``,
+    ``channel_disabled``, ``event_disabled:<flag>``,
+    ``missing_recipient_email``, ``smtp_not_configured``.
+    """
+    try:
+        from repositories.email_outbox_repo import insert_email_outbox_row
+
+        await insert_email_outbox_row(
+            {
+                "notification_id": notification.id,
+                "template_key": template_key,
+                "recipient_email": recipient_email,
+                "status": "skipped",
+                "skipped_reason": reason,
+                "attempts": 0,
+                "user_id": notification.user_id,
+                "user_type": notification.user_type,
+                "tenant_id": notification.tenant_id,
+                "created_at": int(__import__("time").time()),
+                "sent_at": None,
+                "provider_response": None,
+                "error": None,
+                "task_id": None,
+            }
+        )
+    except Exception:
+        # Outbox is observability, not data integrity — never raise.
+        logger.warning(
+            "email outbox write failed for notification=%s",
+            notification.id,
+            exc_info=True,
+        )
+
+
+async def _record_email_outbox_send(
+    *,
+    notification: NotificationOut,
+    template_key: str,
+    recipient_email: str,
+    status: str,
+    task_id: Optional[str],
+    attempts: int,
+    error: Optional[str] = None,
+) -> None:
+    """Write a 'sent' / 'queued' / 'failed' row to the email outbox."""
+    try:
+        from repositories.email_outbox_repo import insert_email_outbox_row
+
+        now = int(__import__("time").time())
+        await insert_email_outbox_row(
+            {
+                "notification_id": notification.id,
+                "template_key": template_key,
+                "recipient_email": recipient_email,
+                "status": status,
+                "skipped_reason": None,
+                "attempts": attempts,
+                "user_id": notification.user_id,
+                "user_type": notification.user_type,
+                "tenant_id": notification.tenant_id,
+                "created_at": now,
+                "sent_at": now if status == "sent" else None,
+                "provider_response": None,
+                "error": error,
+                "task_id": task_id,
+            }
+        )
+    except Exception:
+        logger.warning(
+            "email outbox write failed for notification=%s",
+            notification.id,
+            exc_info=True,
+        )
 
 
 async def retrieve_notifications(
@@ -191,7 +511,12 @@ async def notify_incident_deadline(
     incident_id: str,
     tenant_id: str,
 ) -> None:
-    """Fire-and-forget: notify about NDPC 72-hour deadline approaching."""
+    """Fire-and-forget: notify about NDPC 72-hour deadline approaching.
+
+    Phase B1: fans out to email when the user has the
+    ``email_on_incident`` preference + master ``email_notifications``
+    enabled. Template ``notif_incident_deadline``.
+    """
     try:
         await send_notification(
             user_id=user_id,
@@ -201,6 +526,9 @@ async def notify_incident_deadline(
             type="warning",
             link=f"/app/incidents/{incident_id}",
             tenant_id=tenant_id,
+            email_template_key="notif_incident_deadline",
+            email_context={"incident_id": incident_id},
+            preference_flag="email_on_incident",
         )
     except Exception:
         logger.warning("Failed to send incident deadline notification", exc_info=True)
@@ -212,7 +540,12 @@ async def notify_visitor_check_in(
     visitor_name: str,
     tenant_id: str,
 ) -> None:
-    """Fire-and-forget: notify host about visitor check-in."""
+    """Fire-and-forget: notify host about visitor check-in.
+
+    Phase B1: emails opt-in (``email_on_visitor_check_in`` defaults to
+    False on a fresh row) because most hosts find this too chatty.
+    Template ``notif_visitor_check_in``.
+    """
     try:
         await send_notification(
             user_id=host_user_id,
@@ -221,6 +554,9 @@ async def notify_visitor_check_in(
             body=f"{visitor_name} has checked in and is waiting for you.",
             type="info",
             tenant_id=tenant_id,
+            email_template_key="notif_visitor_check_in",
+            email_context={"visitor_name": visitor_name},
+            preference_flag="email_on_visitor_check_in",
         )
     except Exception:
         logger.warning("Failed to send visitor check-in notification", exc_info=True)
@@ -233,7 +569,12 @@ async def notify_appointment_reminder(
     visitor_name: str,
     tenant_id: str,
 ) -> None:
-    """Fire-and-forget: 30-minute appointment reminder."""
+    """Fire-and-forget: 30-minute appointment reminder.
+
+    Phase B1: ``email_on_appointment_reminder`` defaults to True —
+    hosts almost always want the heads-up. Template
+    ``notif_appointment_reminder``.
+    """
     try:
         await send_notification(
             user_id=user_id,
@@ -243,6 +584,12 @@ async def notify_appointment_reminder(
             type="info",
             link=f"/app/appointments/{appointment_id}",
             tenant_id=tenant_id,
+            email_template_key="notif_appointment_reminder",
+            email_context={
+                "visitor_name": visitor_name,
+                "appointment_id": appointment_id,
+            },
+            preference_flag="email_on_appointment_reminder",
         )
     except Exception:
         logger.warning(
@@ -256,7 +603,12 @@ async def notify_dsr_submitted(
     dsr_id: str,
     tenant_id: str,
 ) -> None:
-    """Fire-and-forget: notify about new data subject request."""
+    """Fire-and-forget: notify about new data subject request.
+
+    Phase B1: DPOs almost universally want email on this — the in-app
+    bell is easy to miss for a privacy obligation with a legal clock.
+    Template ``notif_dsr_submitted``.
+    """
     try:
         await send_notification(
             user_id=user_id,
@@ -266,6 +618,9 @@ async def notify_dsr_submitted(
             type="info",
             link=f"/app/dsr/{dsr_id}",
             tenant_id=tenant_id,
+            email_template_key="notif_dsr_submitted",
+            email_context={"dsr_id": dsr_id},
+            preference_flag="email_on_dsr_received",
         )
     except Exception:
         logger.warning("Failed to send DSR notification", exc_info=True)
@@ -277,7 +632,12 @@ async def notify_subscription_alert(
     message: str,
     tenant_id: Optional[str] = None,
 ) -> None:
-    """Fire-and-forget: subscription expiring or payment failed."""
+    """Fire-and-forget: subscription expiring or payment failed.
+
+    Phase B1: tenant admins want this in email so they don't miss a
+    payment-failed warning and end up suspended. Template
+    ``notif_subscription_alert``.
+    """
     try:
         await send_notification(
             user_id=user_id,
@@ -287,6 +647,9 @@ async def notify_subscription_alert(
             type="warning",
             link="/app/billing",
             tenant_id=tenant_id,
+            email_template_key="notif_subscription_alert",
+            email_context={"message": message},
+            preference_flag="email_on_subscription_alert",
         )
     except Exception:
         logger.warning("Failed to send subscription alert notification", exc_info=True)
@@ -298,7 +661,13 @@ async def notify_new_user_added(
     new_user_name: str,
     tenant_id: str,
 ) -> None:
-    """Fire-and-forget: notify about new user added to tenant."""
+    """Fire-and-forget: notify about new user added to tenant.
+
+    Phase B1: ``email_on_new_user`` defaults to False because most
+    tenants don't want email churn on every staff addition — auditors
+    typically opt in for compliance reasons. Template
+    ``notif_new_user_added``.
+    """
     try:
         await send_notification(
             user_id=admin_user_id,
@@ -307,6 +676,9 @@ async def notify_new_user_added(
             body=f"{new_user_name} has been added to your organization.",
             type="success",
             tenant_id=tenant_id,
+            email_template_key="notif_new_user_added",
+            email_context={"new_user_name": new_user_name},
+            preference_flag="email_on_new_user",
         )
     except Exception:
         logger.warning("Failed to send new user notification", exc_info=True)
@@ -385,6 +757,19 @@ async def _get_active_checkin_approvers(
             continue
         seen.add(uid)
         out.append(user)
+    logger.info(
+        "checkin notification: approver lookup tenant=%s host_employee_id=%s "
+        "host_department_id=%s tenant_wide_count=%d dept_admin_count=%d "
+        "recipient_count=%d tenant_wide_filter=%s dept_admin_filter=%s",
+        tenant_id,
+        host_employee_id,
+        host_department_id,
+        len(tenant_wide),
+        len(dept_admins),
+        len(out),
+        tenant_wide_filter,
+        dept_admin_filter,
+    )
     return out
 
 
@@ -400,9 +785,26 @@ async def notify_checkin_pending_approval(
     super_admin, plus the dept_admin who owns the host's department)
     about a pending check-in."""
     try:
+        logger.info(
+            "checkin notification: pending approval trigger tenant=%s "
+            "checkin=%s visitor=%s verified=%s purpose=%s host_employee_id=%s",
+            tenant_id,
+            checkin_id,
+            visitor_name,
+            verified,
+            purpose,
+            host_employee_id,
+        )
         approvers = await _get_active_checkin_approvers(
             tenant_id, host_employee_id=host_employee_id
         )
+        if not approvers:
+            logger.warning(
+                "checkin notification: no active approvers found tenant=%s "
+                "checkin=%s",
+                tenant_id,
+                checkin_id,
+            )
         for user in approvers:
             try:
                 await send_notification(
@@ -418,6 +820,13 @@ async def notify_checkin_pending_approval(
                 logger.warning(
                     f"Failed to notify approver {user.id}", exc_info=True
                 )
+        logger.info(
+            "checkin notification: pending approval completed tenant=%s "
+            "checkin=%s attempted_recipients=%d",
+            tenant_id,
+            checkin_id,
+            len(approvers),
+        )
     except Exception:
         logger.warning(
             "Failed to send check-in pending approval notification", exc_info=True

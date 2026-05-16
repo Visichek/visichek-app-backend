@@ -212,8 +212,66 @@ async def check_admin_account_status_and_permissions(
         role="admin",
     )
 
-    # Application admins are platform operators with full access —
-    # skip fine-grained endpoint permission checks.
+    # ── Fine-grained permission enforcement (Issue 10 backend, Phase A) ──
+    #
+    # Application admins are no longer all-or-nothing. The invite flow
+    # accepts an ``access_preset`` (content_only / support_only /
+    # content_support / billing_only / all_controls) and persists the
+    # corresponding ``permissionList`` slice from
+    # ``config.role_permissions.ADMIN_ACCESS_PRESETS``. The route
+    # permission check below is what actually enforces that scope —
+    # without it, the preset would only filter the sidebar.
+    #
+    # Migration safety: admins created BEFORE presets shipped have a
+    # full ``ADMIN_PERMISSIONS`` list already stored from
+    # ``get_default_permissions_for_role("admin")``, so they continue
+    # to pass every check. If we encounter an admin with no
+    # ``permissionList`` AND no ``access_preset`` (a malformed
+    # legacy row, or a brand-new admin whose creation skipped the
+    # service layer), we backfill the full ``all_controls`` slice on
+    # the fly. That keeps the deploy safe — no admin gets locked out
+    # because the upgrade can't find their preset.
+    permission_list = getattr(admin, "permissionList", None)
+    stored_preset = getattr(admin, "access_preset", None)
+    needs_backfill = (
+        permission_list is None
+        or not getattr(permission_list, "permissions", None)
+    )
+    if needs_backfill:
+        # Defensive backfill — derive the permissions for this request
+        # from the stored preset (or all_controls when no preset is
+        # known) and log so the row can be migrated to an explicit
+        # state. Two cases land here:
+        #   - Legacy admin row: no preset stored, no permissionList
+        #     either. The pre-presets default was "every admin sees
+        #     everything", so all_controls is the safe choice.
+        #   - Partially-migrated admin: preset is set but the
+        #     permissionList column is empty (manual edit, half-done
+        #     migration, etc). Re-derive from the stored preset so
+        #     we honour the operator's intent.
+        from config.role_permissions import (
+            get_default_permissions_for_admin_preset,
+        )
+
+        logger.warning(
+            "admin %s has no permissionList stored (access_preset=%s); "
+            "computing on the fly from preset for this request",
+            admin.id,
+            stored_preset,
+        )
+        permission_list = get_default_permissions_for_admin_preset(stored_preset)
+
+    _validate_permission_list(permission_list)
+    endpoint_name, request_method, permission_key = _permission_context(request)
+
+    if not _has_permission(
+        permission_list=permission_list,  # type: ignore[arg-type]
+        permission_key=permission_key,
+        endpoint_name=endpoint_name,
+        request_method=request_method,
+    ):
+        raise auth_permission_denied(permission_key)
+
     return admin
 
 

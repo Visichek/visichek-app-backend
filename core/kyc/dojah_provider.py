@@ -3,8 +3,8 @@
 Auth: ``AppId: <app_id>`` + ``Authorization: <secret_key>`` (no
 ``Bearer`` prefix). Sandbox URL is ``https://sandbox.dojah.io``,
 production is ``https://api.dojah.io``. Webhooks include either
-``x-dojah-signature`` (HMAC-SHA256 of the raw request body keyed on
-the secret) or ``x-dojah-signature-v2`` (HMAC-SHA256 of the secret
+``x-dojah-signature`` (HMAC-SHA256 of the event payload keyed on
+the secret) or ``x-dojah-signature-v2`` (SHA-256 of the secret
 itself, body-independent — used as a "this came from us" marker).
 """
 
@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import time
 from typing import Any, Optional
 
@@ -157,8 +158,8 @@ class DojahKYCProvider:
         """Verify signature, decode payload, return a normalised event.
 
         Dojah supports two signature schemes — we accept either. v1 is
-        an HMAC of the raw body (the only scheme that protects against
-        replay or payload tampering). v2 is an HMAC of the secret with
+        an HMAC of the event payload (the only scheme that protects against
+        replay or payload tampering). v2 is a digest of the secret with
         no body input, useful only as a "this came from a Dojah-shaped
         client" marker. We treat v1 as authoritative when present and
         fall back to v2 otherwise; the caller can still reject events
@@ -241,25 +242,51 @@ class DojahKYCProvider:
         webhook_secret = self._webhook_secret
         secret_is_separate = webhook_secret != self._secret_key
         if v1:
-            expected = hmac.new(
-                webhook_secret.encode("utf-8"),
-                msg=body,
-                digestmod=hashlib.sha256,
-            ).hexdigest()
-            ok = hmac.compare_digest(expected, v1)
+            expected_by_payload = {
+                label: _hmac_sha256_hex(webhook_secret, payload)
+                for label, payload in _dojah_v1_payload_candidates(body)
+            }
+            matched = next(
+                (
+                    label
+                    for label, expected in expected_by_payload.items()
+                    if hmac.compare_digest(expected, v1)
+                ),
+                None,
+            )
+            ok = matched is not None
             logger.info(
                 "dojah signature(v1): ok=%s body_len=%d body_sha8=%s "
-                "received_prefix=%s expected_prefix=%s "
+                "matched=%s received_prefix=%s expected_prefixes=%s "
                 "received_len=%d secret_len=%d using_webhook_secret=%s",
                 ok,
                 len(body or b""),
                 body_sha8,
+                matched or "none",
                 v1[:16],
-                expected[:16],
+                {
+                    label: expected[:16]
+                    for label, expected in expected_by_payload.items()
+                },
                 len(v1),
                 len(webhook_secret or ""),
                 secret_is_separate,
             )
+            if _dojah_full_debug_enabled():
+                logger.info(
+                    "dojah signature(v1/full): ok=%s matched=%s "
+                    "received=%s expected_by_payload=%s",
+                    ok,
+                    matched or "none",
+                    v1,
+                    expected_by_payload,
+                )
+            if not ok and v2:
+                self._v2_signature_ok(
+                    v2=v2,
+                    webhook_secret=webhook_secret,
+                    secret_is_separate=secret_is_separate,
+                )
             return ok
         if v2:
             # Dojah's published docs describe v2 as "HMAC SHA256 of
@@ -295,6 +322,16 @@ class DojahKYCProvider:
                 len(webhook_secret or ""),
                 secret_is_separate,
             )
+            if _dojah_full_debug_enabled():
+                logger.info(
+                    "dojah signature(v2/full): ok=%s matched=%s "
+                    "received=%s expected_hmac=%s expected_plain=%s",
+                    ok,
+                    "hmac" if ok_hmac else ("plain" if ok_plain else "none"),
+                    v2,
+                    expected_hmac,
+                    expected_plain,
+                )
             return ok
         logger.info(
             "dojah signature: no header found — header_keys=%s body_len=%d",
@@ -302,6 +339,88 @@ class DojahKYCProvider:
             len(body or b""),
         )
         return False
+
+    def _v2_signature_ok(
+        self,
+        *,
+        v2: str,
+        webhook_secret: str,
+        secret_is_separate: bool,
+    ) -> bool:
+        expected_hmac = hmac.new(
+            webhook_secret.encode("utf-8"),
+            msg=webhook_secret.encode("utf-8"),
+            digestmod=hashlib.sha256,
+        ).hexdigest()
+        expected_plain = hashlib.sha256(webhook_secret.encode("utf-8")).hexdigest()
+        ok_hmac = hmac.compare_digest(expected_hmac, v2)
+        ok_plain = hmac.compare_digest(expected_plain, v2)
+        ok = ok_hmac or ok_plain
+        logger.info(
+            "dojah signature(v2): ok=%s matched=%s "
+            "received_prefix=%s expected_hmac_prefix=%s "
+            "expected_plain_prefix=%s received_len=%d "
+            "secret_len=%d using_webhook_secret=%s",
+            ok,
+            "hmac" if ok_hmac else ("plain" if ok_plain else "none"),
+            v2[:16],
+            expected_hmac[:16],
+            expected_plain[:16],
+            len(v2),
+            len(webhook_secret or ""),
+            secret_is_separate,
+        )
+        if _dojah_full_debug_enabled():
+            logger.info(
+                "dojah signature(v2/full): ok=%s matched=%s "
+                "received=%s expected_hmac=%s expected_plain=%s",
+                ok,
+                "hmac" if ok_hmac else ("plain" if ok_plain else "none"),
+                v2,
+                expected_hmac,
+                expected_plain,
+            )
+        return ok
+
+
+def _dojah_full_debug_enabled() -> bool:
+    return os.getenv("DOJAH_DEBUG_LOG_FULL_PAYLOAD", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _hmac_sha256_hex(secret: str, payload: bytes) -> str:
+    return hmac.new(
+        secret.encode("utf-8"),
+        msg=payload,
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+
+
+def _dojah_v1_payload_candidates(body: bytes) -> list[tuple[str, bytes]]:
+    """Return the byte encodings Dojah may have used for v1 signing."""
+    candidates: list[tuple[str, bytes]] = [("raw", body or b"")]
+    try:
+        parsed = json.loads((body or b"").decode("utf-8")) if body else {}
+    except Exception:
+        return candidates
+
+    existing = {candidate for _, candidate in candidates}
+    for label, ensure_ascii in (
+        ("json.stringify", False),
+        ("json.stringify_ascii", True),
+    ):
+        payload = json.dumps(
+            parsed,
+            ensure_ascii=ensure_ascii,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if payload not in existing:
+            candidates.append((label, payload))
+            existing.add(payload)
+    return candidates
 
 
 def _hash_payload(body: bytes) -> str:

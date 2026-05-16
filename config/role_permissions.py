@@ -283,6 +283,16 @@ SUPER_ADMIN_PERMISSIONS: list[Permission] = [
         "/v1/visitors/sessions/{session_id}",
         "View visit session",
     ),
+    # Force-approve a stuck check-in (Phase A2 / Issue 17 sweep).
+    # Mirrors the frontend ``CHECKIN_FORCE_APPROVE`` capability.
+    # Granted ONLY to super_admin — this is the operational safety
+    # valve when a KYC widget crashes or its webhook never lands.
+    _p(
+        "force_approve_checkin",
+        ["POST"],
+        "/v1/checkins/{checkin_id}/force-approve-pending",
+        "Force-approve a stuck pending_verification check-in",
+    ),
     # Visitor profiles
     _p(
         "search_profiles",
