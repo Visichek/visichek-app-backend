@@ -78,3 +78,50 @@ def test_dojah_invalid_v1_does_not_fall_back_to_v2() -> None:
     )
 
     assert event.signature_valid is False
+
+
+def test_dojah_parses_root_result_and_camel_case_metadata() -> None:
+    payload = {
+        "metadata": {
+            "tenantId": "69e35ec9c27723b4b442bcb1",
+            "checkinId": "6a088bf195d6a42666e03ab6",
+            "fullName": "nathaniel uriri",
+            "visitorId": "69ebe51a931356b26aaea665",
+        },
+        "data": {
+            "id": {
+                "data": {
+                    "id_url": "https://example.test/id.jpg",
+                    "id_data": {
+                        "first_name": "Doe",
+                        "last_name": "John",
+                        "document_type": "Driving License",
+                        "document_number": "123456789",
+                        "date_of_birth": "1990-01-01",
+                    },
+                },
+                "status": True,
+            },
+        },
+        "reference_id": "DJ-7CBFB526E9",
+        "verification_type": "DL_ID",
+        "verification_value": "123456789",
+        "verification_status": "Completed",
+        "status": True,
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+    event = _provider().parse_webhook(
+        body=body,
+        headers={"x-dojah-signature": _hmac_sha256(body)},
+    )
+
+    assert event.signature_valid is True
+    assert event.metadata["checkin_id"] == "6a088bf195d6a42666e03ab6"
+    assert event.metadata["tenant_id"] == "69e35ec9c27723b4b442bcb1"
+    assert event.reference_id == "DJ-7CBFB526E9"
+    assert event.details is not None
+    assert event.details.status == "success"
+    assert event.details.extracted_id_number == "123456789"
+    assert event.details.extracted_id_type == "Driving License"
+    assert event.details.id_image_url == "https://example.test/id.jpg"

@@ -174,12 +174,13 @@ class DojahKYCProvider:
             payload = {}
 
         event_type = str(payload.get("event") or payload.get("type") or "")
-        data = (
+        nested_data = (
             payload.get("data")
             or payload.get("entity")
             or payload.get("verification")
             or payload
         )
+        data = _select_verification_entity(payload=payload, nested_data=nested_data)
         reference_id = str(
             data.get("reference_id")
             or payload.get("reference_id")
@@ -202,7 +203,9 @@ class DojahKYCProvider:
             if isinstance(data, dict)
             else None
         ) or payload.get("metadata") or {}
-        metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+        metadata = _normalise_metadata(
+            metadata_raw if isinstance(metadata_raw, dict) else {}
+        )
 
         details = (
             _entity_to_details(reference_id=reference_id, entity=data)
@@ -428,6 +431,48 @@ def _hash_payload(body: bytes) -> str:
     return hashlib.sha256(body or b"").hexdigest()[:32]
 
 
+def _select_verification_entity(
+    *,
+    payload: dict[str, Any],
+    nested_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the object that carries the verification result fields.
+
+    Some Dojah webhooks put the result at the root and reserve ``data``
+    for per-step details, while others place the full verification under
+    ``data`` / ``entity``. Preserve the root fields when they exist so
+    status mapping sees ``verification_status``.
+    """
+    root_has_result = any(
+        key in payload
+        for key in (
+            "reference_id",
+            "verification_status",
+            "verification_type",
+            "verification_value",
+            "id_url",
+            "selfie_url",
+        )
+    )
+    if root_has_result:
+        return payload
+    return nested_data if isinstance(nested_data, dict) else payload
+
+
+def _normalise_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    out = dict(metadata)
+    aliases = {
+        "tenantId": "tenant_id",
+        "checkinId": "checkin_id",
+        "visitorId": "visitor_id",
+        "fullName": "full_name",
+    }
+    for camel_key, snake_key in aliases.items():
+        if snake_key not in out and camel_key in out:
+            out[snake_key] = out[camel_key]
+    return out
+
+
 def _entity_to_details(
     *, reference_id: str, entity: dict[str, Any]
 ) -> KYCVerificationDetails:
@@ -439,20 +484,23 @@ def _entity_to_details(
     preserved under ``data`` so an auditor can replay anything we
     glossed over.
     """
-    status_raw = (
-        str(
-            entity.get("status")
-            or entity.get("verification_status")
-            or entity.get("overall_status")
-            or ""
-        )
-        .lower()
-        .strip()
-    )
+    status_value = entity.get("verification_status") or entity.get("overall_status")
+    if status_value is None:
+        status_value = entity.get("status")
+    status_raw = str(status_value or "").lower().strip()
     status = _normalise_status(status_raw)
 
+    step_data = entity.get("data") if isinstance(entity.get("data"), dict) else {}
+    id_step = step_data.get("id") if isinstance(step_data, dict) else {}
+    id_step_data = id_step.get("data") if isinstance(id_step, dict) else {}
+    id_data = id_step_data.get("id_data") if isinstance(id_step_data, dict) else {}
     selfie = entity.get("selfie") or {}
-    gov = entity.get("government_data") or entity.get("government") or {}
+    gov = (
+        entity.get("government_data")
+        or entity.get("government")
+        or id_data
+        or {}
+    )
 
     return KYCVerificationDetails(
         reference_id=reference_id,
@@ -467,13 +515,29 @@ def _entity_to_details(
         ),
         extracted_dob=_first_truthy(gov.get("date_of_birth"), entity.get("dob")),
         extracted_id_number=_first_truthy(
-            gov.get("id_number"), gov.get("nin"), entity.get("id_number")
+            gov.get("id_number"),
+            gov.get("document_number"),
+            gov.get("nin"),
+            entity.get("id_number"),
+            entity.get("verification_value"),
         ),
         extracted_id_type=_first_truthy(
-            gov.get("id_type"), entity.get("id_type")
+            gov.get("id_type"),
+            gov.get("document_type"),
+            entity.get("id_type"),
+            entity.get("verification_type"),
         ),
-        selfie_url=_first_truthy(selfie.get("image_url"), selfie.get("url")),
-        id_image_url=_first_truthy(gov.get("image_url"), gov.get("url")),
+        selfie_url=_first_truthy(
+            selfie.get("image_url"),
+            selfie.get("url"),
+            entity.get("selfie_url"),
+        ),
+        id_image_url=_first_truthy(
+            gov.get("image_url"),
+            gov.get("url"),
+            id_step_data.get("id_url") if isinstance(id_step_data, dict) else None,
+            entity.get("id_url"),
+        ),
         failure_reason=_first_truthy(
             entity.get("reason"), entity.get("failure_reason")
         ),
@@ -490,6 +554,10 @@ def _normalise_status(raw: str) -> str:
         return "expired"
     if raw in ("ongoing", "pending", "in_progress"):
         return "ongoing"
+    if raw == "true":
+        return "success"
+    if raw == "false":
+        return "failed"
     return raw or "ongoing"
 
 

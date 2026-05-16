@@ -39,6 +39,7 @@ from repositories.checkin_repo import (
 )
 from repositories.kyc_repo import (
     create_kyc_verification,
+    delete_kyc_verification,
     find_latest_webhook_event_for_checkin,
     get_kyc_by_checkin,
     get_kyc_by_reference,
@@ -501,6 +502,12 @@ async def process_webhook_event(
     if not event.details or not event.reference_id:
         # Lifecycle events with no verification body (e.g. session
         # opened) — recorded but no state change.
+        await update_webhook_event_status(
+            event_id=event.event_id,
+            provider=event.provider,
+            processing_status="noop",
+            error=None,
+        )
         return {"accepted": True, "status": "noop"}
 
     # Pull the visichek-side correlator we encoded in initiate's
@@ -509,16 +516,34 @@ async def process_webhook_event(
     # (which it always does on the first webhook — we persist the
     # checkin_id placeholder until the real Dojah ref arrives).
     metadata_checkin_id: Optional[str] = None
-    raw_checkin_id = event.metadata.get("checkin_id") if event.metadata else None
+    raw_checkin_id = (
+        event.metadata.get("checkin_id")
+        or event.metadata.get("checkinId")
+        if event.metadata
+        else None
+    )
     if raw_checkin_id:
         candidate = str(raw_checkin_id)
         if ObjectId.is_valid(candidate):
             metadata_checkin_id = candidate
+    logger.info(
+        "dojah webhook: correlation ref=%s metadata_checkin_id=%s "
+        "metadata_keys=%s",
+        event.reference_id,
+        metadata_checkin_id,
+        sorted(event.metadata.keys()) if event.metadata else [],
+    )
 
     finalised = await finalize_kyc(
         reference_id=event.reference_id,
         details=event.details,
         fallback_checkin_id=metadata_checkin_id,
+    )
+    await update_webhook_event_status(
+        event_id=event.event_id,
+        provider=event.provider,
+        processing_status="processed",
+        error=None,
     )
     return {"accepted": True, "status": finalised.status.value}
 
@@ -576,7 +601,21 @@ async def finalize_kyc(
     webhooks / polling on that ref resolve directly.
     """
     record = await get_kyc_by_reference(reference_id)
-    if record is None and fallback_checkin_id:
+    if fallback_checkin_id and record is not None and not record.checkin_id:
+        deleted = 0
+        if record.id and ObjectId.is_valid(record.id):
+            deleted = await delete_kyc_verification({"_id": ObjectId(record.id)})
+        logger.info(
+            "finalize_kyc: removed dead-end stub reference_id=%s "
+            "stub_id=%s deleted=%d fallback_checkin_id=%s",
+            reference_id,
+            record.id,
+            deleted,
+            fallback_checkin_id,
+        )
+        record = None
+
+    if fallback_checkin_id and record is None:
         record = await get_kyc_by_checkin(fallback_checkin_id)
         if record is not None and record.reference_id != reference_id:
             relinked = await update_kyc_verification(

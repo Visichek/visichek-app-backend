@@ -70,6 +70,11 @@ async def update_kyc_verification(
     return KYCVerificationOut(**doc)
 
 
+async def delete_kyc_verification(filter_dict: dict) -> int:
+    result = await db[VERIFICATION_COLLECTION].delete_one(filter_dict)
+    return int(result.deleted_count)
+
+
 # ── Webhook idempotency ──────────────────────────────────────────────
 
 async def is_webhook_event_processed(
@@ -84,7 +89,13 @@ async def is_webhook_event_processed(
     doc = await db[WEBHOOK_EVENT_COLLECTION].find_one(
         {"provider": provider, "event_id": event_id}
     )
-    return doc is not None
+    if doc is None:
+        return False
+    return doc.get("processing_status") in {
+        "processed",
+        "noop",
+        "replayed_manually",
+    }
 
 
 async def find_latest_webhook_event_for_checkin(
@@ -126,15 +137,16 @@ async def update_webhook_event_status(
     this for audit, not control-flow.
     """
     try:
+        update_doc = {
+            "processing_status": processing_status,
+            "error": error,
+            "last_processed_at": int(time.time()),
+        }
+        if processing_status == "replayed_manually":
+            update_doc["last_replayed_at"] = int(time.time())
         await db[WEBHOOK_EVENT_COLLECTION].update_one(
             {"provider": provider, "event_id": event_id},
-            {
-                "$set": {
-                    "processing_status": processing_status,
-                    "error": error,
-                    "last_replayed_at": int(time.time()),
-                }
-            },
+            {"$set": update_doc},
         )
     except Exception:
         pass
