@@ -87,33 +87,11 @@ async def dashboard_stats(
     principal: AuthPrincipal = Depends(_all_tenant_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
-    # Unfiltered views hit the precompute cache. The cache resource is
-    # the same for every role (the payload is role-agnostic — see
-    # services.dashboard_service.get_dashboard_stats), so the precompute
-    # fanout that prebuilds ``dashboard.stats`` per tenant warms this for
-    # every authenticated role at once.
-    if not department_id and tenant_id:
-        return await get_or_compute(
-            scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
-            resource="dashboard.stats",
-            ttl=60,
-            loader=lambda: _load_dashboard_stats(tenant_id, principal.role),
-        )
     return await get_dashboard_stats(
         tenant_id=tenant_id,
         department_id=department_id,
         role=principal.role,
     )
-
-
-async def _load_dashboard_stats(tenant_id: str, role: Optional[str] = None) -> Any:
-    result = await get_dashboard_stats(tenant_id=tenant_id, role=role)
-    return (
-        result.model_dump(mode="json", by_alias=True)
-        if hasattr(result, "model_dump")
-        else result
-    )
-
 
 @router.get("/visitors")
 @document_response(

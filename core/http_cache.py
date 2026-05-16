@@ -44,7 +44,12 @@ _BYPASS_PREFIXES = (
 #   freshly delivered notifications for up to 60s. The collection is
 #   per-user with a tight {user_id, user_type, [read]} filter, so direct
 #   reads are cheap.
-_BYPASS_RESOURCE_SEGMENTS = frozenset({"v1-jobs", "v1-notifications"})
+# - ``v1-dashboard`` already uses the precompute layer for heavy payloads.
+#   A second full-response cache can keep live check-in counters stale after
+#   direct synchronous writes, so dashboard routes bypass this middleware.
+_BYPASS_RESOURCE_SEGMENTS = frozenset(
+    {"v1-jobs", "v1-notifications", "v1-dashboard"}
+)
 
 # Substrings that mark a path as auth-related (never cacheable).
 _BYPASS_SUBSTRINGS = (

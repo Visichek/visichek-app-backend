@@ -58,6 +58,7 @@ from schemas.kyc_schema import (
     KYCVerificationUpdate,
 )
 from services.audit_service import record_audit_event
+from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
 
 logger = logging.getLogger(__name__)
 
@@ -716,10 +717,14 @@ async def _apply_to_checkin(record: KYCVerificationOut) -> None:
                 get_visitor_profile_by_phone,
                 update_visitor_profile,
             )
+            from repositories.visitor_repo import update_visitor
             from schemas.visitor_profile_schema import VisitorProfileUpdate
+            from schemas.visitor_schema import VisitorUpdate
             from repositories.visitor_repo import get_visitor
 
             visitor = await get_visitor({"_id": checkin.visitor_id})
+            if visitor and visitor.id:
+                await update_visitor(visitor.id, VisitorUpdate(verified=True))
             phone = visitor.phone if visitor else None
             if phone:
                 profile = await get_visitor_profile_by_phone(
@@ -767,6 +772,8 @@ async def _apply_to_checkin(record: KYCVerificationOut) -> None:
                     rejection_reason="KYC verification expired",
                 ),
             )
+
+    invalidate_tenant_dashboard_cache(checkin.tenant_id)
 
     await record_audit_event(
         actor_id="",

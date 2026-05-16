@@ -67,6 +67,7 @@ from schemas.imports import (
 from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import sign_badge_token, verify_badge_token
 from services.badge_service import generate_badge_pdf
+from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
 from services.plan_limits import enforce_entity_cap, get_month_bounds
 
 
@@ -236,6 +237,7 @@ async def check_in_visitor(
         lawful_basis_at_time=lawful_basis,
     )
     session = await create_visit_session(session_data)
+    invalidate_tenant_dashboard_cache(tenant_id)
 
     # 8. Update visitor profile visit count and last visit date
     await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
@@ -566,6 +568,7 @@ async def confirm_check_in(
         {"_id": ObjectId(session.id)},
         update_payload,
     )
+    invalidate_tenant_dashboard_cache(tenant_id)
 
     # If the session was created from an appointment, mirror the badge
     # issuance on the appointment itself so the host's calendar reflects
@@ -640,6 +643,7 @@ async def deny_visitor(
             denied_by=denied_by,
         ),
     )
+    invalidate_tenant_dashboard_cache(tenant_id)
 
     # Cancel the linked appointment so the host doesn't see it sitting in
     # SCHEDULED forever after the visitor was turned away at reception.
@@ -749,6 +753,7 @@ async def _checkout_approved_checkin(
         checkin_id,
         CheckinUpdate(state=CheckinState.CHECKED_OUT, checked_out_at=now),
     )
+    invalidate_tenant_dashboard_cache(tenant_id)
     expected_minutes = (
         updated.purpose.expected_duration_minutes if updated.purpose else None
     )
@@ -808,6 +813,7 @@ async def _checkout_due_appointment(
         {"_id": ObjectId(appointment_id), "tenant_id": tenant_id},
         AppointmentUpdate(status=AppointmentStatus.CHECKED_OUT, fulfilled_at=now),
     )
+    invalidate_tenant_dashboard_cache(tenant_id)
     timing = _build_checkout_timing(
         eligible_since=updated.scheduled_datetime,
         checked_out_at=now,
@@ -909,6 +915,7 @@ async def check_out_visitor(
             check_out_time=now,
         ),
     )
+    invalidate_tenant_dashboard_cache(tenant_id)
 
     # Mirror the checkout on the originating appointment, if any. The
     # lifecycle helper is a no-op when the appointment is already in a
@@ -1356,6 +1363,7 @@ async def apply_id_scan_verification(
             {"_id": ObjectId(session.visitor_profile_id)},
             profile_update,
         )
+    invalidate_tenant_dashboard_cache(tenant_id)
 
     # Auto-link OCR vendor as sub-processor (8L)
     try:
@@ -1427,6 +1435,7 @@ async def approve_visitor_by_host(
                 verification_method="host_approval",
             ),
         )
+    invalidate_tenant_dashboard_cache(tenant_id)
 
     return updated
 

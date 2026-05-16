@@ -7,11 +7,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.database import db
 from repositories.appointment_repo import count_appointments, get_appointments
+from repositories.appointment_repo import (
+    count_due_scheduled_appointments_for_checkout,
+)
 from repositories.incident_log_repo import get_incidents_approaching_deadline
 from repositories.visit_session_repo import (
     count_awaiting_checkout_sessions,
     count_visit_sessions,
-    get_active_visitors,
     get_visit_sessions,
 )
 from schemas.dashboard_stats_schema import (
@@ -30,8 +32,11 @@ from schemas.dashboard_stats_schema import (
 _VISIT_STATUS_LABELS: Dict[str, str] = {
     "registered": "Registered",
     "pending_verification": "Pending verification",
+    "pending_approval": "Pending approval",
+    "approved": "Approved",
     "checked_in": "Checked in",
     "checked_out": "Checked out",
+    "rejected": "Rejected",
     "denied": "Denied",
     "cancelled": "Cancelled",
 }
@@ -89,6 +94,16 @@ _KYC_STATUS_LABELS: Dict[str, str] = {
     "expired": "Expired",
 }
 _DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+_ENUM_PREFIXES = {
+    "AppointmentStatus",
+    "CheckInMethod",
+    "CheckOutMethod",
+    "CheckinState",
+    "KYCStatus",
+    "VerificationMethod",
+    "VerificationStatus",
+    "VisitStatus",
+}
 
 
 # ─── Time helpers ─────────────────────────────────────────────────────
@@ -149,6 +164,44 @@ def _start_of_year_ts(now: Optional[int] = None) -> int:
     dt = datetime.fromtimestamp(base, tz=timezone.utc)
     first = dt.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
     return int(first.timestamp())
+
+
+def _enum_value(value: Any) -> Any:
+    return value.value if hasattr(value, "value") else value
+
+
+def _normalise_count_key(value: Any) -> str:
+    if value is None:
+        return ""
+    raw = _enum_value(value)
+    text = str(raw)
+    if "." in text:
+        prefix, enum_name = text.rsplit(".", 1)
+        if prefix in _ENUM_PREFIXES:
+            return enum_name.lower()
+    return text
+
+
+def _merge_counts(*parts: Dict[str, int]) -> Dict[str, int]:
+    merged: Dict[str, int] = {}
+    for counts in parts:
+        for key, value in counts.items():
+            merged[key] = merged.get(key, 0) + int(value or 0)
+    return merged
+
+
+def _checkin_match(
+    tenant_id: str,
+    department_id: Optional[str],
+    *,
+    state: Optional[Any] = None,
+) -> Dict[str, Any]:
+    match: Dict[str, Any] = {"tenant_id": tenant_id}
+    if department_id:
+        match["tenant_specific_data.department_id"] = department_id
+    if state is not None:
+        match["state"] = _enum_value(state)
+    return match
 
 
 # ─── Distribution / pie-chart helpers ─────────────────────────────────
@@ -232,10 +285,65 @@ async def _group_count(
     ]
     out: Dict[str, int] = {}
     async for doc in db[collection].aggregate(pipeline):
-        key = doc.get("_id")
-        if key is None:
-            key = ""
-        out[str(key)] = int(doc.get("count", 0))
+        key = _normalise_count_key(doc.get("_id"))
+        out[key] = out.get(key, 0) + int(doc.get("count", 0))
+    return out
+
+
+async def _visitor_verification_counts(tenant_id: str) -> Dict[str, int]:
+    base = {"tenant_id": tenant_id, "deleted_at": None}
+    total = await db.visitor_profiles.count_documents(base)
+    verified = await db.visitor_profiles.count_documents(
+        {
+            **base,
+            "$or": [
+                {"verification_status": "verified"},
+                {"last_verification_date": {"$exists": True, "$ne": None}},
+                {"id_number": {"$exists": True, "$nin": [None, ""]}},
+            ],
+        }
+    )
+    denied = await db.visitor_profiles.count_documents(
+        {**base, "verification_status": "denied"}
+    )
+    unverified = max(total - verified - denied, 0)
+    return {
+        "verified": verified,
+        "unverified": unverified,
+        "denied": denied,
+    }
+
+
+async def _visitor_verification_method_counts(tenant_id: str) -> Dict[str, int]:
+    pipeline = [
+        {
+            "$match": {
+                "tenant_id": tenant_id,
+                "deleted_at": None,
+                "$or": [
+                    {
+                        "verification_method": {
+                            "$exists": True,
+                            "$nin": [None, ""],
+                        }
+                    },
+                    {"id_type": {"$exists": True, "$nin": [None, ""]}},
+                ],
+            }
+        },
+        {
+            "$project": {
+                "method": {
+                    "$ifNull": ["$verification_method", "$id_type"],
+                }
+            }
+        },
+        {"$group": {"_id": "$method", "count": {"$sum": 1}}},
+    ]
+    out: Dict[str, int] = {}
+    async for doc in db.visitor_profiles.aggregate(pipeline):
+        key = _normalise_count_key(doc.get("_id"))
+        out[key] = out.get(key, 0) + int(doc.get("count", 0))
     return out
 
 
@@ -253,7 +361,11 @@ async def _overview_counts(
     tenant_id: str, department_id: Optional[str]
 ) -> Dict[str, Any]:
     base = _base_visit_match(tenant_id, department_id)
-    total_visits = await count_visit_sessions(base)
+    checkin_base = _checkin_match(tenant_id, department_id)
+    total_visits, total_checkins = await asyncio.gather(
+        count_visit_sessions(base),
+        db.checkins.count_documents(checkin_base),
+    )
     total_visitors = await db.visitor_profiles.count_documents(
         {"tenant_id": tenant_id, "deleted_at": None}
     )
@@ -277,7 +389,7 @@ async def _overview_counts(
         {**incident_filter, "risk_level": "critical"}
     )
     return {
-        "total_visits": total_visits,
+        "total_visits": total_visits + total_checkins,
         "total_visitors": total_visitors,
         "total_appointments": total_appointments,
         "total_departments": total_departments,
@@ -292,21 +404,35 @@ async def _overview_counts(
 async def _live_state(
     tenant_id: str, department_id: Optional[str]
 ) -> Dict[str, Any]:
-    active = await get_active_visitors(
-        tenant_id=tenant_id, department_id=department_id
+    (
+        checked_in_sessions,
+        approved_checkins,
+        due_appointments,
+        pending_approval,
+        pending_kyc,
+    ) = await asyncio.gather(
+        count_awaiting_checkout_sessions(
+            tenant_id=tenant_id, department_id=department_id
+        ),
+        db.checkins.count_documents(
+            _checkin_match(tenant_id, department_id, state="approved")
+        ),
+        count_due_scheduled_appointments_for_checkout(
+            tenant_id=tenant_id,
+            due_before_ts=((int(time.time()) // 86400) + 1) * 86400,
+            department_id=department_id,
+        ),
+        db.checkins.count_documents(
+            _checkin_match(tenant_id, department_id, state="pending_approval")
+        ),
+        db.checkins.count_documents(
+            _checkin_match(tenant_id, department_id, state="pending_verification")
+        ),
     )
-    awaiting = await count_awaiting_checkout_sessions(
-        tenant_id=tenant_id, department_id=department_id
-    )
-    pending_approval = await db.checkins.count_documents(
-        {"tenant_id": tenant_id, "state": "pending_approval"}
-    )
-    pending_kyc = await db.checkins.count_documents(
-        {"tenant_id": tenant_id, "state": "pending_verification"}
-    )
+    currently_active = checked_in_sessions + approved_checkins
     return {
-        "currently_active": len(active),
-        "awaiting_checkout": awaiting,
+        "currently_active": currently_active,
+        "awaiting_checkout": currently_active + due_appointments,
         "pending_approval": pending_approval,
         "pending_kyc": pending_kyc,
     }
@@ -319,16 +445,40 @@ async def _today_snapshot(
     start_today: int,
 ) -> Dict[str, Any]:
     base = _base_visit_match(tenant_id, department_id)
+    checkin_base = _checkin_match(tenant_id, department_id)
     today_filter = {**base, "check_in_time": {"$gte": start_today}}
+    checkins_today_filter = {**checkin_base, "date_created": {"$gte": start_today}}
 
-    visitors_today = await count_visit_sessions(today_filter)
+    visitors_today, public_checkins_today = await asyncio.gather(
+        count_visit_sessions(today_filter),
+        db.checkins.count_documents(checkins_today_filter),
+    )
+    visitors_today += public_checkins_today
     check_ins_today = visitors_today  # synonym; kept for clarity
-    check_outs_today = await count_visit_sessions(
-        {**base, "check_out_time": {"$gte": start_today}}
+    check_outs_today, public_checkouts_today = await asyncio.gather(
+        count_visit_sessions({**base, "check_out_time": {"$gte": start_today}}),
+        db.checkins.count_documents(
+            {
+                **checkin_base,
+                "state": "checked_out",
+                "checked_out_at": {"$gte": start_today},
+            }
+        ),
     )
-    denials_today = await count_visit_sessions(
-        {**base, "status": "denied", "date_created": {"$gte": start_today}}
+    check_outs_today += public_checkouts_today
+    denials_today, rejected_checkins_today = await asyncio.gather(
+        count_visit_sessions(
+            {**base, "status": "denied", "date_created": {"$gte": start_today}}
+        ),
+        db.checkins.count_documents(
+            {
+                **checkin_base,
+                "state": "rejected",
+                "last_updated": {"$gte": start_today},
+            }
+        ),
     )
+    denials_today += rejected_checkins_today
 
     appt_filter: Dict[str, Any] = {
         "tenant_id": tenant_id,
@@ -352,6 +502,14 @@ async def _today_snapshot(
     ]
     visitor_ids: List[str] = []
     async for doc in db.visit_sessions.aggregate(pipeline):
+        if doc.get("_id"):
+            visitor_ids.append(str(doc["_id"]))
+    async for doc in db.checkins.aggregate(
+        [
+            {"$match": checkins_today_filter},
+            {"$group": {"_id": "$visitor_id"}},
+        ]
+    ):
         if doc.get("_id"):
             visitor_ids.append(str(doc["_id"]))
 
@@ -396,6 +554,25 @@ async def _today_snapshot(
     async for doc in db.visit_sessions.aggregate(hourly_pipeline):
         peak_hour = doc.get("_id")
         break
+    if peak_hour is None:
+        checkin_hourly_pipeline = [
+            {"$match": checkins_today_filter},
+            {
+                "$group": {
+                    "_id": {
+                        "$hour": {
+                            "$toDate": {"$multiply": ["$date_created", 1000]},
+                        }
+                    },
+                    "count": {"$sum": 1},
+                }
+            },
+            {"$sort": {"count": -1}},
+            {"$limit": 1},
+        ]
+        async for doc in db.checkins.aggregate(checkin_hourly_pipeline):
+            peak_hour = doc.get("_id")
+            break
 
     return {
         "visitors_today": visitors_today,
@@ -417,6 +594,7 @@ async def _period_visits(
     now: int,
 ) -> Dict[str, Any]:
     base = _base_visit_match(tenant_id, department_id)
+    checkin_base = _checkin_match(tenant_id, department_id)
     start_today = _start_of_day(now)
     start_yesterday = start_today - 86400
     start_week = _start_of_week_ts(now)
@@ -430,7 +608,11 @@ async def _period_visits(
         rng: Dict[str, Any] = {"$gte": gte}
         if lt is not None:
             rng["$lt"] = lt
-        return await count_visit_sessions({**base, "check_in_time": rng})
+        sessions, checkins = await asyncio.gather(
+            count_visit_sessions({**base, "check_in_time": rng}),
+            db.checkins.count_documents({**checkin_base, "date_created": rng}),
+        )
+        return sessions + checkins
 
     (
         today_visits,
@@ -601,37 +783,37 @@ async def _distributions(
     tenant_id: str, department_id: Optional[str]
 ) -> Dict[str, Any]:
     base = _base_visit_match(tenant_id, department_id)
+    checkin_base = _checkin_match(tenant_id, department_id)
     appt_match: Dict[str, Any] = {"tenant_id": tenant_id}
     if department_id:
         appt_match["department_id"] = department_id
 
     (
-        visit_status,
+        visit_session_status,
+        checkin_state,
         check_in_method,
         check_out_method,
         verification_status,
         verification_method,
         consent_granted_counts,
         badge_format,
-        purpose,
+        visit_purpose,
+        checkin_purpose,
         appointment_status,
         incident_type,
         incident_status,
         kyc_status,
     ) = await asyncio.gather(
         _group_count("visit_sessions", base, "status"),
+        _group_count("checkins", checkin_base, "state"),
         _group_count("visit_sessions", base, "check_in_method"),
         _group_count(
             "visit_sessions",
             {**base, "check_out_method": {"$ne": None}},
             "check_out_method",
         ),
-        _group_count("visit_sessions", base, "verification_status"),
-        _group_count(
-            "visit_sessions",
-            {**base, "verification_method": {"$ne": None}},
-            "verification_method",
-        ),
+        _visitor_verification_counts(tenant_id),
+        _visitor_verification_method_counts(tenant_id),
         _group_count("visit_sessions", base, "consent_granted"),
         _group_count(
             "visit_sessions",
@@ -641,11 +823,18 @@ async def _distributions(
         _group_count(
             "visit_sessions", {**base, "purpose": {"$ne": None}}, "purpose"
         ),
+        _group_count(
+            "checkins",
+            {**checkin_base, "purpose.purpose": {"$nin": [None, ""]}},
+            "purpose.purpose",
+        ),
         _group_count("expected_appointments", appt_match, "status"),
         _group_count("incident_logs", {"tenant_id": tenant_id}, "incident_type"),
         _group_count("incident_logs", {"tenant_id": tenant_id}, "status"),
-        _group_count("kyc_attempts", {"tenant_id": tenant_id}, "status"),
+        _group_count("kyc_verifications", {"tenant_id": tenant_id}, "status"),
     )
+    visit_status = _merge_counts(visit_session_status, checkin_state)
+    purpose = _merge_counts(visit_purpose, checkin_purpose)
 
     consent_dist_keys = {
         "true": consent_granted_counts.get("True", 0)
@@ -746,6 +935,7 @@ async def _top_lists(
     tenant_id: str, department_id: Optional[str]
 ) -> Dict[str, Any]:
     base = _base_visit_match(tenant_id, department_id)
+    checkin_base = _checkin_match(tenant_id, department_id)
 
     async def _grouped(field: str, top_n: int = 10) -> Dict[str, int]:
         pipeline = [
@@ -759,26 +949,49 @@ async def _top_lists(
             key = doc.get("_id")
             if key is None or key == "":
                 continue
-            out[str(key)] = int(doc.get("count", 0))
+            out[_normalise_count_key(key)] = int(doc.get("count", 0))
+        return out
+
+    async def _grouped_checkins(field: str, top_n: int = 10) -> Dict[str, int]:
+        pipeline = [
+            {"$match": {**checkin_base, field: {"$nin": [None, ""]}}},
+            {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": top_n},
+        ]
+        out: Dict[str, int] = {}
+        async for doc in db.checkins.aggregate(pipeline):
+            key = doc.get("_id")
+            if key is None or key == "":
+                continue
+            out[_normalise_count_key(key)] = int(doc.get("count", 0))
         return out
 
     (
-        dept_counts,
+        session_dept_counts,
+        checkin_dept_counts,
         host_counts,
         company_counts,
         visitor_counts,
-        purpose_counts,
+        session_purpose_counts,
+        checkin_purpose_counts,
         denial_counts,
         check_in_method_counts,
+        checkin_branch_counts,
     ) = await asyncio.gather(
         _grouped("department_id"),
+        _grouped_checkins("tenant_specific_data.department_id"),
         _grouped("host_id"),
         _grouped("company_snapshot"),
         _grouped("visitor_profile_id"),
         _grouped("purpose"),
+        _grouped_checkins("purpose.purpose"),
         _grouped("denial_reason"),
         _grouped("check_in_method"),
+        _grouped_checkins("tenant_specific_data.branch_id"),
     )
+    dept_counts = _merge_counts(session_dept_counts, checkin_dept_counts)
+    purpose_counts = _merge_counts(session_purpose_counts, checkin_purpose_counts)
 
     # Branch top-list — visit_sessions don't carry branch_id directly, so
     # we route through departments to find their branches. Cheap because
@@ -827,7 +1040,7 @@ async def _top_lists(
                 }
 
     # Branch rollup from department.branch_id.
-    branch_counts: Dict[str, int] = {}
+    branch_counts: Dict[str, int] = dict(checkin_branch_counts)
     if dept_counts:
         from bson import ObjectId
 
@@ -912,18 +1125,36 @@ async def _daily_series(
     return out
 
 
+def _combine_daily_series(
+    first: List[TimeSeriesPoint], second: List[TimeSeriesPoint]
+) -> List[TimeSeriesPoint]:
+    second_by_ts = {point.timestamp: point.value for point in second}
+    return [
+        TimeSeriesPoint(
+            timestamp=point.timestamp,
+            label=point.label,
+            value=point.value + second_by_ts.get(point.timestamp, 0),
+        )
+        for point in first
+    ]
+
+
 async def _time_series(
     tenant_id: str, department_id: Optional[str], *, now: int
 ) -> Dict[str, Any]:
     base = _base_visit_match(tenant_id, department_id)
+    checkin_base = _checkin_match(tenant_id, department_id)
     appt_filter: Dict[str, Any] = {"tenant_id": tenant_id}
     if department_id:
         appt_filter["department_id"] = department_id
 
     (
-        visits_7,
-        visits_30,
-        check_outs_7,
+        visit_sessions_7,
+        checkins_7,
+        visit_sessions_30,
+        checkins_30,
+        session_check_outs_7,
+        checkin_check_outs_7,
         signups_30,
         appts_30,
         incidents_30,
@@ -932,12 +1163,25 @@ async def _time_series(
             "visit_sessions", base, timestamp_field="check_in_time", days=7, now=now
         ),
         _daily_series(
+            "checkins", checkin_base, timestamp_field="date_created", days=7, now=now
+        ),
+        _daily_series(
             "visit_sessions", base, timestamp_field="check_in_time", days=30, now=now
+        ),
+        _daily_series(
+            "checkins", checkin_base, timestamp_field="date_created", days=30, now=now
         ),
         _daily_series(
             "visit_sessions",
             {**base, "check_out_time": {"$ne": None}},
             timestamp_field="check_out_time",
+            days=7,
+            now=now,
+        ),
+        _daily_series(
+            "checkins",
+            {**checkin_base, "checked_out_at": {"$ne": None}},
+            timestamp_field="checked_out_at",
             days=7,
             now=now,
         ),
@@ -963,6 +1207,9 @@ async def _time_series(
             now=now,
         ),
     )
+    visits_7 = _combine_daily_series(visit_sessions_7, checkins_7)
+    visits_30 = _combine_daily_series(visit_sessions_30, checkins_30)
+    check_outs_7 = _combine_daily_series(session_check_outs_7, checkin_check_outs_7)
     return {
         "visits_last_7_days": visits_7,
         "visits_last_30_days": visits_30,
@@ -977,8 +1224,10 @@ async def _heatmaps(
     tenant_id: str, department_id: Optional[str], *, now: int
 ) -> Dict[str, Any]:
     base = _base_visit_match(tenant_id, department_id)
+    checkin_base = _checkin_match(tenant_id, department_id)
     start_30d = _start_of_day(now) - 29 * 86400
     match = {**base, "check_in_time": {"$gte": start_30d}}
+    checkin_match = {**checkin_base, "date_created": {"$gte": start_30d}}
 
     hour_pipeline = [
         {"$match": match},
@@ -996,6 +1245,22 @@ async def _heatmaps(
     hour_counts: Dict[int, int] = {}
     async for doc in db.visit_sessions.aggregate(hour_pipeline):
         hour_counts[int(doc["_id"] or 0)] = int(doc["count"])
+    checkin_hour_pipeline = [
+        {"$match": checkin_match},
+        {
+            "$group": {
+                "_id": {
+                    "$hour": {
+                        "$toDate": {"$multiply": ["$date_created", 1000]}
+                    }
+                },
+                "count": {"$sum": 1},
+            }
+        },
+    ]
+    async for doc in db.checkins.aggregate(checkin_hour_pipeline):
+        hour = int(doc["_id"] or 0)
+        hour_counts[hour] = hour_counts.get(hour, 0) + int(doc["count"])
     hourly = [
         HourlyBucket(hour=h, label=f"{h:02d}:00", value=hour_counts.get(h, 0))
         for h in range(24)
@@ -1019,6 +1284,23 @@ async def _heatmaps(
         # MongoDB $isoDayOfWeek returns 1..7 with 1=Monday; Python uses 0..6.
         iso = int(doc["_id"] or 1)
         dow_counts[iso - 1] = int(doc["count"])
+    checkin_dow_pipeline = [
+        {"$match": checkin_match},
+        {
+            "$group": {
+                "_id": {
+                    "$isoDayOfWeek": {
+                        "$toDate": {"$multiply": ["$date_created", 1000]}
+                    }
+                },
+                "count": {"$sum": 1},
+            }
+        },
+    ]
+    async for doc in db.checkins.aggregate(checkin_dow_pipeline):
+        iso = int(doc["_id"] or 1)
+        key = iso - 1
+        dow_counts[key] = dow_counts.get(key, 0) + int(doc["count"])
     dow = [
         DayOfWeekBucket(day=d, label=_DOW_LABELS[d], value=dow_counts.get(d, 0))
         for d in range(7)
@@ -1069,12 +1351,13 @@ async def _quality_metrics(
     consent_counts: Dict[str, int],
     kyc_counts: Dict[str, int],
     total_visits: int,
+    total_visitors: int,
 ) -> Dict[str, Any]:
     base = _base_visit_match(tenant_id, department_id)
 
     verified = verification_status_counts.get("verified", 0)
     verification_rate = (
-        round((verified / total_visits) * 100, 1) if total_visits else 0.0
+        round((verified / total_visitors) * 100, 1) if total_visitors else 0.0
     )
 
     consent_total = sum(consent_counts.values()) or 0
@@ -1121,6 +1404,7 @@ async def _real_time_samples(
     tenant_id: str, department_id: Optional[str], *, start_today: int
 ) -> Dict[str, Any]:
     base = _base_visit_match(tenant_id, department_id)
+    checkin_base = _checkin_match(tenant_id, department_id)
     sessions = await get_visit_sessions(filter_dict=base, start=0, stop=10)
     recent: List[RecentCheckIn] = []
     for s in sessions:
@@ -1135,13 +1419,63 @@ async def _real_time_samples(
                 department_name=s.department_name_snapshot,
                 host_name=s.host_name_snapshot,
                 purpose=s.purpose,
-                status=str(s.status) if s.status else None,
+                status=_normalise_count_key(s.status) if s.status else None,
                 check_in_time=s.check_in_time,
                 check_out_time=s.check_out_time,
                 duration_minutes=duration,
-                verified=str(s.verification_status) == "verified",
+                verified=_normalise_count_key(s.verification_status) == "verified",
             )
         )
+
+    checkin_docs: List[Dict[str, Any]] = []
+    async for doc in (
+        db.checkins.find(checkin_base).sort("date_created", -1).limit(10)
+    ):
+        checkin_docs.append(doc)
+    if checkin_docs:
+        from repositories.visitor_repo import get_visitors_by_ids
+
+        visitor_ids = [
+            str(doc.get("visitor_id")) for doc in checkin_docs if doc.get("visitor_id")
+        ]
+        visitors = await get_visitors_by_ids(
+            tenant_id=tenant_id, visitor_ids=visitor_ids
+        )
+        visitors_by_id = {v.id: v for v in visitors if v.id}
+        for doc in checkin_docs:
+            visitor = visitors_by_id.get(str(doc.get("visitor_id") or ""))
+            bio = visitor.bio_data if visitor is not None else {}
+            purpose_doc = doc.get("purpose") or {}
+            purpose = (
+                purpose_doc.get("purpose")
+                if isinstance(purpose_doc, dict)
+                else str(purpose_doc)
+            )
+            check_in_time = doc.get("approved_at") or doc.get("date_created")
+            check_out_time = doc.get("checked_out_at")
+            duration = None
+            if check_in_time and check_out_time:
+                duration = max(int((check_out_time - check_in_time) / 60), 0)
+            recent.append(
+                RecentCheckIn(
+                    id=str(doc.get("_id") or ""),
+                    visitor_name=visitor.full_name if visitor is not None else None,
+                    company=(
+                        (bio or {}).get("company")
+                        or (bio or {}).get("organization")
+                    ),
+                    department_name=None,
+                    host_name=None,
+                    purpose=purpose,
+                    status=_normalise_count_key(doc.get("state")),
+                    check_in_time=check_in_time,
+                    check_out_time=check_out_time,
+                    duration_minutes=duration,
+                    verified=bool(doc.get("verified")),
+                )
+            )
+    recent.sort(key=lambda row: row.check_in_time or 0, reverse=True)
+    recent = recent[:10]
 
     appt_filter: Dict[str, Any] = {
         "tenant_id": tenant_id,
@@ -1161,7 +1495,7 @@ async def _real_time_samples(
             host_name=a.host_name_snapshot,
             department_id=a.department_id,
             purpose=a.purpose,
-            status=str(a.status) if a.status else None,
+            status=_normalise_count_key(a.status) if a.status else None,
             scheduled_datetime=a.scheduled_datetime,
         )
         for a in upcoming_docs
@@ -1297,9 +1631,14 @@ async def _build_basic_stats_for_free(
     now = int(time.time())
     start_today = _start_of_today_ts(now)
     base = _base_visit_match(tenant_id, None)
+    checkin_base = _checkin_match(tenant_id, None)
     today_filter = {**base, "check_in_time": {"$gte": start_today}}
 
-    total_visits = await count_visit_sessions(base)
+    total_visits, total_checkins = await asyncio.gather(
+        count_visit_sessions(base),
+        db.checkins.count_documents(checkin_base),
+    )
+    total_visits += total_checkins
     total_visitors = await db.visitor_profiles.count_documents(
         {"tenant_id": tenant_id, "deleted_at": None}
     )
@@ -1310,19 +1649,48 @@ async def _build_basic_stats_for_free(
         {"tenant_id": tenant_id}
     )
 
-    active = await get_active_visitors(tenant_id=tenant_id)
-    awaiting = await count_awaiting_checkout_sessions(tenant_id=tenant_id)
-    pending_approval = await db.checkins.count_documents(
-        {"tenant_id": tenant_id, "state": "pending_approval"}
+    checked_in_sessions, approved_checkins, pending_approval = await asyncio.gather(
+        count_awaiting_checkout_sessions(tenant_id=tenant_id),
+        db.checkins.count_documents(
+            _checkin_match(tenant_id, None, state="approved")
+        ),
+        db.checkins.count_documents(
+            _checkin_match(tenant_id, None, state="pending_approval")
+        ),
     )
+    awaiting = checked_in_sessions + approved_checkins
 
-    visitors_today = await count_visit_sessions(today_filter)
-    check_outs_today = await count_visit_sessions(
-        {**base, "check_out_time": {"$gte": start_today}}
+    visitors_today, public_checkins_today = await asyncio.gather(
+        count_visit_sessions(today_filter),
+        db.checkins.count_documents(
+            {**checkin_base, "date_created": {"$gte": start_today}}
+        ),
     )
-    denials_today = await count_visit_sessions(
-        {**base, "status": "denied", "date_created": {"$gte": start_today}}
+    visitors_today += public_checkins_today
+    check_outs_today, public_checkouts_today = await asyncio.gather(
+        count_visit_sessions({**base, "check_out_time": {"$gte": start_today}}),
+        db.checkins.count_documents(
+            {
+                **checkin_base,
+                "state": "checked_out",
+                "checked_out_at": {"$gte": start_today},
+            }
+        ),
     )
+    check_outs_today += public_checkouts_today
+    denials_today, rejected_checkins_today = await asyncio.gather(
+        count_visit_sessions(
+            {**base, "status": "denied", "date_created": {"$gte": start_today}}
+        ),
+        db.checkins.count_documents(
+            {
+                **checkin_base,
+                "state": "rejected",
+                "last_updated": {"$gte": start_today},
+            }
+        ),
+    )
+    denials_today += rejected_checkins_today
 
     # New vs returning today. Free tenants are capped at 50 visitors per
     # month, so this aggregation is trivially small.
@@ -1362,7 +1730,7 @@ async def _build_basic_stats_for_free(
         total_visitors=total_visitors,
         total_departments=total_departments,
         total_system_users=total_system_users,
-        currently_active=len(active),
+        currently_active=awaiting,
         awaiting_checkout=awaiting,
         pending_approval=pending_approval,
         visitors_today=visitors_today,
@@ -1456,6 +1824,7 @@ async def get_dashboard_stats(
         consent_counts=raw.get("consent", {}),
         kyc_counts=raw.get("kyc_status", {}),
         total_visits=overview["total_visits"],
+        total_visitors=overview["total_visitors"],
     )
 
     visits_growth_dod = _growth(

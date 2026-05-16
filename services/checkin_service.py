@@ -30,6 +30,7 @@ from schemas.checkin_schema import (
 )
 from schemas.imports import IDType
 from schemas.summary_schema import VisitorBriefSummary
+from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
 
 
 logger = logging.getLogger(__name__)
@@ -573,6 +574,7 @@ async def submit_returning_visitor_checkin_by_id(
         verified=visitor.verified,
     )
     checkin = await create_checkin(create_data)
+    invalidate_tenant_dashboard_cache(tenant_id)
 
     # Keep the VisitorProfile visit counter in sync (fire-and-forget).
     try:
@@ -921,6 +923,7 @@ async def _submit_verified_checkin_core(
         verified=visitor_verified,
     )
     checkin = await create_checkin(create_data)
+    invalidate_tenant_dashboard_cache(tenant_id)
 
     # If the visitor came in with a pre-run KYC reference, link the
     # verification record so the webhook lands on the correct check-in.
@@ -1082,6 +1085,7 @@ async def submit_checkin(
         verified=visitor.verified,
     )
     checkin = await create_checkin(create_data)
+    invalidate_tenant_dashboard_cache(tenant_id)
 
     # Notify approvers only when the check-in is queue-visible.
     if initial_state == CheckinState.PENDING_APPROVAL:
@@ -1500,6 +1504,7 @@ async def confirm_checkin(
                 approved_at=now,
             ),
         )
+        invalidate_tenant_dashboard_cache(tenant_id)
 
         # Fire notification
         try:
@@ -1568,6 +1573,7 @@ async def confirm_checkin(
                 rejection_reason=req.notes,
             ),
         )
+        invalidate_tenant_dashboard_cache(tenant_id)
 
         # Fire notification
         try:
@@ -1639,6 +1645,7 @@ async def force_approve_pending_verification(
     updated = await update_checkin(
         checkin_id, CheckinUpdate(state=CheckinState.PENDING_APPROVAL)
     )
+    invalidate_tenant_dashboard_cache(checkin.tenant_id)
 
     from services.audit_service import record_audit_event
 
