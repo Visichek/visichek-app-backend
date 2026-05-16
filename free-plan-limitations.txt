@@ -1,0 +1,215 @@
+VISICHEK FREE PLAN — COMPLETE LIMITATION REFERENCE
+====================================================
+Last updated: 2026-05-16
+Source of truth: config/plan_tiers.py (FREE_DENIED_FEATURES + FREE_PLAN)
+Frontend live manifest: GET /v1/me/limitations
+
+The Free plan exists for evaluation and very small offices. It is
+deliberately stripped down so every meaningful operational feature is an
+upgrade prompt. This document is the human-readable companion to the
+machine-readable feature_rules / crud_limits / retrieval_quotas /
+tenant_caps that live on the plan record in MongoDB.
+
+Everything below is enforced by the PlanEnforcementMiddleware in
+core/plan_enforcement.py except where noted.
+
+
+1. HARD CAPS (TenantCapLimit + StorageLimit)
+--------------------------------------------
+   - 1 system user (tenant-side staff account)
+   - 1 department
+   - 1 branch (single location only)
+   - 50 visitor records per month
+   - 0 appointments per month — appointments disabled entirely
+   - 10 documents total (lifetime)
+   - 10 MB total storage
+   - 2 MB per-file size cap
+
+   Adjustable by application admin: only max_visitors_per_month.
+
+
+2. DAILY WRITE QUOTAS (crud_limits, reset 00:00 UTC)
+----------------------------------------------------
+   - 5 visitor creations / day
+   - 10 visitor-profile updates / day
+   - 2 document uploads / day
+
+   Exceeding any of these returns HTTP 429 QUOTA_EXCEEDED.
+
+
+3. DAILY READ QUOTAS (retrieval_quotas, reset 00:00 UTC)
+---------------------------------------------------------
+   - 200 dashboard reads / day
+   - 200 visitor reads / day
+   - 300 visit-session reads / day
+   - 50 document reads / day
+
+   HTTP cache hits still count against these — the cache layer sits
+   inside plan enforcement so quota accounting is honest. Limits are set
+   generously so normal usage by a single receptionist will not trip
+   them; aggressive polling will.
+
+   Exceeding any of these returns HTTP 429 QUOTA_EXCEEDED.
+
+
+4. ENTIRELY BLOCKED ENDPOINTS (HTTP 403 FEATURE_DISABLED)
+----------------------------------------------------------
+   Compliance / governance:
+     /v1/incidents, /v1/incidents/*
+     /v1/dsr, /v1/dsr/*
+     /v1/sub-processors, /v1/sub-processors/*
+     /v1/retention-policies, /v1/retention-policies/*
+     /v1/audit-logs, /v1/audit-logs/*
+     /v1/compliance/*
+
+   Premium productivity / OCR:
+     /v1/appointments, /v1/appointments/*
+     /v1/branding, /v1/branding/*           (the public GET stays open
+                                              — the watermark flag from
+                                              section 7 is added there)
+     /v1/badges, /v1/badges/*
+     /v1/kyc, /v1/kyc/*
+     /v1/face-crop, /v1/face-crop/*
+     /v1/id-extractions, /v1/id-extractions/*
+     /v1/visitors/verify/id-scan
+     /v1/visitors/sessions/*/apply-id-scan
+     /v1/checkout/sessions, /v1/checkout/sessions/*
+     /v1/notifications/test                  (POST only)
+
+   Bulk operations (all bulk endpoints are paid-only):
+     /v1/visitors/sessions/bulk/*
+     /v1/departments/bulk/*
+     /v1/support-cases/bulk/*
+
+   Exports:
+     /v1/dashboard/export*                   (GET)
+     /v1/compliance/export*                  (GET)
+
+
+5. WRITE-METHODS BLOCKED (GET still works)
+-------------------------------------------
+   /v1/branches                              POST denied
+   /v1/branches/*                            POST / PUT / PATCH / DELETE denied
+   /v1/checkin-configs                       POST / PATCH / DELETE denied
+                                             (GET works so the public kiosk
+                                              flow can still fetch the
+                                              default config)
+   /v1/checkin-configs/*                     POST / PATCH / DELETE denied
+   /v1/privacy-notices                       POST / PATCH denied
+                                             (GET / active notice stays open
+                                              so the public consent screen
+                                              works)
+   /v1/privacy-notices/*                     POST / PATCH denied
+   /v1/me/saved-filters                      POST / PATCH / DELETE denied
+   /v1/me/saved-filters/*                    POST / PATCH / DELETE denied
+   /v1/me/column-prefs                       PUT denied
+   /v1/notifications/preferences             PUT / PATCH denied
+                                             (host email channel routing is
+                                              paid-only)
+
+
+6. SLIM DASHBOARD — GET /v1/dashboard/stats
+--------------------------------------------
+   Free-plan response contains ONLY:
+     - plan_tier:                "free"
+     - upgrade_required_for:     ["charts","trends","exports","top-N",
+                                  "heatmaps","recent_activity","growth",
+                                  "compliance","audit","incidents",
+                                  "appointments"]
+     - role_view, last_updated, period
+     - Counters:                 total_visits, total_visitors,
+                                 total_departments, total_system_users
+     - Live state:               currently_active, awaiting_checkout,
+                                 pending_approval
+     - Today snapshot:           visitors_today, check_ins_today,
+                                 check_outs_today, new_visitors_today,
+                                 returning_visitors_today, denials_today
+
+   Every other field on TenantDashboardStats is null — including all
+   charts, distributions, top-N rollups, 7/30-day time series, hourly +
+   day-of-week heatmaps, growth deltas (DoD/WoW/MoM), visit-duration
+   stats, signup metrics, recent check-in / upcoming appointment lists,
+   appointment funnel, operational-quality rates, and the compliance /
+   audit / incident sections.
+
+   The frontend should render an upgrade nudge in any section it sees
+   as null, keyed by upgrade_required_for.
+
+
+7. PUBLIC VISITOR FLOW — "POWERED BY VISICHEK" WATERMARK
+---------------------------------------------------------
+   GET /v1/branding/public/tenant/{tenant_id} returns
+       powered_by_visichek: true
+   for Free-plan tenants. The frontend renders a "Powered by Visichek"
+   watermark on the public registration / kiosk flow whenever this flag
+   is set. Paid tiers receive powered_by_visichek: false.
+
+
+8. SUPPORT
+----------
+   support_tier = NONE  (no SLA, no priority queue)
+   priority_support = false
+   api_access = false
+   custom_branding = false
+   trial_days = 0
+
+
+9. CAPABILITY MATRIX (free vs paid summary)
+-------------------------------------------
+   Manual check-in / check-out                Free + paid
+   Searchable visitor log (basic counters)    Free + paid
+   Single department / branch                 Free + paid
+   QR registration                            Free + paid
+   Custom check-in configs                    Paid only
+   Badge printing                             Starter+
+   Appointments                               Premium+
+   Multi-location                             Premium+
+   Branding customisation                     Premium+
+   ID verification / KYC (Dojah)              Premium+
+   CSV exports (dashboard, compliance)        Premium+
+   Host email notifications                   Premium+
+   Audit log access                           Paid only
+   Incident logging                           Paid only
+   Data subject request workflow              Paid only
+   Privacy notice editing                     Paid only
+   Retention policy management                Paid only
+   Sub-processor register                     Paid only
+   Compliance register / consent log          Paid only
+   Bulk operations (any kind)                 Paid only
+   Saved filters / column prefs               Paid only
+   Test notifications                         Paid only
+   Watchlist / flagged visitors               Enterprise
+   SSO                                        Enterprise
+
+
+10. NOT YET ENFORCED — DOCUMENTED FOR ROADMAP
+----------------------------------------------
+   Historical visibility cap (visit session lists clamped to last 7 days
+   for free plan) is on the roadmap but not yet wired. Currently free
+   tenants can paginate through their full history (subject to the 50
+   visitors / month cap so total volume is bounded).
+
+   Webhook / external integration configuration was never built; when
+   it lands it will be paid-only by default.
+
+
+11. WHERE TO MAKE FUTURE CHANGES
+---------------------------------
+   Plan caps / quotas / feature denies:
+     config/plan_tiers.py    (FREE_DENIED_FEATURES + FREE_PLAN definition)
+     Restart the server — ensure_canonical_plans() runs at boot and
+     upserts the free plan with whatever you edited.
+
+   Dashboard payload shape:
+     schemas/dashboard_stats_schema.py  (Optional vs required fields)
+     services/dashboard_service.py      (_build_basic_stats_for_free
+                                         and the tier branch in
+                                         get_dashboard_stats)
+
+   Watermark logic:
+     services/branding_service.py       (_is_free_plan_tenant helper)
+     schemas/branding_schema.py         (BrandingPublicOut.powered_by_visichek)
+
+   Middleware quota / feature enforcement (do not touch unless you are
+   changing the enforcement contract):
+     core/plan_enforcement.py

@@ -1242,6 +1242,144 @@ async def _overdue_checkouts(
 # ─── Public entrypoint ────────────────────────────────────────────────
 
 
+# Capability keys the frontend can use to render upgrade nudges in the
+# spots where Free-tier dashboard fields are ``null``. Names map 1:1 to
+# UI sections so a future field-level matrix isn't needed.
+_FREE_UPGRADE_CAPABILITIES: List[str] = [
+    "charts",
+    "trends",
+    "exports",
+    "top-N",
+    "heatmaps",
+    "recent_activity",
+    "growth",
+    "compliance",
+    "audit",
+    "incidents",
+    "appointments",
+]
+
+
+async def _resolve_tier_safely(tenant_id: str) -> str:
+    """Best-effort resolution of the tenant's plan tier.
+
+    Returns the tier string (``"free"`` / ``"starter"`` / ``"premium"`` /
+    ``"enterprise"``) or ``"free"`` if resolution fails. The free default
+    is intentional — when in doubt, serve the slim dashboard rather than
+    paid-tier content to an unverified tenant.
+    """
+    try:
+        from services.plan_cache_service import resolve_tenant_plan
+
+        resolved = await resolve_tenant_plan(tenant_id)
+        if resolved and resolved.get("tier"):
+            return str(resolved["tier"]).lower()
+    except Exception:
+        pass
+    return "free"
+
+
+async def _build_basic_stats_for_free(
+    tenant_id: str, role: Optional[str] = None
+) -> TenantDashboardStats:
+    """Slim dashboard payload for Free-plan tenants.
+
+    Returns only basic counters, live state, and today's snapshot. Every
+    other field (charts, time series, heatmaps, top-N, recent activity,
+    growth metrics, compliance, audit) stays ``None`` so the frontend can
+    render an upgrade nudge in its place. The capability keys the user
+    could unlock are listed in ``upgrade_required_for``.
+
+    All queries are direct counts — no ``$facet``, no time-bucket
+    aggregations, no ``_resolve_id_labels`` — to keep the slim path
+    genuinely cheap on the precompute fanout.
+    """
+    now = int(time.time())
+    start_today = _start_of_today_ts(now)
+    base = _base_visit_match(tenant_id, None)
+    today_filter = {**base, "check_in_time": {"$gte": start_today}}
+
+    total_visits = await count_visit_sessions(base)
+    total_visitors = await db.visitor_profiles.count_documents(
+        {"tenant_id": tenant_id, "deleted_at": None}
+    )
+    total_departments = await db.departments.count_documents(
+        {"tenant_id": tenant_id, "is_active": True}
+    )
+    total_system_users = await db.system_users.count_documents(
+        {"tenant_id": tenant_id}
+    )
+
+    active = await get_active_visitors(tenant_id=tenant_id)
+    awaiting = await count_awaiting_checkout_sessions(tenant_id=tenant_id)
+    pending_approval = await db.checkins.count_documents(
+        {"tenant_id": tenant_id, "state": "pending_approval"}
+    )
+
+    visitors_today = await count_visit_sessions(today_filter)
+    check_outs_today = await count_visit_sessions(
+        {**base, "check_out_time": {"$gte": start_today}}
+    )
+    denials_today = await count_visit_sessions(
+        {**base, "status": "denied", "date_created": {"$gte": start_today}}
+    )
+
+    # New vs returning today. Free tenants are capped at 50 visitors per
+    # month, so this aggregation is trivially small.
+    new_visitors_today = 0
+    returning_visitors_today = 0
+    visitor_ids: List[str] = []
+    async for doc in db.visit_sessions.aggregate(
+        [
+            {"$match": today_filter},
+            {"$group": {"_id": "$visitor_profile_id"}},
+        ]
+    ):
+        if doc.get("_id"):
+            visitor_ids.append(str(doc["_id"]))
+    if visitor_ids:
+        async for doc in db.visit_sessions.aggregate(
+            [
+                {"$match": {**base, "visitor_profile_id": {"$in": visitor_ids}}},
+                {
+                    "$group": {
+                        "_id": "$visitor_profile_id",
+                        "first_visit": {"$min": "$check_in_time"},
+                    }
+                },
+            ]
+        ):
+            first = doc.get("first_visit") or 0
+            if first >= start_today:
+                new_visitors_today += 1
+            else:
+                returning_visitors_today += 1
+
+    return TenantDashboardStats(
+        plan_tier="free",
+        upgrade_required_for=list(_FREE_UPGRADE_CAPABILITIES),
+        total_visits=total_visits,
+        total_visitors=total_visitors,
+        total_departments=total_departments,
+        total_system_users=total_system_users,
+        currently_active=len(active),
+        awaiting_checkout=awaiting,
+        pending_approval=pending_approval,
+        visitors_today=visitors_today,
+        check_ins_today=visitors_today,  # synonym; kept for symmetry with full payload
+        check_outs_today=check_outs_today,
+        new_visitors_today=new_visitors_today,
+        returning_visitors_today=returning_visitors_today,
+        denials_today=denials_today,
+        role_view=role,
+        last_updated=now,
+        period={
+            "now": now,
+            "start_today": start_today,
+        },
+    )
+
+
 async def get_dashboard_stats(
     tenant_id: str,
     department_id: Optional[str] = None,
@@ -1254,10 +1392,22 @@ async def get_dashboard_stats(
     secondary API call. Department-scoped views (``department_id``) are
     not cached at the precompute layer.
 
-    All sections default to zero / empty list so a brand-new tenant with
-    no data still gets a fully-shaped response."""
+    Free-plan tenants get a slimmed payload (basic counters + today
+    snapshot only) — see ``_build_basic_stats_for_free``. Paid tiers get
+    the full payload with charts, time series, heatmaps, top-N, growth
+    metrics, compliance, and audit sections populated.
+
+    All paid-tier sections default to zero / empty list so a brand-new
+    tenant with no data still gets a fully-shaped response."""
     if not tenant_id:
         return TenantDashboardStats(role_view=role, department_id=department_id)
+
+    # Free tenants get the slim payload. Department slicing is also a
+    # paid feature (Free is capped at one department) so we ignore
+    # ``department_id`` on the slim path.
+    tier = await _resolve_tier_safely(tenant_id)
+    if tier == "free":
+        return await _build_basic_stats_for_free(tenant_id, role=role)
 
     now = int(time.time())
     start_today = _start_of_today_ts(now)
@@ -1325,6 +1475,8 @@ async def get_dashboard_stats(
     )
 
     payload: Dict[str, Any] = {
+        "plan_tier": tier,
+        "upgrade_required_for": [],
         **overview,
         **live,
         **today,

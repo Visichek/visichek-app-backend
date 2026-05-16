@@ -6,6 +6,7 @@ from typing import Any, List, Optional
 from bson import ObjectId
 from fastapi import HTTPException, status
 
+from core.queue.precompute import delete_precompute
 from repositories.subscription_repo import (
     create_subscription,
     get_subscription,
@@ -278,6 +279,7 @@ async def subscribe_tenant(
     from services.plan_cache_service import invalidate_tenant_plan_cache
 
     await invalidate_tenant_plan_cache(tenant_id)
+    delete_precompute("dashboard.stats", tenant_id=tenant_id)
 
     return sub
 
@@ -571,6 +573,7 @@ async def change_plan(
     from services.plan_cache_service import invalidate_tenant_plan_cache
 
     await invalidate_tenant_plan_cache(tenant_id)
+    delete_precompute("dashboard.stats", tenant_id=tenant_id)
 
     return updated
 
@@ -661,6 +664,7 @@ async def provision_plan_change_from_checkout(
     from services.plan_cache_service import invalidate_tenant_plan_cache
 
     await invalidate_tenant_plan_cache(tenant_id)
+    delete_precompute("dashboard.stats", tenant_id=tenant_id)
 
     return updated
 
@@ -755,6 +759,7 @@ async def cancel_subscription(
     from services.plan_cache_service import invalidate_tenant_plan_cache
 
     await invalidate_tenant_plan_cache(tenant_id)
+    delete_precompute("dashboard.stats", tenant_id=tenant_id)
 
     return updated
 
@@ -864,9 +869,11 @@ async def transition_tenant_to_free_plan(
     except Exception:
         pass
 
-    # 4. Invalidate plan cache so next request sees free-tier gates.
+    # 4. Invalidate plan + dashboard caches so the next request sees
+    # free-tier gates and the slim dashboard payload.
     try:
         await invalidate_tenant_plan_cache(tenant_id)
+        delete_precompute("dashboard.stats", tenant_id=tenant_id)
     except Exception:
         pass
 
@@ -940,5 +947,6 @@ async def update_subscription_overrides(
     from services.plan_cache_service import invalidate_tenant_plan_cache
 
     await invalidate_tenant_plan_cache(sub.tenant_id)
+    delete_precompute("dashboard.stats", tenant_id=sub.tenant_id)
 
     return updated

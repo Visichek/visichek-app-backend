@@ -30,6 +30,7 @@ from schemas.plan_schema import (
     CrudLimit,
     FeatureRule,
     PlanTier,
+    QuotaResetInterval,
     RetrievalQuota,
     StorageLimit,
     TenantCapLimit,
@@ -142,6 +143,93 @@ FREE_DENIED_FEATURES: List[FeatureRule] = [
         "/v1/branches/*",
         "Multi-location requires Premium or Enterprise",
         methods=["POST", "PUT", "PATCH", "DELETE"],
+    ),
+    # ── Compliance & governance — blocked entirely on Free ────────────
+    _deny("/v1/incidents", "Incident logging requires Premium or Enterprise"),
+    _deny("/v1/incidents/*", "Incident logging requires Premium or Enterprise"),
+    _deny("/v1/dsr", "Data subject requests require Premium or Enterprise"),
+    _deny("/v1/dsr/*", "Data subject requests require Premium or Enterprise"),
+    _deny("/v1/sub-processors", "Sub-processor register requires Premium or Enterprise"),
+    _deny("/v1/sub-processors/*", "Sub-processor register requires Premium or Enterprise"),
+    _deny("/v1/retention-policies", "Retention policies require Premium or Enterprise"),
+    _deny("/v1/retention-policies/*", "Retention policies require Premium or Enterprise"),
+    _deny("/v1/audit-logs", "Audit log access requires Premium or Enterprise"),
+    _deny("/v1/audit-logs/*", "Audit log access requires Premium or Enterprise"),
+    _deny("/v1/compliance/*", "Compliance register requires Premium or Enterprise"),
+    # ── Premium productivity / OCR — blocked entirely on Free ─────────
+    _deny("/v1/face-crop", "Badge face-crop requires Premium or Enterprise"),
+    _deny("/v1/face-crop/*", "Badge face-crop requires Premium or Enterprise"),
+    _deny("/v1/id-extractions", "ID extraction OCR requires Premium or Enterprise"),
+    _deny("/v1/id-extractions/*", "ID extraction OCR requires Premium or Enterprise"),
+    _deny(
+        "/v1/visitors/verify/id-scan",
+        "ID scan verification requires Premium or Enterprise",
+    ),
+    _deny(
+        "/v1/visitors/sessions/*/apply-id-scan",
+        "Applying ID scan results requires Premium or Enterprise",
+    ),
+    _deny(
+        "/v1/checkout/sessions",
+        "Advanced checkout sessions require Premium or Enterprise",
+    ),
+    _deny(
+        "/v1/checkout/sessions/*",
+        "Advanced checkout sessions require Premium or Enterprise",
+    ),
+    _deny(
+        "/v1/notifications/test",
+        "Test notifications require Premium or Enterprise",
+        methods=["POST"],
+    ),
+    # ── Bulk operations — blocked entirely on Free ────────────────────
+    _deny(
+        "/v1/visitors/sessions/bulk/*",
+        "Bulk visitor-session operations require Premium or Enterprise",
+    ),
+    _deny(
+        "/v1/departments/bulk/*",
+        "Bulk department operations require Premium or Enterprise",
+    ),
+    _deny(
+        "/v1/support-cases/bulk/*",
+        "Bulk support-case operations require Premium or Enterprise",
+    ),
+    # ── Write-method blocks (GET still works so kiosk / consent screen keep functioning) ──
+    _deny(
+        "/v1/checkin-configs",
+        "Custom kiosk configurations require Premium or Enterprise",
+        methods=["POST", "PATCH", "DELETE"],
+    ),
+    _deny(
+        "/v1/checkin-configs/*",
+        "Custom kiosk configurations require Premium or Enterprise",
+        methods=["POST", "PATCH", "DELETE"],
+    ),
+    _deny(
+        "/v1/privacy-notices",
+        "Editing privacy notices requires Premium or Enterprise",
+        methods=["POST", "PATCH"],
+    ),
+    _deny(
+        "/v1/privacy-notices/*",
+        "Editing privacy notices requires Premium or Enterprise",
+        methods=["POST", "PATCH"],
+    ),
+    _deny(
+        "/v1/me/saved-filters",
+        "Saved filters require Premium or Enterprise",
+        methods=["POST", "PATCH", "DELETE"],
+    ),
+    _deny(
+        "/v1/me/saved-filters/*",
+        "Saved filters require Premium or Enterprise",
+        methods=["POST", "PATCH", "DELETE"],
+    ),
+    _deny(
+        "/v1/me/column-prefs",
+        "Persisting column preferences requires Premium or Enterprise",
+        methods=["PUT"],
     ),
 ]
 
@@ -256,7 +344,59 @@ FREE_PLAN = CanonicalPlan(
         max_visitors_per_month=50,
         max_appointments_per_month=0,
     ),
-    storage_limits=StorageLimit(max_documents=50, max_storage_mb=50, max_file_size_mb=2),
+    storage_limits=StorageLimit(max_documents=10, max_storage_mb=10, max_file_size_mb=2),
+    # Daily write throttle on Free — caps the burst rate that the
+    # monthly tenant_caps don't. Reset interval is DAILY so the counter
+    # rolls over at 00:00 UTC.
+    crud_limits=[
+        CrudLimit(
+            collection="visitors",
+            max_create=5,
+            reset_interval=QuotaResetInterval.DAILY,
+            description="Free plan: 5 visitor records per day",
+        ),
+        CrudLimit(
+            collection="visitor_profiles",
+            max_update=10,
+            reset_interval=QuotaResetInterval.DAILY,
+            description="Free plan: 10 visitor-profile edits per day",
+        ),
+        CrudLimit(
+            collection="documents",
+            max_create=2,
+            reset_interval=QuotaResetInterval.DAILY,
+            description="Free plan: 2 document uploads per day",
+        ),
+    ],
+    # Daily read quotas — generous enough that a normal day of usage
+    # doesn't hit them (HTTP cache hits still count against the cap, so
+    # tight values would lock people out on dashboard refresh).
+    retrieval_quotas=[
+        RetrievalQuota(
+            collection="dashboard",
+            max_reads=200,
+            reset_interval=QuotaResetInterval.DAILY,
+            description="Free plan: 200 dashboard reads per day",
+        ),
+        RetrievalQuota(
+            collection="visitors",
+            max_reads=200,
+            reset_interval=QuotaResetInterval.DAILY,
+            description="Free plan: 200 visitor reads per day",
+        ),
+        RetrievalQuota(
+            collection="visit_sessions",
+            max_reads=300,
+            reset_interval=QuotaResetInterval.DAILY,
+            description="Free plan: 300 visit-session reads per day",
+        ),
+        RetrievalQuota(
+            collection="documents",
+            max_reads=50,
+            reset_interval=QuotaResetInterval.DAILY,
+            description="Free plan: 50 document reads per day",
+        ),
+    ],
     priority_support=False,
     custom_branding=False,
     api_access=False,

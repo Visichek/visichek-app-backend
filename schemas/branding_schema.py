@@ -157,6 +157,10 @@ class BrandingPublicOut(BaseModel):
     """Minimal branding for public / unauthenticated contexts (e.g. login screen).
 
     Omits internal object keys, badge-specific colors, and timestamps.
+
+    ``powered_by_visichek`` is true for tenants on the Free plan — the
+    frontend renders a "Powered by Visichek" watermark on the public
+    visitor flow when this flag is set. False (or absent) for paid tiers.
     """
 
     tenant_id: str
@@ -166,3 +170,4 @@ class BrandingPublicOut(BaseModel):
     accent_color: Optional[str] = None
     logo_url: Optional[str] = None
     favicon_url: Optional[str] = None
+    powered_by_visichek: bool = False

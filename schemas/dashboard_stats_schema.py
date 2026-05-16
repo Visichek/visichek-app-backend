@@ -92,150 +92,154 @@ class UpcomingAppointment(BaseModel):
 class TenantDashboardStats(BaseModel):
     """Comprehensive tenant dashboard payload.
 
-    Every numeric field defaults to 0 / empty list, so a fresh tenant with
-    no traffic still gets a fully-shaped response (frontend can render
-    every chart in its empty state).
+    The "basic" fields (counters, live state, today snapshot) always have a
+    numeric / list default so they're populated for every tier. Every other
+    field defaults to ``None`` and is only populated for paid tiers — on
+    Free, those fields stay ``null`` and the frontend renders an upgrade
+    nudge in their place. See ``upgrade_required_for`` for the capability
+    keys the UI uses to drive those nudges.
 
     Sections are deliberately flat (no nested ``data`` wrapper) so a chart
     can bind directly to ``stats.visit_status_distribution`` etc."""
 
-    # ─── Overview KPIs ────────────────────────────────────────────────
+    # ─── Plan / upgrade signaling ─────────────────────────────────────
+    plan_tier: str = "free"
+    upgrade_required_for: List[str] = Field(default_factory=list)
+
+    # ─── Overview KPIs (basic — always populated) ─────────────────────
     total_visits: int = 0
     total_visitors: int = 0  # unique visitor profiles (lifetime)
-    total_appointments: int = 0
     total_departments: int = 0
-    total_branches: int = 0
     total_system_users: int = 0
-    total_incidents: int = 0
-    open_incidents: int = 0
-    critical_incidents: int = 0
+    # ─── Overview KPIs (paid — null on Free) ──────────────────────────
+    total_appointments: Optional[int] = None
+    total_branches: Optional[int] = None
+    total_incidents: Optional[int] = None
+    open_incidents: Optional[int] = None
+    critical_incidents: Optional[int] = None
 
-    # ─── Live state ───────────────────────────────────────────────────
+    # ─── Live state (basic — always populated) ────────────────────────
     currently_active: int = 0
     awaiting_checkout: int = 0
     pending_approval: int = 0  # checkins still waiting on receptionist
-    pending_kyc: int = 0  # checkins in pending_verification
+    # ─── Live state (paid — null on Free) ─────────────────────────────
+    pending_kyc: Optional[int] = None  # checkins in pending_verification
 
-    # ─── Today snapshot ───────────────────────────────────────────────
+    # ─── Today snapshot (basic — always populated) ────────────────────
     visitors_today: int = 0
     check_ins_today: int = 0
     check_outs_today: int = 0
-    expected_today: int = 0  # appointments scheduled for today
     new_visitors_today: int = 0  # first-time visitors who showed today
     returning_visitors_today: int = 0  # visitors with prior visits
     denials_today: int = 0
-    incidents_today: int = 0
+    # ─── Today snapshot (paid — null on Free) ─────────────────────────
+    expected_today: Optional[int] = None  # appointments scheduled for today
+    incidents_today: Optional[int] = None
     peak_hour_today: Optional[int] = None  # busiest hour 0..23 from today's check-ins
 
-    # ─── Period totals ────────────────────────────────────────────────
-    visits_this_week: int = 0
-    visits_last_week: int = 0
-    visits_this_month: int = 0
-    visits_last_month: int = 0
-    visits_this_quarter: int = 0
-    visits_this_year: int = 0
+    # ─── Period totals (paid — null on Free) ──────────────────────────
+    visits_this_week: Optional[int] = None
+    visits_last_week: Optional[int] = None
+    visits_this_month: Optional[int] = None
+    visits_last_month: Optional[int] = None
+    visits_this_quarter: Optional[int] = None
+    visits_this_year: Optional[int] = None
 
-    # ─── Growth ───────────────────────────────────────────────────────
-    visits_growth_dod: GrowthMetric = Field(default_factory=GrowthMetric)
-    visits_growth_wow: GrowthMetric = Field(default_factory=GrowthMetric)
-    visits_growth_mom: GrowthMetric = Field(default_factory=GrowthMetric)
-    signups_growth_wow: GrowthMetric = Field(default_factory=GrowthMetric)
-    signups_growth_mom: GrowthMetric = Field(default_factory=GrowthMetric)
+    # ─── Growth (paid — null on Free) ─────────────────────────────────
+    visits_growth_dod: Optional[GrowthMetric] = None
+    visits_growth_wow: Optional[GrowthMetric] = None
+    visits_growth_mom: Optional[GrowthMetric] = None
+    signups_growth_wow: Optional[GrowthMetric] = None
+    signups_growth_mom: Optional[GrowthMetric] = None
 
-    # ─── Visit duration ───────────────────────────────────────────────
-    avg_visit_duration_minutes: float = 0.0
-    avg_visit_duration_seconds: int = 0  # raw seconds, frontend can format
-    longest_visit_today_minutes: float = 0.0
-    shortest_visit_today_minutes: float = 0.0
-    overdue_checkouts: int = 0  # currently active visits past their expected_duration
+    # ─── Visit duration (paid — null on Free) ─────────────────────────
+    avg_visit_duration_minutes: Optional[float] = None
+    avg_visit_duration_seconds: Optional[int] = None  # raw seconds, frontend can format
+    longest_visit_today_minutes: Optional[float] = None
+    shortest_visit_today_minutes: Optional[float] = None
+    overdue_checkouts: Optional[int] = None  # currently active visits past expected_duration
 
-    # ─── Visitor acquisition (marketing) ──────────────────────────────
-    new_signups_today: int = 0
-    new_signups_7d: int = 0
-    new_signups_30d: int = 0
-    new_signups_this_month: int = 0
-    new_signups_last_month: int = 0
-    returning_visitor_count: int = 0  # visitors with total_visits >= 2
-    vip_visitor_count: int = 0  # visitors with total_visits >= 5
-    visitor_retention_rate: float = 0.0  # % of profiles with > 1 visit
+    # ─── Visitor acquisition / marketing (paid — null on Free) ────────
+    new_signups_today: Optional[int] = None
+    new_signups_7d: Optional[int] = None
+    new_signups_30d: Optional[int] = None
+    new_signups_this_month: Optional[int] = None
+    new_signups_last_month: Optional[int] = None
+    returning_visitor_count: Optional[int] = None  # visitors with total_visits >= 2
+    vip_visitor_count: Optional[int] = None  # visitors with total_visits >= 5
+    visitor_retention_rate: Optional[float] = None  # % of profiles with > 1 visit
 
-    # ─── Pie charts ───────────────────────────────────────────────────
-    new_vs_returning: List[DistributionSlice] = Field(default_factory=list)
-    visit_status_distribution: List[DistributionSlice] = Field(default_factory=list)
-    check_in_method_distribution: List[DistributionSlice] = Field(default_factory=list)
-    check_out_method_distribution: List[DistributionSlice] = Field(default_factory=list)
-    verification_status_distribution: List[DistributionSlice] = Field(
-        default_factory=list
-    )
-    verification_method_distribution: List[DistributionSlice] = Field(
-        default_factory=list
-    )
-    consent_distribution: List[DistributionSlice] = Field(default_factory=list)
-    badge_format_distribution: List[DistributionSlice] = Field(default_factory=list)
-    purpose_distribution: List[DistributionSlice] = Field(default_factory=list)
-    appointment_status_distribution: List[DistributionSlice] = Field(
-        default_factory=list
-    )
-    incident_type_distribution: List[DistributionSlice] = Field(default_factory=list)
-    incident_status_distribution: List[DistributionSlice] = Field(default_factory=list)
-    kyc_status_distribution: List[DistributionSlice] = Field(default_factory=list)
+    # ─── Pie charts (paid — null on Free) ─────────────────────────────
+    new_vs_returning: Optional[List[DistributionSlice]] = None
+    visit_status_distribution: Optional[List[DistributionSlice]] = None
+    check_in_method_distribution: Optional[List[DistributionSlice]] = None
+    check_out_method_distribution: Optional[List[DistributionSlice]] = None
+    verification_status_distribution: Optional[List[DistributionSlice]] = None
+    verification_method_distribution: Optional[List[DistributionSlice]] = None
+    consent_distribution: Optional[List[DistributionSlice]] = None
+    badge_format_distribution: Optional[List[DistributionSlice]] = None
+    purpose_distribution: Optional[List[DistributionSlice]] = None
+    appointment_status_distribution: Optional[List[DistributionSlice]] = None
+    incident_type_distribution: Optional[List[DistributionSlice]] = None
+    incident_status_distribution: Optional[List[DistributionSlice]] = None
+    kyc_status_distribution: Optional[List[DistributionSlice]] = None
 
-    # ─── Top lists ────────────────────────────────────────────────────
-    top_departments: List[TopItem] = Field(default_factory=list)
-    top_hosts: List[TopItem] = Field(default_factory=list)
-    top_companies: List[TopItem] = Field(default_factory=list)  # marketing gold
-    top_visitors: List[TopItem] = Field(default_factory=list)  # frequent flyers
-    top_branches: List[TopItem] = Field(default_factory=list)
-    top_purposes: List[TopItem] = Field(default_factory=list)
-    top_denial_reasons: List[TopItem] = Field(default_factory=list)
-    top_check_in_methods: List[TopItem] = Field(default_factory=list)
+    # ─── Top lists (paid — null on Free) ──────────────────────────────
+    top_departments: Optional[List[TopItem]] = None
+    top_hosts: Optional[List[TopItem]] = None
+    top_companies: Optional[List[TopItem]] = None  # marketing gold
+    top_visitors: Optional[List[TopItem]] = None  # frequent flyers
+    top_branches: Optional[List[TopItem]] = None
+    top_purposes: Optional[List[TopItem]] = None
+    top_denial_reasons: Optional[List[TopItem]] = None
+    top_check_in_methods: Optional[List[TopItem]] = None
 
-    # ─── Time series (line / bar) ─────────────────────────────────────
-    visits_last_7_days: List[TimeSeriesPoint] = Field(default_factory=list)
-    visits_last_30_days: List[TimeSeriesPoint] = Field(default_factory=list)
-    signups_last_30_days: List[TimeSeriesPoint] = Field(default_factory=list)
-    appointments_last_30_days: List[TimeSeriesPoint] = Field(default_factory=list)
-    incidents_last_30_days: List[TimeSeriesPoint] = Field(default_factory=list)
-    check_outs_last_7_days: List[TimeSeriesPoint] = Field(default_factory=list)
+    # ─── Time series (paid — null on Free) ────────────────────────────
+    visits_last_7_days: Optional[List[TimeSeriesPoint]] = None
+    visits_last_30_days: Optional[List[TimeSeriesPoint]] = None
+    signups_last_30_days: Optional[List[TimeSeriesPoint]] = None
+    appointments_last_30_days: Optional[List[TimeSeriesPoint]] = None
+    incidents_last_30_days: Optional[List[TimeSeriesPoint]] = None
+    check_outs_last_7_days: Optional[List[TimeSeriesPoint]] = None
 
-    # ─── Heatmaps ─────────────────────────────────────────────────────
-    hourly_distribution: List[HourlyBucket] = Field(default_factory=list)
-    day_of_week_distribution: List[DayOfWeekBucket] = Field(default_factory=list)
+    # ─── Heatmaps (paid — null on Free) ───────────────────────────────
+    hourly_distribution: Optional[List[HourlyBucket]] = None
+    day_of_week_distribution: Optional[List[DayOfWeekBucket]] = None
 
-    # ─── Appointment funnel ───────────────────────────────────────────
-    appointments_scheduled: int = 0
-    appointments_fulfilled: int = 0
-    appointments_missed: int = 0
-    appointments_cancelled: int = 0
-    appointment_fulfillment_rate: float = 0.0
-    appointment_no_show_rate: float = 0.0
-    appointment_conversion_rate: float = 0.0  # appts → visits
+    # ─── Appointment funnel (paid — null on Free) ─────────────────────
+    appointments_scheduled: Optional[int] = None
+    appointments_fulfilled: Optional[int] = None
+    appointments_missed: Optional[int] = None
+    appointments_cancelled: Optional[int] = None
+    appointment_fulfillment_rate: Optional[float] = None
+    appointment_no_show_rate: Optional[float] = None
+    appointment_conversion_rate: Optional[float] = None  # appts → visits
 
-    # ─── Operational quality ──────────────────────────────────────────
-    verification_rate: float = 0.0  # verified / total
-    consent_rate: float = 0.0  # consent_granted / total
-    consent_withdrawal_count: int = 0
-    denial_rate: float = 0.0
-    badge_issue_rate: float = 0.0  # badge generated / total
-    avg_kyc_pass_rate: float = 0.0  # success / (success+failed+expired)
+    # ─── Operational quality (paid — null on Free) ────────────────────
+    verification_rate: Optional[float] = None  # verified / total
+    consent_rate: Optional[float] = None  # consent_granted / total
+    consent_withdrawal_count: Optional[int] = None
+    denial_rate: Optional[float] = None
+    badge_issue_rate: Optional[float] = None  # badge generated / total
+    avg_kyc_pass_rate: Optional[float] = None  # success / (success+failed+expired)
 
-    # ─── Real-time samples ────────────────────────────────────────────
-    recent_check_ins: List[RecentCheckIn] = Field(default_factory=list)
-    upcoming_appointments_today: List[UpcomingAppointment] = Field(default_factory=list)
+    # ─── Real-time samples (paid — null on Free) ──────────────────────
+    recent_check_ins: Optional[List[RecentCheckIn]] = None
+    upcoming_appointments_today: Optional[List[UpcomingAppointment]] = None
 
-    # ─── Compliance ───────────────────────────────────────────────────
-    open_dsr_requests: int = 0
-    total_dsr_requests: int = 0
-    dsr_requests_30d: int = 0
-    incidents_approaching_deadline: int = 0
-    privacy_notices_count: int = 0
-    retention_policies_count: int = 0
-    sub_processors_count: int = 0
+    # ─── Compliance (paid — null on Free) ─────────────────────────────
+    open_dsr_requests: Optional[int] = None
+    total_dsr_requests: Optional[int] = None
+    dsr_requests_30d: Optional[int] = None
+    incidents_approaching_deadline: Optional[int] = None
+    privacy_notices_count: Optional[int] = None
+    retention_policies_count: Optional[int] = None
+    sub_processors_count: Optional[int] = None
 
-    # ─── Audit ────────────────────────────────────────────────────────
-    total_audit_events: int = 0
-    audit_events_today: int = 0
-    audit_events_7d: int = 0
+    # ─── Audit (paid — null on Free) ──────────────────────────────────
+    total_audit_events: Optional[int] = None
+    audit_events_today: Optional[int] = None
+    audit_events_7d: Optional[int] = None
 
     # ─── Meta ─────────────────────────────────────────────────────────
     role_view: Optional[str] = None

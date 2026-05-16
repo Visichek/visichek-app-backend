@@ -108,6 +108,24 @@ async def upsert_branding(tenant_id: str, branding_data: BrandingUpdate) -> Bran
         return await _resolve_logo_urls(new_branding)
 
 
+async def _is_free_plan_tenant(tenant_id: str) -> bool:
+    """Best-effort check for whether ``tenant_id`` is on the Free plan.
+
+    Defaults to ``False`` (no watermark) on lookup failure — keeping the
+    public kiosk flow renderable matters more than guaranteeing the
+    watermark on every request.
+    """
+    try:
+        from services.plan_cache_service import resolve_tenant_plan
+
+        resolved = await resolve_tenant_plan(tenant_id)
+        if resolved and resolved.get("tier"):
+            return str(resolved["tier"]).lower() == "free"
+    except Exception:
+        pass
+    return False
+
+
 async def retrieve_public_branding_by_tenant(
     tenant_id: str,
 ) -> BrandingPublicOut:
@@ -117,13 +135,18 @@ async def retrieve_public_branding_by_tenant(
     no badge-specific colors, no timestamps. If the tenant has not configured
     branding, returns a default BrandingPublicOut with just the tenant_id so
     the frontend always has a stable shape to render against.
+
+    Free-plan tenants get ``powered_by_visichek=True`` so the frontend
+    renders the "Powered by Visichek" watermark on the public visitor flow.
     """
     if not ObjectId.is_valid(tenant_id):
         raise HTTPException(status_code=400, detail="Invalid tenant ID format")
 
+    powered_by = await _is_free_plan_tenant(tenant_id)
+
     branding = await get_branding({"tenant_id": tenant_id})
     if not branding:
-        return BrandingPublicOut(tenant_id=tenant_id)
+        return BrandingPublicOut(tenant_id=tenant_id, powered_by_visichek=powered_by)
 
     branding = await _resolve_logo_urls(branding)
 
@@ -135,6 +158,7 @@ async def retrieve_public_branding_by_tenant(
         accent_color=branding.accent_color,
         logo_url=branding.logo_url,
         favicon_url=branding.favicon_url,
+        powered_by_visichek=powered_by,
     )
 
 
