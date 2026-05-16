@@ -169,6 +169,14 @@ FREE_DENIED_FEATURES: List[FeatureRule] = [
         "/v1/visitors/sessions/*/apply-id-scan",
         "Applying ID scan results requires Premium or Enterprise",
     ),
+    # Mint a signed registration QR for visitor self-service. Free
+    # tenants fall back to the public kiosk URL (/register/{tenant_id})
+    # which works on every plan and needs no token.
+    _deny(
+        "/v1/visitors/registration-qr",
+        "Mint a signed registration QR for visitor self-service",
+        methods=["POST"],
+    ),
     _deny(
         "/v1/checkout/sessions",
         "Advanced checkout sessions require Premium or Enterprise",

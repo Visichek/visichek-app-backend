@@ -73,6 +73,9 @@ core/plan_enforcement.py except where noted.
      /v1/id-extractions, /v1/id-extractions/*
      /v1/visitors/verify/id-scan
      /v1/visitors/sessions/*/apply-id-scan
+     /v1/visitors/registration-qr            (POST only — frontend falls
+                                              back to the public kiosk
+                                              URL /register/{tenant_id})
      /v1/checkout/sessions, /v1/checkout/sessions/*
      /v1/notifications/test                  (POST only)
 
