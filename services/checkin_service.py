@@ -291,6 +291,66 @@ async def _upsert_visitor_profile_from_submit(
     await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
 
 
+def _enforce_registration_token_scope(
+    *,
+    tenant_id: str,
+    tenant_specific_data: dict,
+    registration_token: Optional[str],
+) -> Optional[dict]:
+    """Verify a signed QR registration token and override conflicting client values.
+
+    Issue 5 backend gate. When the kiosk forwards a ``registration_token``
+    that was minted by ``POST /v1/super-admin/registration-qr``, this helper:
+
+      - Verifies the HMAC signature + expiry via
+        ``services.qr_service.verify_registration_token``.
+      - Rejects tokens whose ``tenant_id`` doesn't match the resolved
+        check-in tenant (visitor scanned the wrong tenant's QR, or a
+        token was replayed across tenants).
+      - Overrides ``tenant_specific_data['department_id']`` /
+        ``branch_id`` with the token's scope so a browser can't claim a
+        different department just because they typed it. The override
+        happens silently — that's exactly the security property the
+        token is meant to provide.
+      - Returns the verified scope dict so the caller can stash the
+        ``token_id`` (or department/branch) onto the audit row.
+
+    Returns ``None`` when no token was provided (anonymous check-in
+    path). Raises 400 ``INVALID_REGISTRATION_TOKEN`` for any structural
+    failure so the kiosk surfaces a recoverable error.
+    """
+    if not registration_token:
+        return None
+
+    from services.qr_service import verify_registration_token
+
+    scope = verify_registration_token(registration_token)
+    if not scope:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Registration QR token is invalid or expired",
+            details={"reason": "INVALID_REGISTRATION_TOKEN"},
+        )
+
+    if scope.get("tenant_id") and scope["tenant_id"] != tenant_id:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Registration QR token does not belong to this tenant",
+            details={"reason": "TENANT_SCOPE_MISMATCH"},
+        )
+
+    # Override scope-bearing fields. We don't merge — the token wins
+    # outright because the browser-supplied value can't be trusted.
+    if scope.get("department_id"):
+        tenant_specific_data["department_id"] = scope["department_id"]
+    if scope.get("branch_id"):
+        tenant_specific_data["branch_id"] = scope["branch_id"]
+
+    return scope
+
+
 async def submit_verified_checkin(
     *,
     checkin_config_id: str,
@@ -305,6 +365,7 @@ async def submit_verified_checkin(
     visitor_lat: Optional[float] = None,
     visitor_lng: Optional[float] = None,
     kyc_reference_id: Optional[str] = None,
+    registration_token: Optional[str] = None,
 ) -> CheckinOut:
     """Single-step check-in that optionally runs ID verification.
 
@@ -319,12 +380,26 @@ async def submit_verified_checkin(
 
     Either way, the visitor's `verified` flag propagates to the Checkin and the
     check-in is created in PENDING_APPROVAL with the usual notification.
+
+    Issue 5: when ``registration_token`` is present, the token's
+    department/branch scope overrides whatever the browser put in
+    ``tenant_specific_data`` and a mismatched tenant raises 400 before
+    any database writes.
     """
     config = await get_checkin_config({"_id": checkin_config_id, "active": True})
     if not config:
         raise resource_not_found(
             resource="CheckinConfig", resource_id=checkin_config_id
         )
+
+    # Enforce token scope BEFORE we hit visitor upserts so a mismatch
+    # never leaves partial state behind.
+    _enforce_registration_token_scope(
+        tenant_id=config.tenant_id,
+        tenant_specific_data=tenant_specific_data,
+        registration_token=registration_token,
+    )
+
     return await _submit_verified_checkin_core(
         tenant_id=config.tenant_id,
         checkin_config_id=checkin_config_id,
@@ -1168,6 +1243,120 @@ async def get_checkin_detail(
     return enriched[0]
 
 
+async def _send_visitor_badge_email_if_enabled(
+    *,
+    tenant_id: str,
+    visitor,
+    badge,
+    checkin_id: str,
+) -> None:
+    """Issue 7: dispatch the visitor's badge email after approval.
+
+    All three of these must be true or the email is skipped silently:
+
+      1. Tenant settings ``send_visitor_badge_email`` is ``True``.
+      2. The visitor record has a non-empty email address.
+      3. A badge was actually generated for this check-in (Free plan
+         skips badge generation entirely, so we'd have nothing useful
+         to link).
+
+    Fire-and-forget — the approval workflow MUST NOT block on email
+    delivery, and a missing recipient address MUST NOT fail the
+    approval. Exceptions are logged at WARNING; failures don't bubble.
+
+    Uses the queue-aware dispatch (``dispatch="auto"``) so production
+    respects ``EMAIL_QUEUE_ENABLED`` and local dev sends synchronously
+    without any extra plumbing.
+    """
+    if badge is None:
+        return
+    if not visitor or not getattr(visitor, "email", None):
+        return
+
+    try:
+        from repositories.tenant_settings_repo import get_tenant_settings
+
+        tenant_settings = await get_tenant_settings({"tenant_id": tenant_id})
+        # `send_visitor_badge_email` defaults to False at the schema
+        # level; respect that — tenants must opt in.
+        if not tenant_settings or not getattr(
+            tenant_settings, "send_visitor_badge_email", False
+        ):
+            return
+    except Exception:
+        # If we can't read tenant settings we err on the side of NOT
+        # sending — a tenant that hasn't configured email shouldn't
+        # leak addresses just because the read path is flaky.
+        return
+
+    # Look up the tenant for branding-friendly copy in the subject.
+    tenant_name = "VisiChek"
+    try:
+        from repositories.tenant_repo import get_tenant
+        from bson import ObjectId
+
+        if ObjectId.is_valid(tenant_id):
+            tenant = await get_tenant({"_id": ObjectId(tenant_id)})
+            if tenant and getattr(tenant, "company_name", None):
+                tenant_name = tenant.company_name
+    except Exception:
+        pass
+
+    # Best-effort download URL. When DocumentStorageManager isn't
+    # configured (or this badge's PDF wasn't uploaded), fall back to
+    # an empty string — the template gracefully hides the button and
+    # leans on the QR code instead.
+    badge_url = ""
+    badge_pdf_object_key = getattr(badge, "badge_pdf_object_key", None)
+    if badge_pdf_object_key:
+        try:
+            from core.storage.manager import DocumentStorageManager
+
+            storage = DocumentStorageManager.get_instance()
+            badge_url = storage.provider.get_signed_download_url(
+                badge_pdf_object_key,
+                expires_in_seconds=24 * 3600,
+            ) or ""
+        except Exception:
+            badge_url = ""
+
+    expires_at_iso = ""
+    if getattr(badge, "expires_at", None):
+        from datetime import datetime, timezone
+
+        try:
+            expires_at_iso = (
+                datetime.fromtimestamp(badge.expires_at, tz=timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                + "Z"
+            )
+        except Exception:
+            expires_at_iso = ""
+
+    from core.email.manager import EmailManager
+    from core.email.types import EmailDispatchRequest
+
+    manager = EmailManager.get_instance()
+    await manager.send_template(
+        EmailDispatchRequest(
+            to_email=visitor.email,
+            template_key="visitor_badge_approved",
+            context={
+                "visitor_name": getattr(visitor, "full_name", None) or "there",
+                "tenant_name": tenant_name,
+                "host_name": "",  # TODO: resolve from checkin context
+                "department_name": "",  # TODO: resolve from checkin context
+                "badge_url": badge_url,
+                "badge_qr_token": getattr(badge, "qr_code_value", "") or "",
+                "expires_at_formatted": expires_at_iso,
+                "checkin_id": checkin_id,
+            },
+            dispatch="auto",
+        )
+    )
+
+
 async def confirm_checkin(
     checkin_id: str, principal, req: CheckinConfirmRequest
 ) -> dict:
@@ -1239,6 +1428,23 @@ async def confirm_checkin(
             import logging
 
             logging.warning(f"Failed to send approval notification: {e}")
+
+        # Issue 7: send the visitor a "your badge is ready" email when
+        # the tenant has enabled it, the visitor supplied an address,
+        # and a badge artifact was actually generated. All three gates
+        # MUST pass — without the badge there's nothing useful to
+        # link, and without the address we'd just toast a 400.
+        try:
+            await _send_visitor_badge_email_if_enabled(
+                tenant_id=tenant_id,
+                visitor=visitor,
+                badge=badge,
+                checkin_id=checkin_id,
+            )
+        except Exception as e:
+            import logging
+
+            logging.warning(f"Failed to dispatch visitor badge email: {e}")
 
         # Build response. On Free plan ``badge`` is None — return the
         # approval without a badge artifact so the receptionist UI can

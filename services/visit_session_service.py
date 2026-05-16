@@ -579,12 +579,25 @@ async def confirm_check_in(
             target=AppointmentStatus.CHECKED_IN,
         )
 
-    # PHASE 1A: Return session + badge info
+    # PHASE 1A: Return session + badge info.
+    #
+    # Issue 7 fix: guard against base64-encoding ``None`` when badge
+    # generation was skipped by plan gating. The previous code called
+    # ``b64encode(badge_pdf_bytes)`` unconditionally — on Free where
+    # ``badge_pdf_bytes`` is None this raises ``TypeError: a bytes-like
+    # object is required, not 'NoneType'`` and the receptionist sees a
+    # 500 even though the manual check-in succeeded. Return ``None``
+    # explicitly so the frontend can render "approved, manual entry
+    # only" without faking an empty base64 string.
+    import base64
+
+    badge_pdf_base64: Optional[str] = None
+    if badge_pdf_bytes is not None:
+        badge_pdf_base64 = base64.b64encode(badge_pdf_bytes).decode("utf-8")
+
     return {
         "session": updated_session,
-        "badge_pdf_base64": __import__("base64")
-        .b64encode(badge_pdf_bytes)
-        .decode("utf-8"),
+        "badge_pdf_base64": badge_pdf_base64,
         "badge_qr_token": badge_token,
     }
 

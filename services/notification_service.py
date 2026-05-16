@@ -586,7 +586,16 @@ async def notify_support_case_opened(
     subject: str,
     support_tier: str,
 ) -> None:
-    """Fire-and-forget: notify opener + application admins a new case was opened."""
+    """Fire-and-forget: notify opener + application admins a new case was opened.
+
+    Issue 2 fix: emit shell-correct URLs from the start. Application
+    admins live in the ``/admin/*`` shell, so support case links must
+    target ``/admin/support-cases/{id}`` — the previous
+    ``/app/admin/support-cases/{id}`` value was a tenant-shell path and
+    the frontend's route resolver had to rewrite it (sometimes producing
+    ``/admin/admin/...`` double-prefix bugs). Emitting the right URL
+    here removes the rewrite from the hot path.
+    """
     try:
         from repositories.admin_repo import get_admins
         from schemas.imports import AccountStatus
@@ -603,7 +612,7 @@ async def notify_support_case_opened(
                     title="New Support Case",
                     body=f"A tenant opened a support case: {subject}",
                     type="info",
-                    link=f"/app/admin/support-cases/{case_id}",
+                    link=f"/admin/support-cases/{case_id}",
                     tenant_id=tenant_id,
                 )
             except Exception:
@@ -642,7 +651,11 @@ async def notify_onboarding_submission_received(
                     title="New Onboarding Submission",
                     body=f"{org_label} submitted a self-onboarding request.",
                     type="info",
-                    link=f"/app/admin/onboarding/{submission_id}",
+                    # Issue 2 fix: admin shell route is
+                    # /admin/tenants/onboarding/{id}. Previously emitted
+                    # /app/admin/onboarding/{id}, which the frontend
+                    # had to rewrite. Emit the canonical admin URL.
+                    link=f"/admin/tenants/onboarding/{submission_id}",
                 )
             except Exception:
                 logger.warning(
@@ -709,7 +722,12 @@ async def notify_support_case_assigned(
     admin_id: str,
     tenant_id: Optional[str] = None,
 ) -> None:
-    """Fire-and-forget: ping the admin that has just been assigned a case."""
+    """Fire-and-forget: ping the admin that has just been assigned a case.
+
+    Issue 2 fix: application admins live in the ``/admin/*`` shell.
+    Previously emitted ``/app/admin/support-cases/{id}`` (tenant shell
+    path) — corrected here to the canonical admin URL.
+    """
     if not admin_id:
         return
     try:
@@ -719,7 +737,7 @@ async def notify_support_case_assigned(
             title="Support case assigned to you",
             body="You've been assigned a new support case.",
             type="info",
-            link=f"/app/admin/support-cases/{case_id}",
+            link=f"/admin/support-cases/{case_id}",
             tenant_id=tenant_id,
         )
     except Exception:
@@ -780,3 +798,272 @@ async def notify_job_failure(
             task_id,
             exc_info=True,
         )
+
+
+# ── Bucket summary (Issue 2) ───────────────────────────────────────
+
+
+# Bucket name → list of substring patterns that classify a notification
+# link as belonging to that bucket. Mirrors `resolveNotificationBucket`
+# on the frontend; keep them in sync when adding a new bucket.
+_BUCKET_PATTERNS: list[tuple[str, list[str]]] = [
+    ("support_cases", ["/support-cases"]),
+    (
+        "onboarding_queue",
+        ["/tenants/onboarding", "/admin/onboarding"],
+    ),
+    ("visitors", ["/visitors", "/checkins"]),
+    ("appointments", ["/appointments"]),
+    ("incidents", ["/incidents"]),
+    ("jobs", ["/jobs"]),
+    ("plans", ["/plans"]),
+    ("pricing", ["/pricing"]),
+    ("billing", ["/billing", "/subscriptions"]),
+    ("content", ["/blogs", "/media", "/content"]),
+]
+
+
+def _classify_link_to_bucket(link: Optional[str]) -> Optional[str]:
+    """Return the bucket name for a notification link, or ``None``."""
+    if not link:
+        return None
+    for bucket, patterns in _BUCKET_PATTERNS:
+        for pattern in patterns:
+            if pattern in link:
+                return bucket
+    return None
+
+
+async def get_notification_bucket_summary(
+    *,
+    user_id: str,
+    user_type: str,
+) -> dict[str, int]:
+    """Aggregate unread notifications by sidebar bucket (Issue 2).
+
+    Powers ``GET /v1/notifications/summary``. The frontend sidebar
+    renders a numeric badge per bucket plus a pulsing dot when the
+    collapsed rail has any non-zero bucket.
+
+    Returns a dict keyed by bucket name with non-negative integer
+    counts. Buckets with zero unread items are omitted to keep the
+    payload small. Anything that doesn't match a known bucket pattern
+    is dropped — the frontend has its own ``Other`` rendering path
+    so we don't bother carrying noise across the wire.
+
+    Implementation note: this iterates the user's unread notifications
+    rather than running a separate count per bucket. With the default
+    paging plus aggressive read-marking the typical unread set is
+    small (<100 rows), so a single find + classify is faster than
+    N MongoDB round trips. If a tenant ends up with thousands of
+    unread items we should add a server-side classification field on
+    the document and aggregate via ``$group``.
+    """
+    filter_dict: dict = {
+        "user_id": user_id,
+        "user_type": user_type,
+        "read": False,
+    }
+    # Cap the scan at 1000 — way above any plausible UI need but
+    # bounded so a misconfigured tenant can't OOM us.
+    notifications = await get_notifications(filter_dict, skip=0, limit=1000)
+
+    counts: dict[str, int] = {}
+    for notif in notifications:
+        bucket = _classify_link_to_bucket(notif.link)
+        if not bucket:
+            continue
+        counts[bucket] = counts.get(bucket, 0) + 1
+    return counts
+
+
+# ── Test notifications (Issue 6) ───────────────────────────────────
+
+
+async def send_test_notification(
+    *,
+    user_id: str,
+    user_type: str,
+    tenant_id: Optional[str] = None,
+) -> dict:
+    """Send the diagnostic test notification (Issue 6).
+
+    Drives the ``POST /v1/notifications/test`` endpoint the frontend
+    notification-preferences pane + email-diagnostics card call.
+
+    Behavior:
+      - Always creates an in-app notification (so the admin sees the
+        bell-icon update even when SMTP is offline).
+      - Then tries to send an email via the mounted
+        ``notification_test`` template. Three short-circuits each
+        return a structured ``skipped_reason`` rather than raising,
+        so the frontend can render an actionable status line:
+
+          - ``email_disabled_in_preferences`` — user toggled the
+            master switch off.
+          - ``smtp_not_configured`` — platform SMTP isn't wired up
+            (``EMAIL_HOST``/etc. missing in settings).
+          - ``missing_recipient_email`` — no email on file for this
+            account (defensive guard; shouldn't happen in practice).
+
+    Return shape (consumed by the frontend's ``useSendTestNotification``
+    hook):
+
+    ``{ "delivered": bool, "skipped_reason": str | None,
+        "message": str | None }``
+    """
+    from core.email.manager import EmailManager
+    from core.email.types import EmailDispatchRequest
+    from core.settings import get_settings
+    from datetime import datetime, timezone
+
+    # Always drop an in-app notification so the bell pulses even on
+    # SMTP failure. Use a fixed title/body so the row is recognisable.
+    try:
+        await send_notification(
+            user_id=user_id,
+            user_type=user_type,
+            title="Notification settings test",
+            body="If you also received this as an email, your delivery pipeline is fully configured.",
+            type="info",
+            tenant_id=tenant_id,
+        )
+    except Exception:
+        logger.warning(
+            "send_test_notification: in-app delivery failed for user_id=%s",
+            user_id,
+            exc_info=True,
+        )
+
+    # Resolve email + preferences for the master toggle check.
+    recipient_email: Optional[str] = None
+    recipient_name: Optional[str] = None
+    email_master_enabled = True
+
+    try:
+        if user_type == "admin":
+            from repositories.admin_repo import get_admin
+            from bson import ObjectId
+
+            if ObjectId.is_valid(user_id):
+                admin = await get_admin({"_id": ObjectId(user_id)})
+                if admin:
+                    recipient_email = admin.email
+                    recipient_name = admin.full_name
+        elif user_type == "system_user":
+            from repositories.system_user_repo import get_system_user
+            from bson import ObjectId
+
+            if ObjectId.is_valid(user_id):
+                user = await get_system_user({"_id": ObjectId(user_id)})
+                if user:
+                    recipient_email = user.email
+                    recipient_name = user.full_name
+    except Exception:
+        logger.warning(
+            "send_test_notification: failed to resolve recipient email for %s/%s",
+            user_type,
+            user_id,
+            exc_info=True,
+        )
+
+    try:
+        from repositories.user_settings_repo import get_user_settings
+
+        settings_row = await get_user_settings(
+            {"user_id": user_id, "user_type": user_type}
+        )
+        if settings_row is not None:
+            email_master_enabled = bool(
+                getattr(settings_row, "email_notifications", True)
+            )
+    except Exception:
+        # Missing settings is not fatal — fall back to "enabled" so a
+        # fresh account can still receive its first test.
+        pass
+
+    if not email_master_enabled:
+        return {
+            "delivered": False,
+            "skipped_reason": "email_disabled_in_preferences",
+            "message": None,
+        }
+
+    if not recipient_email:
+        return {
+            "delivered": False,
+            "skipped_reason": "missing_recipient_email",
+            "message": None,
+        }
+
+    settings = get_settings()
+    smtp_host = getattr(settings, "email_host", None)
+    if not smtp_host:
+        return {
+            "delivered": False,
+            "skipped_reason": "smtp_not_configured",
+            "message": None,
+        }
+
+    # Fire the email. Use the queue-aware dispatch so production
+    # respects ``EMAIL_QUEUE_ENABLED`` (background send via Celery)
+    # while local dev sends synchronously.
+    try:
+        from_email = (
+            getattr(settings, "email_from_email", None)
+            or getattr(settings, "email_username", None)
+        )
+        manager = EmailManager.get_instance()
+        result = await manager.send_template(
+            EmailDispatchRequest(
+                to_email=recipient_email,
+                template_key="notification_test",
+                context={
+                    "recipient_name": recipient_name or recipient_email,
+                    "platform_name": getattr(
+                        settings, "platform_name", "VisiChek"
+                    ),
+                    "triggered_at": datetime.now(timezone.utc)
+                    .replace(microsecond=0)
+                    .isoformat()
+                    + "Z",
+                    "from_address": from_email or "",
+                },
+                dispatch="auto",
+            )
+        )
+        # `result.status` is one of "sent" | "queued" | "failed". Both
+        # "sent" and "queued" represent a successful handoff — the
+        # frontend renders "Test sent — check your inbox shortly" in
+        # both cases.
+        delivered = result.status in ("sent", "queued")
+        return {
+            "delivered": delivered,
+            "skipped_reason": None if delivered else "send_failed",
+            "message": None,
+        }
+    except RuntimeError as exc:
+        # Raised when SMTP retries are exhausted or the transport is
+        # missing despite host being set. Surface the message so the
+        # admin can fix it.
+        logger.warning(
+            "send_test_notification: SMTP send failed for %s: %s",
+            recipient_email,
+            exc,
+        )
+        return {
+            "delivered": False,
+            "skipped_reason": "smtp_send_failed",
+            "message": str(exc),
+        }
+    except Exception as exc:
+        logger.warning(
+            "send_test_notification: unexpected error for %s",
+            recipient_email,
+            exc_info=True,
+        )
+        return {
+            "delivered": False,
+            "skipped_reason": "unexpected_error",
+            "message": str(exc),
+        }

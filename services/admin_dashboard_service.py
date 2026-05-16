@@ -23,6 +23,8 @@ from bson import ObjectId
 from core.database import db
 from schemas.admin_dashboard_schema import (
     AdminDashboardStats,
+    AttentionItem,
+    AttentionQueue,
     InvoiceStatusBreakdown,
     PlanDistribution,
     SubscriptionStatusBreakdown,
@@ -1185,3 +1187,117 @@ async def get_admin_dashboard_stats() -> AdminDashboardStats:
         "last_updated": now,
     }
     return AdminDashboardStats(**payload)
+
+
+# ── Attention queue (Issue 1 backend) ─────────────────────────────────
+
+
+_PRIORITY_RANK = {
+    "blocker": 0,
+    "urgent": 1,
+    "normal": 2,
+    "informational": 3,
+}
+
+
+async def get_admin_attention_queue() -> AttentionQueue:
+    """Build the platform-admin attention queue.
+
+    Drives ``GET /v1/admins/dashboard/attention``. Same shape as the
+    frontend ``AttentionItem`` so the dashboard panel can swap its
+    derived-from-stats fallback for this authoritative endpoint.
+
+    Stats sourced from the cached dashboard payload so this endpoint
+    is cheap to call frequently (the underlying dashboard query is
+    already precomputed with a 120s TTL).
+    """
+    stats = await get_admin_dashboard_stats()
+    items: list[AttentionItem] = []
+
+    # Open support cases — the most common "real work waiting".
+    if stats.support_cases_open > 0:
+        items.append(
+            AttentionItem(
+                id="support.open-cases",
+                priority="urgent" if stats.support_cases_open >= 10 else "normal",
+                title=f"{stats.support_cases_open} open support case"
+                + ("" if stats.support_cases_open == 1 else "s"),
+                reason="Tenants are waiting for a reply. Review the queue, post replies, or move stale cases through the workflow.",
+                count=stats.support_cases_open,
+                href="/admin/support-cases",
+                owner_area="support",
+            )
+        )
+
+    # New onboarding submissions — keep the funnel moving.
+    if stats.onboarding_new > 0:
+        items.append(
+            AttentionItem(
+                id="onboarding.pending",
+                priority="urgent" if stats.onboarding_new >= 5 else "normal",
+                title=f"{stats.onboarding_new} new onboarding submission"
+                + ("" if stats.onboarding_new == 1 else "s"),
+                reason="Accept to provision a tenant, partial-accept to flag missing fields, or reject with notes.",
+                count=stats.onboarding_new,
+                href="/admin/tenants/onboarding",
+                owner_area="onboarding",
+            )
+        )
+
+    # NDPC deadline — incidents nearing the 72-hour notification cap.
+    if stats.incidents_approaching_deadline > 0:
+        items.append(
+            AttentionItem(
+                id="security.ndpc-deadline",
+                priority="blocker",
+                title=f"{stats.incidents_approaching_deadline} incident"
+                + ("" if stats.incidents_approaching_deadline == 1 else "s")
+                + " near NDPC deadline",
+                reason="Notification must reach the NDPC within 72 hours of the incident. Review and mark notified before the window closes.",
+                count=stats.incidents_approaching_deadline,
+                href="/admin/tenants",
+                owner_area="security",
+            )
+        )
+
+    # Always-on content cues — keep marketing operating cadence. The
+    # frontend's pricing-drift counter feeds the dashboard's pricing
+    # card; the corresponding entry here is the calmer cadence
+    # reminder. When drift counting moves server-side (alongside the
+    # pricing-content tables), upgrade this item to use the real
+    # count + raise the priority.
+    items.append(
+        AttentionItem(
+            id="content.blog-cadence",
+            priority="informational",
+            title="Publish or schedule a new blog post",
+            reason="Keep the marketing site fresh — a steady publish cadence helps inbound signups and SEO.",
+            href="/admin/blogs",
+            owner_area="content",
+        )
+    )
+    items.append(
+        AttentionItem(
+            id="content.pricing-sync",
+            priority="informational",
+            title="Review plan/pricing copy",
+            reason="Make sure the public marketing pricing matches the live billing plans before the next release.",
+            href="/admin/content/pricing",
+            owner_area="content",
+        )
+    )
+
+    # Sort by priority then by count (desc) — same ordering rule
+    # the frontend applies in `deriveAttentionItems`.
+    items.sort(
+        key=lambda it: (
+            _PRIORITY_RANK.get(it.priority, 99),
+            -(it.count or 0),
+        )
+    )
+
+    return AttentionQueue(
+        items=items,
+        blocker_count=sum(1 for i in items if i.priority == "blocker"),
+        urgent_count=sum(1 for i in items if i.priority == "urgent"),
+    )

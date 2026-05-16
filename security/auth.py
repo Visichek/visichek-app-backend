@@ -267,6 +267,34 @@ async def verify_super_admin_token(
     return principal
 
 
+async def verify_tenant_form_configure_token(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(token_auth_scheme),
+) -> AuthPrincipal:
+    """Permission gate for tenant-form mutations (Issue 3 backend).
+
+    Mirrors the frontend ``TENANT_FORM_CONFIGURE`` capability:
+    super_admin and dept_admin can create / draft / update / publish /
+    archive / clone tenant forms (visitor check-in + appointment
+    templates). Every other tenant role — receptionist, auditor,
+    security_officer, dpo — gets ``AUTH_ROLE_MISMATCH`` so the route
+    is closed both at the auth layer and on the frontend.
+
+    Reads (list, by-target, get-one, active-for-target) keep the
+    looser ``verify_any_system_user_token`` gate since the
+    receptionist needs to render the published form on the kiosk and
+    the auditor needs to inspect what's published.
+    """
+    principal = await _resolve_principal(request, credentials, allow_expired=False)
+    if principal.role not in ("super_admin", "dept_admin"):
+        raise auth_role_mismatch(
+            required_role="super_admin_or_dept_admin",
+            actual_role=principal.role,
+        )
+    await _capture_location(request, principal)
+    return principal
+
+
 async def verify_receptionist_token(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(token_auth_scheme),

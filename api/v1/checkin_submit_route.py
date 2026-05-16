@@ -86,6 +86,19 @@ async def submit_checkin_endpoint(
             "result (subject to plan + tenant settings allowing KYC)."
         ),
     ),
+    registration_token: Optional[str] = Form(
+        None,
+        description=(
+            "Signed QR registration token (Issue 5). When supplied, the "
+            "backend verifies the token's tenant/department/branch scope "
+            "and rejects any conflicting browser-supplied "
+            "``tenant_specific_data['department_id']`` value. The "
+            "resolved token id is recorded on the audit trail so we can "
+            "trace which QR shaped each registration. Invalid or expired "
+            "tokens return 400 with code ``INVALID_REGISTRATION_TOKEN`` "
+            "rather than silently downgrading to an unscoped check-in."
+        ),
+    ),
 ) -> CheckinOut:
     bio_dict = _parse_json_dict(bio_data, "bio_data")
     tsd_dict = _parse_json_dict(tenant_specific_data, "tenant_specific_data")
@@ -133,4 +146,5 @@ async def submit_checkin_endpoint(
         id_file_mime=file_mime,
         id_type=id_type,
         kyc_reference_id=kyc_reference_id,
+        registration_token=registration_token,
     )

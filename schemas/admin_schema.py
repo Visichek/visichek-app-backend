@@ -2,8 +2,25 @@ from schemas.imports import *
 from pydantic import Field
 import time
 from security.hash import hash_password
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
+
+
+# Application-admin access preset (Issue 10 backend).
+#
+# Five scope presets the invite flow accepts. Each one maps to a
+# slice of ``ADMIN_PERMISSIONS`` via
+# ``config.role_permissions.get_default_permissions_for_admin_preset``.
+# ``all_controls`` is the legacy full-access default — kept for
+# backwards compatibility with admins provisioned before presets
+# shipped.
+AdminAccessPreset = Literal[
+    "content_only",
+    "support_only",
+    "content_support",
+    "billing_only",
+    "all_controls",
+]
 
 
 class AdminBase(BaseModel):
@@ -15,6 +32,11 @@ class AdminBase(BaseModel):
     accountStatus: AccountStatus = AccountStatus.ACTIVE
     permissionList: Optional[PermissionList] = None
     mfa_enabled: bool = True
+    # Issue 10 backend: persisted access preset. Optional for
+    # backwards compatibility — legacy admins without a preset are
+    # treated as ``all_controls`` by
+    # ``get_default_permissions_for_admin_preset``.
+    access_preset: Optional[AdminAccessPreset] = None
 
 
 class AdminLogin(BaseModel):
@@ -35,11 +57,19 @@ class AdminRefresh(BaseModel):
 
 class AdminSignupRequest(BaseModel):
     """Public-facing signup/invite request. No account_status or permission_list —
-    those are system-assigned based on role defaults."""
+    those are system-assigned based on role defaults.
+
+    Issue 10 backend: ``access_preset`` is optional on signup. The
+    inviting admin (must have ``all_controls``) chooses the scope for
+    the new account. Omitted → defaults to ``all_controls`` for
+    backwards compatibility with any direct API callers that haven't
+    adopted the field yet.
+    """
 
     full_name: str
     email: EmailStr
     password: str
+    access_preset: Optional[AdminAccessPreset] = None
 
 
 class AdminCreate(AdminBase):

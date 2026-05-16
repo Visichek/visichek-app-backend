@@ -265,3 +265,55 @@ class AdminDashboardStats(BaseModel):
 
     # ─── Legacy aliases (kept to avoid breaking existing UIs) ─────────
     recent_signups_30d: int = 0
+
+
+# ─── Attention queue (Issue 1 backend) ────────────────────────────────
+
+
+class AttentionItem(BaseModel):
+    """A single actionable item rendered on the admin dashboard.
+
+    Mirrors the frontend's ``AttentionItem`` type one-for-one so the
+    dashboard panel can swap from its derived-from-stats fallback to
+    this authoritative endpoint with a single hook change.
+
+    Field semantics:
+      - ``priority``: one of ``blocker | urgent | normal | informational``
+        — drives the badge color in the UI and the top-of-list sort.
+      - ``owner_area``: one of ``support | content | billing |
+        onboarding | system | security`` — drives a small group label
+        so users can scan by function.
+      - ``count``: optional. When present the UI renders a pill with
+        this number; absent for "review this" cues that don't have a
+        countable backing item set.
+      - ``href``: relative path the user lands on when the card is
+        clicked. Always a registered route — the frontend's
+        route-existence test catches drift.
+      - ``due_at`` / ``snoozed_until`` / ``dismissed_at``: reserved for
+        future dismissible items. Always ``None`` from this endpoint
+        today.
+    """
+
+    id: str
+    priority: str  # "blocker" | "urgent" | "normal" | "informational"
+    title: str
+    reason: str
+    count: Optional[int] = None
+    href: str
+    owner_area: str
+    due_at: Optional[int] = None
+    snoozed_until: Optional[int] = None
+    dismissed_at: Optional[int] = None
+
+
+class AttentionQueue(BaseModel):
+    """Response envelope for ``GET /v1/admins/dashboard/attention``.
+
+    Carries the rendered item list plus a small summary header so the
+    dashboard can show "N urgent" without re-counting client-side.
+    """
+
+    items: List[AttentionItem] = Field(default_factory=list)
+    blocker_count: int = 0
+    urgent_count: int = 0
+    generated_at: int = Field(default_factory=lambda: int(time.time()))

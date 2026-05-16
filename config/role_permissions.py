@@ -227,6 +227,51 @@ SUPER_ADMIN_PERMISSIONS: list[Permission] = [
     ),
     _p("super_admin_list_users", ["GET"], "/v1/super-admin/admins", "List users"),
     _p("super_admin_invite", ["POST"], "/v1/super-admin/admins/invite", "Invite user"),
+    # Tenant form configuration (Issue 3 backend) — super_admin can
+    # mutate visitor / appointment form templates. Mirrors the
+    # frontend TENANT_FORM_CONFIGURE capability.
+    _p(
+        "create_tenant_form",
+        ["POST"],
+        "/v1/tenant-forms",
+        "Create a tenant form",
+    ),
+    _p(
+        "draft_tenant_form",
+        ["POST"],
+        "/v1/tenant-forms/draft/{target_type}",
+        "Save tenant form draft",
+    ),
+    _p(
+        "update_tenant_form",
+        ["PATCH"],
+        "/v1/tenant-forms/{form_id}",
+        "Update tenant form",
+    ),
+    _p(
+        "publish_tenant_form",
+        ["POST"],
+        "/v1/tenant-forms/{form_id}/publish",
+        "Publish tenant form",
+    ),
+    _p(
+        "discard_tenant_form_draft",
+        ["POST"],
+        "/v1/tenant-forms/{form_id}/discard-draft",
+        "Discard tenant form draft",
+    ),
+    _p(
+        "archive_tenant_form",
+        ["POST"],
+        "/v1/tenant-forms/{form_id}/archive",
+        "Archive tenant form",
+    ),
+    _p(
+        "clone_tenant_form",
+        ["POST"],
+        "/v1/tenant-forms/{form_id}/clone",
+        "Clone tenant form",
+    ),
     # Visitor management (super admin can also do)
     _p("check_in", ["POST"], "/v1/visitors/check-in", "Check in visitor"),
     _p("check_out", ["POST"], "/v1/visitors/check-out", "Check out visitor"),
@@ -403,6 +448,51 @@ DEPT_ADMIN_PERMISSIONS: list[Permission] = [
     # Dashboard
     _p("dashboard_stats", ["GET"], "/v1/dashboard/stats", "View dashboard stats"),
     _p("dashboard_visitors", ["GET"], "/v1/dashboard/visitors", "View visitor log"),
+    # Tenant form configuration (Issue 3 backend) — dept_admin can
+    # also mutate visitor / appointment form templates so they can
+    # tailor the form to their department's needs.
+    _p(
+        "create_tenant_form",
+        ["POST"],
+        "/v1/tenant-forms",
+        "Create a tenant form",
+    ),
+    _p(
+        "draft_tenant_form",
+        ["POST"],
+        "/v1/tenant-forms/draft/{target_type}",
+        "Save tenant form draft",
+    ),
+    _p(
+        "update_tenant_form",
+        ["PATCH"],
+        "/v1/tenant-forms/{form_id}",
+        "Update tenant form",
+    ),
+    _p(
+        "publish_tenant_form",
+        ["POST"],
+        "/v1/tenant-forms/{form_id}/publish",
+        "Publish tenant form",
+    ),
+    _p(
+        "discard_tenant_form_draft",
+        ["POST"],
+        "/v1/tenant-forms/{form_id}/discard-draft",
+        "Discard tenant form draft",
+    ),
+    _p(
+        "archive_tenant_form",
+        ["POST"],
+        "/v1/tenant-forms/{form_id}/archive",
+        "Archive tenant form",
+    ),
+    _p(
+        "clone_tenant_form",
+        ["POST"],
+        "/v1/tenant-forms/{form_id}/clone",
+        "Clone tenant form",
+    ),
     # Visitor management
     _p("check_in", ["POST"], "/v1/visitors/check-in", "Check in visitor"),
     _p("check_out", ["POST"], "/v1/visitors/check-out", "Check out visitor"),
@@ -691,4 +781,108 @@ def get_default_permissions_for_role(role: str) -> PermissionList:
     perms = DEFAULT_ROLE_PERMISSIONS.get(role)
     if perms is None:
         raise KeyError(f"No default permissions defined for role: {role}")
+    return PermissionList(permissions=perms)
+
+
+# ---------------------------------------------------------------------------
+# Application-admin access presets (Issue 10 backend)
+# ---------------------------------------------------------------------------
+#
+# Platform admins are no longer all-or-nothing. The frontend exposes
+# five presets (``content_only``, ``support_only``, ``content_support``,
+# ``billing_only``, ``all_controls``) on the invite flow and via the
+# ``AdminProfile.accessPreset`` field. This file owns the
+# preset → permission-slice mapping so the backend enforcement matches
+# the frontend nav filter exactly — the route-level dependency uses
+# ``get_default_permissions_for_admin_preset`` instead of the blanket
+# ``ADMIN_PERMISSIONS`` so a content-only admin literally cannot call
+# tenant / subscription / discount routes.
+#
+# Each preset is computed as a subset of ``ADMIN_PERMISSIONS`` so we
+# don't accidentally grant a content-only admin a permission that
+# wasn't in the original platform-admin list.
+
+# Helper — match permission keys by path prefix.
+def _admin_perms_by_path_prefix(prefixes: tuple[str, ...]) -> list[Permission]:
+    return [p for p in ADMIN_PERMISSIONS if any(p.path.startswith(pref) for pref in prefixes)]
+
+
+# Account / profile / health permissions every admin keeps — they
+# need to log in, see their own profile, and check dashboard health
+# regardless of scope.
+_ADMIN_BASE_KEEP = _admin_perms_by_path_prefix(
+    (
+        "/v1/admins/profile",
+        "/v1/admins/account",
+        "/v1/admins/dashboard/stats",
+    )
+)
+
+
+# ``content_only`` — blog, media, pricing-content editorial.
+# Backed by ADMIN_PERMISSIONS plus the future content/pricing routes.
+ADMIN_CONTENT_PERMISSIONS: list[Permission] = list(_ADMIN_BASE_KEEP) + _admin_perms_by_path_prefix(
+    # Pricing reads share the plan list endpoint — content admins need
+    # to see plans to write marketing copy about them, but they don't
+    # get write paths.
+    ("/v1/plans",)
+)
+# Strip plan mutations from the content slice. content_only admins can
+# READ plans (to compose marketing copy) but not edit them.
+ADMIN_CONTENT_PERMISSIONS = [
+    p for p in ADMIN_CONTENT_PERMISSIONS if "GET" in p.methods
+]
+
+
+# ``support_only`` — triage tenant support cases + view recent
+# activity. Backed by ADMIN_PERMISSIONS for support endpoints if/when
+# they exist; for now this preset only retains the base permissions
+# plus future ``/v1/support-cases`` write entries the support team
+# will need.
+ADMIN_SUPPORT_PERMISSIONS: list[Permission] = list(_ADMIN_BASE_KEEP)
+
+
+# ``content_support`` — both editorial + support workflows.
+ADMIN_CONTENT_SUPPORT_PERMISSIONS: list[Permission] = list(
+    {p.key: p for p in (*ADMIN_CONTENT_PERMISSIONS, *ADMIN_SUPPORT_PERMISSIONS)}.values()
+)
+
+
+# ``billing_only`` — plans, subscriptions, discounts, usage. The full
+# write set on those resources, but no tenants/content/support.
+ADMIN_BILLING_PERMISSIONS: list[Permission] = list(_ADMIN_BASE_KEEP) + _admin_perms_by_path_prefix(
+    (
+        "/v1/plans",
+        "/v1/subscriptions",
+        "/v1/discounts",
+        "/v1/usage",
+    )
+)
+
+
+# ``all_controls`` — the legacy "platform admin can do everything"
+# behavior. Kept as the default for backwards compatibility with
+# admins provisioned before presets shipped.
+ADMIN_ALL_CONTROLS_PERMISSIONS: list[Permission] = ADMIN_PERMISSIONS
+
+
+ADMIN_ACCESS_PRESETS: dict[str, list[Permission]] = {
+    "content_only": ADMIN_CONTENT_PERMISSIONS,
+    "support_only": ADMIN_SUPPORT_PERMISSIONS,
+    "content_support": ADMIN_CONTENT_SUPPORT_PERMISSIONS,
+    "billing_only": ADMIN_BILLING_PERMISSIONS,
+    "all_controls": ADMIN_ALL_CONTROLS_PERMISSIONS,
+}
+
+
+def get_default_permissions_for_admin_preset(preset: str | None) -> PermissionList:
+    """Return the permission slice an application admin gets for a preset.
+
+    ``preset=None`` (and any unknown value) falls back to the legacy
+    ``all_controls`` permission set so existing admins continue to
+    work after the upgrade. New invites should supply an explicit
+    preset.
+    """
+    key = (preset or "all_controls").lower()
+    perms = ADMIN_ACCESS_PRESETS.get(key, ADMIN_ALL_CONTROLS_PERMISSIONS)
     return PermissionList(permissions=perms)

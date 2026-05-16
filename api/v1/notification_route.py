@@ -12,9 +12,11 @@ from schemas.notification_schema import (
 from security.auth import verify_any_token
 from security.principal import AuthPrincipal
 from services.notification_service import (
+    get_notification_bucket_summary,
     get_unread_count,
     retrieve_notifications_with_summary,
     retrieve_or_create_notification_preferences,
+    send_test_notification,
 )
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
@@ -73,6 +75,38 @@ async def get_notification_unread_count(
         user_id=principal.user_id, user_type=_user_type(principal)
     )
     return {"count": count}
+
+
+# ─── Bucket Summary (Issue 2) ──────────────────────────────────────
+
+
+@router.get("/summary")
+@document_response(
+    message="Notification summary fetched successfully",
+    description=(
+        "Per-bucket unread counts for the sidebar badge layer. Drives the "
+        "frontend `useNotificationBuckets` hook so the visitor / onboarding "
+        "queue / support cases / etc. rows render a numeric badge and the "
+        "collapsed rail shows a pulsing red dot when any child has unread "
+        "work.\n\n"
+        "Response shape: `{ counts: { <bucket>: number } }`. Buckets with "
+        "zero unread items are omitted to keep the payload small. Known "
+        "bucket names: `visitors`, `appointments`, `onboarding_queue`, "
+        "`support_cases`, `jobs`, `incidents`, `content`, `billing`, "
+        "`plans`, `pricing` — kept in sync with `_BUCKET_PATTERNS` in "
+        "services/notification_service.py and the frontend resolver."
+    ),
+    success_example={"counts": {"support_cases": 3, "onboarding_queue": 1}},
+    summary="Get unread notification counts grouped by sidebar bucket",
+    response_codes={401: "Unauthorized"},
+)
+async def get_notification_summary(
+    principal: AuthPrincipal = Depends(verify_any_token),
+) -> Any:
+    counts = await get_notification_bucket_summary(
+        user_id=principal.user_id, user_type=_user_type(principal)
+    )
+    return {"counts": counts}
 
 
 # ─── Mark Single as Read ──────────────────────────────────────────
@@ -214,4 +248,41 @@ async def update_preferences(
         actor_id=principal.user_id,
         actor_role=principal.role,
         request_id=getattr(request.state, "request_id", None),
+    )
+
+
+# ─── Send Test Notification (Issue 6) ──────────────────────────────
+
+
+@router.post("/test")
+@document_response(
+    message="Test notification dispatched",
+    description=(
+        "Fires a single test notification (in-app + email) so the user can "
+        "confirm their notification preferences and the platform's email "
+        "provider are wired up correctly. Driven by the frontend "
+        "useSendTestNotification hook on the notification settings page and "
+        "the platform-admin email diagnostics card.\n\n"
+        "Response shape:\n"
+        "  - ``delivered``: true when the email handoff succeeded (sent or "
+        "queued).\n"
+        "  - ``skipped_reason``: present when the email was intentionally "
+        "skipped. Known values: ``email_disabled_in_preferences``, "
+        "``smtp_not_configured``, ``missing_recipient_email``, "
+        "``smtp_send_failed``, ``unexpected_error``.\n"
+        "  - ``message``: optional human-readable error string when "
+        "the skip reason warrants one (SMTP send failure, etc.).\n\n"
+        "The in-app notification is always created regardless of the email "
+        "outcome so the bell badge updates immediately."
+    ),
+    summary="Send a diagnostic test notification",
+    response_codes={401: "Unauthorized"},
+)
+async def send_test_notification_endpoint(
+    principal: AuthPrincipal = Depends(verify_any_token),
+) -> Any:
+    return await send_test_notification(
+        user_id=principal.user_id,
+        user_type=_user_type(principal),
+        tenant_id=principal.tenant_id,
     )

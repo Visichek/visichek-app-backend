@@ -28,7 +28,10 @@ from repositories.tokens_repo import (
 )
 from services.auth_helpers import issue_tokens_for_user
 from core.email_utils import normalize_email
-from config.role_permissions import get_default_permissions_for_role
+from config.role_permissions import (
+    get_default_permissions_for_admin_preset,
+    get_default_permissions_for_role,
+)
 from schemas.imports import AccountStatus
 
 
@@ -54,14 +57,26 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
                 status_code=409, detail="An admin with this email already exists"
             )
 
-    # Build internal schema with system-assigned fields
-    permission_list = get_default_permissions_for_role("admin")
+    # Issue 10 backend: resolve permissions from the requested access
+    # preset rather than the blanket "all admin" set. Falls back to
+    # the legacy role-based default when no preset was supplied so
+    # CLI / tooling that hasn't adopted the field keeps producing
+    # all_controls admins. The selected preset is persisted onto the
+    # admin record so the frontend ``AdminProfile.accessPreset`` field
+    # is populated for the nav filter.
+    if signup_data.access_preset:
+        permission_list = get_default_permissions_for_admin_preset(
+            signup_data.access_preset
+        )
+    else:
+        permission_list = get_default_permissions_for_role("admin")
     admin_data = AdminCreate(
         full_name=signup_data.full_name,
         email=signup_data.email,
         password=signup_data.password,
         accountStatus=AccountStatus("ACTIVE"),
         permissionList=permission_list,
+        access_preset=signup_data.access_preset,
         invited_by=invited_by,
     )
 

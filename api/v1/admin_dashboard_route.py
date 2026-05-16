@@ -9,7 +9,10 @@ from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.response_envelope import document_response
 from schemas.admin_schema import AdminOut
 from security.account_status_check import check_admin_account_status_and_permissions
-from services.admin_dashboard_service import get_admin_dashboard_stats
+from services.admin_dashboard_service import (
+    get_admin_attention_queue,
+    get_admin_dashboard_stats,
+)
 from services.billing_report_service import (
     get_billing_summary,
     get_payment_discrepancies,
@@ -107,6 +110,45 @@ async def admin_dashboard_stats(
 
 async def _load_admin_stats() -> Any:
     result = await get_admin_dashboard_stats()
+    return (
+        result.model_dump(mode="json", by_alias=True)
+        if hasattr(result, "model_dump")
+        else result
+    )
+
+
+# ─── Attention queue (Issue 1 backend) ────────────────────────────────
+
+
+@router.get("/attention")
+@document_response(
+    message="Attention queue fetched successfully",
+    description=(
+        "Operational queue of items that need an admin's attention right now: "
+        "open support cases, new onboarding submissions, NDPC-deadline incidents, "
+        "and content-cadence reminders. Backs the dashboard 'Needs attention' "
+        "panel introduced in Issue 1.\n\n"
+        "Items are sorted by priority (blocker → urgent → normal → "
+        "informational) and then by count descending. Cache TTL matches the "
+        "stats endpoint (120s, refreshed every 60s by the APScheduler fanout) "
+        "so polling at 60s keeps the queue current."
+    ),
+    summary="Get the platform-admin attention queue",
+    response_codes={401: "Unauthorized"},
+)
+async def admin_attention_queue(
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+) -> Any:
+    return await get_or_compute(
+        scope_key=PrecomputeScope.GLOBAL.value,
+        resource="admin_dashboard.attention",
+        ttl=120,
+        loader=_load_admin_attention,
+    )
+
+
+async def _load_admin_attention() -> Any:
+    result = await get_admin_attention_queue()
     return (
         result.model_dump(mode="json", by_alias=True)
         if hasattr(result, "model_dump")

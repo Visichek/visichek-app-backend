@@ -16,6 +16,7 @@ from typing import Annotated, Any, List
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, Query, Request, status
+from starlette.datastructures import QueryParams
 
 from core.database import db
 from core.errors import AppException, ErrorCode
@@ -69,6 +70,31 @@ SUPPORT_CASES_TENANT_LIST_SPEC = ListSpec(
     range_filters={"createdAt": "date_created"},
     facet_fields=frozenset({"status"}),
 )
+
+
+def _normalize_legacy_pagination(request: Request) -> None:
+    # Older FE callers send `start`/`stop` (legacy slice indices) instead of the
+    # new `skip`/`limit` contract enforced by parse_list_query. Translate them
+    # in-place so this route keeps working without forcing a FE migration.
+    qp = request.query_params
+    if "start" not in qp and "stop" not in qp:
+        return
+    try:
+        start = int(qp.get("start", "0"))
+    except (TypeError, ValueError):
+        start = 0
+    try:
+        stop = int(qp.get("stop", str(start + SUPPORT_CASES_TENANT_LIST_SPEC.default_limit)))
+    except (TypeError, ValueError):
+        stop = start + SUPPORT_CASES_TENANT_LIST_SPEC.default_limit
+    limit = max(stop - start, 1)
+    pairs = [(k, v) for k, v in qp.multi_items() if k not in ("start", "stop", "skip", "limit")]
+    pairs.append(("skip", str(max(start, 0))))
+    pairs.append(("limit", str(limit)))
+    new_qp = QueryParams(pairs)
+    request.scope["query_string"] = str(new_qp).encode("latin-1")
+    if hasattr(request, "_query_params"):
+        del request._query_params
 
 
 def _is_default_sc_listing(request: Request) -> bool:
@@ -209,6 +235,7 @@ async def list_my_support_cases(
     tenant_id = principal.tenant_id or ""
     if not tenant_id:
         return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+    _normalize_legacy_pagination(request)
     if _is_default_sc_listing(request):
         cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",

@@ -28,7 +28,10 @@ from schemas.tenant_form_schema import (
     TenantFormDraftPatch,
     TenantFormOut,
 )
-from security.auth import verify_any_system_user_token, verify_super_admin_token
+from security.auth import (
+    verify_any_system_user_token,
+    verify_tenant_form_configure_token,
+)
 from security.principal import AuthPrincipal
 from services.tenant_form_service import (
     archive_form,
@@ -179,7 +182,7 @@ async def get_form_by_id_endpoint(
 async def create_form_endpoint(
     payload: TenantFormCreateRequest,
     request: Request,
-    principal: AuthPrincipal = Depends(verify_super_admin_token),
+    principal: AuthPrincipal = Depends(verify_tenant_form_configure_token),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     form = await create_form_shell(
@@ -209,7 +212,7 @@ async def create_form_endpoint(
 async def bootstrap_draft_endpoint(
     target_type: str,
     request: Request,
-    principal: AuthPrincipal = Depends(verify_super_admin_token),
+    principal: AuthPrincipal = Depends(verify_tenant_form_configure_token),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     target = _validate_target(target_type)
@@ -244,7 +247,7 @@ async def autosave_draft_endpoint(
     form_id: str,
     patch: TenantFormDraftPatch,
     request: Request,
-    principal: AuthPrincipal = Depends(verify_super_admin_token),
+    principal: AuthPrincipal = Depends(verify_tenant_form_configure_token),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     result = await autosave_draft(
@@ -282,7 +285,7 @@ async def autosave_draft_endpoint(
 async def publish_form_endpoint(
     form_id: str,
     request: Request,
-    principal: AuthPrincipal = Depends(verify_super_admin_token),
+    principal: AuthPrincipal = Depends(verify_tenant_form_configure_token),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     form = await publish_form(
@@ -308,7 +311,7 @@ async def publish_form_endpoint(
 async def discard_draft_endpoint(
     form_id: str,
     request: Request,
-    principal: AuthPrincipal = Depends(verify_super_admin_token),
+    principal: AuthPrincipal = Depends(verify_tenant_form_configure_token),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     form = await discard_draft(
@@ -335,7 +338,7 @@ async def discard_draft_endpoint(
 async def archive_form_endpoint(
     form_id: str,
     request: Request,
-    principal: AuthPrincipal = Depends(verify_super_admin_token),
+    principal: AuthPrincipal = Depends(verify_tenant_form_configure_token),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     form = await archive_form(
@@ -363,7 +366,7 @@ async def archive_form_endpoint(
 async def clone_form_endpoint(
     form_id: str,
     request: Request,
-    principal: AuthPrincipal = Depends(verify_super_admin_token),
+    principal: AuthPrincipal = Depends(verify_tenant_form_configure_token),
     payload: Optional[dict] = Body(default=None),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
