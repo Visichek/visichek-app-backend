@@ -85,7 +85,17 @@ router = APIRouter(prefix="/admins", tags=["Application Admins"])
             "last_updated": 1712500600,
         }
     ],
-    description="Retrieve a paginated list of all admins in the system.",
+    description=(
+        "Retrieve a paginated list of all admins in the system.\n\n"
+        "**Pagination contract (frontend guidance):**\n"
+        "- ``skip`` (int, default ``0``) — number of records to skip from the start. "
+        "Use ``page * limit`` for page-based UIs.\n"
+        "- ``limit`` (int, default ``25``, max ``200``) — page size. Requests above "
+        "``200`` are silently clamped to ``200``.\n"
+        "- Omit both for the first 25 admins; omit ``skip`` only and pass ``limit`` "
+        "to change page size; pass both for any subsequent page.\n"
+        "- Example next page after the first 25: ``?skip=25&limit=25``."
+    ),
     summary="List all admins",
     include_meta=True,
     response_codes={
@@ -106,16 +116,16 @@ router = APIRouter(prefix="/admins", tags=["Application Admins"])
     },
 )
 async def list_admins(
-    start: Annotated[
+    skip: Annotated[
         int,
-        Query(ge=0, description="The starting index (offset) for the list of admins."),
-    ],
-    stop: Annotated[
+        Query(ge=0, description="Number of records to skip (offset). Defaults to 0."),
+    ] = 0,
+    limit: Annotated[
         int,
-        Query(gt=0, description="The ending index for the list of admins (limit)."),
-    ],
+        Query(ge=1, le=200, description="Page size. Defaults to 25, capped at 200."),
+    ] = 25,
 ):
-    items = await retrieve_admins(start=start, stop=stop)
+    items = await retrieve_admins(start=skip, stop=skip + limit)
     return items
 
 
@@ -126,7 +136,11 @@ async def list_admins(
         "Search application admins by id, email, or full name. Case-insensitive, "
         "substring match against email and name; exact match when the query is a "
         "valid ObjectId. Returns a trimmed view with only the fields needed to "
-        "identify an admin — no passwords, tokens, or permission lists."
+        "identify an admin — no passwords, tokens, or permission lists.\n\n"
+        "**Pagination contract (frontend guidance):**\n"
+        "- ``skip`` (int, default ``0``) — number of records to skip from the start.\n"
+        "- ``limit`` (int, default ``50``, max ``200``) — page size.\n"
+        "- Omit both for the first 50 matches; pass ``?skip=50&limit=50`` for the next page."
     ),
     summary="Search admins by id, email, or name",
     include_meta=True,
@@ -172,17 +186,17 @@ async def search_admins_endpoint(
             description="Search term — matched against admin id, email, or full name.",
         ),
     ],
-    start: Annotated[
+    skip: Annotated[
         int,
-        Query(ge=0, description="Pagination offset."),
+        Query(ge=0, description="Number of records to skip (offset). Defaults to 0."),
     ] = 0,
-    stop: Annotated[
+    limit: Annotated[
         int,
-        Query(gt=0, le=200, description="Pagination limit (exclusive end index)."),
+        Query(ge=1, le=200, description="Page size. Defaults to 50, capped at 200."),
     ] = 50,
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> list[AdminSearchResult]:
-    return await search_admins_by_query(query=q, start=start, stop=stop)
+    return await search_admins_by_query(query=q, start=skip, stop=skip + limit)
 
 
 @router.get("/profile")

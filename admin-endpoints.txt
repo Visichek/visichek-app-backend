@@ -608,3 +608,110 @@ NOT DONE / NOT NEEDED
 
 - No SMS or push fallback for the reset link. Email is the only
   channel today, same as the admin invite + OTP flows.
+
+
+LIST PAGINATION — skip / limit CONTRACT (FRONTEND)
+---------------------------------------------------
+Updated: 2026-05-17
+Affects: api/v1/admin_route.py
+         (``GET /v1/admins/`` and ``GET /v1/admins/search``)
+
+WHY THIS CHANGED
+   The two admin GETs used a legacy ``start`` / ``stop`` query pair.
+   ``GET /v1/admins/`` had no defaults, so calling it without query
+   params produced a 422 ``VALIDATION_FAILED`` with
+   ``loc: ["query", "start"]`` and ``loc: ["query", "stop"]``. The FE
+   had to know two non-standard keys before it could render the first
+   page. Every other paginated GET in this codebase already uses
+   ``skip`` / ``limit`` (see ``core/list_params.py`` and
+   ``api/v1/notification_route.py``), so the admin list was the
+   outlier.
+
+   The fix renames the params and adds defaults. No service or
+   repository signature changed — the route translates ``skip`` →
+   ``start`` and ``skip + limit`` → ``stop`` when calling
+   ``retrieve_admins`` / ``search_admins_by_query``.
+
+THE CONTRACT
+   ``GET /v1/admins/?skip=<int>&limit=<int>``
+   ``GET /v1/admins/search?q=<term>&skip=<int>&limit=<int>``
+
+   skip   — int, default ``0``. Number of records to skip from the
+            start. For page-based UIs: ``skip = page * limit``.
+   limit  — int, default ``25`` for the list endpoint and ``50`` for
+            search. Hard cap: ``200``. Requests above 200 are rejected
+            with ``VALIDATION_FAILED`` (``le=200``); the FE should
+            never depend on huge pages — paginate.
+
+   Both params are optional. Omitting both returns the first default
+   page. Omitting just ``skip`` is the natural shape for "first page
+   with a custom size".
+
+FRONTEND CALLING PATTERNS
+   1. First page, defaults:
+         GET /v1/admins/
+
+   2. First page, custom size:
+         GET /v1/admins/?limit=50
+
+   3. Next page (page-based, 25 per page):
+         GET /v1/admins/?skip=25&limit=25
+         GET /v1/admins/?skip=50&limit=25
+         GET /v1/admins/?skip=75&limit=25
+
+   4. Search, first 50 matches:
+         GET /v1/admins/search?q=jane
+
+   5. Search, next page:
+         GET /v1/admins/search?q=jane&skip=50&limit=50
+
+RESPONSE META (for "Next" button wiring)
+   Both endpoints are decorated with ``include_meta=True``, so the
+   envelope carries ``meta`` alongside ``data``:
+
+      {
+        "success": true,
+        "message": "Admins fetched successfully",
+        "data": [ ...admins... ],
+        "meta": {
+          "skip": 0,
+          "limit": 25,
+          "hasMore": true
+        },
+        "requestId": "..."
+      }
+
+   FE rule of thumb: render the "Next" button when ``meta.hasMore`` is
+   true. Do NOT compute it from ``data.length === limit`` — that's
+   off-by-one on the last page (a full-final-page would falsely show
+   "Next").
+
+ERROR SHAPES TO HANDLE
+   - ``skip < 0``     → 422 ``VALIDATION_FAILED`` (FastAPI ``ge=0``).
+   - ``limit < 1``    → 422 ``VALIDATION_FAILED`` (FastAPI ``ge=1``).
+   - ``limit > 200``  → 422 ``VALIDATION_FAILED`` (FastAPI ``le=200``).
+   - Non-integer     → 422 ``VALIDATION_FAILED`` (type coercion).
+   The FE should clamp at the UI layer too so users never see a 422
+   from the page-size selector.
+
+MIGRATION FROM start / stop
+   FastAPI does NOT reject unknown query keys, so a frontend still
+   sending ``?start=0&stop=25`` will receive a 200 — but the legacy
+   keys are ignored and the response is the default page (first 25
+   for the list, first 50 for search). This means a stale FE will
+   silently render the wrong page when the user clicks "Next". Update
+   every admin call site to ``skip`` / ``limit`` at the same time as
+   this deploy; the symptom of a missed migration is "Next" never
+   advancing past page 1.
+
+NOT IN SCOPE
+   - The full table contract (``sort``, ``q``, ``facets``, range
+     filters described in ``backend-docs/tables-spec.txt``) is NOT
+     applied to the admin list yet. These are the only two GETs that
+     moved off ``start`` / ``stop``; the rest of the admin surface
+     either takes no pagination or already uses ``skip`` / ``limit``.
+   - No precompute fanout for ``admins.list`` — application admins are
+     a small, low-volume audience and the direct Mongo read is well
+     within budget. Add ``@register_precompute("admins.list",
+     scope=PrecomputeScope.GLOBAL)`` if dashboard rendering ever
+     becomes hot.
