@@ -21,6 +21,21 @@ class SystemUserBase(BaseModel):
     permissionList: Optional[PermissionList] = None
     mfa_enabled: bool = False
     mfa_locked_by_admin: bool = False
+    # Exactly one super_admin per tenant carries the "main" flag — it is the
+    # permanent owner of the tenant. Enforced by:
+    #   * the partial-unique index in core/indexes.py keyed on
+    #     ``(tenant_id, is_main_super_admin=True)``,
+    #   * the bootstrap / add-super_admin paths which set the flag when the
+    #     tenant has zero existing super_admins,
+    #   * the mutation guard in services/main_super_admin_guard.py which
+    #     rejects role / account_status / is_active changes on the main row,
+    #   * the lifespan + 6h APScheduler invariant check
+    #     (services/main_super_admin_backfill.py) which auto-heals drift
+    #     and opens a high-priority support case for tenants with zero
+    #     active super_admins.
+    # Use the dedicated transfer endpoint to move the flag — never $set it
+    # directly from a writer.
+    is_main_super_admin: bool = False
 
 
 class SystemUserSignupRequest(BaseModel):
@@ -169,3 +184,46 @@ class TenantSelectionRequest(BaseModel):
 
     selection_token: str
     tenant_id: str
+
+
+# --- Main super_admin transfer ------------------------------------------------
+
+
+class TransferMainSuperAdminInitiateRequest(BaseModel):
+    """Step 1 of the main super_admin transfer.
+
+    Validates the target + actor permissions, mints an OTP challenge that
+    must be completed via :class:`TransferMainSuperAdminVerifyRequest`.
+    ``tenant_id`` is required only when the caller is an application admin
+    operating cross-tenant; tenant super_admins infer it from their token.
+    """
+
+    new_main_super_admin_user_id: str
+    tenant_id: Optional[str] = None
+
+
+class TransferMainSuperAdminInitiateResponse(BaseModel):
+    """Step 1 response — carries the challenge id the FE submits to step 2."""
+
+    otp_required: bool = True
+    otp_challenge_id: str
+    new_main_super_admin_user_id: str
+    tenant_id: str
+    message: str = (
+        "Verification code sent. Submit the code to /v1/system-users/"
+        "transfer-main-super-admin to complete the transfer."
+    )
+
+
+class TransferMainSuperAdminVerifyRequest(BaseModel):
+    """Step 2 of the main super_admin transfer.
+
+    The challenge id binds the OTP to the actor + intended target. The
+    body must re-state the target so a stolen challenge id cannot be
+    swapped to a different super_admin. Mismatch → 400 ``OTP_TARGET_MISMATCH``.
+    """
+
+    otp_challenge_id: str
+    otp_code: str
+    new_main_super_admin_user_id: str
+    tenant_id: Optional[str] = None

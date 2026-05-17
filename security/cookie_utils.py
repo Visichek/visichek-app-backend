@@ -126,10 +126,27 @@ def _resolve_user_from_payload(payload: Any) -> Any:
 
 
 def _payload_field(payload: Any, key: str) -> str:
+    """Read a single string field off a model or dict payload.
+
+    Carefully unwraps str-Enum values (``class SystemUserRole(str, Enum)``):
+    Python's ``str()`` on a str-Enum returns ``"ClassName.MEMBER"`` (e.g.
+    ``"SystemUserRole.SUPER_ADMIN"``), NOT the underlying value
+    (``"super_admin"``). Using the formatted string for downstream role
+    matching causes ``user_type`` to default to ``"admin"`` for tenant
+    users, which is exactly how the system-user sessions list ended up
+    empty — the rows existed under the wrong user_type. Always reach
+    through ``.value`` for Enum members.
+    """
+    from enum import Enum
+
     if isinstance(payload, dict):
         value = payload.get(key)
     else:
         value = getattr(payload, key, None)
+    if value is None:
+        return ""
+    if isinstance(value, Enum):
+        value = value.value
     return str(value) if value else ""
 
 

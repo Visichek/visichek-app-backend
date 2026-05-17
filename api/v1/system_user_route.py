@@ -20,9 +20,13 @@ from schemas.system_user_schema import (
     SystemUserProfileOut,
     TenantProfileSummary,
     TenantSelectionRequest,
+    TransferMainSuperAdminInitiateRequest,
+    TransferMainSuperAdminInitiateResponse,
+    TransferMainSuperAdminVerifyRequest,
 )
 from security.auth import (
     verify_any_system_user_token,
+    verify_any_token,
     verify_super_admin_token,
     verify_system_user_refresh_token,
 )
@@ -512,6 +516,99 @@ async def verify_system_user_otp_endpoint(request: Request, otp_data: OtpVerifyR
         access_token=_attr_or_key(user, "access_token") or "",
         refresh_token=_attr_or_key(user, "refresh_token") or "",
     )
+
+
+@router.post("/transfer-main-super-admin/initiate", status_code=status.HTTP_202_ACCEPTED)
+@document_response(
+    message="Verification code sent",
+    status_code=status.HTTP_202_ACCEPTED,
+    success_example={
+        "otp_required": True,
+        "otp_challenge_id": "65f0a1...",
+        "new_main_super_admin_user_id": "64f1a2...",
+        "tenant_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "message": (
+            "Verification code sent. Submit the code to "
+            "/v1/system-users/transfer-main-super-admin to complete the transfer."
+        ),
+    },
+    description=(
+        "Step 1 of the main super_admin transfer. Validates the actor and target, "
+        "mints an OTP challenge bound to (actor, target, tenant), and dispatches "
+        "the code via the actor's normal MFA channel (admin → email; tenant user → "
+        "their configured 2FA channel). The FE then prompts for the code and "
+        "submits it to ``POST /v1/system-users/transfer-main-super-admin`` together "
+        "with the same ``new_main_super_admin_user_id`` to complete the transfer.\n\n"
+        "Auth: application admin (any tenant — must supply ``tenantId`` in body) OR "
+        "the current main super_admin of the target tenant (tenant inferred from "
+        "token)."
+    ),
+    summary="Initiate main super_admin transfer (step 1 — OTP challenge)",
+    response_codes={
+        400: "Target validation failed (not super_admin, inactive, already main, etc.)",
+        401: "Unauthorized",
+        403: "Forbidden — actor is neither app admin nor current main super_admin",
+        404: "Target user not found in tenant",
+    },
+)
+async def initiate_main_super_admin_transfer(
+    payload: TransferMainSuperAdminInitiateRequest,
+    principal: AuthPrincipal = Depends(verify_any_token),
+) -> TransferMainSuperAdminInitiateResponse:
+    from services.main_super_admin_transfer_service import initiate_transfer
+
+    result = await initiate_transfer(
+        principal=principal,
+        new_main_super_admin_user_id=payload.new_main_super_admin_user_id,
+        tenant_id_from_body=payload.tenant_id,
+    )
+    return TransferMainSuperAdminInitiateResponse(
+        otp_challenge_id=result["otp_challenge_id"],
+        new_main_super_admin_user_id=result["new_main_super_admin_user_id"],
+        tenant_id=result["tenant_id"],
+    )
+
+
+@router.post("/transfer-main-super-admin")
+@document_response(
+    message="Main super admin transferred",
+    description=(
+        "Step 2 of the main super_admin transfer. Verifies the OTP from step 1, "
+        "re-checks actor + target, then atomically flips the "
+        "``is_main_super_admin`` flag — clears it from the previous main (and "
+        "any stray rows) and sets it on the target. The partial-unique Mongo "
+        "index keeps the transition from ever exposing two main rows.\n\n"
+        "The ``new_main_super_admin_user_id`` and ``tenant_id`` MUST match the "
+        "values bound to the OTP challenge in step 1; mismatch returns 400 "
+        "``OTP_TARGET_MISMATCH`` so a stolen challenge id cannot be swapped onto "
+        "a different target.\n\n"
+        "Audit: emits ``tenant.main_super_admin_transferred`` with "
+        "``{from_user_id, to_user_id, reason: 'transfer'}``. Both users' "
+        "gate-cache snapshots are dropped so the next request reads fresh state."
+    ),
+    summary="Complete main super_admin transfer (step 2 — OTP verify)",
+    response_codes={
+        400: "OTP mismatch, target invalid, or wrong-intent challenge",
+        401: "Invalid or expired OTP",
+        403: "Forbidden — actor lost the main flag between initiate and verify",
+        404: "Target user not found",
+        429: "Too many OTP attempts",
+    },
+)
+async def complete_main_super_admin_transfer(
+    payload: TransferMainSuperAdminVerifyRequest,
+    principal: AuthPrincipal = Depends(verify_any_token),
+):
+    from services.main_super_admin_transfer_service import verify_and_complete_transfer
+
+    refreshed = await verify_and_complete_transfer(
+        principal=principal,
+        otp_challenge_id=payload.otp_challenge_id,
+        otp_code=payload.otp_code,
+        new_main_super_admin_user_id=payload.new_main_super_admin_user_id,
+        tenant_id_from_body=payload.tenant_id,
+    )
+    return refreshed
 
 
 @router.patch("/me/mfa")

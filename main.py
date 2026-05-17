@@ -325,6 +325,41 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("branch_backfill failed at startup", exc_info=True)
 
+    # One-shot session user_type backfill. Rewrites session rows that were
+    # mis-typed as ``user_type="admin"`` for tenant users between the
+    # initial sessions fix and the Enum-aware ``_payload_field`` fix.
+    # Idempotent: matches zero rows on a clean DB. See
+    # services/session_backfill.py for the rationale.
+    try:
+        from services.session_backfill import backfill_session_user_types
+
+        session_backfill_summary = await backfill_session_user_types()
+        logger.info("session_user_type backfill summary: %s", session_backfill_summary)
+    except Exception:
+        logger.warning(
+            "session_user_type backfill failed at startup", exc_info=True
+        )
+
+    # Main super_admin invariant — backfill + auto-heal. Ensures every
+    # active tenant has exactly one ``is_main_super_admin=True`` row.
+    # Runs AFTER ensure_indexes (which creates the partial-unique index
+    # this backfill depends on) and runs again every 6h via APScheduler
+    # below. Tenants with zero active super_admins auto-open a
+    # high-priority support case. See services/main_super_admin_backfill.py.
+    try:
+        from services.main_super_admin_backfill import (
+            ensure_main_super_admin_invariant,
+        )
+
+        main_super_admin_summary = await ensure_main_super_admin_invariant()
+        logger.info(
+            "main_super_admin invariant summary: %s", main_super_admin_summary
+        )
+    except Exception:
+        logger.warning(
+            "main_super_admin invariant backfill failed at startup", exc_info=True
+        )
+
     # Canonical plan bootstrap. Idempotent: upserts the four canonical plans
     # (Free / Starter / Premium / Enterprise), archives any legacy plan, and
     # auto-subscribes any tenant without an active subscription onto Free.
@@ -354,6 +389,20 @@ async def lifespan(app: FastAPI):
         trigger=IntervalTrigger(hours=6),
         id="expire_stale_discounts",
         name="Expire Stale Discounts",
+        replace_existing=True,
+    )
+
+    # Main super_admin invariant — periodic re-check (every 6 hours).
+    # Heals tenants whose state drifted out of band (e.g. someone
+    # manually changed flags) and opens a HIGH-priority support case
+    # for any tenant left with zero active super_admins. Textual job
+    # reference is required because APScheduler pickles to MongoDB
+    # (see CLAUDE.md gotcha #3).
+    scheduler.add_job(
+        "services.main_super_admin_backfill:ensure_main_super_admin_invariant",
+        trigger=IntervalTrigger(hours=6),
+        id="ensure_main_super_admin_invariant",
+        name="Ensure Main Super Admin Invariant",
         replace_existing=True,
     )
 
@@ -709,6 +758,7 @@ from api.v1.compliance_route import router as v1_compliance_route_router
 from api.v1.audit_route import router as v1_audit_route_router
 from api.v1.incident_route import router as v1_incident_route_router
 from api.v1.plan_route import router as v1_plan_route_router
+from api.v1.pricing_marketing_route import router as v1_pricing_marketing_route_router
 from api.v1.subscription_route import router as v1_subscription_route_router
 from api.v1.discount_route import router as v1_discount_route_router
 from api.v1.usage_route import router as v1_usage_route_router
@@ -808,6 +858,7 @@ app.include_router(v1_compliance_route_router, prefix="/v1")
 app.include_router(v1_audit_route_router, prefix="/v1")
 app.include_router(v1_incident_route_router, prefix="/v1")
 app.include_router(v1_plan_route_router, prefix="/v1")
+app.include_router(v1_pricing_marketing_route_router, prefix="/v1")
 app.include_router(v1_subscription_route_router, prefix="/v1")
 app.include_router(v1_discount_route_router, prefix="/v1")
 app.include_router(v1_usage_route_router, prefix="/v1")

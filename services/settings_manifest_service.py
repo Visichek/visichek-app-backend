@@ -335,11 +335,24 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
     except Exception:
         limitations = None
 
+    # Pinned platform policies the FE can render as informational
+    # banners on the settings page. The main_super_admin policy is
+    # always active — the flag is here so a human can verify the
+    # invariant is in force without grepping the codebase.
+    policies = {
+        "main_super_admin": {
+            "active": True,
+            "rule": "exactly_one_per_tenant_earliest_wins",
+            "transfer_endpoint": "/v1/system-users/transfer-main-super-admin/initiate",
+        }
+    }
+
     return {
         "profile": profile,
         "is_primary_admin": is_primary,
         "sections": sections,
         "limitations": limitations,
+        "policies": policies,
     }
 
 

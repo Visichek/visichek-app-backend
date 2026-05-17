@@ -55,6 +55,22 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
         {"unique": True},
     ),
     ("system_users", [("tenant_id", ASCENDING), ("role", ASCENDING)], {}),
+    # Main super_admin invariant: at most one row per tenant carries
+    # ``is_main_super_admin=True``. Partial filter expression keeps the
+    # uniqueness scoped to flagged rows so the millions of False rows
+    # don't even enter the index, and a single insert that violates the
+    # invariant is rejected at the DB layer regardless of which service
+    # forgot to call the guard. Belt and braces with the service guards
+    # in services/main_super_admin_guard.py.
+    (
+        "system_users",
+        [("tenant_id", ASCENDING), ("is_main_super_admin", ASCENDING)],
+        {
+            "unique": True,
+            "partialFilterExpression": {"is_main_super_admin": True},
+            "name": "tenant_main_super_admin_unique",
+        },
+    ),
     # ── plans / subscriptions / billing ──────────────────────────────
     ("plans", [("name", ASCENDING)], {"unique": True}),
     ("plans", [("status", ASCENDING), ("is_public", ASCENDING)], {}),

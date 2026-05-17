@@ -56,7 +56,15 @@ def _enqueue_list_refresh() -> None:
     and still see it as draft on the public catalogue.
     """
     qm = QueueManager.get_instance()
-    for resource in ("plans.list", "plans.public_list"):
+    for resource in (
+        "plans.list",
+        "plans.public_list",
+        "pricing_marketing.template",
+        # Marketing pricing page is derived from the active+public plans
+        # and the per-plan feature_rules / caps / quotas, so every plan
+        # mutation needs to refresh it.
+        "pricing_marketing.template",
+    ):
         try:
             qm.enqueue(
                 task_key="precompute.tenant_resource",
@@ -74,6 +82,7 @@ def _enqueue_list_refresh() -> None:
     "plan.create", invalidates=[
         "plans.list",
         "plans.public_list",
+        "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
@@ -90,6 +99,7 @@ async def _plan_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]
     "plan.update", invalidates=[
         "plans.list",
         "plans.public_list",
+        "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
@@ -107,6 +117,7 @@ async def _plan_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]
     "plan.activate", invalidates=[
         "plans.list",
         "plans.public_list",
+        "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
@@ -123,6 +134,7 @@ async def _plan_activate(resource_id: str, data: dict[str, Any]) -> dict[str, An
     "plan.archive", invalidates=[
         "plans.list",
         "plans.public_list",
+        "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
@@ -139,6 +151,7 @@ async def _plan_archive(resource_id: str, data: dict[str, Any]) -> dict[str, Any
     "plan.clone", invalidates=[
         "plans.list",
         "plans.public_list",
+        "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
@@ -162,6 +175,7 @@ async def _plan_clone(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     "plan.delete", invalidates=[
         "plans.list",
         "plans.public_list",
+        "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
@@ -178,6 +192,7 @@ async def _plan_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]
     "plan.set_feature", invalidates=[
         "plans.list",
         "plans.public_list",
+        "pricing_marketing.template",
         "subscriptions.list",
         "subscription.active",
     ]
@@ -223,6 +238,7 @@ async def _plan_set_feature(
     invalidates=[
         "plans.list",
         "plans.public_list",
+        "pricing_marketing.template",
         "subscriptions.list",
         "subscription.active",
     ],
@@ -246,6 +262,7 @@ async def _plan_bulk_activate(resource_id: str, data: dict[str, Any]) -> dict[st
     invalidates=[
         "plans.list",
         "plans.public_list",
+        "pricing_marketing.template",
         "subscriptions.list",
         "subscription.active",
     ],
@@ -269,6 +286,7 @@ async def _plan_bulk_archive(resource_id: str, data: dict[str, Any]) -> dict[str
     invalidates=[
         "plans.list",
         "plans.public_list",
+        "pricing_marketing.template",
         "subscriptions.list",
         "subscription.active",
     ],

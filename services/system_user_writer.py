@@ -188,6 +188,8 @@ async def _system_user_bulk_delete(
     actor_user_id = str(extras.get("actor_user_id") or "")
     tenant_scope = str(extras.get("tenant_scope") or "")
 
+    from services.main_super_admin_guard import is_protected_main_super_admin
+
     async def _handle(user_id: str) -> dict[str, Any]:
         if user_id == actor_user_id:
             raise PermissionError("USER_DELETE_PROTECTED: cannot delete self")
@@ -196,6 +198,8 @@ async def _system_user_bulk_delete(
             raise ValueError("User not found")
         if tenant_scope and target.tenant_id != tenant_scope:
             raise PermissionError("USER_DELETE_PROTECTED: cross-tenant blocked")
+        if is_protected_main_super_admin(target):
+            raise PermissionError("MAIN_SUPER_ADMIN_LOCKED")
         target_role = target.role.value if hasattr(target.role, "value") else target.role
         if target_role == "super_admin":
             raise PermissionError("USER_DELETE_PROTECTED: super_admin")
@@ -228,6 +232,8 @@ async def _system_user_bulk_deactivate(
     actor_user_id = str(extras.get("actor_user_id") or "")
     tenant_scope = str(extras.get("tenant_scope") or "")
 
+    from services.main_super_admin_guard import is_protected_main_super_admin
+
     async def _handle(user_id: str) -> dict[str, Any]:
         if user_id == actor_user_id:
             raise PermissionError("USER_DEACTIVATE_PROTECTED: cannot deactivate self")
@@ -236,6 +242,8 @@ async def _system_user_bulk_deactivate(
             raise ValueError("User not found")
         if tenant_scope and target.tenant_id != tenant_scope:
             raise PermissionError("USER_DEACTIVATE_PROTECTED: cross-tenant blocked")
+        if is_protected_main_super_admin(target):
+            raise PermissionError("MAIN_SUPER_ADMIN_LOCKED")
         upd = SystemUserUpdate(account_status=AccountStatus.INACTIVE)
         result = await update_system_user_by_id(
             user_id=user_id, tenant_id=target.tenant_id or "", user_data=upd

@@ -48,6 +48,9 @@ from services import invoice_writer as _invoice_writer  # noqa: F401
 from services import plan_writer as _plan_writer  # noqa: F401
 from services import subscription_writer as _subscription_writer  # noqa: F401
 from services import compliance_writer as _compliance_writer  # noqa: F401
+# Marketing pricing-page overlay — overlay PATCH/DELETE + the
+# GLOBAL-scope precompute loader that the public landing page reads.
+from services import pricing_marketing_writer as _pricing_marketing_writer  # noqa: F401
 
 # Cluster 7 — platform support cases (tenant ↔ app-admin threads)
 # Registering the service module is enough to pull in the precompute

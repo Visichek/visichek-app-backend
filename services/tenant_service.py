@@ -95,7 +95,12 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
         await delete_tenant({"_id": ObjectId(tenant.id)})
         raise
 
-    # 5. Create the first super_admin system user
+    # 5. Create the first super_admin system user. The bootstrap path is
+    # the only place that mints a super_admin AND knows the tenant has
+    # zero existing super_admins, so we set ``is_main_super_admin=True``
+    # here directly. The partial-unique index in core/indexes.py keeps
+    # this row's uniqueness guarantee across the rest of the tenant's
+    # lifetime.
     try:
         super_admin_data = SystemUserCreate(
             tenant_id=tenant.id or "",
@@ -105,6 +110,7 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
             role=SystemUserRole.SUPER_ADMIN,
             account_status=AccountStatus.ACTIVE,
             password_hash=payload.admin_password,
+            is_main_super_admin=True,
         )
         super_admin = await add_system_user(super_admin_data)
     except Exception:

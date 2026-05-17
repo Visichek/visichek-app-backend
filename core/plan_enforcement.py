@@ -48,6 +48,10 @@ EXEMPT_PATH_PREFIXES = (
     "/v1/subscriptions/",  # Subscription management
     "/v1/discounts/",  # Discount management
     "/v1/usage/",  # Usage reporting
+    # Public marketing pricing page — unauthenticated and not tied to a
+    # tenant subscription.
+    "/v1/pricing-marketing",
+    "/v1/pricing-marketing/",
     # Support cases are a hard product rule (10-open cap), not metered quota.
     # Tenants must always be able to reach support even on suspended plans.
     "/v1/support-cases/",

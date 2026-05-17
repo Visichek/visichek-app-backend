@@ -235,10 +235,16 @@ async def add_super_admin_to_tenant(
 
     Reuses the standard ``add_system_user`` so plan caps, email uniqueness,
     permission defaults, branch validation and audit logging all run.
+
+    Main-super_admin handling: if the tenant currently has zero active
+    super_admins (e.g. the previous main was hard-deleted out-of-band)
+    the new row is created with ``is_main_super_admin=True`` so the
+    invariant is restored. Otherwise the new super_admin is a peer.
     """
     from schemas.imports import AccountStatus as _AccountStatus
     from schemas.imports import SystemUserRole as _SystemUserRole
     from services.tenant_service import retrieve_tenant_by_id
+    from repositories.system_user_repo import count_active_super_admins
 
     # Validate the tenant exists and is active before we even hash the
     # password — avoids creating an orphaned user on a deleted tenant.
@@ -249,6 +255,9 @@ async def add_super_admin_to_tenant(
             detail="Cannot add a super admin to an inactive tenant",
         )
 
+    existing_super_count = await count_active_super_admins(tenant_id)
+    should_be_main = existing_super_count == 0
+
     create_data = SystemUserCreate(
         tenant_id=tenant_id,
         branch_ids=list(branch_ids) if branch_ids else [],
@@ -258,6 +267,7 @@ async def add_super_admin_to_tenant(
         account_status=_AccountStatus.ACTIVE,
         is_active=True,
         password_hash=password,
+        is_main_super_admin=should_be_main,
     )
     return await add_system_user(create_data)
 
@@ -270,8 +280,32 @@ async def add_system_user_from_invite(
     - Auto-assigns account_status=ACTIVE
     - Auto-assigns permissions based on role
     - Normalizes and checks email uniqueness
+
+    Role-restriction: the invite path REJECTS ``role=super_admin`` with
+    403 ``SUPER_ADMIN_INVITE_FORBIDDEN``. Super_admins are tenant-critical
+    (they own billing + main-flag succession) and must be created via the
+    dedicated bootstrap or
+    ``POST /v1/admins/tenants/{tenant_id}/super-admins`` flow, both of
+    which run the is_main_super_admin invariant logic.
     """
-    signup_data.role.value if hasattr(signup_data.role, "value") else signup_data.role
+    role_str = (
+        signup_data.role.value
+        if hasattr(signup_data.role, "value")
+        else str(signup_data.role)
+    )
+    if role_str == "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "message": (
+                    "Super admins cannot be created from the invite endpoint. "
+                    "Use POST /v1/admins/tenants/{tenant_id}/super-admins "
+                    "(application admin only) so the main-super_admin "
+                    "invariant is enforced."
+                ),
+                "code": "SUPER_ADMIN_INVITE_FORBIDDEN",
+            },
+        )
 
     # Build internal SystemUserCreate with system-assigned fields. branch_ids
     # validation + default-branch fallback runs inside add_system_user.
@@ -623,6 +657,14 @@ async def update_system_user_by_id(
             status_code=404, detail="System user not found or update failed"
         )
 
+    # I-1 + I-2: protect the main super_admin row. Raises 403
+    # MAIN_SUPER_ADMIN_LOCKED on attempts to change role / account_status
+    # / is_active. Caller must transfer first via
+    # /v1/system-users/transfer-main-super-admin.
+    from services.main_super_admin_guard import guard_system_user_update
+
+    guard_system_user_update(existing=existing, update=user_data)
+
     # Branch-assignment validation runs in the service layer (it needs DB +
     # plan lookups, which can't sit on the schema validator).
     if user_data.branch_ids is not None:
@@ -706,6 +748,13 @@ async def remove_system_user(user_id: str, tenant_id: str):
     user = await get_system_user({"_id": ObjectId(user_id), "tenant_id": tenant_id})
     if not user:
         raise HTTPException(status_code=404, detail="System user not found")
+
+    # I-3: the main super_admin row is never hard-deletable. Distinct from
+    # the generic super_admin block below — the LOCKED error makes clear
+    # the user must transfer the role first.
+    from services.main_super_admin_guard import guard_system_user_delete
+
+    guard_system_user_delete(existing=user)
 
     # Super admins are tenant-critical. They own billing, branch config, and
     # invite other users — deleting one through the normal user-management
