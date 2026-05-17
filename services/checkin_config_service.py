@@ -98,6 +98,36 @@ async def create_config(
     return await create_checkin_config(payload, preassigned_id=preassigned_id)
 
 
+async def _plan_denies_kyc(tenant_id: str) -> bool:
+    """True iff the tenant's current plan explicitly denies KYC.
+
+    Used to force ``id_upload_enabled = false`` on the public kiosk
+    config for tenants whose plan can't actually serve the Dojah flow
+    (Free, Starter). The stored config row is left untouched so the
+    preference comes back automatically on upgrade.
+
+    Returns ``False`` (i.e. do NOT override) on resolution failure —
+    better to surface the Verify button and let it silently degrade via
+    ``/v1/kyc/initiate`` than to hide KYC for a tenant whose plan we
+    couldn't look up.
+    """
+    try:
+        from core.plan_enforcement import _check_feature_access
+        from services.plan_cache_service import resolve_tenant_plan
+
+        resolved = await resolve_tenant_plan(tenant_id)
+        if not resolved:
+            return False
+        allowed, _ = _check_feature_access(
+            "/v1/kyc/initiate",
+            "POST",
+            resolved.get("feature_rules") or [],
+        )
+        return not allowed
+    except Exception:
+        return False
+
+
 async def resolve_public_config(checkin_config_id: str) -> PublicCheckinConfigOut:
     """Resolve a public check-in config with tenant info and logo.
 
@@ -117,12 +147,16 @@ async def resolve_public_config(checkin_config_id: str) -> PublicCheckinConfigOu
 
     logo_url = await _resolve_tenant_logo_url(config.tenant_id)
 
+    id_upload_enabled = config.id_upload_enabled
+    if id_upload_enabled and await _plan_denies_kyc(config.tenant_id):
+        id_upload_enabled = False
+
     return PublicCheckinConfigOut(
         checkin_config_id=config.id or "",
         tenant_id=config.tenant_id,
         tenant_name=tenant.company_name or "",
         logo_url=logo_url,
-        id_upload_enabled=config.id_upload_enabled,
+        id_upload_enabled=id_upload_enabled,
         allow_returning_visitor_lookup=config.allow_returning_visitor_lookup,
         required_fields=config.required_fields,
     )
@@ -142,6 +176,7 @@ async def resolve_public_config_by_tenant(tenant_id: str) -> PublicCheckinConfig
 
     logo_url = await _resolve_tenant_logo_url(tenant_id)
     config = await get_active_checkin_config_for_tenant(tenant_id)
+    plan_denies_kyc = await _plan_denies_kyc(tenant_id)
 
     if config is None:
         return PublicCheckinConfigOut(
@@ -149,17 +184,21 @@ async def resolve_public_config_by_tenant(tenant_id: str) -> PublicCheckinConfig
             tenant_id=tenant_id,
             tenant_name=tenant.company_name or "",
             logo_url=logo_url,
-            id_upload_enabled=True,
+            id_upload_enabled=not plan_denies_kyc,
             allow_returning_visitor_lookup=True,
             required_fields=list(DEFAULT_REQUIRED_FIELDS),
         )
+
+    id_upload_enabled = config.id_upload_enabled
+    if id_upload_enabled and plan_denies_kyc:
+        id_upload_enabled = False
 
     return PublicCheckinConfigOut(
         checkin_config_id=config.id or "",
         tenant_id=tenant_id,
         tenant_name=tenant.company_name or "",
         logo_url=logo_url,
-        id_upload_enabled=config.id_upload_enabled,
+        id_upload_enabled=id_upload_enabled,
         allow_returning_visitor_lookup=config.allow_returning_visitor_lookup,
         required_fields=config.required_fields,
     )

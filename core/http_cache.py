@@ -90,19 +90,47 @@ def _should_bypass(path: str) -> bool:
 def _resource_segment(path: str) -> str:
     """Take the first two path components after the leading slash, joined with '-'.
 
-    /v1/visitors/abc/checkout -> 'v1-visitors'
-    /v1/plans                 -> 'v1-plans'
-    /health                   -> 'health'
+    /v1/visitors/abc/checkout                  -> 'v1-visitors'
+    /v1/plans                                  -> 'v1-plans'
+    /v1/tenants/{tid}/checkins                 -> 'v1-checkins'
+    /v1/tenants/{tid}/pending-approvals        -> 'v1-checkins'
+    /health                                    -> 'health'
+
+    The tenant-scoped check-in list endpoints are routed under
+    ``/v1/tenants/{tid}/...`` but conceptually belong to the check-in
+    domain. We bucket them under ``v1-checkins`` so a write to any
+    ``/v1/checkins/*`` endpoint invalidates both lists in one shot
+    (otherwise the pending-approvals GET stays stale for up to TTL
+    after an approval write).
     """
     parts = [p for p in path.split("/") if p]
     if len(parts) >= 4 and parts[0] == "v1" and parts[1] == "tenants":
-        if parts[3] == "checkins":
+        if parts[3] in ("checkins", "pending-approvals"):
             return "v1-checkins"
     if len(parts) >= 2:
         return f"{parts[0]}-{parts[1]}"
     if len(parts) == 1:
         return parts[0]
     return "_root"
+
+
+# Cross-resource invalidation graph. A write to the key invalidates the
+# value-set in addition to itself.
+#
+# The visitor lifecycle straddles three URL surfaces:
+#   * ``/v1/visitors/...``     — visit_sessions writer surface
+#   * ``/v1/checkins/...``     — receptionist approval queue
+#   * ``/v1/tenants/{tid}/checkins`` / ``/pending-approvals`` (also
+#     bucketed under ``v1-checkins`` via ``_resource_segment`` above)
+#
+# A successful approve / deny / confirm / check-out / host-approve on
+# any of these MUST clear cached GETs on the other side so the UI
+# doesn't display a row in two states at once for up to the cache TTL.
+_LINKED_INVALIDATIONS: dict[str, tuple[str, ...]] = {
+    "v1-visitors": ("v1-checkins",),
+    "v1-checkins": ("v1-visitors",),
+    "v1-appointments": ("v1-checkins", "v1-visitors"),
+}
 
 
 async def _resolve_scope(request: Request) -> str:
@@ -301,13 +329,15 @@ class HttpCacheMiddleware(BaseHTTPMiddleware):
             return None
 
     def _invalidate(self, scope: str, resource: str) -> None:
+        resources_to_clear = {resource, *_LINKED_INVALIDATIONS.get(resource, ())}
         try:
-            pattern = _invalidation_pattern(scope, resource)
             keys: list[str] = []
-            for key in cast(
-                Iterable[str], cache_db.scan_iter(match=pattern, count=200)
-            ):
-                keys.append(key)
+            for res in resources_to_clear:
+                pattern = _invalidation_pattern(scope, res)
+                for key in cast(
+                    Iterable[str], cache_db.scan_iter(match=pattern, count=200)
+                ):
+                    keys.append(key)
             if keys:
                 cache_db.delete(*keys)
         except Exception:

@@ -188,7 +188,7 @@ async def get_tenant_usage_summary(
             }
         )
 
-    appointments_this_month = await db["appointments"].count_documents(
+    appointments_this_month = await db["expected_appointments"].count_documents(
         {
             "tenant_id": tenant_id,
             "date_created": {"$gte": month_start, "$lt": month_end},

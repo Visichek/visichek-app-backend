@@ -37,6 +37,10 @@ _VISITOR_INVALIDATES = [
     "dashboard.visitors_active",
     "dashboard.visitors_page1",
     "dashboard.stats",
+    # visitor_profiles.list mutates on check-in (total_visits++,
+    # last_visit_time) — sync path goes via invalidate_tenant_dashboard_cache,
+    # keep the queued path symmetric so list GETs don't lag bulk ops.
+    "visitor_profiles.list",
 ]
 
 

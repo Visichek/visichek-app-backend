@@ -166,7 +166,7 @@ async def list_appointments(
         if branch_filter:
             base_filter.update(branch_filter)
     return await run_list(
-        collection=db.appointments,
+        collection=db.expected_appointments,
         query=query,
         base_filter=base_filter,
         map_doc=_map_appt_doc,

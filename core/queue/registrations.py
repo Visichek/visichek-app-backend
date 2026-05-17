@@ -63,6 +63,7 @@ from services import tenant_enum_writer as _tenant_enum_writer  # noqa: F401
 
 # Cluster 10 — visitor bulk-action writers
 from services import visitor_bulk_writer as _visitor_bulk_writer  # noqa: F401
+from services import checkin_bulk_writer as _checkin_bulk_writer  # noqa: F401
 
 # Cluster 11 — tenant form builder (precompute-only; mutations stay sync
 # because the autosave / publish UX needs the result in the response).

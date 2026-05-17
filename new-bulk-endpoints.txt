@@ -1,0 +1,192 @@
+NEW BULK ENDPOINTS — CHECK-IN APPROVAL QUEUE
+==============================================
+Added: 2026-05-17
+Affects: api/v1/checkin_route.py, services/checkin_bulk_writer.py,
+         core/queue/registrations.py
+
+These three POST endpoints give the receptionist UI a bulk equivalent
+of the existing single-item endpoints on the check-in approval queue.
+All three return 202 Accepted with the standard queued-write envelope
+``{ id, job_id, status: "queued" }`` and write per-id outcomes to
+``queue_job_log.result`` in the ``{ succeeded, failed }`` shape. Poll
+``GET /v1/jobs/{job_id}`` for the breakdown.
+
+
+1. POST /v1/checkins/bulk/approve
+---------------------------------
+Auth:           receptionist, super_admin
+Writer key:     checkin.bulk_approve
+Wraps:          confirm_checkin(action="approve")
+State change:   PENDING_APPROVAL → APPROVED
+                (any other state → failed[] with 409)
+Idempotency:    honored via Idempotency-Key header (per actor + route)
+
+Request body:
+  {
+    "ids":   ["<checkin_id>", ...],     // required, max 500, ObjectId-validated
+    "notes":  string | null,             // optional, applied to every id
+    "atomic": boolean                     // default false; stop on first failure
+  }
+
+Side effects per id (same as single-item /v1/checkins/{id}/confirm):
+  - On approve: badge issued if the plan grants /v1/badges; approval
+    audit row written; host notified via notify_checkin_approved;
+    visitor "badge ready" email dispatched if all preconditions met.
+  - Tenant dashboard precompute (dashboard.stats, dashboard.visitors_*)
+    and visitor_profiles.list are invalidated via the writer's
+    invalidates= list AND the underlying service's
+    invalidate_tenant_dashboard_cache call.
+
+Response (202): standard queued-write envelope.
+
+Sample job result:
+  {
+    "succeeded": [
+      { "id": "abc...", "result": { "id": "abc...", "state": "approved",
+                                    "badgeId": "bdg_..." } }
+    ],
+    "failed": [
+      { "id": "def...", "error": { "code": "VALIDATION_FAILED",
+                                   "message": "Invalid action: ..." } }
+    ],
+    "atomic": false
+  }
+
+
+2. POST /v1/checkins/bulk/reject
+--------------------------------
+Auth:           receptionist, super_admin
+Writer key:     checkin.bulk_reject
+Wraps:          confirm_checkin(action="reject")
+State change:   PENDING_APPROVAL → REJECTED
+                (any other state → failed[] with 409)
+Idempotency:    honored
+
+Request body:
+  {
+    "ids":    ["<checkin_id>", ...],
+    "reason":  string | null,            // optional shared rejection_reason
+                                         // (capped at 500 chars in the writer)
+    "atomic":  boolean
+  }
+
+Side effects per id:
+  - rejection_reason stored on the checkin;
+  - notify_checkin_rejected fires per id;
+  - same cache invalidations as bulk_approve.
+
+
+3. POST /v1/checkins/bulk/force-approve-pending
+------------------------------------------------
+Auth:           super_admin only
+Writer key:     checkin.bulk_force_approve_pending
+Wraps:          force_approve_pending_verification
+State change:   PENDING_VERIFICATION → PENDING_APPROVAL
+                (any other state → failed[] with 409)
+Idempotency:    honored
+
+Use case: KYC widget never started / never completed / webhook lost —
+the check-in is parked invisible to the receptionist queue forever
+without manual intervention. This bulk variant lets ops un-stick a
+batch in one go. The audit row records the prior state per id.
+
+Request body:
+  {
+    "ids":    ["<checkin_id>", ...],
+    "atomic":  boolean
+  }
+
+Side effects per id (same as single-item endpoint):
+  - State transition recorded in audit_trail as
+    action="checkin.force_approved_pending" with from_state /
+    to_state in details;
+  - notify_checkin_pending_approval fires (receptionist sees the
+    check-in surface in the queue);
+  - dashboard + visitor_profiles caches invalidated.
+
+
+COMMON CONTRACT (all three)
+----------------------------
+
+ids validation: ``core.bulk.validate_bulk_ids``
+  - Must be a non-empty array of strings
+  - Each entry must be a valid hex ObjectId
+  - Duplicates silently de-duped (order preserved for the first instance)
+  - Cap of 500 per call (DEFAULT_MAX_BATCH); split larger sets client-side
+
+Idempotency: ``core.idempotency``
+  - Pass Idempotency-Key header for safe network retries
+  - Key is scoped per (actor_id, role, route_label) — different actors
+    cannot share keys, and the same key for a different request body
+    returns 409 IDEMPOTENCY_CONFLICT
+  - Replays within the idempotency TTL return the cached 202 envelope
+    (no second job is queued)
+
+Cache invalidations (writer-side):
+  - dashboard.stats
+  - dashboard.visitors_active
+  - dashboard.visitors_page1
+  - visitor_profiles.list
+
+The HTTP cache middleware ALSO clears these resource segments on
+successful write thanks to the cross-resource linking in
+core/http_cache.py:_LINKED_INVALIDATIONS:
+  - POST /v1/checkins/*  invalidates  httpcache:t:{tid}:v1-checkins:*
+                                AND   httpcache:t:{tid}:v1-visitors:*
+  - POST /v1/visitors/*  invalidates  httpcache:t:{tid}:v1-visitors:*
+                                AND   httpcache:t:{tid}:v1-checkins:*
+
+The pending-approvals GET (``/v1/tenants/{tid}/pending-approvals``) is
+bucketed under ``v1-checkins`` by ``_resource_segment`` so it is
+covered by both sides of the linked invalidation. Same for the
+tenant-scoped check-in list (``/v1/tenants/{tid}/checkins``).
+
+
+FRONTEND USAGE NOTES
+--------------------
+- Receptionist UI should expose "Approve selected" / "Reject selected"
+  buttons that POST to /v1/checkins/bulk/approve | /reject with the
+  current selection IDs and an optional notes / reason field.
+- Super-admin recovery UI for stuck KYC check-ins should expose a
+  "Force to approval queue" bulk action that POSTs to
+  /v1/checkins/bulk/force-approve-pending.
+- On a 202, the UI should poll GET /v1/jobs/{job_id} (or surface a
+  toast and rely on the next dashboard refresh to show the new state)
+  to surface the per-id succeeded / failed breakdown — partial-success
+  is a normal outcome and should be visible to the operator.
+- The Idempotency-Key header is OPTIONAL but recommended; the UI
+  should generate a fresh UUID per user click and reuse it on retry.
+
+
+VERIFICATION
+------------
+1. Log in as a receptionist; queue a few kiosk submissions so several
+   check-ins are in pending_approval state.
+2. POST /v1/checkins/bulk/approve with their IDs and an Idempotency-Key.
+3. Poll GET /v1/jobs/{job_id} — expect succeeded[] to list each id.
+4. GET /v1/tenants/{tid}/pending-approvals — expect the just-approved
+   IDs to be GONE (cache invalidation working).
+5. GET /v1/tenants/{tid}/checkins?state=approved — expect them present.
+6. Repeat POST with the SAME Idempotency-Key — expect the original
+   202 envelope returned (no new job queued).
+7. Repeat POST with a different body but the same Idempotency-Key —
+   expect 409 IDEMPOTENCY_CONFLICT.
+8. As super_admin, force a single check-in into pending_verification
+   (or simulate by direct DB update), then POST to /bulk/force-approve-
+   pending — expect it to land in pending_approval and surface in the
+   receptionist queue immediately.
+
+
+FILES TOUCHED
+-------------
+core/http_cache.py             — cross-resource invalidation + bucket
+                                 pending-approvals under v1-checkins
+services/dashboard_cache_service.py
+                               — invalidate visitor_profiles.list too
+services/visitor_bulk_writer.py
+                               — _VISITOR_INVALIDATES extended with
+                                 visitor_profiles.list (parity)
+services/checkin_bulk_writer.py (NEW)
+                               — three @write_handler decorators
+api/v1/checkin_route.py        — three new bulk routes + helper
+core/queue/registrations.py    — side-effect import of new writer

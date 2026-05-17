@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Header, Query, Request, status
 
+from core.bulk import enqueue_bulk_write
+from core.idempotency import actor_scope, check_idempotency, store_idempotency
 from core.response_envelope import document_response
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
@@ -22,6 +24,30 @@ from schemas.checkin_schema import (
 )
 
 router = APIRouter(tags=["Check-Ins"])
+
+
+def _checkin_bulk_invocation(
+    *,
+    request: Request,
+    payload: dict[str, Any],
+    idempotency_key: Optional[str],
+    principal: AuthPrincipal,
+    route_label: str,
+) -> tuple[Optional[Any], str, str, str, str]:
+    """Shared bulk-endpoint preamble (mirrors visitor_route.py helper).
+
+    Resolves the actor scope, checks the idempotency key, returns either
+    the cached response (idempotency hit) or the actor metadata the
+    caller needs to enqueue the bulk write.
+    """
+    actor_id = principal.user_id
+    actor_role = principal.role
+    tenant_id = principal.tenant_id or ""
+    scope = actor_scope(actor_id, actor_role)
+    hit = check_idempotency(
+        key=idempotency_key, scope=scope, route=route_label, body=payload
+    )
+    return hit, actor_id, actor_role, tenant_id, scope
 
 
 @router.get(
@@ -236,3 +262,208 @@ async def get_checkin_analytics(
         limit=limit,
     )
     return checkins, {"total": total, "skip": skip, "limit": limit}
+
+
+# ─── Bulk approval queue endpoints ────────────────────────────────────
+#
+# All three return 202 Accepted with the standard queued-write envelope
+# `{ id, job_id, status: "queued" }`. Per-id success / failure lands on
+# `queue_job_log.result` — poll `GET /v1/jobs/{job_id}` for the
+# `{ succeeded, failed }` breakdown. The receptionist UI is expected
+# to surface partial-success states (e.g. some checkins moved, others
+# rejected because they were no longer in `pending_approval`).
+#
+# Idempotency-Key header is honored per actor + route so a flaky
+# network retry does not double-action a batch.
+
+
+@router.post("/checkins/bulk/approve", status_code=status.HTTP_202_ACCEPTED)
+@document_response(
+    message="Bulk approve queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk approve pending check-ins",
+    description=(
+        "Queue an approval for many check-ins at once. Body: "
+        "``{ ids: [...], notes?: string, atomic?: bool }``. Each id must "
+        "be in ``pending_approval`` — items not in that state surface in "
+        "the ``failed`` array on the job result. On approve, the existing "
+        "per-id flow runs (badge generation if the plan allows, host "
+        "notification, visitor-badge email if configured)."
+    ),
+    response_codes={
+        202: "Bulk approve queued",
+        400: "Invalid ids payload",
+        401: "Unauthorized",
+        403: "Forbidden",
+    },
+)
+async def bulk_approve_checkins(
+    request: Request,
+    payload: dict[str, Any] = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("receptionist", "super_admin")
+    ),
+):
+    route_label = "POST /v1/checkins/bulk/approve"
+    cached, actor_id, actor_role, tenant_id, scope = _checkin_bulk_invocation(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        principal=principal,
+        route_label=route_label,
+    )
+    if cached is not None:
+        return cached.response
+    response = await enqueue_bulk_write(
+        writer_key="checkin.bulk_approve",
+        ids=payload.get("ids", []),
+        resource_type="checkin",
+        extras={
+            "tenant_scope": tenant_id,
+            "actor_id": actor_id,
+            "notes": payload.get("notes"),
+        },
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route=route_label,
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post("/checkins/bulk/reject", status_code=status.HTTP_202_ACCEPTED)
+@document_response(
+    message="Bulk reject queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk reject pending check-ins",
+    description=(
+        "Queue a rejection for many check-ins at once. Body: "
+        "``{ ids: [...], reason?: string, atomic?: bool }``. The shared "
+        "``reason`` is stored as ``rejection_reason`` on every check-in "
+        "and surfaced in the rejection notification. Items not currently "
+        "in ``pending_approval`` surface in the ``failed`` array."
+    ),
+    response_codes={
+        202: "Bulk reject queued",
+        400: "Invalid ids payload",
+        401: "Unauthorized",
+        403: "Forbidden",
+    },
+)
+async def bulk_reject_checkins(
+    request: Request,
+    payload: dict[str, Any] = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("receptionist", "super_admin")
+    ),
+):
+    route_label = "POST /v1/checkins/bulk/reject"
+    cached, actor_id, actor_role, tenant_id, scope = _checkin_bulk_invocation(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        principal=principal,
+        route_label=route_label,
+    )
+    if cached is not None:
+        return cached.response
+    response = await enqueue_bulk_write(
+        writer_key="checkin.bulk_reject",
+        ids=payload.get("ids", []),
+        resource_type="checkin",
+        extras={
+            "tenant_scope": tenant_id,
+            "actor_id": actor_id,
+            "reason": payload.get("reason"),
+        },
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route=route_label,
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response
+
+
+@router.post(
+    "/checkins/bulk/force-approve-pending", status_code=status.HTTP_202_ACCEPTED
+)
+@document_response(
+    message="Bulk force-approve queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bulk unstick KYC-parked check-ins (super_admin)",
+    description=(
+        "Bulk equivalent of ``POST /v1/checkins/{id}/force-approve-pending``. "
+        "Moves every id from ``pending_verification`` → ``pending_approval`` "
+        "so the receptionist queue picks them up. Items in any other state "
+        "(already approved, rejected, or checked-out) surface in the "
+        "``failed`` array with the per-id 409 error. Super_admin only — "
+        "this is a manual recovery action for the KYC-webhook-lost scenario."
+    ),
+    response_codes={
+        202: "Bulk force-approve queued",
+        400: "Invalid ids payload",
+        401: "Unauthorized",
+        403: "Forbidden",
+    },
+)
+async def bulk_force_approve_pending_checkins(
+    request: Request,
+    payload: dict[str, Any] = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    principal: AuthPrincipal = Depends(verify_system_user_token("super_admin")),
+):
+    route_label = "POST /v1/checkins/bulk/force-approve-pending"
+    cached, actor_id, actor_role, tenant_id, scope = _checkin_bulk_invocation(
+        request=request,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        principal=principal,
+        route_label=route_label,
+    )
+    if cached is not None:
+        return cached.response
+    response = await enqueue_bulk_write(
+        writer_key="checkin.bulk_force_approve_pending",
+        ids=payload.get("ids", []),
+        resource_type="checkin",
+        extras={
+            "tenant_scope": tenant_id,
+            "actor_id": actor_id,
+            "actor_role": actor_role,
+            "request_id": getattr(request.state, "request_id", None),
+        },
+        atomic=bool(payload.get("atomic", False)),
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    store_idempotency(
+        key=idempotency_key,
+        scope=scope,
+        route=route_label,
+        body=payload,
+        response=response,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    return response

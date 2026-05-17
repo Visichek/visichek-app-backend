@@ -147,6 +147,17 @@ core/plan_enforcement.py except where noted.
    watermark on the public registration / kiosk flow whenever this flag
    is set. Paid tiers receive powered_by_visichek: false.
 
+   KYC step suppression on the kiosk:
+   GET /public/tenants/{tenant_id}/active-checkin-config (and the
+   single-id variant /v1/checkin-configs/{id}) force
+       id_upload_enabled: false
+   in the public response when the tenant's plan denies /v1/kyc/*.
+   The stored CheckinConfig row is NOT mutated — only the public
+   projection is overridden — so the tenant's saved preference comes
+   back automatically on upgrade. The kiosk reads this flag to drop the
+   "Verify with Dojah" step from the wizard entirely. See
+   services/checkin_config_service.py:_plan_denies_kyc.
+
 
 8. SUPPORT
 ----------
