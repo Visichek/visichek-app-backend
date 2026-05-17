@@ -481,6 +481,59 @@ ADMIN_PERMISSIONS: list[Permission] = [
         "/v1/faqs/{kind}/{key}",
         "Remove one FAQ overlay row (item / category)",
     ),
+    # Blog (admin)
+    _p("list_blogs", ["GET"], "/v1/blogs", "List blogs"),
+    _p("list_recent_blogs", ["GET"], "/v1/blogs/recent", "List most-recent blogs"),
+    _p("get_blog", ["GET"], "/v1/blogs/{blog_id}", "Get blog by id"),
+    _p("create_blog", ["POST"], "/v1/blogs", "Create blog"),
+    _p("update_blog", ["PATCH"], "/v1/blogs/{blog_id}", "Update blog"),
+    _p("delete_blog", ["DELETE"], "/v1/blogs/{blog_id}", "Delete blog"),
+    # Media (admin)
+    _p("list_media", ["GET"], "/v1/media", "List media"),
+    _p("list_recent_media", ["GET"], "/v1/media/recent", "List most-recent media"),
+    _p(
+        "list_media_by_type",
+        ["GET"],
+        "/v1/media/by-type/{media_type}",
+        "List media filtered by type",
+    ),
+    _p(
+        "list_media_by_category",
+        ["GET"],
+        "/v1/media/by-category/{category}",
+        "List media filtered by category",
+    ),
+    _p("get_media", ["GET"], "/v1/media/{media_id}", "Get media by id"),
+    _p("upload_media", ["POST"], "/v1/media/upload-media", "Upload media"),
+    _p("create_media", ["POST"], "/v1/media", "Create media row with upload"),
+    _p("upload_image", ["POST"], "/v1/media/upload-image", "Upload image"),
+    _p("upload_video", ["POST"], "/v1/media/upload-video", "Upload video"),
+    _p(
+        "append_media_to_blog",
+        ["POST"],
+        "/v1/media/{blog_id}",
+        "Append media block to blog",
+    ),
+    _p(
+        "update_media_category",
+        ["PATCH"],
+        "/v1/media/{media_id}",
+        "Update media category",
+    ),
+    _p("delete_media", ["DELETE"], "/v1/media/{media_id}", "Delete media"),
+    # Blog-admin compatibility aliases (live under /v1/admins/*)
+    _p(
+        "admin_me_alias",
+        ["GET"],
+        "/v1/admins/me",
+        "Current admin profile (blog-admin alias)",
+    ),
+    _p(
+        "admin_invite_alias",
+        ["POST"],
+        "/v1/admins/invite",
+        "Invite a new admin (blog-admin alias)",
+    ),
 ]
 
 
@@ -1161,30 +1214,45 @@ def _admin_perms_by_path_prefix(prefixes: tuple[str, ...]) -> list[Permission]:
 
 # Account / profile / health permissions every admin keeps — they
 # need to log in, see their own profile, and check dashboard health
-# regardless of scope.
+# regardless of scope. ``/v1/admins/me`` is the blog-admin frontend
+# alias of ``/v1/admins/profile`` (see ``blog/routes/admin_compat_route``);
+# kept here so the blog-admin UI works for every preset, not just
+# all_controls.
 _ADMIN_BASE_KEEP = _admin_perms_by_path_prefix(
     (
         "/v1/admins/profile",
         "/v1/admins/account",
         "/v1/admins/dashboard/stats",
+        "/v1/admins/me",
     )
 )
 
 
 # ``content_only`` — blog, media, pricing-content editorial.
-# Backed by ADMIN_PERMISSIONS plus the future content/pricing routes.
+# Backed by ADMIN_PERMISSIONS plus the content/pricing routes.
 #
 # Plans: READ ONLY — content admins see plans so they can write
 # marketing copy about them, but mutations stay with billing admins.
 # Pricing marketing overlay: FULL EDIT — the whole point of the
 # content slice is editing the public pricing page.
+# Blogs + media: FULL EDIT — same rationale; the editorial team owns
+# the public blog and the media library used in blog posts and
+# pricing pages. Added as an explicit prefix below (NOT under the
+# GET-stripped block) so POST/PATCH/DELETE actually flow through.
 _ADMIN_CONTENT_PLAN_READS: list[Permission] = [
     p for p in _admin_perms_by_path_prefix(("/v1/plans",)) if "GET" in p.methods
 ]
 ADMIN_CONTENT_PERMISSIONS: list[Permission] = (
     list(_ADMIN_BASE_KEEP)
     + _ADMIN_CONTENT_PLAN_READS
-    + _admin_perms_by_path_prefix(("/v1/pricing-marketing", "/v1/faqs"))
+    + _admin_perms_by_path_prefix(
+        (
+            "/v1/pricing-marketing",
+            "/v1/faqs",
+            "/v1/blogs",
+            "/v1/media",
+        )
+    )
 )
 
 
