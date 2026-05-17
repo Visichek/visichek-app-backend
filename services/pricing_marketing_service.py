@@ -51,6 +51,66 @@ from services.plan_service import retrieve_plans
 logger = logging.getLogger(__name__)
 
 
+# ── Defaults for the hero copy ───────────────────────────────────────
+# Returned when no overlay row sets these. Overlay PATCH overrides them.
+
+DEFAULT_HEADLINE = "Pricing for security-first teams"
+DEFAULT_SUBHEADLINE = (
+    "Scales with locations, departments, rollout needs, and the "
+    "security workflow you need on day one."
+)
+
+
+# ── Default highlight bullets per canonical plan slug ─────────────────
+# Surfaced under each pricing card when the overlay doesn't override
+# them. Sourced from the canonical plan defaults in
+# ``config/plan_tiers.py`` (caps + features) so the bullets stay
+# truthful even if no admin ever edits the marketing overlay.
+#
+# Custom enterprise slugs (``enterprise-<customer>``) get the generic
+# enterprise bullets unless an overlay row gives them custom copy.
+
+DEFAULT_PLAN_BULLETS: Dict[str, List[str]] = {
+    "free": [
+        "Manual visitor check-in / check-out",
+        "Up to 50 visitors per month",
+        "1 location, 1 department, 1 seat",
+        "Searchable visitor logs",
+        "Encrypted database",
+        "Email support",
+    ],
+    "starter": [
+        "Everything in Free",
+        "QR self check-in",
+        "Badge printing",
+        "Up to 150 visitors per month",
+        "Up to 5 team seats, 3 departments",
+        "Standard support",
+    ],
+    "premium": [
+        "Everything in Starter",
+        "Multi-location — unlimited branches",
+        "Appointments + host email notifications",
+        "Custom branding (logos, badge styling)",
+        "ID verification (Dojah KYC)",
+        "CSV export of visitor logs & compliance reports",
+        "API access",
+        "Up to 50 seats, 15 departments per location",
+        "24-hour SLA on support",
+    ],
+    "enterprise": [
+        "Everything in Premium",
+        "Unlimited seats, departments, visitors",
+        "Watchlist / flagged-visitor controls",
+        "SSO (Azure AD / Google Workspace)",
+        "Private cloud or on-prem deployment",
+        "Dedicated technical account manager",
+        "4-hour SLA on priority support",
+        "Custom integrations & workflows",
+    ],
+}
+
+
 # ── Canonical category catalog ───────────────────────────────────────
 # Default category labels + ordering. Admins can override any of these
 # via PATCH (a category with the same ``category_key`` in the overlay
@@ -300,6 +360,20 @@ def _index_by(items: List[Any], attr: str) -> Dict[str, Any]:
 # ── Plan cards (summary table) ───────────────────────────────────────
 
 
+def _default_bullets_for_plan(plan: PlanOut) -> List[str]:
+    """Pick the ship-with-code bullets for a plan slug.
+
+    Bespoke ``enterprise-<customer>`` slugs fall back to the generic
+    enterprise bullets. Unknown slugs get an empty list so the card
+    renders without bullets rather than wrong ones.
+    """
+    if plan.name in DEFAULT_PLAN_BULLETS:
+        return list(DEFAULT_PLAN_BULLETS[plan.name])
+    if _is_enterprise(plan):
+        return list(DEFAULT_PLAN_BULLETS["enterprise"])
+    return []
+
+
 def _build_plan_card(
     plan: PlanOut,
     overlay: Optional[PricingMarketingOverlayOut],
@@ -311,6 +385,14 @@ def _build_plan_card(
     cta_label = (copy.cta_label if copy and copy.cta_label else None) or (
         "Contact sales" if enterprise else f"Start with {plan.display_name}"
     )
+
+    # Bullets: overlay wins; otherwise fall back to the per-slug defaults
+    # baked into DEFAULT_PLAN_BULLETS. A copy entry with an empty list is
+    # treated as "no bullets" (admin intentionally cleared them).
+    if copy is not None and copy.highlight_bullets is not None:
+        bullets = list(copy.highlight_bullets)
+    else:
+        bullets = _default_bullets_for_plan(plan)
 
     return PricingPlanCard(
         plan_id=plan.id or "",
@@ -324,7 +406,7 @@ def _build_plan_card(
         cta_label=cta_label,
         cta_url=(copy.cta_url if copy else None),
         badge=(copy.badge if copy else None),
-        highlight_bullets=list(copy.highlight_bullets) if copy else [],
+        highlight_bullets=bullets,
         sort_order=getattr(plan, "sort_order", 0) or 0,
     )
 
@@ -614,9 +696,14 @@ async def render_pricing_marketing() -> PricingMarketingOut:
         else (visible[0].currency if visible else "NGN")
     )
 
+    headline = (overlay.headline if overlay and overlay.headline else None) or DEFAULT_HEADLINE
+    subheadline = (
+        overlay.subheadline if overlay and overlay.subheadline else None
+    ) or DEFAULT_SUBHEADLINE
+
     return PricingMarketingOut(
-        headline=overlay.headline if overlay else None,
-        subheadline=overlay.subheadline if overlay else None,
+        headline=headline,
+        subheadline=subheadline,
         currency=currency,
         plans=plan_cards,
         sections=sections,

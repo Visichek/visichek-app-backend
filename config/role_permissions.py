@@ -454,6 +454,33 @@ ADMIN_PERMISSIONS: list[Permission] = [
         "/v1/admins/2fa/setup",
         "Initiate admin 2FA setup",
     ),
+    # Pricing-marketing page (public GET is unauthenticated; only the
+    # editorial PATCH + row DELETE require an admin token + permission).
+    _p(
+        "patch_pricing_marketing",
+        ["PATCH"],
+        "/v1/pricing-marketing",
+        "Edit the public pricing-page marketing overlay",
+    ),
+    _p(
+        "delete_pricing_marketing_row",
+        ["DELETE"],
+        "/v1/pricing-marketing/{kind}/{key}",
+        "Remove one pricing-page overlay row (plan / feature / category)",
+    ),
+    # FAQ page (public GET unauthenticated; admin PATCH + row DELETE).
+    _p(
+        "patch_faqs",
+        ["PATCH"],
+        "/v1/faqs",
+        "Edit the public FAQ overlay (hero copy, items, categories)",
+    ),
+    _p(
+        "delete_faq_row",
+        ["DELETE"],
+        "/v1/faqs/{kind}/{key}",
+        "Remove one FAQ overlay row (item / category)",
+    ),
 ]
 
 
@@ -1146,17 +1173,19 @@ _ADMIN_BASE_KEEP = _admin_perms_by_path_prefix(
 
 # ``content_only`` — blog, media, pricing-content editorial.
 # Backed by ADMIN_PERMISSIONS plus the future content/pricing routes.
-ADMIN_CONTENT_PERMISSIONS: list[Permission] = list(_ADMIN_BASE_KEEP) + _admin_perms_by_path_prefix(
-    # Pricing reads share the plan list endpoint — content admins need
-    # to see plans to write marketing copy about them, but they don't
-    # get write paths.
-    ("/v1/plans",)
-)
-# Strip plan mutations from the content slice. content_only admins can
-# READ plans (to compose marketing copy) but not edit them.
-ADMIN_CONTENT_PERMISSIONS = [
-    p for p in ADMIN_CONTENT_PERMISSIONS if "GET" in p.methods
+#
+# Plans: READ ONLY — content admins see plans so they can write
+# marketing copy about them, but mutations stay with billing admins.
+# Pricing marketing overlay: FULL EDIT — the whole point of the
+# content slice is editing the public pricing page.
+_ADMIN_CONTENT_PLAN_READS: list[Permission] = [
+    p for p in _admin_perms_by_path_prefix(("/v1/plans",)) if "GET" in p.methods
 ]
+ADMIN_CONTENT_PERMISSIONS: list[Permission] = (
+    list(_ADMIN_BASE_KEEP)
+    + _ADMIN_CONTENT_PLAN_READS
+    + _admin_perms_by_path_prefix(("/v1/pricing-marketing", "/v1/faqs"))
+)
 
 
 # ``support_only`` — triage tenant support cases + view recent

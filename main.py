@@ -372,6 +372,17 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("plan_bootstrap failed at startup", exc_info=True)
 
+    # Default FAQ seed. Idempotent: only inserts items whose item_key
+    # (or normalised question) isn't already in the overlay, so admin
+    # edits to a default item are preserved across restarts.
+    try:
+        from services.faq_bootstrap import ensure_default_faqs
+
+        faq_bootstrap_summary = await ensure_default_faqs()
+        logger.info("faq_bootstrap summary: %s", faq_bootstrap_summary)
+    except Exception:
+        logger.warning("faq_bootstrap failed at startup", exc_info=True)
+
     # Schedule retention cleanup job
     from services.retention_service import run_retention_cleanup
 
@@ -759,6 +770,7 @@ from api.v1.audit_route import router as v1_audit_route_router
 from api.v1.incident_route import router as v1_incident_route_router
 from api.v1.plan_route import router as v1_plan_route_router
 from api.v1.pricing_marketing_route import router as v1_pricing_marketing_route_router
+from api.v1.faq_route import router as v1_faq_route_router
 from api.v1.subscription_route import router as v1_subscription_route_router
 from api.v1.discount_route import router as v1_discount_route_router
 from api.v1.usage_route import router as v1_usage_route_router
@@ -859,6 +871,7 @@ app.include_router(v1_audit_route_router, prefix="/v1")
 app.include_router(v1_incident_route_router, prefix="/v1")
 app.include_router(v1_plan_route_router, prefix="/v1")
 app.include_router(v1_pricing_marketing_route_router, prefix="/v1")
+app.include_router(v1_faq_route_router, prefix="/v1")
 app.include_router(v1_subscription_route_router, prefix="/v1")
 app.include_router(v1_discount_route_router, prefix="/v1")
 app.include_router(v1_usage_route_router, prefix="/v1")

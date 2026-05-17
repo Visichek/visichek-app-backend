@@ -13,7 +13,10 @@ class PricingPlanCopy(BaseModel):
     tagline: Optional[str] = None
     cta_label: Optional[str] = None
     cta_url: Optional[str] = None
-    highlight_bullets: List[str] = Field(default_factory=list)
+    # None means "use the ship-with-code default bullets". An empty
+    # list ([]) means "admin explicitly wants no bullets". A populated
+    # list overrides the defaults.
+    highlight_bullets: Optional[List[str]] = None
     badge: Optional[str] = None
 
 

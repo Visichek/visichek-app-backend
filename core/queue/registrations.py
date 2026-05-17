@@ -51,6 +51,9 @@ from services import compliance_writer as _compliance_writer  # noqa: F401
 # Marketing pricing-page overlay — overlay PATCH/DELETE + the
 # GLOBAL-scope precompute loader that the public landing page reads.
 from services import pricing_marketing_writer as _pricing_marketing_writer  # noqa: F401
+# FAQ overlay — mirrors the pricing-marketing pattern (singleton
+# overlay + global precompute) for the public FAQ page.
+from services import faq_writer as _faq_writer  # noqa: F401
 
 # Cluster 7 — platform support cases (tenant ↔ app-admin threads)
 # Registering the service module is enough to pull in the precompute

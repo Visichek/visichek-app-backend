@@ -52,6 +52,9 @@ EXEMPT_PATH_PREFIXES = (
     # tenant subscription.
     "/v1/pricing-marketing",
     "/v1/pricing-marketing/",
+    # Public FAQ page — same shape as pricing-marketing.
+    "/v1/faqs",
+    "/v1/faqs/",
     # Support cases are a hard product rule (10-open cap), not metered quota.
     # Tenants must always be able to reach support even on suspended plans.
     "/v1/support-cases/",
