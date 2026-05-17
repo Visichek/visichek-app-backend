@@ -3,16 +3,22 @@
 Listing style follows the host backend's tables contract — see
 ``BLOGS_LIST_SPEC`` in ``admin_blog_route.py`` for the same shape.
 
-All mutations and uploads route through ``enqueue_write`` and return
-``202 + job_id``. The R2 PUT (or local-disk write, when R2 isn't
-configured) runs on the ``worker-writes`` queue; clients poll
-``/v1/jobs/{job_id}`` for the final URL.
+Uploads stream directly to R2 (or local disk fallback) from the route
+handler using boto3 multipart transfer. The frontend contract is
+preserved — the response shape is still ``{ id, job_id, status }`` and
+clients can still poll ``/v1/jobs/{job_id}`` — but the row is written
+in ``succeeded`` state synchronously so the first poll resolves
+immediately. We do NOT route upload bytes through the celery broker:
+that path required base64-encoding the file into a JSON payload, which
+blows up Redis size limits and worker memory on anything over ~5 MB.
+
+Non-upload mutations (update_category / delete) keep the queued path
+because they ship only small JSON.
 """
 
 from __future__ import annotations
 
-import base64
-from typing import Any, List
+from typing import Any, List, Literal
 
 from bson import ObjectId
 from fastapi import (
@@ -29,12 +35,16 @@ from fastapi import (
 
 from blog.schemas.imports import CategoryNameEnum
 from blog.schemas.media_schema import MediaBase, MediaOut, MediaUpdate
-from blog.services.media_service import retrieve_media_by_id
+from blog.services.media_service import (
+    add_media_from_stream,
+    retrieve_media_by_id,
+)
+from blog.services.r2_upload import upload_media_stream
 from core.database import db
 from core.list_params import FilterDef, ListSpec, parse_list_query
 from core.list_runner import run_list
 from core.queue.precompute import PrecomputeScope, get_or_compute
-from core.queue.write_pipeline import enqueue_write
+from core.queue.write_pipeline import enqueue_write, record_inline_completed_write
 from core.response_envelope import document_response
 from schemas.admin_schema import AdminOut
 from security.account_status_check import check_admin_account_status_and_permissions
@@ -108,56 +118,62 @@ def _is_video_content_type(content_type: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+async def _stream_upload_or_400(
+    file: UploadFile, default_content_type: str = "application/octet-stream"
+) -> tuple[str, str, str]:
+    """Stream ``file`` to R2 and return ``(url, filename, content_type)``.
+
+    Raises 400 on an unsupported content type so callers can mirror the
+    original error contract. Closes the upload's underlying tempfile in
+    a ``finally`` block — Starlette doesn't auto-close ``UploadFile``.
+    """
+    content_type = (file.content_type or default_content_type).lower()
+    filename = file.filename or ""
+    try:
+        url = await upload_media_stream(file.file, filename, content_type)
+    finally:
+        await file.close()
+    return url, filename, content_type
+
+
 @router.post("/upload-media", status_code=status.HTTP_202_ACCEPTED)
 @document_response(
     message="Upload queued",
     status_code=status.HTTP_202_ACCEPTED,
     description=(
         "Upload an image or video. The route detects the file type from its "
-        "MIME header, enqueues an upload to R2 (or local disk when R2 isn't "
-        "configured), and returns a `job_id` to poll for the final URL."
+        "MIME header and streams the body straight to R2 (or local disk when "
+        "R2 isn't configured) without buffering in memory. Returns the same "
+        "``{ id, job_id, status }`` envelope as a queued write; the job row "
+        "is written in ``succeeded`` state synchronously so the first poll of "
+        "``/v1/jobs/{job_id}`` resolves immediately with the final URL."
     ),
-    summary="Upload media (queued)",
+    summary="Upload media (streaming)",
 )
 async def upload_media(
     request: Request,
     file: UploadFile = File(...),
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> dict:
-    file_bytes = await file.read()
     content_type = (file.content_type or "").lower()
-    filename = file.filename or ""
-
-    if _is_image_content_type(content_type):
-        return await enqueue_write(
-            writer_key="media.upload_image",
-            payload={
-                "file_b64": base64.b64encode(file_bytes).decode("ascii"),
-                "filename": filename,
-                "content_type": content_type,
-            },
-            resource_type="media_upload",
-            actor_id=getattr(admin, "id", None),
-            actor_role="admin",
-            request_id=getattr(request.state, "request_id", None),
-        )
-    if _is_video_content_type(content_type):
-        return await enqueue_write(
-            writer_key="media.upload_video",
-            payload={
-                "file_b64": base64.b64encode(file_bytes).decode("ascii"),
-                "filename": filename,
-                "content_type": content_type,
-                "request_base_url": str(request.base_url).rstrip("/"),
-            },
-            resource_type="media_upload",
-            actor_id=getattr(admin, "id", None),
-            actor_role="admin",
-            request_id=getattr(request.state, "request_id", None),
+    if not (_is_image_content_type(content_type) or _is_video_content_type(content_type)):
+        await file.close()
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported file type: {content_type}"
         )
 
-    raise HTTPException(
-        status_code=400, detail=f"Unsupported file type: {content_type}"
+    writer_key = "media.upload_image" if _is_image_content_type(content_type) else "media.upload_video"
+    url, filename, ctype = await _stream_upload_or_400(
+        file, "video/mp4" if _is_video_content_type(content_type) else "application/octet-stream"
+    )
+    return await record_inline_completed_write(
+        writer_key=writer_key,
+        payload={"filename": filename, "content_type": ctype},
+        resource_type="media_upload",
+        result={"url": url},
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
@@ -166,10 +182,11 @@ async def upload_media(
     message="Media create queued",
     status_code=status.HTTP_202_ACCEPTED,
     description=(
-        "Upload media and create a `media` row in one queued operation. "
-        "Equivalent to the legacy `create_media_task` celery task."
+        "Upload media and create a `media` row in one operation. The upload "
+        "streams directly to R2 from the route — no celery hop — and the row "
+        "is persisted inline. Response shape matches a queued write."
     ),
-    summary="Create media with category (queued)",
+    summary="Create media with category (streaming)",
 )
 async def upload_media_with_category(
     request: Request,
@@ -177,32 +194,48 @@ async def upload_media_with_category(
     file: UploadFile = File(...),
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> dict:
-    file_bytes = await file.read()
     content_type = (file.content_type or "").lower()
-    filename = file.filename or ""
-
     if not (_is_image_content_type(content_type) or _is_video_content_type(content_type)):
+        await file.close()
         raise HTTPException(
             status_code=400, detail=f"Unsupported file type: {content_type}"
         )
 
-    media = MediaBase(
-        mediaType="image" if _is_image_content_type(content_type) else "video",
-        category=category,
-        requestUrl=str(request.base_url).rstrip("/")
-        if _is_video_content_type(content_type)
-        else None,
+    media_type: Literal["image", "video"] = (
+        "image" if _is_image_content_type(content_type) else "video"
     )
+    media_dict = MediaBase(
+        mediaType=media_type,
+        category=category,
+        requestUrl=str(request.base_url).rstrip("/") if media_type == "video" else None,
+    ).model_dump()
 
-    return await enqueue_write(
+    filename = file.filename or ""
+    try:
+        media = await add_media_from_stream(
+            media_dict=media_dict,
+            fileobj=file.file,
+            filename=filename,
+            content_type=content_type,
+        )
+    finally:
+        await file.close()
+
+    return await record_inline_completed_write(
         writer_key="media.create",
         payload={
-            "media": media.model_dump(),
-            "file_b64": base64.b64encode(file_bytes).decode("ascii"),
+            "media": media_dict,
             "filename": filename,
             "content_type": content_type,
         },
         resource_type="media",
+        resource_id=media.id,
+        result={
+            "id": media.id,
+            "url": media.url,
+            "mediaType": media.mediaType,
+            "category": media.category.value if media.category else None,
+        },
         actor_id=getattr(admin, "id", None),
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),
@@ -213,22 +246,19 @@ async def upload_media_with_category(
 @document_response(
     message="Image upload queued",
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload image (queued)",
+    summary="Upload image (streaming)",
 )
 async def upload_image_endpoint(
     request: Request,
     file: UploadFile = File(...),
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> dict:
-    file_bytes = await file.read()
-    return await enqueue_write(
+    url, filename, ctype = await _stream_upload_or_400(file)
+    return await record_inline_completed_write(
         writer_key="media.upload_image",
-        payload={
-            "file_b64": base64.b64encode(file_bytes).decode("ascii"),
-            "filename": file.filename or "",
-            "content_type": file.content_type or "application/octet-stream",
-        },
+        payload={"filename": filename, "content_type": ctype},
         resource_type="media_upload",
+        result={"url": url},
         actor_id=getattr(admin, "id", None),
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),
@@ -239,23 +269,19 @@ async def upload_image_endpoint(
 @document_response(
     message="Video upload queued",
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload video (queued)",
+    summary="Upload video (streaming)",
 )
 async def upload_video_endpoint(
     request: Request,
     file: UploadFile = File(...),
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> dict:
-    file_bytes = await file.read()
-    return await enqueue_write(
+    url, filename, ctype = await _stream_upload_or_400(file, "video/mp4")
+    return await record_inline_completed_write(
         writer_key="media.upload_video",
-        payload={
-            "file_b64": base64.b64encode(file_bytes).decode("ascii"),
-            "filename": file.filename or "",
-            "content_type": file.content_type or "video/mp4",
-            "request_base_url": str(request.base_url).rstrip("/"),
-        },
+        payload={"filename": filename, "content_type": ctype},
         resource_type="media_upload",
+        result={"url": url},
         actor_id=getattr(admin, "id", None),
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),
@@ -484,11 +510,13 @@ async def delete_media_endpoint(
     message="Media append queued",
     status_code=status.HTTP_202_ACCEPTED,
     description=(
-        "Upload an image or video, then append a BlockNote media block "
-        "to the blog's ``currentPageBody``. Returns ``202 + job_id``; "
-        "poll ``/v1/jobs/{job_id}`` for the appended URL."
+        "Upload an image or video and append a BlockNote media block to the "
+        "blog's ``currentPageBody``. The file streams to R2 directly from the "
+        "route; the blog update runs inline. Returns ``202 + job_id`` matching "
+        "the queued-write contract — the job row is in ``succeeded`` state on "
+        "first poll."
     ),
-    summary="Append media block to blog (queued)",
+    summary="Append media block to blog (streaming)",
 )
 async def append_media_to_blog(
     request: Request,
@@ -498,19 +526,58 @@ async def append_media_to_blog(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> dict:
     if not ObjectId.is_valid(blog_id):
+        await file.close()
         raise HTTPException(status_code=400, detail="Invalid blog id format")
-    file_bytes = await file.read()
-    return await enqueue_write(
+
+    content_type = (file.content_type or "").lower()
+    image_types = {"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp"}
+    video_types = {
+        "video/mp4",
+        "video/quicktime",
+        "video/x-msvideo",
+        "video/x-matroska",
+        "video/webm",
+    }
+    media_type: Literal["image", "video"]
+    if content_type in image_types:
+        media_type = "image"
+    elif content_type in video_types:
+        media_type = "video"
+    else:
+        await file.close()
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported file type: {content_type}"
+        )
+
+    filename = file.filename or ""
+    try:
+        url = await upload_media_stream(file.file, filename, content_type)
+    finally:
+        await file.close()
+
+    from blog.repositories.blog_repo import update_blog as update_blog_repo
+    from blog.schemas.blog_schema import BlogUpdate
+    from blog.services.blog_service import retrieve_blog_by_blog_id
+    from blog.services.image_host import generate_media_json
+
+    blog = await retrieve_blog_by_blog_id(blog_id)
+    block = generate_media_json(file_url=url, caption=caption, media_type=media_type)
+    new_body = list(blog.currentPageBody or [])
+    new_body.append(block)
+    await update_blog_repo(
+        {"_id": ObjectId(blog_id)}, BlogUpdate(currentPageBody=new_body)
+    )
+
+    return await record_inline_completed_write(
         writer_key="media.append_to_blog",
         payload={
-            "file_b64": base64.b64encode(file_bytes).decode("ascii"),
-            "filename": file.filename or "",
-            "content_type": (file.content_type or "").lower(),
+            "filename": filename,
+            "content_type": content_type,
             "caption": caption,
-            "request_base_url": str(request.base_url).rstrip("/"),
         },
         resource_type="blog",
         resource_id=blog_id,
+        result={"id": blog_id, "url": url, "appended": True, "block": block},
         actor_id=getattr(admin, "id", None),
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),

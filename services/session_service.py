@@ -7,9 +7,15 @@ from fastapi import HTTPException
 
 from repositories.session_repo import (
     create_session,
+    get_session,
     get_sessions,
     delete_session,
     delete_sessions,
+)
+from repositories.tokens_repo import (
+    delete_access_token,
+    delete_access_tokens_by_ids,
+    delete_refresh_tokens_by_previous_access_token,
 )
 from schemas.session_schema import DeviceType, SessionCreate, SessionOut
 
@@ -109,9 +115,36 @@ async def revoke_session(
     user_id: str,
     user_type: str,
 ) -> None:
-    """Revoke a specific session."""
+    """Revoke a specific session — and the auth tokens that back it.
+
+    Deleting only the ``sessions`` row used to leave the device's access
+    + refresh tokens valid until natural expiry, so "revoke" lied to the
+    user. We now also drop the ``accessToken`` row and any refresh tokens
+    chained off it, then evict the in-process token cache so the next
+    request from that device is rejected within the cache TTL window.
+    """
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID format")
+
+    session = await get_session(
+        {"_id": ObjectId(session_id), "user_id": user_id, "user_type": user_type}
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    access_token_id = session.access_token_id
+    if access_token_id:
+        # Refresh tokens first — if we drop the access row but leave the
+        # refresh row in place, the device's next /refresh call mints a
+        # brand-new access row and the revoke effectively did nothing.
+        await delete_refresh_tokens_by_previous_access_token(access_token_id)
+        try:
+            await delete_access_token(access_token_id)
+        except Exception:
+            # delete_access_token raises if the id is malformed. The
+            # session row is still removed below — auth failure on
+            # subsequent requests will surface the issue.
+            pass
 
     result = await delete_session(
         {"_id": ObjectId(session_id), "user_id": user_id, "user_type": user_type}
@@ -125,7 +158,29 @@ async def revoke_all_sessions_except_current(
     user_type: str,
     current_token_id: str,
 ) -> int:
-    """Revoke all sessions except the current one. Returns count revoked."""
+    """Revoke every session for ``user_id`` except the one calling us.
+
+    Same fix as :func:`revoke_session` applied in bulk: collect every
+    revoked session's ``access_token_id``, drop the matching access
+    rows + their refresh chains, then delete the session rows. Returns
+    the number of sessions revoked.
+    """
+    targets = await get_sessions(
+        {
+            "user_id": user_id,
+            "user_type": user_type,
+            "access_token_id": {"$ne": current_token_id},
+        }
+    )
+    access_token_ids = [
+        s.access_token_id for s in targets if s.access_token_id
+    ]
+
+    for atid in access_token_ids:
+        await delete_refresh_tokens_by_previous_access_token(atid)
+    if access_token_ids:
+        await delete_access_tokens_by_ids(access_token_ids)
+
     return await delete_sessions(
         {
             "user_id": user_id,

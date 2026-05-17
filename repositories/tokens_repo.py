@@ -88,6 +88,47 @@ async def delete_refresh_token(refreshToken: str):
         return True
 
 
+async def delete_refresh_tokens_by_previous_access_token(
+    access_token_id: str,
+) -> int:
+    """Drop every refresh token rooted at ``access_token_id``.
+
+    Refresh rows are linked back to the access row that issued them via
+    ``previousAccessToken``. Without this call, a session "revoke" would
+    leave the device's refresh token in place — the next refresh would
+    mint a brand-new access row and the user would silently stay signed
+    in past the cache TTL. Returns the number of refresh rows deleted.
+    """
+    if not access_token_id:
+        return 0
+    result = await db.refreshToken.delete_many(
+        {"previousAccessToken": access_token_id}
+    )
+    return int(getattr(result, "deleted_count", 0) or 0)
+
+
+async def delete_access_tokens_by_ids(access_token_ids: list[str]) -> int:
+    """Bulk-delete access tokens by id and drop them from the in-process cache.
+
+    Used by the multi-session revoke flow ("log out of all other
+    devices"). Returns the number of rows actually deleted.
+    """
+    object_ids: list[ObjectId] = []
+    for tid in access_token_ids:
+        if not tid:
+            continue
+        try:
+            object_ids.append(ObjectId(tid))
+        except errors.InvalidId:
+            continue
+    if not object_ids:
+        return 0
+    result = await db.accessToken.delete_many({"_id": {"$in": object_ids}})
+    for oid in object_ids:
+        token_cache.invalidate_by_token_id(str(oid))
+    return int(getattr(result, "deleted_count", 0) or 0)
+
+
 def is_older_than_days(date_value, days=10):
     """
     Accepts either an ISO-8601 string or a UNIX timestamp (int/float).

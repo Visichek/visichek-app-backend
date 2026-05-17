@@ -10,7 +10,7 @@ routes and precompute loaders directly — no queue round-trip.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import BinaryIO, List, Optional
 
 from bson import ObjectId
 from fastapi import HTTPException
@@ -28,7 +28,7 @@ from blog.schemas.media_schema import (
     MediaOut,
     MediaUpdate,
 )
-from blog.services.r2_upload import upload_media_bytes
+from blog.services.r2_upload import upload_media_bytes, upload_media_stream
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +85,31 @@ async def add_media_from_bytes(
         )
 
     url = await upload_media_bytes(file_bytes, filename, content_type)
+    media_data = MediaCreate(**media_dict, url=url, name=filename)
+    return await create_media(media_data, preassigned_id=preassigned_id)
+
+
+async def add_media_from_stream(
+    media_dict: dict,
+    fileobj: BinaryIO,
+    filename: str,
+    content_type: str,
+    *,
+    preassigned_id: Optional[str] = None,
+) -> MediaOut:
+    """Streaming variant of :func:`add_media_from_bytes`.
+
+    Used by the route handlers so an inbound video / large image never
+    materialises in process memory. Streams the body to R2 (or local
+    disk) via :func:`upload_media_stream`, then inserts the media row.
+    """
+    media = MediaBase(**media_dict)
+    if media.mediaType not in ("image", "video"):  # pragma: no cover
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported mediaType: {media.mediaType}"
+        )
+
+    url = await upload_media_stream(fileobj, filename, content_type)
     media_data = MediaCreate(**media_dict, url=url, name=filename)
     return await create_media(media_data, preassigned_id=preassigned_id)
 

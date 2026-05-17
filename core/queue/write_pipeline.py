@@ -383,3 +383,82 @@ async def enqueue_write(
         "job_id": job_result.task_id,
         "status": "queued",
     }
+
+
+async def record_inline_completed_write(
+    *,
+    writer_key: str,
+    payload: dict[str, Any],
+    resource_type: str,
+    result: dict[str, Any],
+    resource_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    actor_role: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> dict[str, str]:
+    """Record a write that has ALREADY completed inline on the request thread.
+
+    Same response shape as :func:`enqueue_write` (``{ id, job_id, status }``)
+    so callers can swap one for the other without changing their HTTP
+    contract. The difference is:
+
+    * No celery task is enqueued — the work was done synchronously by
+      the caller.
+    * The ``queue_job_log`` row is written with
+      ``status=QueueJobStatus.SUCCEEDED`` and the ``result`` populated.
+      The first poll of ``GET /v1/jobs/{job_id}`` resolves immediately.
+    * Cache invalidation cascades fire exactly as in ``enqueue_write``
+      so reads stay consistent.
+
+    Used by routes that need to do heavy I/O (e.g. streaming a video
+    upload to R2) that would crash if shuffled through the celery
+    broker as a base64-encoded JSON payload, while keeping the
+    queued-write API contract the frontend expects.
+    """
+    if not resource_id:
+        resource_id = str(ObjectId())
+
+    _invalidate_caches_for_writer(
+        writer_key=writer_key,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+    )
+    invalidate_entity(resource_type, resource_id)
+    for public_type in _TENANT_ENTITY_INVALIDATIONS.get(writer_key, ()):
+        if tenant_id:
+            invalidate_entity(public_type, tenant_id)
+        if public_type == "checkin_config":
+            invalidate_entity("checkin_config", resource_id)
+
+    task_id = str(uuid4())
+    try:
+        await insert_job_log(
+            QueueJobLogCreate(
+                task_id=task_id,
+                task_key=f"db.write:{writer_key}",
+                resource_type=resource_type,
+                resource_id=resource_id,
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                request_id=request_id,
+                status=QueueJobStatus.SUCCEEDED,
+                payload_redacted=_redact(payload),
+                result=result,
+            )
+        )
+    except Exception:
+        logger.exception(
+            "Failed to persist inline-completed queue_job_log "
+            "for task_id=%s writer=%s",
+            task_id,
+            writer_key,
+        )
+
+    return {
+        "id": resource_id,
+        "job_id": task_id,
+        "status": "queued",
+    }
