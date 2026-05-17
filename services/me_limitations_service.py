@@ -98,6 +98,22 @@ _ENDPOINT_TO_FEATURE_KEY: Dict[str, str] = {
 }
 
 
+# Feature keys that do NOT map to a single endpoint pattern — they
+# gate sub-sections of shared endpoints (e.g. fields inside
+# ``PATCH /v1/tenants/{id}/settings``). Listed here per tier so the
+# frontend can hide / lock the matching UI controls. The server-side
+# enforcement lives in the writer for each shared endpoint (see
+# ``services/tenant_settings_writer.py`` for the matching field-strip
+# logic that backs these keys).
+_EXTRA_FEATURE_KEYS_BY_TIER: Dict[str, tuple[str, ...]] = {
+    "free": (
+        "email_preferences",
+        "visitor_policies",
+        "geofencing",
+    ),
+}
+
+
 async def _list_locked_branch_ids(tenant_id: str) -> List[str]:
     """Branches the plan's ``max_branches`` cap excludes.
 
@@ -276,6 +292,14 @@ async def build_me_limitations(
 
     denied_endpoints = _denied_endpoints_from_plan(plan_data)
     denied_features = _denied_feature_keys(denied_endpoints)
+    # Tier-level extras: feature keys that gate sub-sections of shared
+    # endpoints (not whole endpoints). The matching server-side
+    # enforcement lives in each shared endpoint's writer.
+    tier_extras = _EXTRA_FEATURE_KEYS_BY_TIER.get(
+        str(plan_data.get("tier") or "").lower(), ()
+    )
+    if tier_extras:
+        denied_features = sorted(set(denied_features) | set(tier_extras))
 
     caps_raw = plan_data.get("tenant_caps") or {}
     # camelCase the cap keys so the FE doesn't have to convert
