@@ -40,6 +40,22 @@ async def update_session_activity(session_id: str) -> None:
     )
 
 
+async def touch_session_by_token(access_token_id: str) -> None:
+    """Bump ``last_active_at`` for the session matching this access token.
+
+    Called from the auth hot path so the sessions list reflects the real
+    "last active" time without a separate heartbeat endpoint. Silently
+    no-ops when no session row matches (e.g. tokens issued before the
+    session-recording fix landed).
+    """
+    import time
+
+    await db[COLLECTION].update_one(
+        {"access_token_id": access_token_id},
+        {"$set": {"last_active_at": int(time.time())}},
+    )
+
+
 async def delete_session(filter_dict: dict):
     return await db[COLLECTION].delete_one(filter_dict)
 

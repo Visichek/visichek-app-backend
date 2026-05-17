@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from core.email.types import MountedTemplate
+from email_templates import admin_invite as _admin_invite
+from email_templates import admin_otp_code as _admin_otp_code
 from email_templates import notification_templates as _notification_templates
 from email_templates import notification_test as _notification_test
+from email_templates import password_reset as _password_reset
 from email_templates import starter_template as _starter
 from email_templates import visitor_badge_approved as _visitor_badge_approved
 from email_templates import support_case_acknowledged_tenant as _sc_ack_tenant
@@ -35,6 +38,11 @@ def get_mounted_templates() -> list[MountedTemplate]:
         _mount(_starter),
         # Diagnostics (Issue 6 — POST /v1/notifications/test)
         _mount(_notification_test),
+        # Application-admin lifecycle: invite welcome + per-login OTP.
+        _mount(_admin_invite),
+        _mount(_admin_otp_code),
+        # Self-service password reset (both admin + system_user).
+        _mount(_password_reset),
         # Visitor lifecycle (Issue 7 — badge email on approval)
         _mount(_visitor_badge_approved),
         # Per-event notification fan-out (Issue 6 / Phase B2 —

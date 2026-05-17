@@ -913,3 +913,11 @@ from core.enterprise_apps import include_enterprise_apps
 include_enterprise_apps(app)
 
 apply_response_documentation(app)
+
+# Surface any admin-gated route whose permission key was never backfilled
+# into ``config.role_permissions.ADMIN_PERMISSIONS``. Logs a warning so
+# the next time this gap appears it's visible at boot rather than only
+# when an admin's request 403s in production.
+from security.permissions import assert_admin_permission_coverage
+
+assert_admin_permission_coverage(app)

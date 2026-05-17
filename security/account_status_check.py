@@ -237,6 +237,20 @@ async def check_admin_account_status_and_permissions(
         permission_list is None
         or not getattr(permission_list, "permissions", None)
     )
+
+    # Drift detection — when ADMIN_PERMISSIONS grows (a new admin route
+    # ships and gets backfilled into ``config.role_permissions``), every
+    # existing admin's stored ``permissionList`` is now a stale subset of
+    # what their preset should grant. Re-derive from the preset, persist
+    # it via ``heal_admin_permissions_to_preset``, and use the fresh
+    # list for this request so the call that triggered the heal succeeds.
+    # The preset stays the source of truth — this just keeps materialised
+    # state in sync with it without requiring a manual migration each
+    # time the set of admin routes changes.
+    from config.role_permissions import (
+        get_default_permissions_for_admin_preset,
+    )
+
     if needs_backfill:
         # Defensive backfill — derive the permissions for this request
         # from the stored preset (or all_controls when no preset is
@@ -249,10 +263,6 @@ async def check_admin_account_status_and_permissions(
         #     permissionList column is empty (manual edit, half-done
         #     migration, etc). Re-derive from the stored preset so
         #     we honour the operator's intent.
-        from config.role_permissions import (
-            get_default_permissions_for_admin_preset,
-        )
-
         logger.warning(
             "admin %s has no permissionList stored (access_preset=%s); "
             "computing on the fly from preset for this request",
@@ -260,6 +270,22 @@ async def check_admin_account_status_and_permissions(
             stored_preset,
         )
         permission_list = get_default_permissions_for_admin_preset(stored_preset)
+    else:
+        expected = get_default_permissions_for_admin_preset(stored_preset)
+        stored_keys = {
+            p.key for p in permission_list.permissions if p.key  # type: ignore[union-attr]
+        }
+        expected_keys = {p.key for p in expected.permissions if p.key}
+        if stored_keys != expected_keys:
+            # Drift: stored list is missing keys the preset now grants
+            # (or carries keys the preset no longer grants). Heal in
+            # place — persists and invalidates the gate cache. Failure
+            # is non-fatal; this request continues against ``expected``.
+            from services.admin_service import (
+                heal_admin_permissions_to_preset,
+            )
+
+            permission_list = await heal_admin_permissions_to_preset(admin)
 
     _validate_permission_list(permission_list)
     endpoint_name, request_method, permission_key = _permission_context(request)

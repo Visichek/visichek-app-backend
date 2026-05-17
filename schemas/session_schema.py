@@ -134,3 +134,23 @@ class AccountDeleteRequest(BaseModel):
     """Request account deletion — requires password confirmation."""
 
     password: str
+
+
+# --- Forgot / reset password (unauthenticated) ---
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Public request body for POST /v1/auth/forgot-password."""
+
+    email: EmailStr
+
+
+class ResetPasswordWithTokenRequest(BaseModel):
+    """Public request body for POST /v1/auth/reset-password.
+
+    The ``token`` is the single-use opaque string sent in the password
+    reset email — the server stores only ``sha256(token)``.
+    """
+
+    token: str
+    new_password: str

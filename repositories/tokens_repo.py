@@ -158,6 +158,26 @@ def _mark_user_active_safe(user_id: str | None, tenant_id: str | None) -> None:
         pass
 
 
+def _touch_session_safe(access_token_id: str | None) -> None:
+    """Bump ``last_active_at`` on the session row matching this token.
+
+    Only fires on token-cache misses so the write rate is bounded to
+    once per cache TTL (30s by default) per active session. Failures
+    are silent — session bookkeeping must never break auth.
+    """
+    if not access_token_id:
+        return
+    try:
+        import asyncio
+
+        from repositories.session_repo import touch_session_by_token
+
+        loop = asyncio.get_running_loop()
+        loop.create_task(touch_session_by_token(access_token_id))
+    except Exception:
+        pass
+
+
 async def get_access_token(
     accessToken: str, allow_expired: bool = False
 ) -> accessTokenOut | None:
@@ -193,6 +213,9 @@ async def get_access_token(
         token_cache.put(accessToken, result)
     _mark_tenant_active_safe(result.tenant_id)
     _mark_user_active_safe(result.userId, result.tenant_id)
+    # Bump session activity on cache misses only — the cache TTL caps
+    # write rate to roughly one session-write per 30s per active token.
+    _touch_session_safe(result.accesstoken)
     return result
 
 

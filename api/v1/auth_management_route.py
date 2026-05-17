@@ -10,6 +10,8 @@ from core.response_envelope import document_response
 from schemas.admin_schema import AdminRefresh
 from schemas.session_schema import (
     ChangePasswordRequest,
+    ForgotPasswordRequest,
+    ResetPasswordWithTokenRequest,
     TwoFactorVerifyRequest,
     TwoFactorDisableRequest,
     BackupCodesRegenerateRequest,
@@ -25,6 +27,10 @@ from services.password_change_service import (
     change_system_user_password,
 )
 from services.system_user_service import refresh_system_user_tokens
+from services.forgot_password_service import (
+    request_password_reset,
+    reset_password_with_token,
+)
 from services.two_factor_service import (
     setup_two_factor,
     verify_two_factor_setup,
@@ -111,6 +117,71 @@ async def change_password(
             principal.user_id, data.current_password, data.new_password
         )
     return {"changed": True}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# FORGOT PASSWORD (unauthenticated)
+# ═══════════════════════════════════════════════════════════════════
+
+
+@router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+@document_response(
+    message="If the email matches an account, a reset link has been sent.",
+    status_code=status.HTTP_202_ACCEPTED,
+    success_example={"requested": True},
+    description=(
+        "Unauthenticated. Submit an email address; the server mints a "
+        "single-use reset token and mails the link (HTML template "
+        "``password_reset``) to the address. The response is the SAME "
+        "202 envelope whether or not the email matches a real account — "
+        "this is the standard defence against account enumeration. The "
+        "actual reset is completed by POST /v1/auth/reset-password.\n\n"
+        "Same email can match one admin AND/OR one or more system users "
+        "across different tenants; one email is dispatched per match. "
+        "The env-pinned primary admin is excluded from this flow — that "
+        "account's recovery uses OTP_DEV_CODE + env credentials."
+    ),
+    summary="Request password reset by email",
+)
+async def forgot_password(
+    data: ForgotPasswordRequest,
+    request: Request,
+):
+    """Request a password reset email."""
+    await request_password_reset(email=data.email, request=request)
+    return {"requested": True}
+
+
+@router.post("/reset-password")
+@document_response(
+    message="Password reset successfully",
+    success_example={"reset": True},
+    description=(
+        "Unauthenticated. Submit the token from the password-reset email "
+        "together with the new password. Enforces the same password policy "
+        "and history rules as POST /v1/auth/change-password. Side effects: "
+        "every active access/refresh token for the account is revoked "
+        "(forcing re-login on every device), every other outstanding "
+        "reset token for the account is invalidated, and the gate cache "
+        "snapshot is dropped so the next request reads fresh state."
+    ),
+    summary="Consume reset token + set new password",
+    response_codes={
+        400: "Invalid, used, expired, or malformed token",
+        403: "Forbidden — the env primary admin cannot be reset via this flow",
+        404: "Account not found",
+        422: "Password fails strength / history check",
+    },
+)
+async def reset_password(
+    data: ResetPasswordWithTokenRequest,
+    request: Request,
+):
+    """Consume a reset token and set a new password."""
+    await reset_password_with_token(
+        token=data.token, new_password=data.new_password, request=request
+    )
+    return {"reset": True}
 
 
 # ═══════════════════════════════════════════════════════════════════

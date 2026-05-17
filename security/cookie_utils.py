@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import Request
@@ -8,6 +9,8 @@ from fastapi.responses import JSONResponse, Response
 
 from core.response_envelope import success_payload
 from core.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 ACCESS_TOKEN_COOKIE = "access_token"
 REFRESH_TOKEN_COOKIE = "refresh_token"
@@ -110,6 +113,79 @@ def _scrub_tokens(body: Any) -> Any:
     return body
 
 
+def _resolve_user_from_payload(payload: Any) -> Any:
+    """Return the user-like sub-object from a login payload.
+
+    Most login endpoints return the user object directly. The super-admin
+    global login returns ``{"user": {...}, "tenant": {...}}`` — peel the
+    wrapper so the session recorder can read ``id``/``role`` uniformly.
+    """
+    if isinstance(payload, dict) and isinstance(payload.get("user"), (dict, object)):
+        return payload["user"]
+    return payload
+
+
+def _payload_field(payload: Any, key: str) -> str:
+    if isinstance(payload, dict):
+        value = payload.get(key)
+    else:
+        value = getattr(payload, key, None)
+    return str(value) if value else ""
+
+
+async def _record_session_safe(
+    *,
+    request: Request,
+    payload: Any,
+    access_jwt: str,
+) -> None:
+    """Best-effort session capture on every successful login / refresh.
+
+    Decodes the JWT to recover the access-token DB id (the same value
+    AuthPrincipal stores as ``access_token_id``) and writes a row to
+    the ``sessions`` collection so the Active-Sessions UI has something
+    to render. All exceptions are swallowed — recording is observability,
+    not a security check, and must never break the login response.
+    """
+    try:
+        user = _resolve_user_from_payload(payload)
+        user_id = _payload_field(user, "id") or _payload_field(user, "_id")
+        role = _payload_field(user, "role").lower() or "admin"
+        if not user_id:
+            return
+
+        from security.encrypting_jwt import decode_jwt_token_without_expiration
+
+        decoded = await decode_jwt_token_without_expiration(access_jwt)
+        if not decoded or not decoded.get("accessToken"):
+            return
+        access_token_id = str(decoded["accessToken"])
+
+        # Map role → session.user_type to stay consistent with the
+        # /v1/sessions list endpoint, which filters by user_type.
+        from security.principal import TENANT_USER_ROLES
+
+        user_type = "system_user" if role in TENANT_USER_ROLES else "admin"
+
+        ip_address = request.client.host if request.client else None
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            ip_address = forwarded.split(",")[0].strip() or ip_address
+        user_agent = request.headers.get("user-agent")
+
+        from services.session_service import record_session
+
+        await record_session(
+            user_id=user_id,
+            user_type=user_type,
+            access_token_id=access_token_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+    except Exception:
+        logger.warning("record_session failed for login response", exc_info=True)
+
+
 def build_auth_response(
     *,
     request: Request,
@@ -160,6 +236,27 @@ def build_auth_response(
         resolved_access or "",
         resolved_refresh or "",
     )
+
+    # Fire-and-forget session recording. We do this after the cookies are
+    # set so a failure here can never block the login from succeeding —
+    # the user always gets their tokens, the Active-Sessions table catches
+    # up a moment later.
+    if resolved_access:
+        import asyncio
+
+        try:
+            asyncio.get_running_loop().create_task(
+                _record_session_safe(
+                    request=request,
+                    payload=payload,
+                    access_jwt=resolved_access,
+                )
+            )
+        except RuntimeError:
+            # No running loop — happens in some test contexts. Swallow it;
+            # the response is still well-formed.
+            pass
+
     return response
 
 

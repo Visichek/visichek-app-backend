@@ -139,6 +139,321 @@ ADMIN_PERMISSIONS: list[Permission] = [
         "/v1/usage/tenant/{tenant_id}/summary",
         "View tenant usage summary",
     ),
+    # Admin search + lifecycle
+    _p("search_admins", ["GET"], "/v1/admins/search", "Search application admins"),
+    _p(
+        "update_admin_access_preset",
+        ["PATCH"],
+        "/v1/admins/{admin_id}/access-preset",
+        "Update an admin's access preset",
+    ),
+    _p(
+        "reset_system_user_password",
+        ["POST"],
+        "/v1/admins/system-users/{user_id}/reset-password",
+        "Force-reset a tenant system user password",
+    ),
+    # Tenant lifecycle (admin)
+    _p("admin_create_tenant", ["POST"], "/v1/tenants", "Create a tenant (admin)"),
+    _p("admin_list_tenants", ["GET"], "/v1/tenants", "List tenants (admin)"),
+    _p(
+        "promote_super_admin",
+        ["POST"],
+        "/v1/admins/tenants/{tenant_id}/super-admins",
+        "Promote an existing user to tenant super admin",
+    ),
+    _p(
+        "offboard_tenant",
+        ["POST"],
+        "/v1/admins/tenants/{tenant_id}/offboard",
+        "Offboard a tenant",
+    ),
+    _p(
+        "offboarding_summary",
+        ["GET"],
+        "/v1/admins/tenants/{tenant_id}/offboarding-summary",
+        "View tenant offboarding summary",
+    ),
+    _p(
+        "bulk_offboard_tenants",
+        ["POST"],
+        "/v1/tenants/bulk/offboard",
+        "Bulk offboard tenants",
+    ),
+    # Tenant self-onboarding queue
+    _p(
+        "list_onboarding_submissions",
+        ["GET"],
+        "/v1/tenants/onboarding",
+        "List onboarding submissions",
+    ),
+    _p(
+        "list_marketing_opt_ins",
+        ["GET"],
+        "/v1/tenants/onboarding/marketing-opt-ins",
+        "List marketing opt-in emails",
+    ),
+    _p(
+        "get_onboarding_submission",
+        ["GET"],
+        "/v1/tenants/onboarding/{submission_id}",
+        "View onboarding submission",
+    ),
+    _p(
+        "accept_onboarding_submission",
+        ["POST"],
+        "/v1/tenants/onboarding/{submission_id}/accept",
+        "Accept onboarding submission",
+    ),
+    _p(
+        "partial_accept_onboarding_submission",
+        ["POST"],
+        "/v1/tenants/onboarding/{submission_id}/partial-accept",
+        "Partially accept onboarding submission",
+    ),
+    _p(
+        "reject_onboarding_submission",
+        ["POST"],
+        "/v1/tenants/onboarding/{submission_id}/reject",
+        "Reject onboarding submission",
+    ),
+    _p(
+        "archive_onboarding_submission",
+        ["POST"],
+        "/v1/tenants/onboarding/{submission_id}/archive",
+        "Archive onboarding submission",
+    ),
+    _p(
+        "bulk_archive_onboarding",
+        ["POST"],
+        "/v1/tenants/onboarding/bulk/archive",
+        "Bulk archive onboarding submissions",
+    ),
+    _p(
+        "bulk_reject_onboarding",
+        ["POST"],
+        "/v1/tenants/onboarding/bulk/reject",
+        "Bulk reject onboarding submissions",
+    ),
+    # Admin dashboard (beyond /stats)
+    _p(
+        "dashboard_attention",
+        ["GET"],
+        "/v1/admins/dashboard/attention",
+        "View admin attention queue",
+    ),
+    _p(
+        "dashboard_email_outbox",
+        ["GET"],
+        "/v1/admins/dashboard/email-outbox",
+        "View admin email outbox",
+    ),
+    _p(
+        "dashboard_billing",
+        ["GET"],
+        "/v1/admins/dashboard/billing",
+        "View admin billing dashboard",
+    ),
+    _p(
+        "dashboard_billing_discrepancies",
+        ["GET"],
+        "/v1/admins/dashboard/billing/discrepancies",
+        "View billing discrepancies",
+    ),
+    # Application admin support cases
+    _p(
+        "admin_list_support_cases",
+        ["GET"],
+        "/v1/admins/support-cases",
+        "List all support cases (admin)",
+    ),
+    _p(
+        "admin_support_cases_sla",
+        ["GET"],
+        "/v1/admins/support-cases/approaching-sla",
+        "List SLA-at-risk support cases",
+    ),
+    _p(
+        "admin_get_support_case",
+        ["GET"],
+        "/v1/admins/support-cases/{case_id}",
+        "Retrieve a support case (admin)",
+    ),
+    _p(
+        "admin_list_support_case_messages",
+        ["GET"],
+        "/v1/admins/support-cases/{case_id}/messages",
+        "List messages on a support case (admin)",
+    ),
+    _p(
+        "admin_reply_support_case",
+        ["POST"],
+        "/v1/admins/support-cases/{case_id}/messages",
+        "Reply on a support case (admin)",
+    ),
+    _p(
+        "admin_assign_support_case",
+        ["POST"],
+        "/v1/admins/support-cases/{case_id}/assign",
+        "Assign a support case (admin)",
+    ),
+    _p(
+        "admin_transition_support_case",
+        ["POST"],
+        "/v1/admins/support-cases/{case_id}/transition",
+        "Transition a support case (admin)",
+    ),
+    _p(
+        "admin_support_case_attachment_intent",
+        ["POST"],
+        "/v1/admins/support-cases/{case_id}/attachments/intent",
+        "Create support case attachment intent (admin)",
+    ),
+    _p(
+        "admin_register_support_case_attachment",
+        ["POST"],
+        "/v1/admins/support-cases/{case_id}/attachments",
+        "Register support case attachment (admin)",
+    ),
+    _p(
+        "admin_support_case_bulk_assign",
+        ["POST"],
+        "/v1/admins/support-cases/bulk/assign",
+        "Bulk assign support cases",
+    ),
+    _p(
+        "admin_support_case_bulk_status",
+        ["POST"],
+        "/v1/admins/support-cases/bulk/status",
+        "Bulk transition support cases",
+    ),
+    _p(
+        "admin_support_case_bulk_close",
+        ["POST"],
+        "/v1/admins/support-cases/bulk/close",
+        "Bulk close support cases",
+    ),
+    # Audit logs (admin)
+    _p(
+        "admin_list_audit_logs",
+        ["GET"],
+        "/v1/audit-logs/admin",
+        "List platform audit log",
+    ),
+    _p(
+        "admin_export_audit_logs",
+        ["GET"],
+        "/v1/audit-logs/admin/export",
+        "Export platform audit log",
+    ),
+    # Invoices (admin)
+    _p(
+        "admin_list_invoices",
+        ["GET"],
+        "/v1/invoices/admin",
+        "List all invoices (admin)",
+    ),
+    _p(
+        "admin_invoice_bulk_download",
+        ["POST"],
+        "/v1/invoices/bulk/download",
+        "Bulk-download invoices",
+    ),
+    _p(
+        "admin_invoice_bulk_void",
+        ["POST"],
+        "/v1/invoices/bulk/void",
+        "Bulk-void invoices",
+    ),
+    # Payment webhooks (admin)
+    _p(
+        "admin_list_webhook_events",
+        ["GET"],
+        "/v1/payments/webhooks/events",
+        "List webhook events",
+    ),
+    _p(
+        "admin_replay_webhook_event",
+        ["POST"],
+        "/v1/payments/webhooks/replay/{event_id}",
+        "Replay a webhook event",
+    ),
+    # Plans (bulk + feature toggles)
+    _p(
+        "bulk_activate_plans",
+        ["POST"],
+        "/v1/plans/bulk/activate",
+        "Bulk activate plans",
+    ),
+    _p(
+        "bulk_archive_plans",
+        ["POST"],
+        "/v1/plans/bulk/archive",
+        "Bulk archive plans",
+    ),
+    _p(
+        "bulk_delete_plans",
+        ["POST"],
+        "/v1/plans/bulk/delete",
+        "Bulk delete plans",
+    ),
+    _p(
+        "set_plan_feature",
+        ["POST"],
+        "/v1/plans/{plan_id}/features/{feature_key}",
+        "Toggle plan feature",
+    ),
+    # Subscriptions (bulk)
+    _p(
+        "bulk_cancel_subscriptions",
+        ["POST"],
+        "/v1/subscriptions/bulk/cancel",
+        "Bulk cancel subscriptions",
+    ),
+    # Discounts (bulk)
+    _p(
+        "bulk_disable_discounts",
+        ["POST"],
+        "/v1/discounts/bulk/disable",
+        "Bulk disable discounts",
+    ),
+    _p(
+        "bulk_delete_discounts",
+        ["POST"],
+        "/v1/discounts/bulk/delete",
+        "Bulk delete discounts",
+    ),
+    # Platform settings (singleton + 2FA setup)
+    _p(
+        "get_platform_settings_admin",
+        ["GET"],
+        "/v1/admins/platform-settings",
+        "View platform settings (admin)",
+    ),
+    _p(
+        "update_platform_settings_admin",
+        ["PATCH"],
+        "/v1/admins/platform-settings",
+        "Update platform settings (admin)",
+    ),
+    _p(
+        "get_platform_settings_unified",
+        ["GET"],
+        "/v1/platform-settings",
+        "View platform settings",
+    ),
+    _p(
+        "update_platform_settings_unified",
+        ["PATCH"],
+        "/v1/platform-settings",
+        "Update platform settings",
+    ),
+    _p(
+        "admin_setup_2fa",
+        ["POST"],
+        "/v1/admins/2fa/setup",
+        "Initiate admin 2FA setup",
+    ),
 ]
 
 
@@ -845,11 +1160,19 @@ ADMIN_CONTENT_PERMISSIONS = [
 
 
 # ``support_only`` — triage tenant support cases + view recent
-# activity. Backed by ADMIN_PERMISSIONS for support endpoints if/when
-# they exist; for now this preset only retains the base permissions
-# plus future ``/v1/support-cases`` write entries the support team
-# will need.
-ADMIN_SUPPORT_PERMISSIONS: list[Permission] = list(_ADMIN_BASE_KEEP)
+# activity. Pulls in every ``/v1/admins/support-cases`` permission
+# (read, reply, assign, transition, attachments, bulk) plus the
+# operational dashboard views support teams rely on (attention queue,
+# email outbox). Onboarding triage is included so support can accept
+# or reject incoming tenant signups during off-hours coverage.
+ADMIN_SUPPORT_PERMISSIONS: list[Permission] = list(_ADMIN_BASE_KEEP) + _admin_perms_by_path_prefix(
+    (
+        "/v1/admins/support-cases",
+        "/v1/admins/dashboard/attention",
+        "/v1/admins/dashboard/email-outbox",
+        "/v1/tenants/onboarding",
+    )
+)
 
 
 # ``content_support`` — both editorial + support workflows.
@@ -858,14 +1181,18 @@ ADMIN_CONTENT_SUPPORT_PERMISSIONS: list[Permission] = list(
 )
 
 
-# ``billing_only`` — plans, subscriptions, discounts, usage. The full
-# write set on those resources, but no tenants/content/support.
+# ``billing_only`` — plans, subscriptions, discounts, usage, invoices,
+# payment webhooks, and the billing dashboard. The full write set on
+# those resources, but no tenants/content/support.
 ADMIN_BILLING_PERMISSIONS: list[Permission] = list(_ADMIN_BASE_KEEP) + _admin_perms_by_path_prefix(
     (
         "/v1/plans",
         "/v1/subscriptions",
         "/v1/discounts",
         "/v1/usage",
+        "/v1/invoices",
+        "/v1/payments/webhooks",
+        "/v1/admins/dashboard/billing",
     )
 )
 

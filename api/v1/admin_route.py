@@ -31,6 +31,7 @@ from services.admin_service import (
     remove_admin,
     retrieve_admins,
     search_admins_by_query,
+    update_admin_access_preset,
     verify_admin_otp,
 )
 from services.tenant_service import bootstrap_tenant
@@ -202,6 +203,45 @@ async def get_my_admin(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ):
     return admin
+
+
+class AccessPresetUpdateRequest(BaseModel):
+    """Re-scope an existing admin to a different access preset."""
+
+    access_preset: str
+
+
+@router.patch("/{admin_id}/access-preset")
+@document_response(
+    message="Admin access preset updated",
+    description=(
+        "Re-scope an existing application admin to a different access preset. "
+        "The preset must be one of: ``content_only``, ``support_only``, "
+        "``content_support``, ``billing_only``, ``all_controls``. The new "
+        "permission slice is derived from "
+        "``config.role_permissions.ADMIN_ACCESS_PRESETS`` and is enforced on "
+        "the admin's next request — no logout required.\n\n"
+        "The env-pinned primary admin (id ``656f7ac12b9d4f6c9e2b9f7d`` or matching "
+        "``SUPER_ADMIN_EMAIL``) is locked at ``all_controls`` and cannot be "
+        "downgraded."
+    ),
+    summary="Update an admin's access preset",
+    response_codes={
+        400: "Bad request — invalid admin id or unknown preset",
+        401: "Unauthorized",
+        403: "Forbidden — caller lacks permission, or target is the primary admin",
+        404: "Admin not found",
+    },
+)
+async def update_admin_access_preset_endpoint(
+    admin_id: str,
+    payload: AccessPresetUpdateRequest,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    """Re-scope an existing admin's preset (modular per-feature access)."""
+    return await update_admin_access_preset(
+        admin_id=admin_id, new_preset=payload.access_preset
+    )
 
 
 @router.post("/signup")
