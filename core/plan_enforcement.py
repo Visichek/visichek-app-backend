@@ -214,19 +214,36 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
             # No tenant association — can't enforce, let it through
             return await call_next(request)
 
-        # Resolve the tenant's plan (cached). Every tenant should have at
-        # least a Free-plan subscription (see services.plan_bootstrap).
-        # If we still find nothing here, lazily provision Free instead
-        # of breaking the request — this protects new tenants whose
-        # bootstrap auto-subscribe failed and migrated tenants the
-        # backfill missed.
+        # Classify the tenant's subscription via the watchdog. On a
+        # Redis "healthy" cache hit this is one round-trip; on a miss
+        # the watchdog runs the full DB check, immediately provisions
+        # the Free plan for tenants with no subscription, and enqueues
+        # near-expiry / past-expiry tenants onto the background drain.
+        # See services/subscription_watchdog_service.py for the full
+        # state machine.
         from services.plan_cache_service import resolve_tenant_plan
+        from services.subscription_watchdog_service import (
+            evaluate_tenant_subscription,
+        )
+
+        try:
+            await evaluate_tenant_subscription(tenant_id)
+        except Exception:
+            logger.exception(
+                "subscription_watchdog: evaluate failed tenant_id=%s",
+                tenant_id,
+            )
 
         plan_data = await resolve_tenant_plan(tenant_id)
         if not plan_data:
+            # Watchdog should have provisioned Free synchronously when
+            # the subscription was missing. If we still see no plan
+            # here something failed deeper (Free plan row missing from
+            # bootstrap, plan cache write failure, etc.) — fall back
+            # to the explicit lazy provision so the request can proceed.
             request_id = getattr(request.state, "request_id", None)
             logger.info(
-                "plan_enforcement: lazy free-plan provision tenant_id=%s path=%s",
+                "plan_enforcement: lazy free-plan provision (watchdog miss) tenant_id=%s path=%s",
                 tenant_id,
                 path,
             )

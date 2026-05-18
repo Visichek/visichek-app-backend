@@ -1,12 +1,16 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
-from core.errors import AppException, ErrorCode
+from core.errors import AppException, ErrorCode, resource_not_found
 from core.response_envelope import document_response
+from repositories.checkin_config_repo import get_checkin_config
 from schemas.checkin_schema import CheckinOut, CheckinPurpose
 from schemas.imports import IDType
+from security.auth import verify_optional_kiosk_token
+from security.principal import AuthPrincipal
+from services.checkin_config_service import enforce_kiosk_submit_access
 from services.checkin_service import submit_verified_checkin
 
 router = APIRouter(prefix="/checkin-configs", tags=["Check-In Submit"])
@@ -99,7 +103,23 @@ async def submit_checkin_endpoint(
             "rather than silently downgrading to an unscoped check-in."
         ),
     ),
+    principal: Optional[AuthPrincipal] = Depends(verify_optional_kiosk_token),
 ) -> CheckinOut:
+    # Plan gate: on Free / Starter the kiosk submit endpoint requires a
+    # system user with visitor permissions. Resolve the config first so
+    # we know which tenant the plan check applies to (the path key is
+    # checkin_config_id, not tenant_id).
+    config = await get_checkin_config(
+        {"_id": checkin_config_id, "active": True}
+    )
+    if not config:
+        raise resource_not_found(
+            resource="CheckinConfig", resource_id=checkin_config_id
+        )
+    await enforce_kiosk_submit_access(
+        tenant_id=config.tenant_id, principal=principal
+    )
+
     bio_dict = _parse_json_dict(bio_data, "bio_data")
     tsd_dict = _parse_json_dict(tenant_specific_data, "tenant_specific_data")
     purpose_dict = _parse_json_dict(purpose, "purpose")

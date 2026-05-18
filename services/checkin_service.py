@@ -421,10 +421,18 @@ async def submit_verified_checkin(
         registration_token=registration_token,
     )
 
+    # Merge tenant form fields into the config's required-field set so
+    # super_admins can drive the kiosk via the form builder without
+    # touching the legacy CheckinConfig row.
+    from services.checkin_config_service import resolve_required_fields_for_tenant
+
+    merged_fields, _form = await resolve_required_fields_for_tenant(config.tenant_id)
+    merged_required_keys = {f.key for f in merged_fields if f.required}
+
     checkin = await _submit_verified_checkin_core(
         tenant_id=config.tenant_id,
         checkin_config_id=checkin_config_id,
-        required_field_keys={f.key for f in config.required_fields},
+        required_field_keys=merged_required_keys,
         email=email,
         phone=phone,
         bio_data=bio_data,
@@ -508,7 +516,9 @@ async def submit_returning_visitor_checkin_by_id(
     from repositories.tenant_repo import get_tenant
     from repositories.visitor_repo import get_visitor
     from schemas.imports import CheckinFieldCategory
-    from services.checkin_config_service import DEFAULT_REQUIRED_FIELDS
+    from services.checkin_config_service import (
+        resolve_required_fields_for_tenant,
+    )
 
     if not ObjectId.is_valid(tenant_id):
         raise resource_not_found(resource="Tenant", resource_id=tenant_id)
@@ -530,12 +540,8 @@ async def submit_returning_visitor_checkin_by_id(
     )
 
     config = await get_active_checkin_config_for_tenant(tenant_id)
-    if config is not None:
-        checkin_config_id = config.id or ""
-        required_fields = list(config.required_fields)
-    else:
-        checkin_config_id = ""
-        required_fields = list(DEFAULT_REQUIRED_FIELDS)
+    checkin_config_id = config.id or "" if config else ""
+    required_fields, _form = await resolve_required_fields_for_tenant(tenant_id)
 
     # Only TENANT_SPECIFIC required fields must be re-sent on every visit.
     # BIO fields are already on the visitor record.
@@ -646,7 +652,9 @@ async def submit_verified_checkin_for_tenant(
     from repositories.checkin_config_repo import (
         get_active_checkin_config_for_tenant,
     )
-    from services.checkin_config_service import DEFAULT_REQUIRED_FIELDS
+    from services.checkin_config_service import (
+        resolve_required_fields_for_tenant,
+    )
 
     if not ObjectId.is_valid(tenant_id):
         raise resource_not_found(resource="Tenant", resource_id=tenant_id)
@@ -655,12 +663,9 @@ async def submit_verified_checkin_for_tenant(
         raise resource_not_found(resource="Tenant", resource_id=tenant_id)
 
     config = await get_active_checkin_config_for_tenant(tenant_id)
-    if config is not None:
-        checkin_config_id = config.id or ""
-        required_field_keys = {f.key for f in config.required_fields}
-    else:
-        checkin_config_id = ""
-        required_field_keys = {f.key for f in DEFAULT_REQUIRED_FIELDS}
+    checkin_config_id = config.id or "" if config else ""
+    merged_fields, _form = await resolve_required_fields_for_tenant(tenant_id)
+    required_field_keys = {f.key for f in merged_fields if f.required}
 
     return await _submit_verified_checkin_core(
         tenant_id=tenant_id,
@@ -1016,10 +1021,15 @@ async def submit_checkin(
     tenant_id = config.tenant_id
 
     # Validate required fields. Email is system-optional in v2 — see
-    # ``_submit_verified_checkin_core`` for the full rationale.
+    # ``_submit_verified_checkin_core`` for the full rationale. The set
+    # is merged with the active tenant_form (target=checkin) so the
+    # form builder is the canonical source of truth.
+    from services.checkin_config_service import resolve_required_fields_for_tenant
+
+    merged_fields, _form = await resolve_required_fields_for_tenant(tenant_id)
     bio_data_keys = set(req.bio_data.keys())
     tenant_specific_keys = set(req.tenant_specific_data.keys())
-    required_field_keys = {f.key for f in config.required_fields} - {"email"}
+    required_field_keys = {f.key for f in merged_fields if f.required} - {"email"}
 
     available_keys = bio_data_keys | tenant_specific_keys
     missing_fields = required_field_keys - available_keys

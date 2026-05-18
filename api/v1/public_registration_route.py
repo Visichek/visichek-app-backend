@@ -1,7 +1,7 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
 from core.errors import AppException, ErrorCode
 from core.queue.entity_cache import get_or_compute_entity
@@ -15,7 +15,12 @@ from schemas.public_registration_schema import (
     PublicReturningVisitorSubmitRequest,
     PublicVisitorStatusRequest,
 )
-from services.checkin_config_service import resolve_public_config_by_tenant
+from security.auth import verify_optional_kiosk_token
+from security.principal import AuthPrincipal
+from services.checkin_config_service import (
+    enforce_kiosk_submit_access,
+    resolve_public_config_by_tenant,
+)
 from services.checkin_service import (
     submit_returning_visitor_checkin_by_id,
     submit_verified_checkin_for_tenant,
@@ -55,7 +60,12 @@ router = APIRouter(prefix="/public", tags=["Public Registration"])
         422: "Validation error",
     },
 )
-async def public_register_endpoint(tenant_id: str, request: PublicRegistrationRequest):
+async def public_register_endpoint(
+    tenant_id: str,
+    request: PublicRegistrationRequest,
+    principal: Optional[AuthPrincipal] = Depends(verify_optional_kiosk_token),
+):
+    await enforce_kiosk_submit_access(tenant_id=tenant_id, principal=principal)
     return await register_visitor_public(tenant_id=tenant_id, request=request)
 
 
@@ -124,7 +134,24 @@ async def get_privacy_notice_public_endpoint(tenant_id: str):
     },
     response_codes={400: "Invalid or expired QR token", 404: "Session not found"},
 )
-async def public_checkout_endpoint(badge_qr_token: str):
+async def public_checkout_endpoint(
+    badge_qr_token: str,
+    principal: Optional[AuthPrincipal] = Depends(verify_optional_kiosk_token),
+):
+    # Plan gate: on Free / Starter the kiosk self-checkout requires a
+    # system user with visitor permissions. We need the tenant_id
+    # before we can check the plan, so resolve the badge first.
+    from services.qr_service import verify_badge_token
+    from bson import ObjectId
+    from repositories.visit_session_repo import get_visit_session
+
+    session_id = verify_badge_token(badge_qr_token)
+    if session_id and ObjectId.is_valid(session_id):
+        session = await get_visit_session({"_id": ObjectId(session_id)})
+        if session is not None:
+            await enforce_kiosk_submit_access(
+                tenant_id=session.tenant_id, principal=principal
+            )
     return await checkout_visitor_public(badge_qr_token=badge_qr_token)
 
 
@@ -204,7 +231,9 @@ async def submit_checkin_for_tenant_endpoint(
             "result (subject to plan + tenant settings allowing KYC)."
         ),
     ),
+    principal: Optional[AuthPrincipal] = Depends(verify_optional_kiosk_token),
 ) -> CheckinOut:
+    await enforce_kiosk_submit_access(tenant_id=tenant_id, principal=principal)
     bio_dict = _parse_json_dict(bio_data, "bio_data")
     tsd_dict = _parse_json_dict(tenant_specific_data, "tenant_specific_data")
     purpose_dict = _parse_json_dict(purpose, "purpose")
@@ -383,7 +412,9 @@ async def public_ocr_scan_endpoint(tenant_id: str, file: UploadFile = File(...))
 async def submit_checkin_for_returning_visitor_endpoint(
     tenant_id: str,
     request: PublicReturningVisitorSubmitRequest,
+    principal: Optional[AuthPrincipal] = Depends(verify_optional_kiosk_token),
 ) -> CheckinOut:
+    await enforce_kiosk_submit_access(tenant_id=tenant_id, principal=principal)
     return await submit_returning_visitor_checkin_by_id(
         tenant_id=tenant_id,
         visitor_id=request.visitor_id,

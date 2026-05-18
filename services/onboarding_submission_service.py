@@ -475,6 +475,7 @@ async def _accept_internal(
 ) -> OnboardingAcceptOut:
     from repositories.system_user_repo import get_system_user
     from schemas.system_user_schema import SystemUserCreate
+    from security.password_policy import generate_secure_temp_password
     from services.system_user_service import add_system_user
     from services.tenant_service import add_tenant
 
@@ -508,6 +509,17 @@ async def _accept_internal(
             message="Missing fields required to provision the tenant",
             details={"missing": missing},
         )
+
+    # Auto-generate a policy-compliant temporary password when the admin
+    # did not supply one. We keep the raw value so the welcome email can
+    # carry it to the super_admin — the email is the only channel that
+    # ever sees the cleartext password. When we generate the password
+    # ourselves we set ``must_change_password=True`` on the new
+    # super_admin row so the gate dep refuses every endpoint except
+    # ``POST /v1/auth/change-password`` until the user picks their own
+    # password. Admin-supplied passwords are treated as already chosen.
+    password_was_generated = not payload.admin_password
+    admin_password = payload.admin_password or generate_secure_temp_password()
 
     pending_field_labels: Dict[str, str] = {}
     if pending_field_keys:
@@ -555,7 +567,9 @@ async def _accept_internal(
                 email=admin_email,
                 role=SystemUserRole.SUPER_ADMIN,
                 account_status=AccountStatus.ACTIVE,
-                password_hash=payload.admin_password,
+                password_hash=admin_password,
+                is_main_super_admin=True,
+                must_change_password=password_was_generated,
             )
         )
     except Exception:
@@ -601,6 +615,8 @@ async def _accept_internal(
         updated,
         template_key=email_template,
         review_notes=payload.review_notes,
+        admin_email=admin_email,
+        temp_password=admin_password,
     )
 
     return OnboardingAcceptOut(
@@ -654,18 +670,32 @@ async def _queue_status_email(
     *,
     template_key: str,
     review_notes: Optional[str] = None,
+    admin_email: Optional[str] = None,
+    temp_password: Optional[str] = None,
 ) -> None:
     """Queue a templated status email — silent on failure.
 
     The template files live alongside other email templates; if they're not
     yet mounted the EmailManager logs and drops the message rather than
     blocking onboarding state changes.
+
+    ``admin_email`` / ``temp_password`` are populated by the accept paths so
+    the welcome email can carry sign-in credentials. They are NOT persisted
+    anywhere — the only place a cleartext password ever appears is the
+    rendered email payload that goes out to the new super_admin.
     """
     if not submission.email:
         return
     try:
         from core.email.manager import EmailManager
         from core.email.types import EmailDispatchRequest
+        from core.settings import get_settings
+
+        settings = get_settings()
+        platform_name = settings.email_sender_name or "VisiChek"
+        login_url = (settings.app_base_url or "").rstrip("/")
+        if login_url:
+            login_url = f"{login_url}/login"
 
         context: Dict[str, Any] = {
             "full_name": submission.full_name or "",
@@ -674,6 +704,10 @@ async def _queue_status_email(
             "pending_field_keys": list(submission.pending_field_keys),
             "pending_field_labels": dict(submission.pending_field_labels),
             "tenant_id": submission.tenant_id or "",
+            "platform_name": platform_name,
+            "login_url": login_url,
+            "admin_email": admin_email or submission.email or "",
+            "temp_password": temp_password or "",
         }
         await EmailManager.get_instance().send_template(
             EmailDispatchRequest(

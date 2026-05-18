@@ -163,6 +163,12 @@ ADMIN_PERMISSIONS: list[Permission] = [
         "Promote an existing user to tenant super admin",
     ),
     _p(
+        "replace_super_admin",
+        ["POST"],
+        "/v1/admins/tenants/{tenant_id}/super-admins/replace",
+        "Replace tenant's lone super admin with a new one",
+    ),
+    _p(
         "offboard_tenant",
         ["POST"],
         "/v1/admins/tenants/{tenant_id}/offboard",

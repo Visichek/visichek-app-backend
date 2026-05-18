@@ -179,7 +179,31 @@ async def add_tenant(
                 detail="Cross-border data transfer requires approval. Set cross_border_approved=true or use hosting within Nigeria.",
             )
 
-    return await create_tenant(tenant_data, preassigned_id=preassigned_id)
+    tenant = await create_tenant(tenant_data, preassigned_id=preassigned_id)
+
+    # Every tenant must have an active subscription — auto-enrol on the
+    # Free plan immediately so plan enforcement, quota tracking, and the
+    # tenant dashboard all have a plan to resolve from the very first
+    # request. Idempotent: ``ensure_tenant_default_subscription`` is a
+    # no-op if the tenant already has an active or trialing subscription
+    # (the ``bootstrap_tenant`` path also calls it explicitly). Best
+    # effort — a failure here logs but does not roll back the tenant,
+    # and the lazy fallback in ``PlanEnforcementMiddleware`` will heal
+    # the gap on the next request.
+    try:
+        from services.plan_bootstrap import ensure_tenant_default_subscription
+
+        await ensure_tenant_default_subscription(tenant_id=tenant.id or "")
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "free-plan auto-subscribe failed for tenant_id=%s",
+            tenant.id,
+            exc_info=True,
+        )
+
+    return tenant
 
 
 async def retrieve_tenant_by_id(tenant_id: str) -> TenantOut:

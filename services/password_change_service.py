@@ -92,9 +92,14 @@ async def change_system_user_password(
         user_id, new_password, role="system_user"
     )
 
+    # Also clear the ``must_change_password`` flag. The flag is set by the
+    # onboarding-accept + replace-super-admin flows when they auto-generate
+    # a temporary password; clearing it here is what lifts the gate-side
+    # block (security/account_status_check.py) so the user can resume
+    # using the rest of the API.
     await db.system_users.update_one(
         {"_id": ObjectId(user_id)},
-        {"$set": {"password_hash": hashed}},
+        {"$set": {"password_hash": hashed, "must_change_password": False}},
     )
 
     policy = await get_security_policy()
@@ -104,6 +109,16 @@ async def change_system_user_password(
         role="system_user",
         history_count=policy.password_history_count,
     )
+
+    # Drop the cached gate snapshot so the next request re-reads the row
+    # and sees ``must_change_password=False``. Otherwise the user stays
+    # locked out for up to the gate-cache TTL.
+    try:
+        from core.queue.gate_cache import invalidate_gate
+
+        invalidate_gate(user_id=user_id)
+    except Exception:
+        pass
 
 
 async def reset_system_user_password_by_authority(
@@ -155,9 +170,14 @@ async def reset_system_user_password_by_authority(
         target_user_id, new_password, role="system_user"
     )
 
+    # Authority resets always force a self-change on next login: the
+    # actor (application admin or tenant super_admin) chose the value
+    # and knows it, so the target user must pick their own before they
+    # can hit the rest of the API. See the ``must_change_password``
+    # docstring on ``SystemUserBase`` for the full lifecycle.
     await db.system_users.update_one(
         filter_doc,
-        {"$set": {"password_hash": hashed}},
+        {"$set": {"password_hash": hashed, "must_change_password": True}},
     )
 
     policy = await get_security_policy()

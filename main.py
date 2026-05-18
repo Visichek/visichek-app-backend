@@ -465,6 +465,22 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Subscription watchdog drain (every 60s). The PlanEnforcementMiddleware
+    # pushes tenant_ids onto the Redis ``subscription_watchlist`` sorted set
+    # whenever their subscription is within ``EXPIRING_SOON_SECONDS`` of
+    # ``current_period_end`` (or already past it). This job pops the
+    # oldest entries off the watchlist and routes each tenant through
+    # ``transition_tenant_to_free_plan`` so the platform's "everyone has
+    # an active subscription" invariant always holds. See
+    # services/subscription_watchdog_service.py for the full state machine.
+    scheduler.add_job(
+        "services.subscription_watchdog_service:drain_subscription_watchlist",
+        trigger=IntervalTrigger(seconds=60),
+        id="subscription_watchdog_drain",
+        name="Subscription Watchdog Drain",
+        replace_existing=True,
+    )
+
     # Support-case auto-close: RESOLVED → CLOSED after 7 days of inactivity.
     scheduler.add_job(
         "services.support_case_service:auto_close_resolved_cases",

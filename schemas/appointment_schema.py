@@ -20,6 +20,16 @@ class AppointmentBase(BaseModel):
     # Resolved to a presigned URL on read via
     # ``expected_visitor_photo_url`` on the *Out schema.
     expected_visitor_photo_object_key: Optional[str] = None
+    # Tenant-configurable form data: free-form key/value dict whose
+    # required keys come from the published TenantForm row with
+    # ``target_type=appointment``. The service layer rejects creates
+    # missing any field the form marks as ``required=True``. Snapshots
+    # of the form_id / version that validated this row are stored so
+    # historical submissions remain interpretable when the form is
+    # later edited or archived.
+    tenant_form_data: dict = Field(default_factory=dict)
+    tenant_form_id: Optional[str] = None
+    tenant_form_version: Optional[int] = None
 
 
 class AppointmentCreate(AppointmentBase):
@@ -35,6 +45,9 @@ class AppointmentUpdate(BaseModel):
     purpose: Optional[str] = None
     fulfilled_at: Optional[int] = None
     expected_visitor_photo_object_key: Optional[str] = None
+    tenant_form_data: Optional[dict] = None
+    tenant_form_id: Optional[str] = None
+    tenant_form_version: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

@@ -1,0 +1,302 @@
+================================================================
+VisiChek Backend — Form / Check-in / Appointment Sync Changes
+================================================================
+
+This document describes the new contract between the tenant form
+builder, the visitor check-in flow, and the appointment scheduler.
+Three things changed:
+
+  1. Tenant forms (target_type=checkin) are now reflected in the
+     public/admin check-in config — fields published in the form
+     builder appear automatically as kiosk required fields.
+  2. Appointments now have two required-field tiers: SYSTEM (always
+     present) and TENANT (published via tenant_form target_type=
+     appointment). Missing any tenant-required field rejects the
+     scheduling call.
+  3. The public kiosk submit/checkout endpoints are now plan-gated.
+     Free / Starter tenants must drive the kiosk with a system user
+     bearer token (super_admin / dept_admin / receptionist). Plans
+     that grant `/v1/public/tenants/*/submit` keep the endpoint
+     fully anonymous.
+
+
+================================================================
+A) VISITOR CHECK-IN
+================================================================
+
+A.1) FORM ROUTES
+----------------
+Unchanged: /v1/tenant-forms/* (super_admin / dept_admin).
+Use target_type="checkin" when authoring the kiosk form.
+
+Bootstrap the draft:
+  POST /v1/tenant-forms/draft/checkin
+  → 200 { form_id, ... } (idempotent)
+
+Autosave fields:
+  PATCH /v1/tenant-forms/{form_id}
+  Body: { "name": "Front Desk", "fields": [ ...FormFieldDefinition ] }
+  → 200 { items: {...}, meta: { warnings: [...] } }
+
+Publish (strict validation):
+  POST /v1/tenant-forms/{form_id}/publish
+  → 200 TenantFormOut (status=active, version bumped)
+  → 422 if name empty / no fields / consent_text missing / etc.
+
+Read active form for kiosk:
+  GET /v1/tenant-forms/active/checkin               (system user)
+  GET /v1/public/tenant-forms/by-target/{tenant_id}/checkin (public)
+
+
+A.2) CHECK-IN CONFIG ROUTES (changed payload)
+---------------------------------------------
+GET /v1/public/tenants/{tenant_id}/active-checkin-config
+  No auth required (always public — the kiosk landing page needs
+  this even on Free).
+  Response now includes:
+    {
+      "checkinConfigId": "...",
+      "tenantId": "...",
+      "tenantName": "...",
+      "logoUrl": "...",
+      "idUploadEnabled": true,
+      "allowReturningVisitorLookup": true,
+      "requiredFields": [
+        // System BIO defaults first (full_name, phone, email),
+        // then every field from the published tenant form (mapped
+        // onto CheckinFieldDef shape), then any tenant_specific
+        // entries from the legacy CheckinConfig the form doesn't
+        // already cover. "purpose" is always present.
+        ...
+      ],
+      "tenantFormId": "<form_id of the published checkin form, or null>",
+      "tenantFormVersion": <int or null>,
+      "publicSelfCheckinEnabled": true | false
+    }
+  * publicSelfCheckinEnabled=false means the kiosk MUST attach a
+    system user bearer token on submit (see A.3).
+
+GET /v1/checkin-configs/{checkin_config_id}  (legacy public read)
+  Same enriched response as above.
+
+
+A.3) SUBMIT / KIOSK ROUTES
+--------------------------
+All three submit endpoints now:
+  * validate `bio_data` + `tenant_specific_data` against the
+    MERGED required-field set (form ∪ config defaults),
+  * call `enforce_kiosk_submit_access(tenant_id, principal)` —
+    on Free / Starter this rejects anonymous calls with 403
+    FEATURE_DISABLED and rejects non-visitor-scoped tokens with
+    403 AUTH_PERMISSION_DENIED.
+
+(a) Tenant-keyed kiosk submit (multipart):
+  POST /v1/public/tenants/{tenant_id}/submit
+  Optional Authorization: Bearer <system_user_token>
+  Body (multipart/form-data):
+    phone                  (str, required)
+    full_name              (str, top-level OR inside bio_data)
+    email                  (str, optional)
+    purpose                (JSON object: { purpose, purpose_details?, expected_duration_minutes? })
+    bio_data               (JSON object — fields keyed on form/field_id)
+    tenant_specific_data   (JSON object — fields keyed on form/field_id)
+    id_type                ("national_id" | "drivers_license" | "passport", optional)
+    id_file                (UploadFile, optional — triggers OCR)
+    visitor_lat, visitor_lng (float, when geofencing is on)
+    kyc_reference_id       (str, optional — pre-run Dojah)
+  → 201 CheckinOut
+  → 400 missing_fields = [...] when merged required keys are unmet
+  → 403 FEATURE_DISABLED when plan denies public submit and no/wrong token
+  → 422 ID verification failure (retry with clearer photo or w/o id_file)
+
+(b) Returning-visitor submit (JSON, by visitor_id):
+  POST /v1/public/tenants/{tenant_id}/submit-by-visitor-id
+  Optional Authorization: Bearer <system_user_token>
+  Body:
+    {
+      "visitor_id": "...",
+      "purpose": { "purpose": "meeting", ... },
+      "tenant_specific_data": { "<field_id>": "value", ... },
+      "visitor_lat": <float?>, "visitor_lng": <float?>
+    }
+  → 201 CheckinOut
+  → 400 missing tenant-specific fields
+  → 403 plan gate (same as above)
+
+(c) Legacy by-config submit (multipart, deprecated path):
+  POST /v1/checkin-configs/{checkin_config_id}/submit
+  Same payload as (a). Resolves tenant from the config row, then
+  applies the same plan gate + merged-field validation.
+
+(d) Bare check-in (older JSON path):
+  POST /v1/checkin-configs/{checkin_config_id}/checkins
+  Body: CheckinSubmitRequest { visitor_id?, id_extraction_id?,
+                               bio_data, tenant_specific_data, purpose }
+  Same plan gate.
+
+(e) Self-registration ↔ reception confirm:
+  POST /v1/public/register/{tenant_id}
+  Optional Authorization: Bearer <system_user_token>
+  Body: PublicRegistrationRequest
+  → 201 { session_id, visitor_profile_id, status, message }
+  → 403 plan gate (same)
+
+(f) Self-checkout (badge QR):
+  POST /v1/public/checkout?badge_qr_token=...
+  Optional Authorization: Bearer <system_user_token>
+  → 200 { session_id, status, visit_duration }
+  → 403 plan gate (same — tenant resolved from the badge session)
+
+
+A.4) WHEN TO CALL WHAT (CHECK-IN)
+---------------------------------
+Kiosk boot:
+  1. GET /v1/public/tenants/{tenant_id}/active-checkin-config
+  2. Inspect publicSelfCheckinEnabled — if false, present a
+     "receptionist log-in" gate; the token then accompanies every
+     submit.
+
+Kiosk submit (new visitor):
+  POST /v1/public/tenants/{tenant_id}/submit  (multipart)
+  Build bio_data / tenant_specific_data from requiredFields (a).
+
+Kiosk submit (returning):
+  POST /v1/public/tenants/{tenant_id}/visitor-status
+  → if visitor_id returned: POST /v1/public/tenants/{tenant_id}/submit-by-visitor-id
+  → else: fall back to (a) above with phone + bio_data.
+
+Self-checkout:
+  POST /v1/public/checkout?badge_qr_token=...
+
+Receptionist / dept_admin / super_admin queue:
+  GET  /v1/checkins?state=pending_approval
+  POST /v1/checkins/{checkin_id}/confirm  { action: "approve" | "reject" }
+
+
+================================================================
+B) APPOINTMENT
+================================================================
+
+B.1) FORM ROUTES
+----------------
+Author the tenant-required fields:
+  POST /v1/tenant-forms/draft/appointment   → bootstrap draft
+  PATCH /v1/tenant-forms/{form_id}          → autosave fields
+  POST /v1/tenant-forms/{form_id}/publish   → make live
+
+Each field needs:
+  { "field_id": "snake_case",
+    "type": "text|select|datetime|...",
+    "label": "...",
+    "required": true | false,
+    "options": [...]  // for select / multi_select
+  }
+
+
+B.2) APPOINTMENT ROUTES
+-----------------------
+GET /v1/appointments/form-requirements   (super_admin / dept_admin / receptionist)
+  → 200 {
+        "system_required_fields": [
+          { "key": "host_id", "required": true },
+          { "key": "department_id", "required": true },
+          { "key": "scheduled_datetime", "required": true }
+        ],
+        "tenant_form_id": "<form_id or null>",
+        "tenant_form_version": <int or null>,
+        "tenant_required_fields": [
+          { "key": "<field_id>", "label": "...", "type": "...",
+            "required": true|false,
+            "placeholder": null, "help_text": null,
+            "options": [{ "key", "label" }] | null }
+        ]
+      }
+  Use this to render two visually-distinct sections on the schedule
+  form. EVERY entry with required=true (in either list) MUST be
+  filled before the scheduler will accept the create.
+
+POST /v1/appointments   (async, 202 queued)
+  Body (AppointmentCreate):
+    {
+      "tenant_id": "<auto-injected from token>",
+      "host_id": "...",                  // SYSTEM required
+      "department_id": "...",            // SYSTEM required
+      "scheduled_datetime": <unix_int>,  // SYSTEM required
+      "visitor_profile_id": "...",       // optional
+      "visitor_name_snapshot": "...",
+      "host_name_snapshot": "...",
+      "purpose": "...",
+      "expected_visitor_photo_object_key": "...",
+      "tenant_form_data": {              // TENANT required keys live here
+        "<field_id>": "value",
+        ...
+      }
+      // tenant_form_id / tenant_form_version are server-set on accept
+    }
+  → 202 { id, jobId, status: "queued" }
+  → 400 VALIDATION_FAILED with details.missing_fields = ["..."]
+        when a tenant_form field marked required=true is absent or empty.
+  → 403 when plan denies appointments feature.
+  → 429 when monthly cap reached.
+
+PATCH /v1/appointments/{id}
+  Same payload (all optional). tenant_form_data may be partially
+  updated. The existing per-field diff audit captures the change.
+
+POST /v1/appointments/{id}/check-in
+POST /v1/appointments/{id}/cancel
+DELETE /v1/appointments/{id}
+  Unchanged.
+
+
+B.3) APPOINTMENT OUT (response) ADDITIONS
+-----------------------------------------
+AppointmentOut / AppointmentWithSummaryOut now carry:
+  "tenant_form_data":     { ... },
+  "tenant_form_id":       "<form_id>" | null,
+  "tenant_form_version":  <int> | null
+
+
+B.4) WHEN TO CALL WHAT (APPOINTMENT)
+------------------------------------
+Schedule UI mount:
+  GET /v1/appointments/form-requirements
+  → render system section (locked, always required) + tenant section
+    (dynamic, every required=true must be filled).
+
+On Save:
+  POST /v1/appointments  with the combined payload above.
+  On 400 with missing_fields, highlight each fieldId on the form.
+
+On Edit:
+  PATCH /v1/appointments/{id}  with the changed tenant_form_data
+  keys. Server-side diff records what changed for audit.
+
+
+================================================================
+C) PLAN GATE SUMMARY
+================================================================
+
+The fnmatch pattern used for kiosk submit:
+  /v1/public/tenants/*/submit  (method POST)
+
+A plan whose `feature_rules` contains an `enabled=false` rule
+matching this pattern (Free / Starter by default) triggers the
+gate. To open the kiosk for a plan, the plan must either omit any
+denying rule, or include an enabling rule earlier in
+`feature_rules`.
+
+Error envelope on gate rejection:
+  HTTP 403
+  { "success": false,
+    "code": "FEATURE_DISABLED",          // no token at all
+    "message": "This tenant's plan does not include unattended public kiosk check-ins...",
+    "details": { "required": "system_user_with_visitor_permissions" } }
+
+  or
+
+  HTTP 403
+  { "success": false,
+    "code": "AUTH_PERMISSION_DENIED",    // wrong-role token
+    "message": "Public self check-in is disabled on this plan ...",
+    "details": { "role": "..." } }

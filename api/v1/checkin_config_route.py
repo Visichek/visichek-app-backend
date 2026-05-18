@@ -8,9 +8,10 @@ from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
-from security.auth import verify_system_user_token
+from security.auth import verify_optional_kiosk_token, verify_system_user_token
 from security.principal import AuthPrincipal
 from services.checkin_config_service import (
+    enforce_kiosk_submit_access,
     list_configs_for_tenant,
     resolve_public_config,
 )
@@ -87,10 +88,18 @@ async def lookup_returning_visitor(
 async def submit_visitor_checkin(
     checkin_config_id: str,
     payload: CheckinSubmitRequest,
+    principal: Optional[AuthPrincipal] = Depends(verify_optional_kiosk_token),
 ):
-    """Submit a check-in via kiosk (unauthenticated endpoint). Remains sync for UX."""
+    """Submit a check-in via kiosk (plan-gated). On plans that grant
+    ``/v1/public/tenants/*/submit`` the endpoint is fully public; on
+    Free / Starter a system user with visitor permissions must drive
+    the kiosk (enforced via :func:`enforce_kiosk_submit_access`)."""
     from services.checkin_service import submit_checkin as submit_checkin_service
 
+    config = await resolve_public_config(checkin_config_id)
+    await enforce_kiosk_submit_access(
+        tenant_id=config.tenant_id, principal=principal
+    )
     return await submit_checkin_service(checkin_config_id, payload)
 
 

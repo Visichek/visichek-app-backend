@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from bson import ObjectId
 from fastapi import HTTPException
@@ -229,17 +230,24 @@ async def add_super_admin_to_tenant(
     """Create a super_admin for an *existing* tenant.
 
     Distinct from ``services.tenant_service.bootstrap_tenant`` (which creates
-    the tenant + first super_admin atomically). Use this when an application
-    admin needs to add a secondary super_admin or recreate one after the
-    original was offboarded.
+    the tenant + first super_admin atomically). Use this to recover a
+    tenant whose super_admin was offboarded (zero active super_admins
+    remaining).
 
-    Reuses the standard ``add_system_user`` so plan caps, email uniqueness,
-    permission defaults, branch validation and audit logging all run.
+    Singleton invariant: a tenant may have at most ONE active super_admin
+    at a time. If the tenant already has an active super_admin this call
+    is rejected with 409 ``SUPER_ADMIN_ALREADY_EXISTS``. To replace the
+    existing super_admin, use the MFA-protected transfer flow
+    (``POST /v1/system-users/transfer-main-super-admin/initiate``) or
+    offboard the tenant first. This is enforced regardless of plan tier
+    — the per-plan ``max_system_users`` cap is an additional, separate
+    check that ``add_system_user`` runs further down the stack.
 
-    Main-super_admin handling: if the tenant currently has zero active
-    super_admins (e.g. the previous main was hard-deleted out-of-band)
-    the new row is created with ``is_main_super_admin=True`` so the
-    invariant is restored. Otherwise the new super_admin is a peer.
+    Reuses the standard ``add_system_user`` so plan caps, email
+    uniqueness, permission defaults, branch validation and audit logging
+    all run. The new row is always marked ``is_main_super_admin=True``
+    because at this point we have just verified zero existing
+    super_admins.
     """
     from schemas.imports import AccountStatus as _AccountStatus
     from schemas.imports import SystemUserRole as _SystemUserRole
@@ -256,7 +264,23 @@ async def add_super_admin_to_tenant(
         )
 
     existing_super_count = await count_active_super_admins(tenant_id)
-    should_be_main = existing_super_count == 0
+    if existing_super_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "This tenant already has an active super admin. A tenant "
+                    "may have at most one super admin at a time. Use "
+                    "POST /v1/system-users/transfer-main-super-admin/initiate "
+                    "to move ownership to a different user, or offboard the "
+                    "tenant first via "
+                    "POST /v1/admins/tenants/{tenant_id}/offboard."
+                ),
+                "code": "SUPER_ADMIN_ALREADY_EXISTS",
+                "tenant_id": tenant_id,
+                "active_super_admins": existing_super_count,
+            },
+        )
 
     create_data = SystemUserCreate(
         tenant_id=tenant_id,
@@ -267,9 +291,235 @@ async def add_super_admin_to_tenant(
         account_status=_AccountStatus.ACTIVE,
         is_active=True,
         password_hash=password,
-        is_main_super_admin=should_be_main,
+        is_main_super_admin=True,
     )
     return await add_system_user(create_data)
+
+
+async def replace_super_admin_for_tenant(
+    tenant_id: str,
+    full_name: str,
+    email: str,
+    *,
+    password: str | None = None,
+    branch_ids: list[str] | None = None,
+    actor_id: str = "system",
+) -> dict:
+    """Atomically swap the tenant's lone super_admin for a new one.
+
+    Use this when the existing super_admin is unreachable or has to be
+    handed over to a different person. The flow is:
+
+      1. Clear ``is_main_super_admin`` on the existing main super_admin
+         (the partial-unique index forbids two ``True`` rows in the same
+         tenant — so we must drop the flag before we set it elsewhere).
+      2. Mark the old super_admin INACTIVE + ``is_active=False`` and
+         revoke their tokens. Bypasses ``guard_system_user_update``
+         because replacement is an authority-driven operation (same
+         escape hatch ``tenant_offboarding_service`` uses for the
+         deactivation sweep).
+      3. Create the new super_admin with ``is_main_super_admin=True``.
+      4. Email the welcome / temporary password to the new super_admin.
+
+    ``password`` is optional — when omitted a policy-compliant temporary
+    password is generated and surfaced via the welcome email; the raw
+    value is never returned in the API response.
+
+    Distinct from ``add_super_admin_to_tenant`` (which refuses when one
+    already exists) and from ``transfer-main-super-admin`` (which moves
+    the main flag between two *existing* super_admins).
+    """
+    from bson import ObjectId as _ObjectId
+
+    from repositories.system_user_repo import (
+        clear_main_super_admin_flag_for_tenant,
+        count_active_super_admins,
+        get_main_super_admin,
+        update_system_user,
+    )
+    from repositories.tokens_repo import delete_all_tokens_with_user_id
+    from schemas.imports import AccountStatus as _AccountStatus
+    from schemas.imports import SystemUserRole as _SystemUserRole
+    from schemas.system_user_schema import SystemUserUpdate
+    from security.password_policy import generate_secure_temp_password
+    from services.audit_service import record_audit_event
+    from services.tenant_service import retrieve_tenant_by_id
+
+    tenant = await retrieve_tenant_by_id(tenant_id)
+    if not getattr(tenant, "is_active", True):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot replace a super admin on an inactive tenant",
+        )
+
+    existing_super_count = await count_active_super_admins(tenant_id)
+    if existing_super_count == 0:
+        # No existing super_admin to replace — caller wants
+        # ``add_super_admin_to_tenant`` instead. We surface a specific
+        # error so the frontend can offer the right next step rather
+        # than silently doing the wrong thing.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "This tenant has no active super admin to replace. Use "
+                    "POST /v1/admins/tenants/{tenant_id}/super-admins to "
+                    "create the first one."
+                ),
+                "code": "SUPER_ADMIN_NONE_TO_REPLACE",
+                "tenant_id": tenant_id,
+            },
+        )
+
+    old_main = await get_main_super_admin(tenant_id)
+    if old_main is None:
+        # Multiple active super_admins but none marked main — the
+        # backfill will heal this within 6h, but we refuse to add yet
+        # another one in the meantime so the operator picks the right
+        # flow rather than racing the backfill.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Tenant has active super admins but no main is currently "
+                    "set. Wait for the invariant backfill or use the transfer "
+                    "endpoint to designate the main first."
+                ),
+                "code": "MAIN_SUPER_ADMIN_MISSING",
+                "tenant_id": tenant_id,
+            },
+        )
+
+    raw_password = password or generate_secure_temp_password()
+    password_was_generated = password is None
+
+    # 1. Drop the main flag from the old row first so the partial-unique
+    # index on (tenant_id, is_main_super_admin=True) does not reject
+    # the new insert. Best-effort: if the old row was already cleared
+    # by the backfill we still proceed.
+    try:
+        await clear_main_super_admin_flag_for_tenant(tenant_id)
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "replace_super_admin: clear_main_flag failed tenant=%s",
+            tenant_id,
+            exc_info=True,
+        )
+
+    # 2. Deactivate the old super_admin. We go through the repo directly
+    # so guard_system_user_update does not reject the status flip — this
+    # is an authority-driven action by an application admin and is
+    # logged in the audit trail below.
+    now = int(time.time())
+    try:
+        await update_system_user(
+            {"_id": _ObjectId(old_main.id), "tenant_id": tenant_id},
+            SystemUserUpdate(
+                account_status=_AccountStatus.INACTIVE,
+                is_active=False,
+                last_updated=now,
+            ),
+        )
+    except Exception as exc:
+        # Re-raise the original failure verbatim so the admin sees what
+        # went wrong. The new super_admin has NOT been created yet.
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to deactivate existing super admin: {exc}",
+        )
+    try:
+        await delete_all_tokens_with_user_id(userId=old_main.id or "")
+    except Exception:
+        # Best-effort token revocation — failure here just means the old
+        # session can keep running until its TTL. The replacement still
+        # proceeds.
+        pass
+
+    # 3. Create the new super_admin as the main. add_system_user runs
+    # the per-plan max_system_users cap, branch validation, permission
+    # default assignment, and audit logging for the create itself.
+    create_data = SystemUserCreate(
+        tenant_id=tenant_id,
+        branch_ids=list(branch_ids) if branch_ids else [],
+        full_name=full_name,
+        email=email,
+        role=_SystemUserRole.SUPER_ADMIN,
+        account_status=_AccountStatus.ACTIVE,
+        is_active=True,
+        password_hash=raw_password,
+        is_main_super_admin=True,
+        must_change_password=password_was_generated,
+    )
+    new_super = await add_system_user(create_data)
+
+    # 4. Audit the replacement so the trail says "X replaced Y at T".
+    try:
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role="admin",
+            action="system_user.super_admin_replaced",
+            resource_type="system_user",
+            resource_id=new_super.id or "",
+            tenant_id=tenant_id,
+            details={
+                "replaced_user_id": old_main.id,
+                "replaced_email": old_main.email,
+                "new_user_id": new_super.id,
+                "new_email": new_super.email,
+            },
+        )
+    except Exception:
+        pass
+
+    # 5. Welcome email — mirrors the onboarding-accepted flow. Use the
+    # same template so the experience is consistent.
+    try:
+        from core.email.manager import EmailManager
+        from core.email.types import EmailDispatchRequest
+        from core.settings import get_settings
+
+        settings = get_settings()
+        platform_name = settings.email_sender_name or "VisiChek"
+        login_url = (settings.app_base_url or "").rstrip("/")
+        if login_url:
+            login_url = f"{login_url}/login"
+
+        await EmailManager.get_instance().send_template(
+            EmailDispatchRequest(
+                to_email=email,
+                template_key="onboarding_accepted",
+                context={
+                    "full_name": full_name or "there",
+                    "platform_name": platform_name,
+                    "organization_name": tenant.company_name or "your organization",
+                    "admin_email": email,
+                    "temp_password": raw_password if password is None else "",
+                    "login_url": login_url,
+                    "review_notes": (
+                        "Your account was provisioned by your platform "
+                        "administrator. Sign in with the temporary password "
+                        "below and change it from Settings → Account."
+                    ),
+                },
+                dispatch="queued",
+            )
+        )
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "replace_super_admin: welcome email dispatch failed for %s",
+            email,
+            exc_info=True,
+        )
+
+    return {
+        "tenant_id": tenant_id,
+        "replaced_user_id": old_main.id,
+        "new_super_admin": new_super,
+    }
 
 
 async def add_system_user_from_invite(

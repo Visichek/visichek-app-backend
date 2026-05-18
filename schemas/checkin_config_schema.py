@@ -69,3 +69,17 @@ class PublicCheckinConfigOut(BaseModel):
     id_upload_enabled: bool
     allow_returning_visitor_lookup: bool
     required_fields: list[CheckinFieldDef]
+    # ID + version of the published TenantForm (target_type=checkin)
+    # whose fields were merged into ``required_fields``. None when the
+    # tenant has not published a checkin form — the legacy
+    # ``CheckinConfig.required_fields`` (or system defaults) are used in
+    # that case.
+    tenant_form_id: Optional[str] = None
+    tenant_form_version: Optional[int] = None
+    # When True the kiosk endpoint may be called unauthenticated; when
+    # False the tenant's plan does not allow public self check-in and
+    # the kiosk must present a system user (receptionist / super_admin
+    # / dept_admin) bearer token on submit. The form retrieval endpoint
+    # itself stays public so an unauthenticated browser can render the
+    # login wall.
+    public_self_checkin_enabled: bool = True

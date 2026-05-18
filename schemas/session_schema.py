@@ -94,6 +94,26 @@ class AddSuperAdminRequest(BaseModel):
     branch_ids: Optional[List[str]] = None
 
 
+class ReplaceSuperAdminRequest(BaseModel):
+    """Request body for an application admin replacing a tenant's sole
+    super_admin with a new one.
+
+    A tenant may only have one active super_admin at a time, so the
+    standard ``AddSuperAdminRequest`` is rejected when one already
+    exists. This endpoint atomically deactivates the existing main
+    super_admin and provisions a new one in its place.
+
+    ``password`` is optional — when omitted a policy-compliant temporary
+    password is generated and emailed to the new super_admin (the raw
+    value is never returned in the API response).
+    """
+
+    full_name: str
+    email: EmailStr
+    password: Optional[str] = None
+    branch_ids: Optional[List[str]] = None
+
+
 # --- Two-Factor Authentication ---
 
 

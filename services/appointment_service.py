@@ -24,6 +24,74 @@ from services.plan_limits import (
 )
 
 
+# System-required appointment fields — the ones the platform always
+# captures regardless of the tenant's form configuration. These are
+# enforced by Pydantic (the AppointmentCreate schema marks them
+# non-optional) and surfaced to the frontend via
+# :func:`describe_appointment_form_requirements` so the schedule UI
+# can split them visually from the tenant-configurable section.
+SYSTEM_REQUIRED_APPOINTMENT_FIELDS: tuple[str, ...] = (
+    "host_id",
+    "department_id",
+    "scheduled_datetime",
+)
+
+
+async def _validate_tenant_form_data_for_appointment(
+    appt_data: AppointmentCreate,
+) -> None:
+    """Reject scheduling if any tenant-configured required field is missing.
+
+    Looks up the published tenant_form row with
+    ``target_type=appointment`` for the tenant and rejects the create
+    when ``appt_data.tenant_form_data`` is missing any field marked
+    ``required=True``. Stamps ``tenant_form_id`` / ``tenant_form_version``
+    on the appointment so historical rows stay interpretable after the
+    super_admin edits or archives the form.
+    """
+    from core.errors import AppException, ErrorCode
+    from repositories.tenant_form_repo import get_active_by_target
+    from schemas.imports import FormTargetType
+
+    form = await get_active_by_target(
+        tenant_id=appt_data.tenant_id,
+        target_type=FormTargetType.APPOINTMENT.value,
+    )
+    if form is None:
+        # No tenant form published — nothing extra to validate. The
+        # legacy required fields on AppointmentBase (Pydantic) still
+        # enforce host_id / department_id / scheduled_datetime.
+        return
+
+    submitted_keys = set(appt_data.tenant_form_data.keys())
+    missing: list[str] = []
+    for field in form.fields or []:
+        if not field.required:
+            continue
+        value = appt_data.tenant_form_data.get(field.field_id)
+        if field.field_id not in submitted_keys or value in (None, "", [], {}):
+            missing.append(field.field_id)
+
+    if missing:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message=(
+                "Cannot schedule appointment: required tenant form "
+                f"fields are missing: {', '.join(missing)}"
+            ),
+            details={
+                "missing_fields": missing,
+                "tenant_form_id": form.form_id,
+                "tenant_form_version": form.version,
+            },
+        )
+
+    # Snapshot the form id / version that validated this row.
+    appt_data.tenant_form_id = form.form_id
+    appt_data.tenant_form_version = form.version
+
+
 async def add_appointment(
     appt_data: AppointmentCreate,
     *,
@@ -41,6 +109,11 @@ async def add_appointment(
         friendly_name="appointments",
     )
 
+    # Validate against the published appointment form BEFORE the cap
+    # check so a tenant whose form is misconfigured doesn't burn a
+    # quota slot on a soon-to-be-rejected create.
+    await _validate_tenant_form_data_for_appointment(appt_data)
+
     # Enforce plan cap on appointments created this calendar month
     month_start, month_end = get_month_bounds()
     month_count = await count_appointments(
@@ -57,6 +130,52 @@ async def add_appointment(
     )
 
     return await create_appointment(appt_data, preassigned_id=preassigned_id)
+
+
+async def describe_appointment_form_requirements(tenant_id: str) -> dict:
+    """Return the split system / tenant required-field map for a tenant.
+
+    Backs the ``GET /v1/appointments/form-requirements`` endpoint the
+    schedule UI calls to render the form. The system block is static
+    (host, department, scheduled_datetime); the tenant block is the
+    published TenantForm with ``target_type=appointment`` (or an empty
+    list when none is configured).
+    """
+    from repositories.tenant_form_repo import get_active_by_target
+    from schemas.imports import FormTargetType
+
+    form = await get_active_by_target(
+        tenant_id=tenant_id, target_type=FormTargetType.APPOINTMENT.value
+    )
+    return {
+        "system_required_fields": [
+            {"key": k, "required": True} for k in SYSTEM_REQUIRED_APPOINTMENT_FIELDS
+        ],
+        "tenant_form_id": form.form_id if form else None,
+        "tenant_form_version": form.version if form else None,
+        "tenant_required_fields": (
+            [
+                {
+                    "key": f.field_id,
+                    "label": f.label or f.field_id,
+                    "type": (
+                        f.type.value if hasattr(f.type, "value") else str(f.type)
+                    ),
+                    "required": bool(f.required),
+                    "placeholder": f.placeholder,
+                    "help_text": f.help_text,
+                    "options": (
+                        [{"key": o.key, "label": o.label} for o in f.options]
+                        if f.options
+                        else None
+                    ),
+                }
+                for f in (form.fields if form else [])
+            ]
+            if form
+            else []
+        ),
+    }
 
 
 async def retrieve_appointment_by_id(

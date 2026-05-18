@@ -5,10 +5,91 @@ from typing import Final, Optional
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from core.errors import auth_invalid_token, auth_role_mismatch
+from core.errors import (
+    AppException,
+    ErrorCode,
+    auth_invalid_token,
+    auth_role_mismatch,
+)
 from repositories.tokens_repo import get_access_token, get_access_token_allow_expired
 from security.cookie_utils import ACCESS_TOKEN_COOKIE
-from security.principal import ALL_ROLES, AuthPrincipal
+from security.principal import ALL_ROLES, AuthPrincipal, TENANT_USER_ROLES
+
+
+# ---------------------------------------------------------------------------
+# must_change_password enforcement
+#
+# When a system_user row carries ``must_change_password=True`` (set by the
+# onboarding-accept flow when it auto-generates a temporary password, by
+# replace-super-admin under the same condition, and by every
+# authority-driven password reset), the gate refuses every request EXCEPT
+# the self-service change-password endpoint until the user picks their own
+# password. The login response surfaces the flag so the frontend can route
+# straight to the change-password screen.
+#
+# Path matching is exact (route path with placeholders, NOT the literal
+# URL) because FastAPI populates ``request.scope["route"].path`` with the
+# template before any URL params are substituted.
+# ---------------------------------------------------------------------------
+
+_PASSWORD_CHANGE_ALLOWED_PATHS: Final[frozenset[str]] = frozenset(
+    {
+        "/v1/auth/change-password",
+        "/v1/system-users/change-password",
+    }
+)
+
+
+async def _enforce_must_change_password(
+    request: Request, principal: AuthPrincipal
+) -> None:
+    """Refuse system_user requests when the row demands a password change.
+
+    Application admins / users are exempt — the flag is only set on
+    ``system_users`` rows today. The allowlist lets the change-password
+    endpoint itself through so the user can lift the block.
+
+    Fail-open on DB errors: if the lookup raises, we let the request
+    proceed rather than locking everyone out on an infrastructure blip.
+    The next successful lookup re-applies the block.
+    """
+    if principal.role not in TENANT_USER_ROLES:
+        return
+
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None) or request.url.path
+    if route_path in _PASSWORD_CHANGE_ALLOWED_PATHS:
+        return
+
+    try:
+        from bson import ObjectId
+
+        from core.database import db
+
+        doc = await db.system_users.find_one(
+            {"_id": ObjectId(principal.user_id)},
+            projection={"must_change_password": 1},
+        )
+    except Exception:
+        return
+
+    if not doc:
+        return
+    if not doc.get("must_change_password"):
+        return
+
+    raise AppException(
+        status_code=403,
+        code=ErrorCode.AUTH_PERMISSION_DENIED,
+        message=(
+            "Password change required. Submit a new password via "
+            "POST /v1/auth/change-password before using the rest of the API."
+        ),
+        details={
+            "code": "PASSWORD_CHANGE_REQUIRED",
+            "allowed_endpoints": sorted(_PASSWORD_CHANGE_ALLOWED_PATHS),
+        },
+    )
 
 
 # auto_error=False so missing header doesn't 403 before we check cookies
@@ -71,7 +152,9 @@ async def verify_any_token(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(token_auth_scheme),
 ) -> AuthPrincipal:
-    return await _resolve_principal(request, credentials, allow_expired=False)
+    principal = await _resolve_principal(request, credentials, allow_expired=False)
+    await _enforce_must_change_password(request, principal)
+    return principal
 
 
 async def verify_user_token(
@@ -209,6 +292,7 @@ def verify_system_user_token(*allowed_roles: str):
                 required_role=",".join(allowed_roles),
                 actual_role=principal.role,
             )
+        await _enforce_must_change_password(request, principal)
         await _capture_location(request, principal)
         return principal
 
@@ -221,14 +305,13 @@ async def verify_any_system_user_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(token_auth_scheme),
 ) -> AuthPrincipal:
     """Verify token belongs to any VisiChek system user role."""
-    from security.principal import TENANT_USER_ROLES
-
     principal = await _resolve_principal(request, credentials, allow_expired=False)
     if principal.role not in TENANT_USER_ROLES:
         raise auth_role_mismatch(
             required_role="system_user",
             actual_role=principal.role,
         )
+    await _enforce_must_change_password(request, principal)
     await _capture_location(request, principal)
     return principal
 
@@ -293,6 +376,33 @@ async def verify_tenant_form_configure_token(
         )
     await _capture_location(request, principal)
     return principal
+
+
+async def verify_optional_kiosk_token(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(token_auth_scheme),
+) -> Optional[AuthPrincipal]:
+    """Soft auth for the public kiosk submit endpoints.
+
+    Returns the resolved ``AuthPrincipal`` when a valid Bearer / cookie
+    token is presented, or ``None`` when no token is present. The
+    service layer is responsible for deciding whether unauthenticated
+    access is allowed for the tenant's plan — on Free / Starter the
+    public submit is closed and only a system user with visitor
+    permissions (super_admin / dept_admin / receptionist) may drive
+    the kiosk. On plans that grant ``/v1/public/tenants/*/submit`` no
+    token is needed and ``None`` is returned to keep the kiosk usable
+    without a login.
+
+    Any invalid / expired token surfaces the usual
+    ``AUTH_INVALID_TOKEN`` error so a misconfigured kiosk doesn't
+    silently fall back to anonymous mode.
+    """
+    # No header AND no cookie — return None silently and let the
+    # service layer decide whether anonymous is allowed.
+    if credentials is None and not request.cookies.get(ACCESS_TOKEN_COOKIE):
+        return None
+    return await _resolve_principal(request, credentials, allow_expired=False)
 
 
 async def verify_receptionist_token(

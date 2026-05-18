@@ -30,6 +30,7 @@ Usage in services (async — passes a freshly-loaded policy):
 from __future__ import annotations
 
 import re
+import secrets
 import time
 from typing import List, Optional
 
@@ -429,6 +430,64 @@ def _has_repeated_chars(password: str, count: int) -> bool:
         if len(set(password[i : i + count])) == 1:
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Temporary password generation
+# ---------------------------------------------------------------------------
+
+# Character pools chosen to stay clear of look-alike glyphs (no 0/O, 1/l/I)
+# so users can read the password off the welcome email and type it without
+# guessing. The special-character set mirrors what ``validate_password_strength``
+# accepts so the generated value always passes policy.
+_TEMP_PW_UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+_TEMP_PW_LOWER = "abcdefghjkmnpqrstuvwxyz"
+_TEMP_PW_DIGITS = "23456789"
+_TEMP_PW_SPECIAL = "!@#$%^&*_-+=?"
+
+
+def generate_secure_temp_password(length: int = 14) -> str:
+    """Return a random password that satisfies the strength validator.
+
+    The output always includes at least one uppercase, one lowercase, one
+    digit, and one special character, and is shuffled so the required
+    characters are not always in the same positions. Length defaults to
+    14 which is comfortably above the platform's 12-character soft floor
+    and short enough to communicate over email.
+    """
+    if length < 8:
+        length = 8
+    if length > 32:
+        length = 32
+
+    all_chars = _TEMP_PW_UPPER + _TEMP_PW_LOWER + _TEMP_PW_DIGITS + _TEMP_PW_SPECIAL
+
+    while True:
+        required = [
+            secrets.choice(_TEMP_PW_UPPER),
+            secrets.choice(_TEMP_PW_LOWER),
+            secrets.choice(_TEMP_PW_DIGITS),
+            secrets.choice(_TEMP_PW_SPECIAL),
+        ]
+        remaining = [secrets.choice(all_chars) for _ in range(length - len(required))]
+        pool = required + remaining
+        # secrets-driven Fisher-Yates shuffle (random.shuffle isn't CSPRNG)
+        for i in range(len(pool) - 1, 0, -1):
+            j = secrets.randbelow(i + 1)
+            pool[i], pool[j] = pool[j], pool[i]
+        candidate = "".join(pool)
+
+        # Re-roll on the rare chance we hit a sequential / repeated / common
+        # pattern. With this pool size the probability is tiny but checking
+        # keeps the contract simple: the returned value always passes
+        # ``validate_password_strength``.
+        if _has_sequential_chars(candidate, 4):
+            continue
+        if _has_repeated_chars(candidate, 4):
+            continue
+        if is_common_password(candidate):
+            continue
+        return candidate
 
 
 # ---------------------------------------------------------------------------

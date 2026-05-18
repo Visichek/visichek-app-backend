@@ -20,6 +20,7 @@ from schemas.visit_session_schema import AppointmentCheckInRequest
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.appointment_service import (
+    describe_appointment_form_requirements,
     retrieve_appointment_by_id_with_summary,
     retrieve_appointments_with_summary,
 )
@@ -80,6 +81,29 @@ async def _appt_status_facet(
         out[v] = await collection.count_documents({**base, "status": v})
     out["all"] = sum(out.values())
     return out
+
+
+@router.get("/form-requirements")
+@document_response(
+    message="Appointment form requirements retrieved",
+    description=(
+        "Return the split system + tenant-configured required-field "
+        "map for scheduling an appointment. ``system_required_fields`` "
+        "is static (host, department, scheduled_datetime) and always "
+        "compulsory; ``tenant_required_fields`` comes from the "
+        "published TenantForm with ``target_type=appointment`` — every "
+        "field marked ``required=True`` must be present in the "
+        "``tenant_form_data`` dict on POST /v1/appointments or the "
+        "create will be rejected with 400 ``VALIDATION_FAILED``."
+    ),
+    summary="Get appointment form requirements (split system vs tenant)",
+)
+async def appointment_form_requirements_endpoint(
+    principal: AuthPrincipal = Depends(_admin_roles),
+) -> Any:
+    return await describe_appointment_form_requirements(
+        tenant_id=principal.tenant_id or ""
+    )
 
 
 @router.post("")

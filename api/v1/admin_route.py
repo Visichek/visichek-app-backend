@@ -13,7 +13,11 @@ from schemas.admin_schema import (
     AdminSearchResult,
     AdminSignupRequest,
 )
-from schemas.session_schema import AddSuperAdminRequest, ResetPasswordRequest
+from schemas.session_schema import (
+    AddSuperAdminRequest,
+    ReplaceSuperAdminRequest,
+    ResetPasswordRequest,
+)
 from schemas.tenant_schema import TenantBootstrapRequest
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_admin_refresh_token
@@ -606,7 +610,13 @@ async def add_super_admin_to_tenant_endpoint(
     payload: AddSuperAdminRequest,
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ):
-    """Application-admin only path to add a super_admin to a live tenant."""
+    """Application-admin only path to add a super_admin to a live tenant.
+
+    Refuses with 409 ``SUPER_ADMIN_ALREADY_EXISTS`` when the tenant
+    already has an active super_admin — use the replace endpoint below
+    (or the MFA transfer flow) to swap ownership instead of stacking
+    a second one.
+    """
     from services.system_user_service import add_super_admin_to_tenant
 
     return await add_super_admin_to_tenant(
@@ -615,6 +625,49 @@ async def add_super_admin_to_tenant_endpoint(
         email=payload.email,
         password=payload.password,
         branch_ids=payload.branch_ids,
+    )
+
+
+@router.post("/tenants/{tenant_id}/super-admins/replace")
+@document_response(
+    message="Tenant super admin replaced",
+    status_code=status.HTTP_201_CREATED,
+    description=(
+        "Atomically swap the tenant's lone super_admin for a new one. "
+        "Deactivates the existing main super_admin, revokes their "
+        "tokens, then provisions the new super_admin with a temporary "
+        "password emailed directly to them. Use this when the original "
+        "super_admin is unreachable or must be handed over — "
+        "``add super admin`` refuses while one already exists, and the "
+        "MFA transfer flow only works between two existing super_admins."
+    ),
+    summary="Replace tenant super admin",
+    response_codes={
+        400: "Tenant is inactive or validation failed",
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - only application admins can replace super_admins",
+        404: "Tenant not found",
+        409: (
+            "Tenant has no super admin to replace, or its super admins are "
+            "in an unhealthy state (no main set)"
+        ),
+    },
+)
+async def replace_super_admin_for_tenant_endpoint(
+    tenant_id: str,
+    payload: ReplaceSuperAdminRequest,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    """Application-admin only path to replace a tenant's lone super_admin."""
+    from services.system_user_service import replace_super_admin_for_tenant
+
+    return await replace_super_admin_for_tenant(
+        tenant_id=tenant_id,
+        full_name=payload.full_name,
+        email=payload.email,
+        password=payload.password,
+        branch_ids=payload.branch_ids,
+        actor_id=admin.id or "",  # type: ignore[arg-type]
     )
 
 

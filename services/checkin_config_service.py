@@ -22,6 +22,10 @@ from schemas.checkin_config_schema import (
     PublicCheckinConfigOut,
 )
 from schemas.imports import CheckinFieldCategory, TenantEnumKind
+from schemas.tenant_form_schema import (
+    FormFieldDefinition,
+    TenantFormOut,
+)
 
 
 # System-default required fields. Phone + Full Name are *system-mandated*
@@ -98,6 +102,244 @@ async def create_config(
     return await create_checkin_config(payload, preassigned_id=preassigned_id)
 
 
+# ─── Form ↔ CheckinConfig sync helpers ─────────────────────────────
+#
+# The tenant form builder (target_type=CHECKIN) is the user-facing way
+# super_admins describe the kiosk form. The legacy ``CheckinConfig`` row
+# carries id/feature toggles only — fields are sourced from the
+# published tenant form when one exists. Helpers below merge the two
+# so callers (kiosk, receptionist, submit validation) see a single
+# consistent list.
+
+
+_FIELD_TYPE_MAP: dict[str, str] = {
+    "text": "text",
+    "long_text": "text",
+    "email": "email",
+    "phone": "tel",
+    "url": "url",
+    "number": "number",
+    "integer": "number",
+    "boolean": "boolean",
+    "date": "date",
+    "time": "time",
+    "datetime": "datetime",
+    "select": "select",
+    "multi_select": "multi_select",
+    "country": "select",
+    "address": "text",
+    "file": "file",
+    "image": "image",
+    "signature": "signature",
+    "consent_checkbox": "consent_checkbox",
+    "rating": "rating",
+    "id_document": "file",
+    "host_picker": "select",
+    "visitor_picker": "select",
+    "calculated": "text",
+}
+
+
+def _form_field_to_checkin_field(field: FormFieldDefinition) -> CheckinFieldDef:
+    """Project a tenant form field onto the kiosk CheckinFieldDef shape.
+
+    The kiosk renderer was originally written against ``CheckinFieldDef``
+    so we coerce here instead of teaching the kiosk a new schema. Tenant
+    form fields are always considered ``tenant_specific`` (BIO fields
+    are system-managed and emitted separately by ``DEFAULT_REQUIRED_FIELDS``).
+    """
+    field_type = (
+        field.type.value if hasattr(field.type, "value") else str(field.type)
+    )
+    options_payload: Optional[list[dict]] = None
+    if field.options:
+        options_payload = [
+            {"key": o.key, "label": o.label} for o in field.options if not o.archived
+        ]
+    return CheckinFieldDef(
+        key=field.field_id,
+        label=field.label or field.field_id,
+        type=_FIELD_TYPE_MAP.get(field_type, "text"),
+        required=bool(field.required),
+        category=CheckinFieldCategory.TENANT_SPECIFIC,
+        options=options_payload,
+        enum_kind=None,
+        placeholder=field.placeholder,
+        help_text=field.help_text,
+    )
+
+
+async def _get_active_checkin_form(tenant_id: str) -> Optional[TenantFormOut]:
+    """Fetch the published TenantForm for ``target_type=checkin`` if any."""
+    try:
+        from repositories.tenant_form_repo import get_active_by_target
+        from schemas.imports import FormTargetType
+
+        return await get_active_by_target(
+            tenant_id=tenant_id, target_type=FormTargetType.CHECKIN.value
+        )
+    except Exception:
+        return None
+
+
+def _merge_required_fields(
+    *,
+    config_fields: Optional[list[CheckinFieldDef]],
+    form: Optional[TenantFormOut],
+) -> list[CheckinFieldDef]:
+    """Merge tenant form fields into the CheckinConfig field list.
+
+    Order: system BIO defaults first (``full_name``, ``phone``, ``email``),
+    then everything from the published tenant form, then any
+    ``tenant_specific`` fields from the legacy CheckinConfig that the
+    form does not already cover. Fields the form publishes always
+    override an equally-keyed CheckinConfig entry.
+    """
+    bio_defaults = [
+        f for f in DEFAULT_REQUIRED_FIELDS if f.category == CheckinFieldCategory.BIO
+    ]
+    seen_keys: set[str] = {f.key for f in bio_defaults}
+    merged: list[CheckinFieldDef] = list(bio_defaults)
+
+    if form is not None:
+        for form_field in form.fields or []:
+            projected = _form_field_to_checkin_field(form_field)
+            if projected.key in seen_keys:
+                continue
+            merged.append(projected)
+            seen_keys.add(projected.key)
+
+    # Preserve tenant_specific fields configured via the legacy
+    # CheckinConfig that aren't already on the published form (e.g.
+    # ``purpose`` which is seeded into DEFAULT_REQUIRED_FIELDS too).
+    for config_field in config_fields or []:
+        if config_field.key in seen_keys:
+            continue
+        merged.append(config_field)
+        seen_keys.add(config_field.key)
+
+    # Always guarantee the ``purpose`` picker exists — it's the one
+    # tenant-specific field every kiosk needs to bucket the visit.
+    if "purpose" not in seen_keys:
+        purpose_default = next(
+            (f for f in DEFAULT_REQUIRED_FIELDS if f.key == "purpose"), None
+        )
+        if purpose_default is not None:
+            merged.append(purpose_default)
+            seen_keys.add("purpose")
+
+    return merged
+
+
+async def resolve_required_fields_for_tenant(
+    tenant_id: str,
+) -> tuple[list[CheckinFieldDef], Optional[TenantFormOut]]:
+    """Return the merged (form + config) required-field set for a tenant.
+
+    Used by both the public kiosk config endpoint and the kiosk submit
+    validators so a single source of truth exists. The TenantFormOut is
+    returned alongside so callers that need the form_id / version (e.g.
+    submit handlers writing form_id onto the check-in record) can pick
+    it up without a second lookup.
+    """
+    config = await get_active_checkin_config_for_tenant(tenant_id)
+    form = await _get_active_checkin_form(tenant_id)
+    merged = _merge_required_fields(
+        config_fields=(config.required_fields if config else None),
+        form=form,
+    )
+    return merged, form
+
+
+async def _plan_allows_public_self_checkin(tenant_id: str) -> bool:
+    """True iff the tenant's plan grants the public kiosk submit feature.
+
+    Free / Starter tenants do NOT get the unauthenticated kiosk submit —
+    they must instead use a receptionist / super_admin / dept_admin
+    token to drive the kiosk. The check resolves the plan via the same
+    fnmatch path the middleware uses for ``/v1/public/tenants/*/submit``.
+    """
+    try:
+        from services.plan_limits import is_feature_enabled
+
+        return await is_feature_enabled(
+            tenant_id=tenant_id,
+            endpoint_pattern="/v1/public/tenants/*/submit",
+            method="POST",
+        )
+    except Exception:
+        # Fail OPEN — the auth path will still be checked at submit
+        # time. Better to surface a usable kiosk than to silently
+        # require auth on a flaky plan lookup.
+        return True
+
+
+async def enforce_kiosk_submit_access(
+    *,
+    tenant_id: str,
+    principal: Optional[object],
+) -> None:
+    """Authorize a kiosk submit against the tenant's plan + caller.
+
+    Two outcomes:
+
+    * Tenant's plan grants ``/v1/public/tenants/*/submit`` →
+      anonymous calls are allowed; ``principal`` is ignored.
+    * Plan denies the public endpoint (Free / Starter) →
+      a system user principal with visitor permissions
+      (``super_admin`` / ``dept_admin`` / ``receptionist``) is
+      required. Anyone else (no token, application admin token, or
+      auditor / dpo / security_officer) gets a 403 explaining the
+      kiosk must be driven by a logged-in receptionist on the
+      current plan.
+
+    The principal type is ``object`` to avoid a hard import cycle on
+    ``AuthPrincipal``; we duck-type the ``role`` + ``tenant_id``
+    attributes below.
+    """
+    from core.errors import AppException, ErrorCode
+
+    if await _plan_allows_public_self_checkin(tenant_id):
+        return
+
+    if principal is None:
+        raise AppException(
+            status_code=403,
+            code=ErrorCode.FEATURE_DISABLED,
+            message=(
+                "This tenant's plan does not include unattended public "
+                "kiosk check-ins. Log in as a receptionist / department "
+                "admin / super admin and resubmit, or upgrade the plan "
+                "to enable kiosk self check-in."
+            ),
+            details={"required": "system_user_with_visitor_permissions"},
+        )
+
+    role = getattr(principal, "role", "")
+    principal_tenant_id = getattr(principal, "tenant_id", None)
+    if role not in ("super_admin", "dept_admin", "receptionist"):
+        raise AppException(
+            status_code=403,
+            code=ErrorCode.AUTH_PERMISSION_DENIED,
+            message=(
+                "Public self check-in is disabled on this plan and only "
+                "tenant receptionists, department admins, or super admins "
+                "may drive the kiosk."
+            ),
+            details={"role": role},
+        )
+    if principal_tenant_id and principal_tenant_id != tenant_id:
+        raise AppException(
+            status_code=403,
+            code=ErrorCode.AUTH_PERMISSION_DENIED,
+            message="System user is not scoped to this tenant.",
+            details={
+                "tenant_id": tenant_id,
+                "principal_tenant_id": principal_tenant_id,
+            },
+        )
+
+
 async def _plan_denies_kyc(tenant_id: str) -> bool:
     """True iff the tenant's current plan explicitly denies KYC.
 
@@ -151,6 +393,12 @@ async def resolve_public_config(checkin_config_id: str) -> PublicCheckinConfigOu
     if id_upload_enabled and await _plan_denies_kyc(config.tenant_id):
         id_upload_enabled = False
 
+    form = await _get_active_checkin_form(config.tenant_id)
+    merged_fields = _merge_required_fields(
+        config_fields=config.required_fields, form=form
+    )
+    public_self_checkin = await _plan_allows_public_self_checkin(config.tenant_id)
+
     return PublicCheckinConfigOut(
         checkin_config_id=config.id or "",
         tenant_id=config.tenant_id,
@@ -158,7 +406,10 @@ async def resolve_public_config(checkin_config_id: str) -> PublicCheckinConfigOu
         logo_url=logo_url,
         id_upload_enabled=id_upload_enabled,
         allow_returning_visitor_lookup=config.allow_returning_visitor_lookup,
-        required_fields=config.required_fields,
+        required_fields=merged_fields,
+        tenant_form_id=(form.form_id if form else None),
+        tenant_form_version=(form.version if form else None),
+        public_self_checkin_enabled=public_self_checkin,
     )
 
 
@@ -177,6 +428,13 @@ async def resolve_public_config_by_tenant(tenant_id: str) -> PublicCheckinConfig
     logo_url = await _resolve_tenant_logo_url(tenant_id)
     config = await get_active_checkin_config_for_tenant(tenant_id)
     plan_denies_kyc = await _plan_denies_kyc(tenant_id)
+    public_self_checkin = await _plan_allows_public_self_checkin(tenant_id)
+
+    form = await _get_active_checkin_form(tenant_id)
+    merged_fields = _merge_required_fields(
+        config_fields=(config.required_fields if config else None),
+        form=form,
+    )
 
     if config is None:
         return PublicCheckinConfigOut(
@@ -186,7 +444,10 @@ async def resolve_public_config_by_tenant(tenant_id: str) -> PublicCheckinConfig
             logo_url=logo_url,
             id_upload_enabled=not plan_denies_kyc,
             allow_returning_visitor_lookup=True,
-            required_fields=list(DEFAULT_REQUIRED_FIELDS),
+            required_fields=merged_fields,
+            tenant_form_id=(form.form_id if form else None),
+            tenant_form_version=(form.version if form else None),
+            public_self_checkin_enabled=public_self_checkin,
         )
 
     id_upload_enabled = config.id_upload_enabled
@@ -200,7 +461,10 @@ async def resolve_public_config_by_tenant(tenant_id: str) -> PublicCheckinConfig
         logo_url=logo_url,
         id_upload_enabled=id_upload_enabled,
         allow_returning_visitor_lookup=config.allow_returning_visitor_lookup,
-        required_fields=config.required_fields,
+        required_fields=merged_fields,
+        tenant_form_id=(form.form_id if form else None),
+        tenant_form_version=(form.version if form else None),
+        public_self_checkin_enabled=public_self_checkin,
     )
 
 

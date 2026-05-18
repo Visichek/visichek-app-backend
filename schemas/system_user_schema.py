@@ -36,6 +36,15 @@ class SystemUserBase(BaseModel):
     # Use the dedicated transfer endpoint to move the flag — never $set it
     # directly from a writer.
     is_main_super_admin: bool = False
+    # True when the row's current ``password_hash`` is a system-generated
+    # temporary password (set by the onboarding-accept and replace-super-admin
+    # flows). The gate dep refuses every request from a user with this flag
+    # set EXCEPT the change-password endpoints so the temp password can never
+    # be used long-term. Cleared by ``services.password_change_service`` once
+    # a self-service change succeeds. The flag is surfaced on every
+    # ``SystemUserOut`` response (login, profile) so the frontend can route
+    # straight into the change-password screen.
+    must_change_password: bool = False
 
 
 class SystemUserSignupRequest(BaseModel):
@@ -99,6 +108,7 @@ class SystemUserUpdate(BaseModel):
     last_login_at: Optional[int] = None
     mfa_enabled: Optional[bool] = None
     mfa_locked_by_admin: Optional[bool] = None
+    must_change_password: Optional[bool] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

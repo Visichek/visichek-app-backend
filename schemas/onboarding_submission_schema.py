@@ -226,11 +226,14 @@ class OnboardingSubmissionOut(BaseModel):
 class OnboardingAcceptRequest(BaseModel):
     """Application-admin body for full acceptance.
 
-    Only ``admin_password`` is required; everything else is best-effort
-    extracted from the submission payload but can be overridden here.
+    All fields are optional. ``company_name``, ``admin_full_name``, and
+    ``admin_email`` default to values extracted from the submission payload
+    when omitted. ``admin_password`` is auto-generated when omitted; the
+    generated value is emailed to the new super_admin as a temporary
+    password and never returned in the API response.
     """
 
-    admin_password: str = Field(..., min_length=1, max_length=128)
+    admin_password: Optional[str] = Field(default=None, min_length=1, max_length=128)
     company_name: Optional[str] = None
     admin_full_name: Optional[str] = None
     admin_email: Optional[EmailStr] = None
