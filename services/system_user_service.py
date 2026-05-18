@@ -224,7 +224,6 @@ async def add_super_admin_to_tenant(
     tenant_id: str,
     full_name: str,
     email: str,
-    password: str,
     branch_ids: list[str] | None = None,
 ) -> SystemUserOut:
     """Create a super_admin for an *existing* tenant.
@@ -233,6 +232,13 @@ async def add_super_admin_to_tenant(
     the tenant + first super_admin atomically). Use this to recover a
     tenant whose super_admin was offboarded (zero active super_admins
     remaining).
+
+    The new super_admin's password is ALWAYS system-generated — the
+    inviting application admin does not choose it. The cleartext value
+    is delivered via the ``onboarding_accepted`` welcome email and the
+    new row carries ``must_change_password=True`` so the gate dep
+    refuses every endpoint except ``POST /v1/auth/change-password``
+    until the user picks their own.
 
     Singleton invariant: a tenant may have at most ONE active super_admin
     at a time. If the tenant already has an active super_admin this call
@@ -251,6 +257,7 @@ async def add_super_admin_to_tenant(
     """
     from schemas.imports import AccountStatus as _AccountStatus
     from schemas.imports import SystemUserRole as _SystemUserRole
+    from security.password_policy import generate_secure_temp_password
     from services.tenant_service import retrieve_tenant_by_id
     from repositories.system_user_repo import count_active_super_admins
 
@@ -282,6 +289,7 @@ async def add_super_admin_to_tenant(
             },
         )
 
+    raw_password = generate_secure_temp_password()
     create_data = SystemUserCreate(
         tenant_id=tenant_id,
         branch_ids=list(branch_ids) if branch_ids else [],
@@ -290,10 +298,74 @@ async def add_super_admin_to_tenant(
         role=_SystemUserRole.SUPER_ADMIN,
         account_status=_AccountStatus.ACTIVE,
         is_active=True,
-        password_hash=password,
+        password_hash=raw_password,
         is_main_super_admin=True,
+        must_change_password=True,
     )
-    return await add_system_user(create_data)
+    new_super = await add_system_user(create_data)
+
+    # Welcome email carries the temp password — the only channel that
+    # ever sees the cleartext. Mirrors the onboarding-accept template
+    # so the experience is uniform.
+    await _send_super_admin_welcome_email(
+        full_name=full_name,
+        email=email,
+        temp_password=raw_password,
+        tenant_company_name=tenant.company_name,
+    )
+
+    return new_super
+
+
+async def _send_super_admin_welcome_email(
+    *,
+    full_name: str,
+    email: str,
+    temp_password: str,
+    tenant_company_name: str | None,
+    review_notes: str | None = None,
+) -> None:
+    """Queue the welcome email for a freshly provisioned tenant super_admin.
+
+    Fire-and-forget: failures only log so the create flow is never
+    blocked by SMTP. Reuses the ``onboarding_accepted`` template so the
+    add / replace / onboarding-accept flows all render identically.
+    """
+    try:
+        from core.email.manager import EmailManager
+        from core.email.types import EmailDispatchRequest
+        from core.settings import get_settings
+
+        settings = get_settings()
+        platform_name = settings.email_sender_name or "VisiChek"
+        login_url = (settings.app_base_url or "").rstrip("/")
+        if login_url:
+            login_url = f"{login_url}/login"
+
+        await EmailManager.get_instance().send_template(
+            EmailDispatchRequest(
+                to_email=email,
+                template_key="onboarding_accepted",
+                context={
+                    "full_name": full_name or "there",
+                    "platform_name": platform_name,
+                    "organization_name": tenant_company_name or "your organization",
+                    "admin_email": email,
+                    "temp_password": temp_password,
+                    "login_url": login_url,
+                    "review_notes": review_notes or "",
+                },
+                dispatch="queued",
+            )
+        )
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "super_admin welcome email dispatch failed for %s",
+            email,
+            exc_info=True,
+        )
 
 
 async def replace_super_admin_for_tenant(
@@ -301,7 +373,6 @@ async def replace_super_admin_for_tenant(
     full_name: str,
     email: str,
     *,
-    password: str | None = None,
     branch_ids: list[str] | None = None,
     actor_id: str = "system",
 ) -> dict:
@@ -318,12 +389,14 @@ async def replace_super_admin_for_tenant(
          because replacement is an authority-driven operation (same
          escape hatch ``tenant_offboarding_service`` uses for the
          deactivation sweep).
-      3. Create the new super_admin with ``is_main_super_admin=True``.
+      3. Create the new super_admin with ``is_main_super_admin=True``
+         and ``must_change_password=True``.
       4. Email the welcome / temporary password to the new super_admin.
 
-    ``password`` is optional — when omitted a policy-compliant temporary
-    password is generated and surfaced via the welcome email; the raw
-    value is never returned in the API response.
+    The new super_admin's password is ALWAYS system-generated — the
+    application admin does not (and cannot) choose it. The cleartext
+    value is delivered via the welcome email; the API response only
+    carries the new super_admin's metadata.
 
     Distinct from ``add_super_admin_to_tenant`` (which refuses when one
     already exists) and from ``transfer-main-super-admin`` (which moves
@@ -390,8 +463,7 @@ async def replace_super_admin_for_tenant(
             },
         )
 
-    raw_password = password or generate_secure_temp_password()
-    password_was_generated = password is None
+    raw_password = generate_secure_temp_password()
 
     # 1. Drop the main flag from the old row first so the partial-unique
     # index on (tenant_id, is_main_super_admin=True) does not reject
@@ -450,7 +522,7 @@ async def replace_super_admin_for_tenant(
         is_active=True,
         password_hash=raw_password,
         is_main_super_admin=True,
-        must_change_password=password_was_generated,
+        must_change_password=True,
     )
     new_super = await add_system_user(create_data)
 
@@ -473,47 +545,19 @@ async def replace_super_admin_for_tenant(
     except Exception:
         pass
 
-    # 5. Welcome email — mirrors the onboarding-accepted flow. Use the
-    # same template so the experience is consistent.
-    try:
-        from core.email.manager import EmailManager
-        from core.email.types import EmailDispatchRequest
-        from core.settings import get_settings
-
-        settings = get_settings()
-        platform_name = settings.email_sender_name or "VisiChek"
-        login_url = (settings.app_base_url or "").rstrip("/")
-        if login_url:
-            login_url = f"{login_url}/login"
-
-        await EmailManager.get_instance().send_template(
-            EmailDispatchRequest(
-                to_email=email,
-                template_key="onboarding_accepted",
-                context={
-                    "full_name": full_name or "there",
-                    "platform_name": platform_name,
-                    "organization_name": tenant.company_name or "your organization",
-                    "admin_email": email,
-                    "temp_password": raw_password if password is None else "",
-                    "login_url": login_url,
-                    "review_notes": (
-                        "Your account was provisioned by your platform "
-                        "administrator. Sign in with the temporary password "
-                        "below and change it from Settings → Account."
-                    ),
-                },
-                dispatch="queued",
-            )
-        )
-    except Exception:
-        import logging as _logging
-
-        _logging.getLogger(__name__).warning(
-            "replace_super_admin: welcome email dispatch failed for %s",
-            email,
-            exc_info=True,
-        )
+    # 5. Welcome email — mirrors the add-super-admin / onboarding-accept
+    # flow so all three create paths render identically.
+    await _send_super_admin_welcome_email(
+        full_name=full_name,
+        email=email,
+        temp_password=raw_password,
+        tenant_company_name=tenant.company_name,
+        review_notes=(
+            "Your account was provisioned by your platform administrator. "
+            "Sign in with the temporary password below and change it from "
+            "Settings → Account."
+        ),
+    )
 
     return {
         "tenant_id": tenant_id,

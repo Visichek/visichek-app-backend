@@ -8,6 +8,7 @@ from email_templates import notification_test as _notification_test
 from email_templates import onboarding_accepted as _onboarding_accepted
 from email_templates import onboarding_partial_accepted as _onboarding_partial_accepted
 from email_templates import password_reset as _password_reset
+from email_templates import password_reset_temp as _password_reset_temp
 from email_templates import starter_template as _starter
 from email_templates import visitor_badge_approved as _visitor_badge_approved
 from email_templates import support_case_acknowledged_tenant as _sc_ack_tenant
@@ -43,8 +44,13 @@ def get_mounted_templates() -> list[MountedTemplate]:
         # Application-admin lifecycle: invite welcome + per-login OTP.
         _mount(_admin_invite),
         _mount(_admin_otp_code),
-        # Self-service password reset (both admin + system_user).
+        # Self-service password reset (both admin + system_user — token-based
+        # forgot-password flow).
         _mount(_password_reset),
+        # Authority-driven reset notification: an admin / super_admin
+        # triggered the reset; the user receives a temporary password
+        # they must change on next sign-in.
+        _mount(_password_reset_temp),
         # Tenant self-onboarding: accept + partial-accept welcome emails
         # carry the generated temporary password the new super_admin
         # needs to sign in for the first time.

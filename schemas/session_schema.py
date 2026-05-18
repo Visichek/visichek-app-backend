@@ -70,25 +70,37 @@ class ChangePasswordRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    """Request body for an authority-driven password reset (no current
-    password required because the actor is privileged).
+    """Request body for an authority-driven password reset.
 
     Used by:
       * Application admin → /v1/admins/system-users/{user_id}/reset-password
       * Tenant super_admin → /v1/system-users/{user_id}/reset-password
+
+    The new password is ALWAYS system-generated — actors do not (and
+    cannot) choose it. The cleartext value is emailed to the target
+    user and never returned in the API response, and the row is marked
+    ``must_change_password=true`` so the target must pick their own
+    password on the next sign-in. Body is intentionally empty so the
+    POST is a pure action confirmation.
     """
 
-    new_password: str
+    pass
 
 
 class AddSuperAdminRequest(BaseModel):
     """Request body for an application admin adding a super_admin to an
     existing tenant (separate from the bootstrap path which creates the
-    tenant + first super_admin together)."""
+    tenant + first super_admin together).
+
+    The new super_admin's password is ALWAYS system-generated — admins
+    do not (and cannot) choose it. The cleartext value is emailed to
+    the new super_admin and never returned in the API response, and the
+    row is marked ``must_change_password=true`` so the user must pick
+    their own password on first login.
+    """
 
     full_name: str
     email: EmailStr
-    password: str
     # Optional branch assignment; defaults to the tenant's headquarters
     # branch when omitted. Multi-branch requires the plan's max_branches > 1.
     branch_ids: Optional[List[str]] = None
@@ -103,14 +115,15 @@ class ReplaceSuperAdminRequest(BaseModel):
     exists. This endpoint atomically deactivates the existing main
     super_admin and provisions a new one in its place.
 
-    ``password`` is optional — when omitted a policy-compliant temporary
-    password is generated and emailed to the new super_admin (the raw
-    value is never returned in the API response).
+    The new super_admin's password is ALWAYS system-generated — admins
+    do not (and cannot) choose it. The cleartext value is emailed to
+    the new super_admin and never returned in the API response, and the
+    row is marked ``must_change_password=true`` so the user must pick
+    their own password on first login.
     """
 
     full_name: str
     email: EmailStr
-    password: Optional[str] = None
     branch_ids: Optional[List[str]] = None
 
 

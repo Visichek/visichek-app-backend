@@ -623,7 +623,6 @@ async def add_super_admin_to_tenant_endpoint(
         tenant_id=tenant_id,
         full_name=payload.full_name,
         email=payload.email,
-        password=payload.password,
         branch_ids=payload.branch_ids,
     )
 
@@ -665,7 +664,6 @@ async def replace_super_admin_for_tenant_endpoint(
         tenant_id=tenant_id,
         full_name=payload.full_name,
         email=payload.email,
-        password=payload.password,
         branch_ids=payload.branch_ids,
         actor_id=admin.id or "",  # type: ignore[arg-type]
     )
@@ -676,8 +674,11 @@ async def replace_super_admin_for_tenant_endpoint(
     message="Password reset successfully",
     description=(
         "Application-admin password reset for any system user (including "
-        "super_admins of any tenant). All of the target user's tokens are "
-        "revoked so they must log in again with the new password."
+        "super_admins of any tenant). The new password is system-generated "
+        "and emailed directly to the target user — the admin does NOT (and "
+        "cannot) choose it. All of the target user's tokens are revoked "
+        "and ``must_change_password`` is flipped to True, so the next "
+        "successful sign-in lands them on the change-password screen."
     ),
     summary="Admin reset of a system user's password",
     response_codes={
@@ -685,7 +686,6 @@ async def replace_super_admin_for_tenant_endpoint(
         401: "Unauthorized - invalid or missing token",
         403: "Forbidden - only application admins",
         404: "Target system user not found",
-        422: "Password does not meet policy or matches a recent password",
     },
 )
 async def admin_reset_system_user_password_endpoint(
@@ -694,13 +694,13 @@ async def admin_reset_system_user_password_endpoint(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ):
     """Reset another system user's password without knowing the old one."""
+    del payload  # body is intentionally empty — kept for consistency
     from services.password_change_service import (
         reset_system_user_password_by_authority,
     )
 
     await reset_system_user_password_by_authority(
         target_user_id=user_id,
-        new_password=payload.new_password,
         actor_id=admin.id or "",  # type: ignore[arg-type]
         actor_role="admin",
         scope_tenant_id=None,

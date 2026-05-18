@@ -228,12 +228,13 @@ class OnboardingAcceptRequest(BaseModel):
 
     All fields are optional. ``company_name``, ``admin_full_name``, and
     ``admin_email`` default to values extracted from the submission payload
-    when omitted. ``admin_password`` is auto-generated when omitted; the
-    generated value is emailed to the new super_admin as a temporary
-    password and never returned in the API response.
+    when omitted. The new super_admin's password is ALWAYS system-generated
+    — admins do not (and cannot) choose it. The cleartext value is emailed
+    to the new super_admin and never returned in the API response, and the
+    row is marked ``must_change_password=true`` so the user must pick their
+    own password on first login.
     """
 
-    admin_password: Optional[str] = Field(default=None, min_length=1, max_length=128)
     company_name: Optional[str] = None
     admin_full_name: Optional[str] = None
     admin_email: Optional[EmailStr] = None

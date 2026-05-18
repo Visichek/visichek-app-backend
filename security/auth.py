@@ -36,48 +36,33 @@ _PASSWORD_CHANGE_ALLOWED_PATHS: Final[frozenset[str]] = frozenset(
     {
         "/v1/auth/change-password",
         "/v1/system-users/change-password",
+        "/v1/admins/change-password",
     }
 )
 
 
-async def _enforce_must_change_password(
-    request: Request, principal: AuthPrincipal
-) -> None:
-    """Refuse system_user requests when the row demands a password change.
+async def _is_must_change_password(user_id: str, *, collection: str) -> bool:
+    """Read the ``must_change_password`` flag for a user/admin.
 
-    Application admins / users are exempt — the flag is only set on
-    ``system_users`` rows today. The allowlist lets the change-password
-    endpoint itself through so the user can lift the block.
-
-    Fail-open on DB errors: if the lookup raises, we let the request
-    proceed rather than locking everyone out on an infrastructure blip.
-    The next successful lookup re-applies the block.
+    Fail-open on DB errors: returns False so a Mongo blip never
+    locks every account out. The next successful read re-applies
+    the block on the offending row.
     """
-    if principal.role not in TENANT_USER_ROLES:
-        return
-
-    route = request.scope.get("route")
-    route_path = getattr(route, "path", None) or request.url.path
-    if route_path in _PASSWORD_CHANGE_ALLOWED_PATHS:
-        return
-
     try:
         from bson import ObjectId
 
         from core.database import db
 
-        doc = await db.system_users.find_one(
-            {"_id": ObjectId(principal.user_id)},
+        doc = await db[collection].find_one(
+            {"_id": ObjectId(user_id)},
             projection={"must_change_password": 1},
         )
     except Exception:
-        return
+        return False
+    return bool(doc and doc.get("must_change_password"))
 
-    if not doc:
-        return
-    if not doc.get("must_change_password"):
-        return
 
+def _raise_password_change_required() -> None:
     raise AppException(
         status_code=403,
         code=ErrorCode.AUTH_PERMISSION_DENIED,
@@ -90,6 +75,37 @@ async def _enforce_must_change_password(
             "allowed_endpoints": sorted(_PASSWORD_CHANGE_ALLOWED_PATHS),
         },
     )
+
+
+async def _enforce_must_change_password(
+    request: Request, principal: AuthPrincipal
+) -> None:
+    """Refuse authenticated requests when the row demands a password change.
+
+    Applies to BOTH tenant-user roles (rows in ``system_users``) and
+    application admins (rows in ``admins``). Application users (role
+    ``user``) are not in scope because the public signup flow lets
+    them choose their own password and no admin-driven create path
+    exists for them.
+
+    The allowlist (``_PASSWORD_CHANGE_ALLOWED_PATHS``) lets the
+    change-password endpoints themselves through so the user can lift
+    the block.
+    """
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None) or request.url.path
+    if route_path in _PASSWORD_CHANGE_ALLOWED_PATHS:
+        return
+
+    if principal.role in TENANT_USER_ROLES:
+        if await _is_must_change_password(principal.user_id, collection="system_users"):
+            _raise_password_change_required()
+        return
+
+    if principal.role == "admin":
+        if await _is_must_change_password(principal.user_id, collection="admins"):
+            _raise_password_change_required()
+        return
 
 
 # auto_error=False so missing header doesn't 403 before we check cookies
@@ -174,6 +190,7 @@ async def verify_admin_token(
     principal = await _resolve_principal(request, credentials, allow_expired=False)
     if principal.role != "admin":
         raise auth_role_mismatch(required_role="admin", actual_role=principal.role)
+    await _enforce_must_change_password(request, principal)
     return principal
 
 

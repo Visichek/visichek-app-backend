@@ -153,6 +153,33 @@ if (failBtn) failBtn.addEventListener('click', () => complete('failure'));
 async def render_app_checkout_page(reference: str, request: Request) -> HTMLResponse:
     session = await get_checkout_by_reference(reference)
     if not session:
+        # Addon-purchase fallback page — same simulator, different copy.
+        if reference.startswith("addon_"):
+            from repositories.tenant_addon_repo import (
+                get_tenant_addon_by_reference,
+            )
+
+            row = await get_tenant_addon_by_reference(reference)
+            if row is None:
+                raise HTTPException(status_code=404, detail="Addon purchase not found")
+            amount = row.unit_price_snapshot * row.quantity
+            completed = row.status.value != "pending"
+            html_body = _render_page(
+                reference=reference,
+                session_id=row.id or "",
+                plan_display=(
+                    f"Addon: {row.addon_kind.value} x{row.quantity}"
+                ),
+                amount=f"{row.currency_snapshot.upper()} {amount:,.2f}",
+                base_price=f"{row.currency_snapshot.upper()} {amount:,.2f}",
+                percent_off=0.0,
+                fixed_off="0.00",
+                discount_ids=[],
+                status_label=row.status.value,
+                completed=completed,
+                failure_reason=row.cancellation_reason,
+            )
+            return HTMLResponse(content=html_body, status_code=200)
         raise HTTPException(status_code=404, detail="Checkout session not found")
 
     plan_display = (session.metadata or {}).get(
@@ -183,18 +210,59 @@ async def complete_app_checkout(
     reference: str, payload: CheckoutCompleteRequest
 ) -> JSONResponse:
     session = await get_checkout_by_reference(reference)
-    if not session or session.id is None:
-        raise HTTPException(status_code=404, detail="Checkout session not found")
-    result = await complete_checkout(
-        checkout_id=session.id,
-        outcome=payload.outcome,
-    )
-    return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content={
-            "success": True,
-            "status": result.status.value,
-            "subscription_id": result.subscription_id,
-            "reference": reference,
-        },
-    )
+    if session and session.id is not None:
+        result = await complete_checkout(
+            checkout_id=session.id,
+            outcome=payload.outcome,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "success": True,
+                "status": result.status.value,
+                "subscription_id": result.subscription_id,
+                "reference": reference,
+            },
+        )
+
+    # Addon-purchase fallback. Addon references are prefixed
+    # ``addon_`` and don't live in the ``checkouts`` collection.
+    if reference.startswith("addon_"):
+        from repositories.tenant_addon_repo import (
+            get_tenant_addon_by_reference,
+        )
+        from services.addon_service import (
+            activate_tenant_addon_by_reference,
+            cancel_tenant_addon,
+        )
+
+        row = await get_tenant_addon_by_reference(reference)
+        if row is None or row.id is None:
+            raise HTTPException(
+                status_code=404, detail="Addon purchase not found"
+            )
+        if payload.outcome == "success":
+            activated = await activate_tenant_addon_by_reference(
+                payment_reference=reference
+            )
+            status_value = (
+                activated.status.value if activated else "active"
+            )
+        else:
+            cancelled = await cancel_tenant_addon(
+                row.id,
+                actor_id=row.created_by_user_id or "system",
+                reason=f"app-checkout {payload.outcome}",
+            )
+            status_value = cancelled.status.value
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "success": True,
+                "status": status_value,
+                "tenant_addon_id": row.id,
+                "reference": reference,
+            },
+        )
+
+    raise HTTPException(status_code=404, detail="Checkout session not found")

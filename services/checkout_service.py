@@ -556,10 +556,49 @@ async def maybe_complete_checkout_from_reference(
     reference: str, outcome: str = "success"
 ) -> Optional[CheckoutSessionOut]:
     """Called from external-provider webhook handlers. Returns ``None`` when
-    no checkout matches the reference (e.g. non-subscription payments)."""
+    no checkout matches the reference (e.g. non-subscription payments).
+
+    Falls through to addon activation when the reference matches a
+    ``tenant_addons`` row instead — this is the single entry point
+    every payment provider's webhook plumbing calls, so addon
+    purchases activate automatically without per-provider plumbing
+    duplication.
+    """
     if not reference:
         return None
     session = await get_checkout_by_reference(reference)
-    if not session or session.id is None:
-        return None
-    return await complete_checkout(checkout_id=session.id, outcome=outcome)
+    if session and session.id is not None:
+        return await complete_checkout(checkout_id=session.id, outcome=outcome)
+
+    # Addon purchase fallback. The reference matches the
+    # ``payment_reference`` we minted in
+    # ``services.addon_service.initiate_addon_purchase`` (always
+    # prefixed ``addon_``). Activate on success; cancel on failure.
+    if reference.startswith("addon_"):
+        try:
+            from services.addon_service import (
+                activate_tenant_addon_by_reference,
+                cancel_tenant_addon,
+            )
+            from repositories.tenant_addon_repo import (
+                get_tenant_addon_by_reference,
+            )
+
+            if outcome == "success":
+                await activate_tenant_addon_by_reference(
+                    payment_reference=reference
+                )
+            else:
+                row = await get_tenant_addon_by_reference(reference)
+                if row and row.id:
+                    await cancel_tenant_addon(
+                        row.id,
+                        actor_id=row.created_by_user_id or "system",
+                        reason=f"payment {outcome}",
+                    )
+        except Exception:
+            logger.warning(
+                "addon webhook fallback failed for reference=%s", reference,
+                exc_info=True,
+            )
+    return None

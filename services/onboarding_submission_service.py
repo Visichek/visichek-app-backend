@@ -510,16 +510,14 @@ async def _accept_internal(
             details={"missing": missing},
         )
 
-    # Auto-generate a policy-compliant temporary password when the admin
-    # did not supply one. We keep the raw value so the welcome email can
-    # carry it to the super_admin — the email is the only channel that
-    # ever sees the cleartext password. When we generate the password
-    # ourselves we set ``must_change_password=True`` on the new
-    # super_admin row so the gate dep refuses every endpoint except
-    # ``POST /v1/auth/change-password`` until the user picks their own
-    # password. Admin-supplied passwords are treated as already chosen.
-    password_was_generated = not payload.admin_password
-    admin_password = payload.admin_password or generate_secure_temp_password()
+    # Auto-generate a policy-compliant temporary password. The reviewing
+    # admin no longer chooses it — we keep the raw value here only to
+    # render the welcome email, which is the only channel that ever
+    # sees the cleartext. The new super_admin row is marked
+    # ``must_change_password=True`` so the gate dep refuses every
+    # endpoint except ``POST /v1/auth/change-password`` until the user
+    # picks their own.
+    admin_password = generate_secure_temp_password()
 
     pending_field_labels: Dict[str, str] = {}
     if pending_field_keys:
@@ -569,7 +567,7 @@ async def _accept_internal(
                 account_status=AccountStatus.ACTIVE,
                 password_hash=admin_password,
                 is_main_super_admin=True,
-                must_change_password=password_was_generated,
+                must_change_password=True,
             )
         )
     except Exception:

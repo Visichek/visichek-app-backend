@@ -37,6 +37,14 @@ class AdminBase(BaseModel):
     # treated as ``all_controls`` by
     # ``get_default_permissions_for_admin_preset``.
     access_preset: Optional[AdminAccessPreset] = None
+    # True when the row's current password is a system-generated
+    # temporary value (set on every admin invite, since the inviting
+    # admin no longer chooses the password — see
+    # ``security/password_policy.generate_secure_temp_password``).
+    # The admin gate (``check_admin_account_status_and_permissions``)
+    # refuses every endpoint except the change-password ones until
+    # the flag is cleared by a successful self-change.
+    must_change_password: bool = False
 
 
 class AdminLogin(BaseModel):
@@ -64,11 +72,17 @@ class AdminSignupRequest(BaseModel):
     the new account. Omitted → defaults to ``all_controls`` for
     backwards compatibility with any direct API callers that haven't
     adopted the field yet.
+
+    The new admin's password is ALWAYS system-generated — the inviter
+    does not (and cannot) choose it. The cleartext value is emailed to
+    the new admin (via the ``admin_invite`` template) and never returned
+    in the API response, and the row is marked
+    ``must_change_password=true`` so the new admin must pick their own
+    password on first sign-in.
     """
 
     full_name: str
     email: EmailStr
-    password: str
     access_preset: Optional[AdminAccessPreset] = None
 
 

@@ -61,15 +61,27 @@ async def change_admin_password(
 
     hashed = await _enforce_new_password_policy(admin_id, new_password, role="admin")
 
+    # Also clear ``must_change_password`` — set by the admin invite
+    # flow and any future authority-driven admin reset. Clearing it
+    # here lifts the gate-side block in security/auth.py.
     await db.admins.update_one(
         {"_id": ObjectId(admin_id)},
-        {"$set": {"password": hashed}},
+        {"$set": {"password": hashed, "must_change_password": False}},
     )
 
     policy = await get_security_policy()
     await record_password_in_history(
         admin_id, hashed, role="admin", history_count=policy.password_history_count
     )
+
+    # Drop the cached gate snapshot so the next admin request re-reads
+    # the row and sees ``must_change_password=false``.
+    try:
+        from core.queue.gate_cache import invalidate_gate
+
+        invalidate_gate(user_id=admin_id)
+    except Exception:
+        pass
 
 
 async def change_system_user_password(
@@ -123,7 +135,6 @@ async def change_system_user_password(
 
 async def reset_system_user_password_by_authority(
     target_user_id: str,
-    new_password: str,
     *,
     actor_id: str,
     actor_role: str,
@@ -137,10 +148,16 @@ async def reset_system_user_password_by_authority(
       * Tenant super_admins (``actor_role="super_admin"`` +
         ``scope_tenant_id``) — limited to users inside their own tenant.
 
+    The new password is ALWAYS system-generated — the actor does not
+    (and cannot) choose it. The cleartext value is emailed to the
+    target user via the ``password_reset_temp`` template, never
+    returned in the API response, and ``must_change_password`` is
+    flipped to True so the target must pick their own on next login.
+
     Side effects: writes the new ``password_hash``, records it in
     ``password_history``, deletes every active token for the target user
-    (so they're forced to log in again), and emits a tenant-scoped audit
-    event.
+    (so they're forced to log in again), invalidates the gate cache,
+    emails the temp password, and emits a tenant-scoped audit event.
     """
     if not ObjectId.is_valid(target_user_id):
         raise HTTPException(status_code=400, detail="Invalid user ID format")
@@ -166,15 +183,19 @@ async def reset_system_user_password_by_authority(
             ),
         )
 
+    from security.password_policy import generate_secure_temp_password
+
+    new_password = generate_secure_temp_password()
     hashed = await _enforce_new_password_policy(
         target_user_id, new_password, role="system_user"
     )
 
     # Authority resets always force a self-change on next login: the
-    # actor (application admin or tenant super_admin) chose the value
-    # and knows it, so the target user must pick their own before they
-    # can hit the rest of the API. See the ``must_change_password``
-    # docstring on ``SystemUserBase`` for the full lifecycle.
+    # actor (application admin or tenant super_admin) chose to trigger
+    # the reset, so the target user must pick their own value before
+    # they can hit the rest of the API. See the
+    # ``must_change_password`` docstring on ``SystemUserBase`` for the
+    # full lifecycle.
     await db.system_users.update_one(
         filter_doc,
         {"$set": {"password_hash": hashed, "must_change_password": True}},
@@ -205,6 +226,16 @@ async def reset_system_user_password_by_authority(
     except Exception:
         pass
 
+    # Email the temporary password — the only channel that ever sees
+    # the cleartext. Fire-and-forget so an SMTP outage doesn't block
+    # the reset itself; the actor can re-trigger if delivery fails.
+    await _send_temp_password_reset_email(
+        full_name=user.get("full_name") or "",
+        email=user.get("email") or "",
+        temp_password=new_password,
+        actor_role=actor_role,
+    )
+
     # Audit (mandatory for tenant-scoped writes).
     try:
         from services.audit_service import record_audit_event
@@ -223,3 +254,54 @@ async def reset_system_user_password_by_authority(
         )
     except Exception:
         pass
+
+
+async def _send_temp_password_reset_email(
+    *,
+    full_name: str,
+    email: str,
+    temp_password: str,
+    actor_role: str,
+) -> None:
+    """Queue the authority-reset notification email.
+
+    Fire-and-forget: failures only log so the reset itself never fails
+    because of an SMTP hiccup. Uses the ``password_reset_temp``
+    template (mounted alongside the rest of the auth templates).
+    """
+    if not email:
+        return
+    try:
+        from core.email.manager import EmailManager
+        from core.email.types import EmailDispatchRequest
+        from core.settings import get_settings
+
+        settings = get_settings()
+        platform_name = settings.email_sender_name or "VisiChek"
+        login_url = (settings.app_base_url or "").rstrip("/")
+        if login_url:
+            login_url = f"{login_url}/login"
+
+        await EmailManager.get_instance().send_template(
+            EmailDispatchRequest(
+                to_email=email,
+                template_key="password_reset_temp",
+                context={
+                    "recipient_name": full_name or "there",
+                    "platform_name": platform_name,
+                    "email": email,
+                    "temp_password": temp_password,
+                    "login_url": login_url,
+                    "actor_role": actor_role,
+                },
+                dispatch="queued",
+            )
+        )
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "password_reset_temp email dispatch failed for %s",
+            email,
+            exc_info=True,
+        )

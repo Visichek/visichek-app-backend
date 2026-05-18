@@ -118,7 +118,12 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
     - Normalizes email to prevent +alias / dot duplicates
     - Auto-assigns default admin permissions
     - Sets account_status to ACTIVE
+    - Generates a temporary password (the inviter does not choose it),
+      flips ``must_change_password=True`` on the new row, and emails
+      the cleartext value via the ``admin_invite`` template
     """
+    from security.password_policy import generate_secure_temp_password
+
     normalized = normalize_email(signup_data.email)
 
     # Check for existing admin using normalized email
@@ -147,10 +152,16 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
         )
     else:
         permission_list = get_default_permissions_for_role("admin")
+
+    # The inviter doesn't (and cannot) choose the password — generate
+    # a policy-compliant value here and email it. The cleartext is
+    # never returned in the API response.
+    temp_password = generate_secure_temp_password()
+
     admin_data = AdminCreate(
         full_name=signup_data.full_name,
         email=signup_data.email,
-        password=signup_data.password,
+        password=temp_password,
         accountStatus=AccountStatus("ACTIVE"),
         permissionList=permission_list,
         access_preset=signup_data.access_preset,
@@ -160,6 +171,7 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
         # — setting both belt-and-braces so a future policy flip cannot
         # silently weaken the security posture for invited admins.
         mfa_enabled=True,
+        must_change_password=True,
         invited_by=invited_by,
     )
 
@@ -180,7 +192,7 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
     await _send_admin_invite_email(
         full_name=signup_data.full_name,
         email=signup_data.email,
-        temp_password=signup_data.password,
+        temp_password=temp_password,
         access_preset=signup_data.access_preset,
         inviter_name=inviter_name,
     )

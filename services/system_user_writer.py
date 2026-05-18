@@ -266,21 +266,18 @@ async def _system_user_bulk_reset_password(
 ) -> dict[str, Any]:
     """Trigger password reset across users.
 
-    Each target's tokens are revoked. The new password is generated
-    server-side and emailed to the user; the response NEVER includes
-    the plaintext password — leaking it via the queue_job_log result
-    would defeat the point of generating it server-side.
+    Each target's password is generated server-side inside
+    ``reset_system_user_password_by_authority`` and emailed to the
+    user via the ``password_reset_temp`` template. The response
+    intentionally never carries the cleartext — leaking it via the
+    queue_job_log result would defeat the point of generating it
+    server-side. The target's tokens are revoked and
+    ``must_change_password`` is flipped to True so the next sign-in
+    routes to the change-password screen.
     """
     from services.password_change_service import (
         reset_system_user_password_by_authority,
     )
-    import secrets
-    import string
-
-    def _gen_password() -> str:
-        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-        # 20 chars, 2 digits, 2 specials guaranteed by sampling — well above policy.
-        return "".join(secrets.choice(alphabet) for _ in range(20))
 
     ids = list(data.get("ids", []))
     atomic = bool(data.get("atomic", False))
@@ -291,10 +288,8 @@ async def _system_user_bulk_reset_password(
     async def _handle(user_id: str) -> dict[str, Any]:
         if user_id == actor_user_id:
             raise PermissionError("USE_SELF_PASSWORD_CHANGE_INSTEAD")
-        new_password = _gen_password()
         await reset_system_user_password_by_authority(
             target_user_id=user_id,
-            new_password=new_password,
             actor_id=actor_user_id,
             actor_role="super_admin",
             scope_tenant_id=tenant_scope,

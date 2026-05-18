@@ -300,3 +300,781 @@ Error envelope on gate rejection:
     "code": "AUTH_PERMISSION_DENIED",    // wrong-role token
     "message": "Public self check-in is disabled on this plan ...",
     "details": { "role": "..." } }
+
+
+================================================================
+D) TENANT ONBOARDING — ADMIN DOES NOT SET THE PASSWORD
+================================================================
+
+The application admin reviewing a self-onboarding submission no
+longer supplies (and cannot supply) the new super_admin's
+password. The backend always generates a policy-compliant
+temporary value, marks the new super_admin row
+`must_change_password=true`, and emails the cleartext value to
+the super_admin's address. The cleartext is NEVER returned in
+the API response — the welcome email is the only carrier.
+
+The welcome email (template `onboarding_accepted` /
+`onboarding_partial_accepted`) was silently dropped before this
+release because the templates weren't mounted; both are mounted
+now and carry the sign-in email + temporary password + login URL.
+
+
+D.1) ROUTES
+-----------
+POST /v1/tenants/onboarding/{submission_id}/accept
+  Body (OnboardingAcceptRequest) — ALL FIELDS OPTIONAL.
+  ``admin_password`` is GONE from the schema — sending it is now
+  a 422 "extra fields not permitted".
+    {
+      "company_name": "...",     // defaults to submission.organization_name
+      "admin_full_name": "...",  // defaults to submission.full_name
+      "admin_email": "...",      // defaults to submission.email
+      "review_notes": "..."      // shown in the welcome email when set
+    }
+  → 201 OnboardingAcceptOut {
+        submission_id, status, tenant_id,
+        super_admin_user_id, pending_field_keys
+      }
+  Effects:
+    * Server generates a temp password and persists it on the new
+      super_admin (hashed). The new row carries
+      ``must_change_password=true`` (see E).
+    * New super_admin row created with role=super_admin,
+      account_status=ACTIVE, is_main_super_admin=true.
+    * Tenant auto-subscribed to the Free plan (see G below).
+    * Welcome email queued to ``admin_email`` carrying the temp
+      password — the ONLY channel that ever sees the cleartext.
+
+POST /v1/tenants/onboarding/{submission_id}/partial-accept
+  Same body shape (OnboardingPartialAcceptRequest extends the
+  same schema and adds `pending_field_keys`). Same temp-password
+  behavior. Welcome email uses template ``onboarding_partial_accepted``
+  and renders the pending-fields list.
+
+
+D.2) WHEN TO CALL WHAT (ONBOARDING REVIEW UI)
+---------------------------------------------
+Reviewer presses "Accept":
+  POST /v1/tenants/onboarding/{submission_id}/accept
+  with ONLY company_name / admin_email overrides if the reviewer
+  changed anything. There is NO password field on the form
+  anymore — surface a callout: "A temporary password will be
+  emailed to <admin_email>; they will be required to change it on
+  first sign-in."
+
+Tip for FE migration: any UI that was previously surfacing a
+password input on the accept screen should remove it; the
+server will reject the field with a 422 validation error.
+
+
+================================================================
+E) FORCED PASSWORD CHANGE — must_change_password
+================================================================
+
+A new boolean field is present on every authenticated user
+payload the frontend touches:
+  * ``SystemUserOut`` / ``SystemUserProfileOut`` (tenant users —
+    super_admin, dept_admin, receptionist, auditor,
+    security_officer, dpo)
+  * ``AdminOut`` (application admins)
+
+When it is `true`, the user is allowed to call only the
+change-password endpoints; every other authenticated request is
+refused with HTTP 403 ``PASSWORD_CHANGE_REQUIRED`` so the
+temporary password can never be used as a working credential.
+
+Cases the backend sets the flag:
+  * Tenant onboarding accept — every accept generates a temp
+    password (D).
+  * Application-admin add-super-admin — every add generates a
+    temp password (F).
+  * Application-admin replace-super-admin — same (F).
+  * Application-admin invite of another admin via
+    ``POST /v1/admins/signup`` (or the blog alias
+    ``POST /v1/admins/invite``) — every invite generates a temp
+    password (H).
+  * ANY authority-driven password reset:
+    - ``POST /v1/admins/system-users/{user_id}/reset-password``
+      (application admin)
+    - ``POST /v1/system-users/{user_id}/reset-password``
+      (tenant super_admin)
+    - ``POST /v1/system-users/bulk/reset-password``
+      (tenant super_admin, queued)
+
+Cases the backend clears the flag:
+  * Successful self-change via the change-password endpoints.
+    The backend also invalidates the gate cache in that same
+    call so the very next request sees
+    ``must_change_password=false``.
+
+
+E.1) RESPONSE FIELD
+-------------------
+SystemUserOut, SystemUserProfileOut, AND AdminOut all carry:
+  {
+    ...,
+    "must_change_password": true | false
+  }
+
+Login responses, refresh responses, /me, /profile, and any list
+endpoint that returns one of those schemas all carry the field.
+
+
+E.2) GATE BEHAVIOR
+------------------
+Allowed while ``must_change_password=true``:
+  POST /v1/auth/change-password           (unified — both roles)
+  POST /v1/system-users/change-password   (system-user role-specific)
+  POST /v1/admins/change-password         (admin role-specific)
+
+EVERY other endpoint guarded by an authenticated token verifier
+(``verify_admin_token``, ``verify_system_user_token``,
+``verify_any_system_user_token``, ``verify_any_token``) returns:
+
+  HTTP 403
+  {
+    "success": false,
+    "code": "AUTH_PERMISSION_DENIED",
+    "message": "Password change required. Submit a new password via POST /v1/auth/change-password before using the rest of the API.",
+    "details": {
+      "code": "PASSWORD_CHANGE_REQUIRED",
+      "allowed_endpoints": [
+        "/v1/admins/change-password",
+        "/v1/auth/change-password",
+        "/v1/system-users/change-password"
+      ]
+    }
+  }
+
+Note: login itself does NOT go through these verifiers — the
+user can still complete tenant-selection + MFA + token issuance
+and receive a payload whose ``must_change_password=true``. The
+frontend uses that flag to route into the change screen.
+
+
+E.3) WHEN TO CALL WHAT (LOGIN / FIRST-RUN)
+------------------------------------------
+After login (any path that returns AdminOut / SystemUserOut):
+  1. Inspect ``user.must_change_password``.
+  2. If true → route directly to the "Set a new password" screen.
+     Disable global navigation; the only working endpoints are
+     the change-password ones for the user's role.
+  3. POST /v1/auth/change-password
+     Body: { "current_password": "...", "new_password": "..." }
+     → 200 (no body) → the flag is now false, re-route to the
+       intended landing page.
+     → 401 / 422 → keep the user on the screen with the policy
+       errors surfaced from the body.
+
+If a non-allowed endpoint returns 403 with
+``details.code = "PASSWORD_CHANGE_REQUIRED"``, the frontend should
+treat it as a hard redirect to the change-password screen even
+in flows that don't otherwise read ``must_change_password`` (e.g.
+deep links, browser back-button).
+
+
+================================================================
+F) TENANT SUPER ADMIN — SINGLETON INVARIANT + REPLACEMENT
+================================================================
+
+A tenant may now have AT MOST one active super_admin at any
+moment. The pre-existing ``POST /v1/admins/tenants/{tenant_id}/super-admins``
+endpoint enforced this loosely via the per-plan ``max_system_users``
+cap; the rule is now hard regardless of plan tier.
+
+To swap the lone super_admin out for a different person, use the
+new ``replace`` endpoint. The MFA-protected transfer endpoint at
+``/v1/system-users/transfer-main-super-admin/initiate`` still
+exists for the (now-impossible) case of two existing super_admins.
+
+Neither endpoint accepts a password anymore — the new
+super_admin's value is always temp-generated and emailed.
+
+
+F.1) ROUTES
+-----------
+POST /v1/admins/tenants/{tenant_id}/super-admins
+  Add a super_admin. Now rejects with 409 when one already exists.
+  Body (AddSuperAdminRequest) — ``password`` is GONE; sending it
+  is a 422 "extra fields not permitted":
+    { "full_name": "...", "email": "...",
+      "branch_ids": ["..."] | null }
+  Effects:
+    * Server generates a temp password, persists it (hashed) on
+      the new super_admin row, sets ``must_change_password=true``.
+    * Sends the ``onboarding_accepted`` welcome email carrying
+      the temp password.
+  → 201 SystemUserOut (new super_admin, is_main_super_admin=true,
+        must_change_password=true)
+  → 409 {
+      "success": false,
+      "message": "...",
+      "code": "SUPER_ADMIN_ALREADY_EXISTS",
+      "tenant_id": "...",
+      "active_super_admins": 1
+    }
+  → Other existing rejections (404 tenant missing, 400 tenant inactive,
+    409 duplicate email) unchanged.
+
+POST /v1/admins/tenants/{tenant_id}/super-admins/replace   [NEW]
+  Atomically swap the tenant's lone super_admin for a new one.
+  Body (ReplaceSuperAdminRequest) — also no ``password`` field:
+    {
+      "full_name": "...",
+      "email": "...",
+      "branch_ids": ["..."] | null
+    }
+  Side effects (in order):
+    1. Clear ``is_main_super_admin`` on the existing main row so
+       the partial-unique Mongo index accepts the new row.
+    2. Update existing super_admin: account_status=INACTIVE,
+       is_active=false. Bypasses the main-super_admin guard
+       (this is an authority-driven action and is audited).
+    3. Revoke all tokens for the old super_admin.
+    4. Generate a temp password and create the new super_admin
+       with role=super_admin, account_status=ACTIVE,
+       is_main_super_admin=true, must_change_password=true.
+    5. Email the temp password via the ``onboarding_accepted``
+       template.
+    6. Audit: ``system_user.super_admin_replaced`` with
+       replaced_user_id / new_user_id in details.
+  → 201 {
+        "tenant_id": "...",
+        "replaced_user_id": "<old super_admin id>",
+        "new_super_admin": { ...SystemUserOut, must_change_password: true }
+      }
+  → 400 "Cannot replace a super admin on an inactive tenant"
+  → 404 Tenant not found
+  → 409 SUPER_ADMIN_NONE_TO_REPLACE  (no active super_admin exists yet
+        — caller should hit the plain ``super-admins`` POST instead)
+  → 409 MAIN_SUPER_ADMIN_MISSING     (multiple super_admins active but
+        none flagged main — wait for the 6h backfill or use the transfer
+        endpoint to designate a main first)
+
+
+F.2) WHEN TO CALL WHAT (TENANT MGMT)
+------------------------------------
+"Add super admin" button in the tenant detail page:
+  * If the tenant currently has zero active super_admins
+    (returned via the existing tenant-detail payload or
+    ``/v1/admins/tenants/{tenant_id}/offboarding-summary``):
+      POST /v1/admins/tenants/{tenant_id}/super-admins
+  * Otherwise:
+      POST /v1/admins/tenants/{tenant_id}/super-admins/replace
+        — surface as "Replace super admin" with a confirmation
+          step ("This will deactivate <name> and email a
+          temporary password to <new email>").
+
+Neither form should expose a password input. Both display a
+callout: "A temporary password will be emailed to the new super
+admin; they will be required to change it on first sign-in."
+
+
+================================================================
+G) FREE PLAN AUTO-ASSIGN + SUBSCRIPTION WATCHDOG
+================================================================
+
+Mostly transparent to the frontend. Two behavior changes worth
+noting:
+
+G.1) Every newly-created tenant is now auto-enrolled on the Free
+plan inside `add_tenant()` itself. The bootstrap / queued
+`tenant.create` / onboarding-accept paths all converge on this
+single funnel, so the FE should never observe a freshly created
+tenant whose plan resolution is empty.
+
+G.2) On every authenticated tenant request the backend runs a
+subscription watchdog (Redis-cached) that classifies the
+tenant's subscription as healthy / expiring_soon / expired /
+missing. The transitions the FE will eventually observe:
+
+  * `missing` → tenant is moved onto Free synchronously, in
+    the same request. The 402 `SUBSCRIPTION_REQUIRED` error
+    that previously surfaced for tenants with no subscription
+    should now be effectively unreachable.
+  * `expiring_soon` (≤ 2 h 30 m to `current_period_end`) or
+    `expired` → the tenant is queued for a background drain
+    that runs every 60 s. Within ~60 s the watchdog moves the
+    tenant onto Free via `transition_tenant_to_free_plan`, and
+    the next request returns the Free-plan `X-Plan-Tier` header
+    and Free-plan `tenant_caps`.
+
+There are NO new endpoints, request fields, or response fields.
+The `X-Plan-Tier` / `X-Subscription-Status` headers that the
+existing `PlanEnforcementMiddleware` already sets are the
+frontend's source of truth — re-render plan-gated UI when
+they change between requests.
+
+Defensive code that previously special-cased
+`SUBSCRIPTION_REQUIRED` can be left in place as a safety net,
+but it should be rare enough in practice to treat as an
+"infrastructure incident" message rather than a normal flow.
+
+
+================================================================
+H) APPLICATION-ADMIN INVITES — NO PASSWORD INPUT
+================================================================
+
+The "invite admin" form no longer collects a password. The
+inviting application admin only provides the invitee's name +
+email; the backend generates a temporary password, persists the
+new admin with ``must_change_password=true`` (see E), and emails
+the temp value via the existing ``admin_invite`` template. The
+cleartext is NEVER returned in the API response.
+
+This applies to BOTH endpoints that create admins:
+  * ``POST /v1/admins/signup``  (host endpoint)
+  * ``POST /v1/admins/invite``  (blog-admin alias)
+
+
+H.1) ROUTES
+-----------
+POST /v1/admins/signup
+  Body (AdminSignupRequest) — ``password`` is GONE; sending it
+  is a 422 "extra fields not permitted":
+    {
+      "full_name": "...",
+      "email": "...",
+      "access_preset": "content_only" | "support_only"
+                       | "content_support" | "billing_only"
+                       | "all_controls"     // optional, defaults to all_controls
+    }
+  Effects:
+    * Server generates a temp password and persists the new
+      admin row with ``must_change_password=true`` and
+      ``mfa_enabled=true`` (2FA is mandatory for admins).
+    * Sends the ``admin_invite`` welcome email carrying the
+      temp password + login URL + 2FA-on-first-login notice.
+  → 201 AdminOut {
+        ...,
+        must_change_password: true,
+        mfa_enabled: true,
+        access_token, refresh_token  // tokens of the INVITER, not the invitee
+      }
+    Note: ``password`` is excluded from the response per the
+    existing AdminOut convention.
+
+POST /v1/admins/invite  (blog-admin alias)
+  Body (AdminInviteRequest) — also no password field:
+    { "full_name": "...", "email": "..." }
+  Delegates to the same ``add_admin`` service. Same effects +
+  response shape as ``POST /v1/admins/signup``.
+
+
+H.2) WHEN TO CALL WHAT (ADMIN MANAGEMENT UI)
+--------------------------------------------
+Reviewer presses "Invite admin":
+  POST /v1/admins/signup
+  with full_name + email (+ optional access_preset chip). There
+  is NO password input on the form anymore — surface a callout:
+  "A temporary password will be emailed to <email>. They will
+  set their own password on first sign-in."
+
+First-login UX for the invitee mirrors E.3 — the welcome email
+walks them through (1) signing in with the temp password, then
+(2) the 2FA enrollment step (because ``mfa_enabled`` is true),
+then (3) the forced change-password screen.
+
+
+================================================================
+I) AUTHORITY PASSWORD RESETS — NO PASSWORD INPUT
+================================================================
+
+When an application admin or a tenant super_admin resets another
+user's password, they no longer choose the new value. The backend
+generates a temp password, sets ``must_change_password=true`` on
+the target row, revokes all of the target's tokens, and emails
+the cleartext via the new ``password_reset_temp`` template.
+
+
+I.1) ROUTES
+-----------
+POST /v1/admins/system-users/{user_id}/reset-password
+  (application admin → any system user)
+POST /v1/system-users/{user_id}/reset-password
+  (tenant super_admin → users in their own tenant)
+
+  Body (ResetPasswordRequest) — INTENTIONALLY EMPTY:
+    { }
+  ``new_password`` is GONE from the schema; sending it is a
+  422 "extra fields not permitted".
+
+  Effects:
+    * Server generates a temp password and writes the hash.
+    * Records the new hash in ``password_history``.
+    * Sets ``must_change_password=true`` on the target row.
+    * Revokes EVERY active token for the target user so an
+      attacker holding a stolen session can't continue.
+    * Invalidates the gate cache so the next request re-reads
+      the row.
+    * Sends the ``password_reset_temp`` welcome email — the
+      target user receives the temp value and clear "you must
+      change it on next sign-in" copy.
+    * Records an ``system_user.password_reset`` audit event.
+
+  → 200 { "id": "<user_id>", "password_reset": true }
+  → 400 actor cannot reset their own password here
+  → 404 target system user not found
+
+POST /v1/system-users/bulk/reset-password   (super_admin, queued)
+  Same body contract; the queued writer generates one temp
+  password per target id and dispatches one email per target.
+  The queue_job_log result NEVER carries any of the cleartext
+  values — only ``{ succeeded: [...], failed: [...] }`` ids.
+
+
+I.2) WHEN TO CALL WHAT (USER MANAGEMENT UI)
+-------------------------------------------
+Reset button in the user-row kebab menu:
+  POST /v1/<admins|system-users>/<user_id>/reset-password
+  with an EMPTY JSON body ``{}``. There is NO password input on
+  the form anymore — surface a callout: "<user_email> will be
+  signed out and emailed a temporary password. They will set a
+  new password on next sign-in."
+
+The bulk action on a user-list selection:
+  POST /v1/system-users/bulk/reset-password
+  Body: { "ids": [...], "atomic": false }
+  Poll the returned job_id; the per-user ``{ succeeded, failed }``
+  result tells the FE which rows to flag.
+
+
+================================================================
+I) UPLOADS — UNIFIED PRIVATE / PUBLIC SURFACE
+================================================================
+
+All file uploads (photos, IDs, signatures, kiosk-form files) now
+flow through a single pipeline that enforces plan storage limits +
+purchased add-ons (see J) before the bytes hit disk. Two routes
+share the same pipeline; difference is who can call them and
+whether the request needs a token.
+
+
+I.1) PRIVATE UPLOAD  (every plan including Free)
+-------------------------------------------------
+POST /v1/uploads/private
+  Auth: Bearer <any token> (admin / user / any tenant system user)
+  Body (multipart/form-data):
+    file        (UploadFile, required)
+    purpose     (UploadPurpose, default=system)
+                — one of: kiosk_form | visitor_photo | id_document
+                          | appointment_photo | branding | system
+    field_id    (str, optional — tenant form field this satisfies)
+  → 201 UploadResponse {
+        "object_key":          "id-docs/<tenant_id>/<uuid>.jpg",
+        "download_url":        "https://...presigned...",
+        "file_name":           "id.jpg",
+        "mime_type":           "image/jpeg",
+        "size":                234567,
+        "backend":             "s3" | "local",
+        "purpose":             "id_document",
+        "tenant_id":           "<tenant_id or null>",
+        "field_id":            "<id_front> | null",
+        "expires_in_seconds":  86400
+      }
+  → 400 DOCUMENT_UPLOAD_INVALID — empty file
+  → 413 DOCUMENT_UPLOAD_INVALID — exceeds plan max_file_size_mb / 50 MB hard cap
+  → 429 storage / document-count cap reached (purchase an addon)
+
+  Notes:
+    * Tenant-scoped tokens count the upload against the tenant's
+      storage budget. App admin / user tokens (no tenant_id) bypass
+      the per-tenant quota — used for system-level uploads.
+    * The Document row is persisted automatically; the object_key
+      is what other models reference. Look it up later via
+      GET /v1/documents/{document_id} if you saved the doc id.
+
+
+I.2) PUBLIC TENANT UPLOAD  (plan-gated, kiosk form file fields)
+---------------------------------------------------------------
+POST /v1/public/tenants/{tenant_id}/uploads
+  Auth: optional Bearer <system user token>
+        — required when the tenant's plan does NOT grant
+          ``/v1/public/tenants/*/uploads``.
+  Body (multipart/form-data):
+    file       (UploadFile, required)
+    purpose    (UploadPurpose, default=kiosk_form)
+    field_id   (str, optional — tenant form field_id this fills)
+  → 201 UploadResponse (same shape as I.1)
+  → 403 FEATURE_DISABLED — no token + plan denies public upload
+  → 403 AUTH_PERMISSION_DENIED — wrong role / wrong tenant
+  → 413 / 429 — same as I.1
+
+Plan gate (mirrors check-in submit gate from section C):
+  fnmatch ``/v1/public/tenants/*/uploads`` (POST)
+  → enabled rule → anonymous calls allowed
+  → no rule / disabled → must present a super_admin /
+    dept_admin / receptionist Bearer token for the SAME tenant
+
+
+I.3) STORAGE QUOTA  (read for any tenant principal)
+---------------------------------------------------
+GET /v1/storage/quota
+  Auth: Bearer <any token>
+  → 200 StorageQuotaOut {
+        "tenant_id":         "<tenant_id>",
+        "plan_storage_mb":   200,        // null = unlimited
+        "addon_storage_mb":  3072,       // 3 GB from 3 active addons
+        "total_storage_mb":  3272,
+        "used_bytes":        524288000,
+        "used_mb":           500.0,
+        "remaining_mb":      2772.0,
+        "document_count":    142,
+        "max_documents":     1000,
+        "max_file_size_mb":  25,
+        "active_addons":     3
+      }
+  Surfaces the live combined budget — call before kicking off a
+  multipart upload UI so you can render "you've used X of Y".
+
+
+I.4) TENANT FORM FILE / IMAGE / SIGNATURE / ID_DOCUMENT FIELDS
+--------------------------------------------------------------
+When a published TenantForm (target_type ∈ {checkin, appointment})
+includes a field with type ∈ {file, image, signature, id_document}:
+
+  1. Kiosk renders an upload widget for the field.
+  2. On file pick, kiosk POSTs to:
+       /v1/public/tenants/{tenant_id}/uploads
+       (or /v1/uploads/private when a receptionist is driving)
+     with purpose=kiosk_form and field_id=<form_field_id>.
+  3. Server returns object_key.
+  4. Kiosk stores object_key inside the matching slot:
+       * tenant_specific_data["<field_id>"] = object_key  — checkin
+       * tenant_form_data["<field_id>"]      = object_key  — appointment
+  5. Submit (POST .../submit  /  POST /v1/appointments) carries
+     the object_key. The required-field validator sees a non-empty
+     value and passes.
+
+The submit endpoints do NOT re-upload. Bytes only ever flow
+through the upload endpoints; the submit endpoints are JSON /
+multipart-of-keys only.
+
+
+I.5) WHEN TO CALL WHAT (UPLOADS)
+--------------------------------
+Kiosk file-field flow:
+  1. POST /v1/public/tenants/{tenant_id}/uploads  → object_key
+  2. POST /v1/public/tenants/{tenant_id}/submit
+     with bio_data / tenant_specific_data containing the object_key
+  → check that publicSelfCheckinEnabled + the analogous upload
+    feature are both granted by the plan, otherwise carry a
+    receptionist token on both calls.
+
+Receptionist-captured ID re-scan:
+  1. POST /v1/uploads/private  purpose=id_document  → object_key
+  2. POST /v1/visitors/.../apply-id-scan  with image_object_key
+
+Storage budget display:
+  GET /v1/storage/quota  → render meter + "upgrade / buy addon" CTA.
+
+
+================================================================
+J) ADD-ON FRAMEWORK + STORAGE EXTENSIONS
+================================================================
+
+A generic add-on system lets tenants buy extra resource on top of
+their plan without changing tier. The first concrete add-on is
+``storage_extension`` (1 GB for ₦2,000, default 12-month validity)
+but the same machinery handles future add-ons (``visitor_quota``,
+``branch_quota``, …) by adding a new ``AddonKind`` enum value and
+teaching the consuming service which key on ``benefit_per_unit``
+to read.
+
+
+J.1) DATA MODEL
+---------------
+Two MongoDB collections:
+
+* ``addons``         — Catalog of SKUs (admin-managed).
+  Fields: name, description, kind (AddonKind), status (draft /
+  active / archived), unit_price, currency, benefit_per_unit
+  (kind-specific dict — e.g. {"storage_mb": 1024} for the 1 GB
+  storage SKU), validity_days (None = perpetual), max_units_per_purchase.
+
+* ``tenant_addons``  — Per-tenant instances of a purchased addon.
+  Fields: tenant_id, addon_id, addon_kind (snapshot), quantity,
+  unit_price_snapshot, currency_snapshot, benefit_snapshot,
+  status (pending / active / expired / cancelled), purchased_at,
+  expires_at (null = perpetual), payment_provider, payment_reference,
+  checkout_url, completed_at, cancelled_at, cancellation_reason,
+  created_by_user_id.
+
+Snapshotted price + benefit means catalog edits never retro-change
+a previously-paid instance.
+
+
+J.2) ADMIN — MANAGE THE CATALOG
+-------------------------------
+POST   /v1/admins/addons                  (application admin)
+  Body: AddonCreate {
+    "name": "Storage 1 GB",
+    "description": "Adds 1 GB of document storage",
+    "kind": "storage_extension",
+    "status": "active",
+    "unit_price": 2000.0,
+    "currency": "NGN",
+    "benefit_per_unit": { "storage_mb": 1024 },
+    "validity_days": 365,
+    "max_units_per_purchase": 50
+  }
+  → 201 AddonOut
+
+PATCH  /v1/admins/addons/{addon_id}      AddonUpdate (partial)
+DELETE /v1/admins/addons/{addon_id}      → { "deleted": true }
+GET    /v1/admins/addons?kind=...        list catalog
+       Query: kind=storage_extension|visitor_quota|branch_quota
+
+
+J.3) PUBLIC PRICING READS
+-------------------------
+GET /v1/addons                  → list of AddonOut (active only)
+  Query: kind=storage_extension
+GET /v1/addons/{addon_id}       → single AddonOut (404 if archived)
+
+
+J.4) TENANT — PURCHASE + HISTORY (super_admin)
+----------------------------------------------
+POST /v1/tenants/me/addons/purchase
+  Body: AddonPurchaseRequest {
+    "addon_id":            "<addon_id>",
+    "quantity":            5,           // 5 × 1 GB = 5 GB
+    "preferred_provider":  "stripe" | "flutterwave" | "app"   // optional
+  }
+  → 201 AddonPurchaseResponse {
+        "tenant_addon_id":     "...",
+        "addon_id":            "...",
+        "addon_name":          "Storage 1 GB",
+        "addon_kind":          "storage_extension",
+        "quantity":            5,
+        "amount_total":        10000.0,
+        "currency":            "NGN",
+        "payment_provider":    "stripe",
+        "checkout_url":        "https://checkout.stripe.com/...",
+        "payment_reference":   "addon_<uuid>",
+        "status":              "pending"
+      }
+  Open checkout_url in the browser. On payment success the
+  webhook flips the tenant_addons row to ``active`` and sets
+  ``expires_at = purchased_at + addon.validity_days * 86400``
+  (or null for perpetual SKUs).
+
+GET    /v1/tenants/me/addons                  full history
+GET    /v1/tenants/me/addons/active?kind=...  only currently usable
+GET    /v1/tenants/me/addons/{tenant_addon_id} one row
+POST   /v1/tenants/me/addons/{tenant_addon_id}/cancel
+       Body: { "reason": "..." }   → TenantAddonOut (status=cancelled)
+
+
+J.5) PAYMENT WEBHOOK ACTIVATION (automatic)
+-------------------------------------------
+Stripe / Flutterwave / app-mode webhooks all funnel through
+``services.checkout_service:maybe_complete_checkout_from_reference``.
+The function now recognises addon references (those prefixed
+``addon_``) and:
+
+  * outcome="success"  → activate the tenant addon, set expires_at
+  * outcome="failure"  → cancel the tenant addon
+
+Idempotent — duplicate webhook deliveries leave the row in the
+same state. No per-provider plumbing required when adding a new
+addon kind.
+
+Manual replay (ops tooling, application admin only):
+  POST /v1/admins/addons/webhooks/activate/{payment_reference}
+  → TenantAddonOut (re-runs the activation)
+
+
+J.6) STORAGE QUOTA INTEGRATION
+------------------------------
+The pre-existing ``services.plan_limits.enforce_storage_limits``
+is still the legacy reference, but every NEW upload path uses the
+combined helper:
+
+  services.storage_quota_service.enforce_storage_quota(tenant_id, file_bytes)
+  services.storage_quota_service.get_storage_quota(tenant_id)
+
+Total budget = ``plan.storage_limits.max_storage_mb`` (None = unlimited)
+             + Σ active storage_extension addons:
+                 quantity × benefit_snapshot["storage_mb"]
+
+Per-file size cap (``max_file_size_mb``) and document-count cap
+(``max_documents``) remain plan-only — add a new addon kind later
+if they need extending.
+
+Failure responses:
+  413 — file exceeds per-file limit
+  429 — projected used_bytes > total_storage_mb
+        ("Storage limit reached … Purchase a storage addon")
+  429 — document_count ≥ max_documents
+
+
+J.7) SCHEDULED EXPIRY SWEEP
+---------------------------
+APScheduler runs ``services.addon_service:expire_due_addons``
+every 6 hours. Rows whose ``expires_at`` is in the past flip
+``status: active → expired`` and stop being counted toward the
+tenant's budget. The benefit reactivates only when a fresh
+purchase replaces them.
+
+
+J.8) ADDING A NEW ADDON KIND
+----------------------------
+1. Add a value to ``schemas.addon_schema.AddonKind``.
+2. POST /v1/admins/addons with that kind + a ``benefit_per_unit``
+   dict keyed on whatever your consuming service reads (e.g.
+   ``{"visitors": 500}`` for a visitor-quota SKU).
+3. In the consuming service (e.g. visitor cap enforcement), call
+   ``services.addon_service.list_active_addons_for_tenant(
+       tenant_id, kind=AddonKind.VISITOR_QUOTA)``
+   and add the summed benefit to the plan cap before checking.
+4. The purchase / payment / webhook flow doesn't need changes —
+   ``initiate_addon_purchase`` works for every kind.
+
+
+J.9) WHEN TO CALL WHAT (ADDONS)
+-------------------------------
+Render addon pricing:
+  GET /v1/addons?kind=storage_extension
+
+Render tenant's storage page:
+  GET /v1/storage/quota                            // budget
+  GET /v1/tenants/me/addons/active                 // active rows
+  GET /v1/tenants/me/addons                        // full history
+
+Purchase flow:
+  1. POST /v1/tenants/me/addons/purchase           → checkout_url
+  2. Open checkout_url (Stripe / Flutterwave / app simulator).
+  3. Poll GET /v1/tenants/me/addons/{tenant_addon_id} or rely on
+     the webhook side effect — status flips to ``active``.
+
+Cancel:
+  POST /v1/tenants/me/addons/{tenant_addon_id}/cancel
+  Refunds are handled separately via /v1/payments/{id}/refund.
+
+
+J.10) ERROR ENVELOPES
+---------------------
+Purchase rejected (quantity > max_units_per_purchase):
+  HTTP 400
+  { "success": false,
+    "code": "VALIDATION_FAILED",
+    "message": "This addon caps purchases at 50 units per checkout.",
+    "details": { "max_units_per_purchase": 50 } }
+
+Payment provider error (all providers failed):
+  HTTP 502
+  { "success": false,
+    "code": "PAYMENT_PROVIDER_ERROR",
+    "message": "All payment providers failed to create an addon checkout intent",
+    "details": { "error": "..." } }
+
+Storage cap reached even after addons:
+  HTTP 429
+  { "success": false,
+    "message": "Storage limit reached (3272 MB total — plan 200 MB +
+                addons 3072 MB). Purchase a storage addon
+                (POST /v1/addons/purchase) or upgrade your plan." }
+
+

@@ -706,9 +706,12 @@ async def bulk_reset_system_users_password(
     description=(
         "Super_admin-driven password reset for any system user inside the same "
         "tenant. The actor's tenant is taken from their token; the target must "
-        "belong to that tenant or a 404 is returned. The target's tokens are "
-        "all revoked so they're forced to log in again. Super admins cannot "
-        "reset their own password through this endpoint — use "
+        "belong to that tenant or a 404 is returned. The new password is "
+        "system-generated and emailed directly to the target — the super_admin "
+        "does NOT (and cannot) choose it. The target's tokens are all revoked "
+        "and ``must_change_password`` is flipped to True, so the next sign-in "
+        "lands them on the change-password screen. Super admins cannot reset "
+        "their own password through this endpoint — use "
         "/v1/auth/change-password instead."
     ),
     summary="Super admin reset of another tenant user's password",
@@ -717,7 +720,6 @@ async def bulk_reset_system_users_password(
         401: "Unauthorized - invalid or missing token",
         403: "Forbidden - only super_admins",
         404: "Target system user not found in this tenant",
-        422: "Password does not meet policy or matches a recent password",
     },
 )
 async def super_admin_reset_user_password_endpoint(
@@ -727,13 +729,13 @@ async def super_admin_reset_user_password_endpoint(
 ):
     """Super_admin can reset any tenant user's password (including other
     super_admins inside the same tenant)."""
+    del payload  # body is intentionally empty — kept for consistency
     from services.password_change_service import (
         reset_system_user_password_by_authority,
     )
 
     await reset_system_user_password_by_authority(
         target_user_id=user_id,
-        new_password=payload.new_password,
         actor_id=principal.user_id,
         actor_role="super_admin",
         scope_tenant_id=principal.tenant_id or "",

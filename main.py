@@ -403,6 +403,19 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Schedule addon expiry sweep (every 6 hours). Flips active
+    # storage / quota addons past their expires_at to ``expired`` so
+    # they stop being counted toward the tenant's budget. Without
+    # this job, a forgotten addon would keep granting benefit
+    # forever.
+    scheduler.add_job(
+        "services.addon_service:expire_due_addons",
+        trigger=IntervalTrigger(hours=6),
+        id="expire_due_addons",
+        name="Expire Due Addons",
+        replace_existing=True,
+    )
+
     # Main super_admin invariant — periodic re-check (every 6 hours).
     # Heals tenants whose state drifted out of band (e.g. someone
     # manually changed flags) and opens a HIGH-priority support case
@@ -845,6 +858,16 @@ from api.v1.tenant_form_route import (
     router as v1_tenant_form_route_router,
     public_router as v1_tenant_form_public_router,
 )
+from api.v1.upload_route import (
+    public_router as v1_upload_public_router,
+    router as v1_upload_route_router,
+    storage_router as v1_storage_router,
+)
+from api.v1.addon_route import (
+    admin_router as v1_addon_admin_router,
+    public_router as v1_addon_public_router,
+    tenant_router as v1_addon_tenant_router,
+)
 # Blog backend port (visichek-blog-backend merged in). Admin routers
 # live under /v1 alongside the existing /v1/admins admin surface;
 # public website routers live under /api/v1; video streaming sits at
@@ -935,6 +958,16 @@ app.include_router(v1_me_limitations_route_router, prefix="/v1")
 # Tenant form builder — authenticated CRUD + kiosk-public read endpoints.
 app.include_router(v1_tenant_form_route_router, prefix="/v1")
 app.include_router(v1_tenant_form_public_router, prefix="/v1")
+# Unified upload surface — private (auth, all plans) + public kiosk
+# (plan-gated). Storage quota endpoint reads plan + active addons.
+app.include_router(v1_upload_route_router, prefix="/v1")
+app.include_router(v1_upload_public_router, prefix="/v1")
+app.include_router(v1_storage_router, prefix="/v1")
+# Add-on catalog (admin), public pricing, and tenant purchase /
+# history endpoints.
+app.include_router(v1_addon_admin_router, prefix="/v1")
+app.include_router(v1_addon_public_router, prefix="/v1")
+app.include_router(v1_addon_tenant_router, prefix="/v1")
 # App-mode payment simulator — deliberately NOT under /v1 so the URLs
 # match the checkout_url emitted by AppCheckoutPaymentProvider.
 app.include_router(app_payment_route_router)
