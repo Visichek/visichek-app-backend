@@ -13,6 +13,11 @@ from uuid import uuid4
 
 from bson import ObjectId
 
+from config.default_forms import (
+    default_description_for_target,
+    default_fields_for_target,
+    default_name_for_target,
+)
 from core.errors import AppException, ErrorCode, resource_not_found
 from core.queue.precompute import delete_precompute, mark_scope_dirty
 from repositories.tenant_form_repo import (
@@ -319,16 +324,32 @@ async def create_form_shell(
     actor_role: Optional[str] = None,
     request_id: Optional[str] = None,
     preassigned_id: Optional[str] = None,
+    seed_defaults: bool = True,
 ) -> TenantFormOut:
     """Create a brand-new form for a tenant in draft status.
 
-    The first POST from the frontend creates an empty shell so subsequent
-    PATCHes have something to autosave against. The published columns
-    (``fields``, ``version``) remain empty until the user calls
-    ``publish``.
+    When ``seed_defaults=True`` (the default) and the caller did not
+    supply name / description / fields, the draft is pre-populated with
+    the system defaults for the ``target_type`` (see
+    :mod:`config.default_forms`). This means a freshly bootstrapped
+    check-in form already lists ``full_name``, ``phone``, ``email``,
+    ``company`` and ``purpose`` so the super_admin can edit them
+    instead of starting from a blank canvas.
+
+    The published columns (``fields``, ``version``) stay empty regardless
+    — the caller still has to ``publish`` to make the seeded draft go
+    live.
     """
     form_id = _new_form_id()
     now = int(time.time())
+
+    seeded_name = name
+    seeded_description = description
+    seeded_fields = fields
+    if seed_defaults and not name and not description and not fields:
+        seeded_name = default_name_for_target(target_type)
+        seeded_description = default_description_for_target(target_type) or None
+        seeded_fields = default_fields_for_target(target_type) or None
 
     payload = TenantFormCreate(
         form_id=form_id,
@@ -339,11 +360,15 @@ async def create_form_shell(
         status=FormStatus.DRAFT,
         version=0,
         fields=[],
-        draft_name=name if name else None,
-        draft_description=description,
-        draft_fields=fields,
-        draft_updated_at=now if (name or description or fields) else None,
-        draft_updated_by=actor_id if (name or description or fields) else None,
+        draft_name=seeded_name if seeded_name else None,
+        draft_description=seeded_description,
+        draft_fields=seeded_fields,
+        draft_updated_at=(
+            now if (seeded_name or seeded_description or seeded_fields) else None
+        ),
+        draft_updated_by=(
+            actor_id if (seeded_name or seeded_description or seeded_fields) else None
+        ),
         created_by_user_id=actor_id,
         last_updated_by_user_id=actor_id,
         date_created=now,
@@ -623,6 +648,102 @@ async def discard_draft(
     except Exception:
         pass
     return cleared
+
+
+async def seed_default_fields_into_draft(
+    *,
+    tenant_id: str,
+    form_id: str,
+    force: bool = False,
+    actor_id: Optional[str] = None,
+    actor_role: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> TenantFormOut:
+    """Load the system default fields into a form's draft.
+
+    Idempotent in the common case: if the draft already has fields and
+    ``force`` is False, the call is a no-op (returns the form unchanged).
+    When ``force=True`` the existing draft fields are overwritten with
+    the defaults — useful for "reset to defaults" UX. The published
+    columns (``name``, ``description``, ``fields``, ``version``) are
+    never touched; this is a draft-only operation.
+
+    Existing drafts where the super_admin already started editing
+    (added/removed fields) keep their work unless ``force=True`` is
+    passed. A draft whose ``draft_fields`` is ``None`` or empty is
+    treated as untouched and gets seeded.
+    """
+    head = await get_head_for_form_id(tenant_id=tenant_id, form_id=form_id)
+    if not head:
+        raise resource_not_found(resource="TenantForm", resource_id=form_id)
+    if head.status == FormStatus.ARCHIVED:
+        raise AppException(
+            status_code=409,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Cannot seed defaults into an archived form.",
+            details={"form_id": form_id, "status": head.status.value},
+        )
+
+    has_draft_fields = bool(head.draft_fields)
+    if has_draft_fields and not force:
+        # Draft already populated — nothing to do.
+        return head
+
+    target = head.target_type.value
+    defaults = default_fields_for_target(target)
+    if not defaults:
+        raise AppException(
+            status_code=422,
+            code=ErrorCode.VALIDATION_FAILED,
+            message=(
+                f"No system defaults defined for target_type='{target}'. "
+                "Add fields manually or extend config.default_forms."
+            ),
+            details={"target_type": target, "form_id": form_id},
+        )
+
+    now = int(time.time())
+    update = TenantFormUpdate(
+        draft_name=head.draft_name or default_name_for_target(target),
+        draft_description=(
+            head.draft_description
+            if head.draft_description is not None
+            else (default_description_for_target(target) or None)
+        ),
+        draft_fields=defaults,
+        draft_updated_at=now,
+        draft_updated_by=actor_id,
+        last_updated_by_user_id=actor_id,
+        last_updated=now,
+    )
+    updated = await update_tenant_form(
+        {"_id": ObjectId(head.id)} if head.id else {"form_id": form_id},
+        update,
+    )
+    if not updated:
+        raise resource_not_found(resource="TenantForm", resource_id=form_id)
+
+    _invalidate_form_caches(tenant_id=tenant_id, target_type=target)
+
+    try:
+        await record_audit_event(
+            actor_id=actor_id or "system",
+            actor_role=actor_role or "system",
+            action="form.defaults_seeded",
+            resource_type="tenant_form",
+            resource_id=form_id,
+            tenant_id=tenant_id,
+            details={
+                "row_id": updated.id,
+                "target_type": target,
+                "force": force,
+                "field_count": len(defaults),
+            },
+            request_id=request_id,
+        )
+    except Exception:
+        pass
+    return updated
 
 
 async def archive_form(

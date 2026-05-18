@@ -46,6 +46,7 @@ from services.tenant_form_service import (
     retrieve_form_by_id,
     retrieve_head_by_target,
     retrieve_public_active_by_target,
+    seed_default_fields_into_draft,
 )
 from services.tenant_form_writer import (
     RESOURCE_LIST,
@@ -291,6 +292,43 @@ async def publish_form_endpoint(
     form = await publish_form(
         tenant_id=tenant_id,
         form_id=form_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=_request_id(request),
+    )
+    return form.model_dump(mode="json", by_alias=True)
+
+
+@router.post("/{form_id}/seed-defaults")
+@document_response(
+    message="Default fields seeded into draft",
+    description=(
+        "Load the system default fields for the form's ``target_type`` "
+        "into the draft. Idempotent — if the draft already has fields "
+        "this is a no-op (returns the form unchanged). Pass "
+        "``?force=true`` to overwrite the existing draft with the "
+        "defaults (useful for a 'reset' button in the form-builder UI). "
+        "The published shape is never touched; you still have to "
+        "``publish`` afterwards."
+    ),
+    summary="Seed default fields into form draft",
+    response_codes={
+        404: "Form not found",
+        409: "Form is archived",
+        422: "No defaults defined for this target_type",
+    },
+)
+async def seed_defaults_endpoint(
+    form_id: str,
+    request: Request,
+    force: bool = Query(default=False),
+    principal: AuthPrincipal = Depends(verify_tenant_form_configure_token),
+) -> Any:
+    tenant_id = principal.tenant_id or ""
+    form = await seed_default_fields_into_draft(
+        tenant_id=tenant_id,
+        form_id=form_id,
+        force=force,
         actor_id=principal.user_id,
         actor_role=principal.role,
         request_id=_request_id(request),

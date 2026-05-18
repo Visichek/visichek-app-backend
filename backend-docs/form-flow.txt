@@ -1,0 +1,493 @@
+================================================================================
+FORM FLOW — Tenant form builder (check-in + appointment) end-to-end
+================================================================================
+
+Companion docs:
+  backend-docs/tenant-config-forms-spec.txt  — the design spec
+  CLAUDE.md "Notifications System" + "Tenant Settings" — adjacent surfaces
+
+This file documents the *current* shipping behaviour: how a super_admin
+configures a form, where the defaults come from, what bytes the kiosk
+actually receives, and how the moving parts stay in sync between the
+`tenant_forms` collection and the legacy `CheckinConfig`.
+
+--------------------------------------------------------------------------------
+0. TL;DR
+--------------------------------------------------------------------------------
+
+A tenant has at most ONE head row per (tenant_id, target_type) in
+`tenant_forms`. The head row carries both the published shape
+(`fields`, `version`, `status=active|draft`) AND a draft working copy
+(`draft_fields`, `draft_name`, `draft_description`). Autosave writes to
+`draft_*`; publish promotes `draft_*` into the published columns and
+clears the draft.
+
+For target_type=checkin the form-builder output is merged at read time
+with `services/checkin_config_service.py::_merge_required_fields` and
+exposed publicly at `GET /v1/public/tenants/{tenant_id}/active-checkin-config`.
+For target_type=appointment the form drives create-time validation
+inside `services/appointment_service.py::_validate_tenant_form_data_for_appointment`
+and is exposed to the schedule UI via `GET /v1/appointments/form-requirements`.
+
+A brand-new draft is no longer empty: `config/default_forms.py` ships
+default field sets for `checkin` and `appointment`, and
+`bootstrap_draft_for_target` seeds them on first call. Existing drafts
+can request a re-seed via `POST /v1/tenant-forms/{form_id}/seed-defaults`.
+
+--------------------------------------------------------------------------------
+1. ARCHITECTURE — two collections, one source of truth
+--------------------------------------------------------------------------------
+
+There are TWO collections involved in the kiosk render path. Knowing
+which is which matters because legacy code still touches both.
+
+1.1 `tenant_forms` — the form-builder source of truth
+-----------------------------------------------------
+Shape:   schemas/tenant_form_schema.py :: TenantFormBase / TenantFormOut
+Repo:    repositories/tenant_form_repo.py
+Service: services/tenant_form_service.py
+
+Each row has:
+  form_id                  stable uuid across versions
+  tenant_id, target_type   (target_type ∈ {checkin, appointment, visit_session})
+  status                   draft | active | archived | superseded
+  version                  monotonically incremented on publish
+  fields                   PUBLISHED field list (empty until first publish)
+  draft_name / draft_description / draft_fields
+                           in-flight working copy; cleared on publish/discard
+  draft_updated_at / draft_updated_by
+
+Multi-row per form_id: at most one row per (tenant_id, target_type)
+with status ∈ {active, draft}; older published versions linger as
+status=superseded so historical submissions stay interpretable.
+
+1.2 `checkin_configs` — the legacy kiosk config row
+---------------------------------------------------
+Shape:   schemas/checkin_config_schema.py :: CheckinConfigBase
+Repo:    repositories/checkin_config_repo.py
+Service: services/checkin_config_service.py
+
+Carries id/feature toggles (`id_upload_enabled`,
+`allow_returning_visitor_lookup`, `required_fields`). The
+`required_fields` column predates the form builder — it's preserved
+for tenants who set it before the tenant_forms collection existed.
+
+1.3 How they line up
+--------------------
+For `checkin`:
+  • `services/checkin_config_service.py::_merge_required_fields` reads
+    both: published TenantForm wins for any field key it covers, then
+    legacy `CheckinConfig.required_fields` fills any remaining keys,
+    then the in-code `DEFAULT_REQUIRED_FIELDS` provides bio fallbacks
+    (full_name / phone / email / company) and the mandatory `purpose`
+    picker.
+  • The merged output is exposed at:
+      GET /v1/public/tenants/{tenant_id}/active-checkin-config
+      GET /v1/checkin-configs/{id}  (when an explicit config row exists)
+
+For `appointment`:
+  • The form is read directly by `services/appointment_service.py::
+    _validate_tenant_form_data_for_appointment` on appointment create
+    to reject submissions missing tenant-required fields.
+  • The form-requirements split (system vs tenant) is exposed at:
+      GET /v1/appointments/form-requirements
+
+For `visit_session`:
+  • Same form-builder mechanics; no automatic merge with a legacy
+    config row.
+
+--------------------------------------------------------------------------------
+2. LIFECYCLE — draft, publish, archive, discard, clone
+--------------------------------------------------------------------------------
+
+```
+  +------------------+   bootstrap     +-----------------------+
+  |  no head row     | --------------> | head row, status=draft|
+  +------------------+                 | draft_*  = defaults   |
+                                       | fields   = []         |
+                                       | version  = 0          |
+                                       +-----------+-----------+
+                                                   |
+                                                   | autosave PATCH
+                                                   | (writes draft_* only)
+                                                   v
+                                       +-----------------------+
+                                       | head row, status=draft|
+                                       | draft_*  = user edits |
+                                       +-----+-----------+-----+
+                                             |           |
+                                publish      |           |  discard-draft
+                                             v           v
+                              +-----------------+   +-----------------+
+                              | status=active   |   | status=draft    |
+                              | fields=draft    |   | draft_* cleared |
+                              | version+=1      |   | fields untouched|
+                              | draft_* cleared |   +-----------------+
+                              +--------+--------+
+                                       |
+                              archive  |
+                                       v
+                              +-----------------+
+                              | status=archived |
+                              | fields preserved|
+                              +-----------------+
+```
+
+Side flows:
+  • `clone` copies a source form's PUBLISHED shape into a fresh
+    form_id as `status=draft, version=0`.
+  • `seed-defaults` loads the system defaults into a draft (only when
+    `draft_fields` is empty, or when `?force=true`).
+
+--------------------------------------------------------------------------------
+3. DEFAULT FIELDS — where they come from
+--------------------------------------------------------------------------------
+
+Source: `config/default_forms.py`
+
+Why a code constant and not a database row: the defaults must
+materialise even before bootstrap has run, must be migration-safe, and
+must not leak between tenants. The constant is copied per call (no
+shared mutable state).
+
+3.1 Checkin defaults
+--------------------
+  full_name (text, required,   maps_to=visitor.full_name)
+  phone     (phone, required,  maps_to=visitor.phone)
+  email     (email, optional,  maps_to=visitor.email)
+  company   (text, optional,   maps_to=visitor.company)
+  purpose   (select, required, maps_to=purpose, options=DEFAULT_PURPOSES_OF_VISIT)
+
+These are deliberately the same shape as
+`services/checkin_config_service.py::DEFAULT_REQUIRED_FIELDS` so a
+super_admin who just bootstraps + publishes (no edits) gets a kiosk
+that looks identical to the in-code defaults — just one that is
+editable through the form-builder.
+
+3.2 Appointment defaults
+------------------------
+  full_name                  (text, required,   maps_to=visitor.full_name)
+  phone                      (phone, required,  maps_to=visitor.phone)
+  email                      (email, optional,  maps_to=visitor.email)
+  company                    (text, optional,   maps_to=visitor.company)
+  purpose                    (select, required, maps_to=purpose)
+  expected_duration_minutes  (integer, optional, maps_to=expected_duration_minutes)
+
+System-required appointment fields (host_id, department_id,
+scheduled_datetime) are NOT in the tenant form — they live on
+first-class appointment columns and are enforced by `AppointmentCreate`
+Pydantic + `services/appointment_service.SYSTEM_REQUIRED_APPOINTMENT_FIELDS`.
+`describe_appointment_form_requirements` returns them under a separate
+`system_required_fields` key so the schedule UI renders them as a
+fixed section above the tenant-editable section.
+
+--------------------------------------------------------------------------------
+4. AUTOSAVE → PUBLISH — the super_admin's HTTP path
+--------------------------------------------------------------------------------
+
+4.1 Bootstrap (idempotent — call on form-builder mount)
+-------------------------------------------------------
+  POST /v1/tenant-forms/draft/{target_type}
+
+  No body. If a head row already exists, returns it untouched. Else
+  creates a fresh head with `status=draft`, `version=0`, and `draft_*`
+  pre-populated with the defaults for `target_type`.
+
+4.2 Autosave (call on each keystroke / debounce)
+------------------------------------------------
+  PATCH /v1/tenant-forms/{form_id}
+  Body: { "name"?, "description"?, "fields"? }
+
+  Writes to `draft_*` only. NEVER mutates the published `fields` /
+  `version`. Validation is permissive — empty labels, zero fields,
+  empty name are all allowed because the user is mid-typing.
+  Response includes `meta.warnings[]` for soft hints
+  ("Form name is empty — required to publish.").
+
+  Response `hasUnpublishedChanges: true` whenever any of
+  `draft_name`, `draft_description`, `draft_fields` is non-null.
+
+4.3 Publish (call when the super_admin clicks "Publish")
+--------------------------------------------------------
+  POST /v1/tenant-forms/{form_id}/publish
+
+  No body. Runs `_validate_publish`:
+    NAME_REQUIRED              — draft_name (or name) is empty
+    NO_FIELDS                  — draft has zero fields
+    EMPTY_LABEL                — any field with empty label
+    DUPLICATE_FIELD_ID         — two fields share field_id
+    CONSENT_TEXT_REQUIRED      — consent_checkbox missing consent_text
+    OPTIONS_REQUIRED           — select / multi_select with no options
+    FORMULA_REQUIRED           — calculated with no formula
+
+  On success: bumps `version`, copies draft → published, clears
+  draft_*, supersedes any other active row for the same (tenant,
+  target_type). Invalidates the precompute cache so the next public
+  read sees the new version.
+
+  On failure: returns 422 with `details.errors[]` so the builder can
+  pin each error inline next to its question card.
+
+4.4 Discard draft
+-----------------
+  POST /v1/tenant-forms/{form_id}/discard-draft
+
+  Clears `draft_*`. The published shape is untouched. Idempotent
+  no-op on a form with no draft.
+
+4.5 Seed defaults (recovery for forms that started empty)
+---------------------------------------------------------
+  POST /v1/tenant-forms/{form_id}/seed-defaults
+  POST /v1/tenant-forms/{form_id}/seed-defaults?force=true
+
+  Loads the system defaults for the form's `target_type` into
+  `draft_*`. Without `?force=true` this is a no-op when the draft
+  already has fields — useful for "I started typing and want to start
+  over". With `?force=true` the existing draft fields are wholesale
+  replaced with the defaults.
+
+  Use case: drafts that were bootstrapped under an older build before
+  default seeding shipped come back empty; one call to
+  `seed-defaults` loads the standard field set so the super_admin can
+  edit instead of building from scratch.
+
+4.6 Archive
+-----------
+  POST /v1/tenant-forms/{form_id}/archive
+
+  Flips the head row's `status=archived`. Existing submissions still
+  resolve against the form's last published version. New submissions
+  for that `target_type` are rejected until another form is published.
+
+4.7 Clone
+---------
+  POST /v1/tenant-forms/{form_id}/clone
+  Body (optional): { "name": "..." }
+
+  Duplicates the source's PUBLISHED shape into a fresh form_id as
+  `status=draft, version=0`. The source row is untouched. Useful for
+  trial redesigns.
+
+--------------------------------------------------------------------------------
+5. READ PATHS — who sees what
+--------------------------------------------------------------------------------
+
+5.1 Super_admin form-builder
+----------------------------
+  GET /v1/tenant-forms                       — list head rows
+  GET /v1/tenant-forms/by-target/{target}    — head row (draft or active)
+  GET /v1/tenant-forms/{form_id}             — head row by id
+
+  These return the FULL row including `draft_*`, so the form-builder
+  UI can render the working copy with a "Discard changes" affordance
+  when `hasUnpublishedChanges` is true.
+
+5.2 Receptionist / kiosk (authenticated tenant user)
+----------------------------------------------------
+  GET /v1/tenant-forms/active/{target}
+
+  Returns the PUBLISHED shape only — no `draft_*`. Served from the
+  per-tenant precompute cache.
+
+5.3 Public kiosk (no auth)
+--------------------------
+  GET /v1/public/tenant-forms/by-target/{tenant_id}/{target}
+
+  Same as 5.2 but unauthenticated. Used by kiosk QR landing pages.
+  Returns 404 when no active form exists.
+
+5.4 Active check-in config (no auth) — the merge endpoint
+---------------------------------------------------------
+  GET /v1/public/tenants/{tenant_id}/active-checkin-config
+
+  Returns the merged required-field set:
+    1. Published TenantForm fields (`form` table)            ← wins
+    2. Legacy CheckinConfig.required_fields (`checkin_configs`)
+    3. System BIO defaults (full_name, phone, email, company)
+    4. System `purpose` picker (always present)
+
+  Plus flags from CheckinConfig: `id_upload_enabled` (force-disabled
+  on plans that block KYC), `allow_returning_visitor_lookup`,
+  `public_self_checkin_enabled` (plan-gated).
+
+  ALSO returns `tenant_form_id` and `tenant_form_version` — these are
+  None until a TenantForm is published for `target_type=checkin`. This
+  is the signal you've been editing a draft but never published.
+
+5.5 Appointment form requirements (authenticated)
+-------------------------------------------------
+  GET /v1/appointments/form-requirements
+
+  Returns:
+    system_required_fields  — host_id, department_id, scheduled_datetime
+    tenant_form_id          — id of the published appointment form, or null
+    tenant_form_version     — version, or null
+    tenant_required_fields  — the published form's fields with labels,
+                              types, options, help text
+
+  When no form is published, `tenant_required_fields` is `[]` and
+  appointment create accepts whatever extra data the client sends
+  without tenant-specific validation.
+
+--------------------------------------------------------------------------------
+6. PRECOMPUTE / CACHE
+--------------------------------------------------------------------------------
+
+Precompute resources registered in `services/tenant_form_writer.py`:
+  tenant_forms.list                     — scope=TENANT
+  tenant_forms.active.{target_type}     — scope=TENANT (3 resources)
+  tenant_forms.public.{target_type}     — scope=TENANT (3 resources)
+
+Mutation invalidation (in `services/tenant_form_service.py::_invalidate_form_caches`):
+  • `delete_precompute` for the 3 affected keys
+  • `mark_scope_dirty("t:{tenant_id}")` so the http_cache layer drops
+    its per-tenant page cache
+  • `enqueue_refresh` so the precompute worker re-warms the keys
+    within the next fanout cycle
+
+The merged `active-checkin-config` endpoint is NOT precomputed (it
+spans two collections + plan lookups) but its inputs are.
+
+--------------------------------------------------------------------------------
+7. APPOINTMENT VALIDATION DETAILS
+--------------------------------------------------------------------------------
+
+`services/appointment_service.py::_validate_tenant_form_data_for_appointment`
+is called from `add_appointment` before the cap check. It:
+
+  1. Looks up the ACTIVE TenantForm for `(tenant_id, target_type=appointment)`.
+  2. Returns immediately if no form is published — only the Pydantic
+     system-required fields apply.
+  3. For every field with `required=True`, checks
+     `appt_data.tenant_form_data[field_id]` is present and non-empty
+     (rejects `""`, `[]`, `{}`).
+  4. Raises 400 VALIDATION_FAILED with `missing_fields` listed on any
+     gap.
+  5. Stamps `appt_data.tenant_form_id` / `tenant_form_version` so the
+     appointment row preserves the form version it satisfied — survives
+     subsequent form edits.
+
+--------------------------------------------------------------------------------
+8. WHY THE KIOSK STILL SHOWS DEFAULTS WHEN YOUR DRAFT HAS ONE FIELD
+--------------------------------------------------------------------------------
+
+This was the original report. Three things were at play:
+
+  A. The form was in `status=draft`. The kiosk endpoints
+     (`/v1/public/tenants/.../active-checkin-config` and
+     `/v1/public/tenant-forms/by-target/.../checkin`) only ever read
+     PUBLISHED rows. A draft is invisible to the kiosk.
+
+  B. The bootstrap that created the draft left it empty (no name, no
+     fields). The user added a single `question` field via PATCH —
+     this still couldn't be published because `_validate_publish`
+     rejects forms with empty `name`.
+
+  C. Even with everything published correctly, the old merge logic
+     ALWAYS prepended the in-code bio defaults and skipped any form
+     field with the same key — so editing the bio fields through the
+     form-builder had no visible effect on the kiosk.
+
+Fixes shipped:
+  • Bootstrap now seeds defaults into `draft_*` so a freshly created
+    form arrives ready to edit.
+  • `POST /v1/tenant-forms/{form_id}/seed-defaults` re-seeds drafts
+    that were created under the old empty-bootstrap behaviour.
+  • `_merge_required_fields` now lets the published form's fields
+    win over equally-keyed bio defaults.
+
+The "still draft" condition itself is intentional — publishing is the
+user's explicit action and the validation gate exists to keep
+malformed forms off the kiosk.
+
+--------------------------------------------------------------------------------
+9. ALIAS — verify-registration-token
+--------------------------------------------------------------------------------
+
+A second path was added for the registration-token verifier:
+
+  GET /v1/public/verify-registration-token?token=...
+
+  Returns the same payload as `GET /v1/public/register/verify?token=...`.
+  Both are unauthenticated; both are best-effort (`valid: false` rather
+  than 4xx on a bad/expired token). The alias exists so older frontend
+  builds that hard-coded the flatter path continue to work.
+
+--------------------------------------------------------------------------------
+10. END-TO-END EXAMPLE — checkin form from blank to live
+--------------------------------------------------------------------------------
+
+```
+# 1. Bootstrap on form-builder mount.
+POST /v1/tenant-forms/draft/checkin
+->  200 {
+        formId: "...",
+        status: "draft",
+        version: 0,
+        fields: [],
+        draftName: "Check-in form",
+        draftDescription: "Fields the receptionist (or kiosk) captures...",
+        draftFields: [
+          { fieldId: "full_name", type: "text",   required: true,  ... },
+          { fieldId: "phone",     type: "phone",  required: true,  ... },
+          { fieldId: "email",     type: "email",  required: false, ... },
+          { fieldId: "company",   type: "text",   required: false, ... },
+          { fieldId: "purpose",   type: "select", required: true,  options: [...] }
+        ],
+        hasUnpublishedChanges: true
+    }
+
+# 2. User edits — adds a custom "department_visiting" select.
+PATCH /v1/tenant-forms/{formId}
+{ "fields": [ ... existing five ..., {
+    "field_id": "department_visiting", "type": "select",
+    "label": "Which department are you visiting?", "required": true,
+    "options": [
+      { "key": "engineering", "label": "Engineering" },
+      { "key": "sales",       "label": "Sales" }
+    ], "order": 60
+}]}
+->  200 { ..., draftFields: <new list>, hasUnpublishedChanges: true,
+          meta: { warnings: [] } }
+
+# 3. Publish.
+POST /v1/tenant-forms/{formId}/publish
+->  200 { status: "active", version: 1, fields: <published list>,
+          draftFields: null, hasUnpublishedChanges: false }
+
+# 4. Kiosk fetches the merged config.
+GET /v1/public/tenants/{tenantId}/active-checkin-config
+->  200 {
+        ...,
+        tenantFormId: "...",
+        tenantFormVersion: 1,
+        requiredFields: [
+          { key: "full_name", ... },          # from the published form
+          { key: "phone", ... },              # from the published form
+          { key: "email", ... },              # from the published form
+          { key: "company", ... },            # from the published form
+          { key: "purpose", ... },            # from the published form
+          { key: "department_visiting", ... } # custom tenant field
+        ]
+    }
+```
+
+If the user had instead created a draft, added a `question` field
+without a label, and called publish, the response would be:
+
+```
+POST /v1/tenant-forms/{formId}/publish
+->  422 {
+        code: "VALIDATION_FAILED",
+        message: "Form is not ready to publish.",
+        details: {
+            formId: "...",
+            errors: [
+                { fieldId: null,       code: "NAME_REQUIRED",   ... },
+                { fieldId: "question", code: "EMPTY_LABEL",     ... }
+            ]
+        }
+    }
+```
+
+================================================================================

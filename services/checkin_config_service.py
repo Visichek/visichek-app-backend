@@ -189,17 +189,24 @@ def _merge_required_fields(
 ) -> list[CheckinFieldDef]:
     """Merge tenant form fields into the CheckinConfig field list.
 
-    Order: system BIO defaults first (``full_name``, ``phone``, ``email``),
-    then everything from the published tenant form, then any
-    ``tenant_specific`` fields from the legacy CheckinConfig that the
-    form does not already cover. Fields the form publishes always
-    override an equally-keyed CheckinConfig entry.
+    Source-of-truth precedence:
+
+    1. The published tenant form (when one exists). Fields the
+       super_admin published win over equally-keyed system defaults so
+       making ``email`` required or dropping ``company`` actually takes
+       effect on the kiosk. Their render order is preserved.
+    2. Any legacy CheckinConfig ``tenant_specific`` fields that the
+       form does not already cover.
+    3. System BIO defaults (``full_name``, ``phone``, ``email``,
+       ``company``) for keys nobody else provided — this guarantees a
+       freshly bootstrapped tenant has a usable kiosk before any form
+       is published.
+    4. The ``purpose`` picker is always present (defaulted from
+       :data:`DEFAULT_REQUIRED_FIELDS`) — every kiosk needs to bucket
+       the visit.
     """
-    bio_defaults = [
-        f for f in DEFAULT_REQUIRED_FIELDS if f.category == CheckinFieldCategory.BIO
-    ]
-    seen_keys: set[str] = {f.key for f in bio_defaults}
-    merged: list[CheckinFieldDef] = list(bio_defaults)
+    merged: list[CheckinFieldDef] = []
+    seen_keys: set[str] = set()
 
     if form is not None:
         for form_field in form.fields or []:
@@ -209,17 +216,21 @@ def _merge_required_fields(
             merged.append(projected)
             seen_keys.add(projected.key)
 
-    # Preserve tenant_specific fields configured via the legacy
-    # CheckinConfig that aren't already on the published form (e.g.
-    # ``purpose`` which is seeded into DEFAULT_REQUIRED_FIELDS too).
     for config_field in config_fields or []:
         if config_field.key in seen_keys:
             continue
         merged.append(config_field)
         seen_keys.add(config_field.key)
 
-    # Always guarantee the ``purpose`` picker exists — it's the one
-    # tenant-specific field every kiosk needs to bucket the visit.
+    bio_defaults = [
+        f for f in DEFAULT_REQUIRED_FIELDS if f.category == CheckinFieldCategory.BIO
+    ]
+    for default_field in bio_defaults:
+        if default_field.key in seen_keys:
+            continue
+        merged.append(default_field)
+        seen_keys.add(default_field.key)
+
     if "purpose" not in seen_keys:
         purpose_default = next(
             (f for f in DEFAULT_REQUIRED_FIELDS if f.key == "purpose"), None

@@ -356,6 +356,27 @@ async def verify_registration_token_public_endpoint(token: str):
     return await verify_public_registration_token(token)
 
 
+@router.get("/verify-registration-token")
+@document_response(
+    message="Registration token verified",
+    description=(
+        "Alias of ``GET /v1/public/register/verify``. Kept so older "
+        "frontend builds that hard-coded the flatter URL keep working "
+        "without a redeploy. Both routes return the same payload."
+    ),
+    summary="Verify public registration QR token (alias)",
+    success_example={
+        "valid": True,
+        "tenant_id": "t123",
+        "department_id": "d1",
+        "branch_id": None,
+        "company_name": "Acme Corp",
+    },
+)
+async def verify_registration_token_alias_endpoint(token: str):
+    return await verify_public_registration_token(token)
+
+
 @router.post("/register/{tenant_id}/id-scan")
 @document_response(
     message="ID scan extracted",
