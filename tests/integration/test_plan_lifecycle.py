@@ -451,7 +451,9 @@ class TestDiscountLifecycle:
             },
             headers=admin_auth_headers,
         )
-        disc_job = await complete_write(integration_client, disc_resp, admin_auth_headers)
+        disc_job = await complete_write(
+            integration_client, disc_resp, admin_auth_headers
+        )
         disc_id = disc_job["resource_id"]
 
         # Create plan
@@ -465,7 +467,9 @@ class TestDiscountLifecycle:
             },
             headers=admin_auth_headers,
         )
-        plan_job = await complete_write(integration_client, plan_resp, admin_auth_headers)
+        plan_job = await complete_write(
+            integration_client, plan_resp, admin_auth_headers
+        )
         plan_id = plan_job["resource_id"]
 
         # Create tenant (synchronous bootstrap)
@@ -554,7 +558,9 @@ class TestSubscriptionOverrides:
             },
             headers=admin_auth_headers,
         )
-        plan_job = await complete_write(integration_client, plan_resp, admin_auth_headers)
+        plan_job = await complete_write(
+            integration_client, plan_resp, admin_auth_headers
+        )
         plan_id = plan_job["resource_id"]
 
         tenant_resp = await integration_client.post(
