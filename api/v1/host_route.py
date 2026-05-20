@@ -55,6 +55,10 @@ def _map_host_doc(doc: dict[str, Any]) -> dict[str, Any]:
 router = APIRouter(prefix="/hosts", tags=["Hosts"])
 
 _admin_roles = verify_system_user_token("super_admin", "dept_admin")
+# Read access is wider than management: receptionists can't manage the host
+# roster but DO create appointments, so the appointment host-picker must be
+# able to list/read hosts for them.
+_read_roles = verify_system_user_token("super_admin", "dept_admin", "receptionist")
 
 
 @router.post("")
@@ -127,7 +131,7 @@ async def create_host_endpoint(
 )
 async def list_hosts(
     request: Request,
-    principal: AuthPrincipal = Depends(_admin_roles),
+    principal: AuthPrincipal = Depends(_read_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     if not tenant_id:
@@ -183,7 +187,7 @@ async def _load_hosts_for_tenant(tenant_id: str) -> List[Any]:
 )
 async def get_host_endpoint(
     host_id: str,
-    principal: AuthPrincipal = Depends(_admin_roles),
+    principal: AuthPrincipal = Depends(_read_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     return await get_or_compute_entity(

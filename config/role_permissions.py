@@ -1028,6 +1028,9 @@ RECEPTIONIST_PERMISSIONS: list[Permission] = [
         "/v1/visitor-profiles/{profile_id}",
         "Update visitor profile",
     ),
+    # Hosts (read-only — needed for the appointment host picker)
+    _p("list_hosts", ["GET"], "/v1/hosts", "List hosts"),
+    _p("get_host", ["GET"], "/v1/hosts/{host_id}", "View host"),
     # Appointments
     _p("create_appointment", ["POST"], "/v1/appointments/", "Create appointment"),
     _p("list_appointments", ["GET"], "/v1/appointments/", "List appointments"),
