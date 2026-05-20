@@ -70,7 +70,7 @@ async def wait_for_job(
     job_id: str,
     headers: dict[str, str],
     *,
-    timeout: float = 20.0,
+    timeout: float = 30.0,
     interval: float = 0.1,
     raise_on_failure: bool = True,
 ) -> dict[str, Any]:

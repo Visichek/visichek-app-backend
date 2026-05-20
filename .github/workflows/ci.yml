@@ -107,16 +107,26 @@ jobs:
           pip install -r requirements-dev.txt
       # Queued writes (POST/PUT/PATCH/DELETE) commit on the Celery worker, not
       # inline. Integration flows create-then-read, so a worker MUST be draining
-      # the queues or every read comes back empty. We start it in-line here
-      # (background) so its lifetime is scoped to this step, drain all queues,
-      # and dump its log afterwards for debugging. Its DB_NAME/broker MUST match
-      # the test env below so it writes where the in-process app reads.
+      # the WRITES queue or every read comes back empty. We start it in-line here
+      # (background) so its lifetime is scoped to this step and dump its log
+      # afterwards for debugging. Its DB_NAME/broker MUST match the test env
+      # below so it writes where the in-process app reads.
+      #
+      # IMPORTANT: consume ONLY the `writes` queue. The `precompute` queue gets
+      # flooded by the 60s active-tenant fanout, and the `gates`/`celery` queues
+      # carry gate-refresh + email tasks that intentionally fail in CI (no SMTP,
+      # unpicklable HTTPExceptions). A single worker draining all four round-robins
+      # away from `writes` and starves it, so create-then-read polls time out.
+      # Reads don't need the worker — precompute misses fall through to the live
+      # loader and the gate cache falls through to a sync DB lookup.
       - name: Run integration tests
         run: |
           set -uo pipefail
           nohup celery -A celery_worker worker \
             --pool=custom --concurrency=4 \
-            -Q writes,precompute,gates,celery \
+            --prefetch-multiplier=1 \
+            --without-gossip --without-mingle --without-heartbeat \
+            -Q writes \
             -l info > celery-worker.log 2>&1 &
           WORKER_PID=$!
           echo "Started Celery worker pid=$WORKER_PID; waiting for it to come up"
