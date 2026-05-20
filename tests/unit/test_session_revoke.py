@@ -26,6 +26,69 @@ def _session_stub(access_token_id: str = _ACCESS_TOKEN_ID) -> MagicMock:
     return sess
 
 
+def _list_session_stub(session_id: str, access_token_id: str) -> MagicMock:
+    """Stub for retrieve_sessions: real id + token + a settable is_current."""
+    sess = MagicMock()
+    sess.id = session_id
+    sess.access_token_id = access_token_id
+    sess.is_current = False
+    return sess
+
+
+@pytest.mark.asyncio
+async def test_retrieve_sessions_filters_and_prunes_dead_rows() -> None:
+    """Sessions whose access token no longer exists are dropped and pruned."""
+    live = _list_session_stub("64f1a2b3c4d5e6f7a8b9c0d1", "650000000000000000000a01")
+    dead = _list_session_stub("64f1a2b3c4d5e6f7a8b9c0d2", "650000000000000000000a02")
+    with (
+        patch.object(
+            session_service, "get_sessions", new=AsyncMock(return_value=[live, dead])
+        ),
+        patch.object(
+            session_service,
+            "filter_existing_access_token_ids",
+            new=AsyncMock(return_value={"650000000000000000000a01"}),
+        ),
+        patch.object(
+            session_service, "delete_sessions", new=AsyncMock(return_value=1)
+        ) as mock_delete_sessions,
+    ):
+        result = await session_service.retrieve_sessions(
+            user_id="u1", user_type="admin", current_token_id="650000000000000000000a01"
+        )
+
+    assert result == [live]
+    assert live.is_current is True
+    mock_delete_sessions.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_retrieve_sessions_keeps_current_even_if_token_missing() -> None:
+    """The caller's own session is never pruned, even if the token lookup
+    races and reports it as missing."""
+    current = _list_session_stub("64f1a2b3c4d5e6f7a8b9c0d1", "650000000000000000000a01")
+    with (
+        patch.object(
+            session_service, "get_sessions", new=AsyncMock(return_value=[current])
+        ),
+        patch.object(
+            session_service,
+            "filter_existing_access_token_ids",
+            new=AsyncMock(return_value=set()),
+        ),
+        patch.object(
+            session_service, "delete_sessions", new=AsyncMock(return_value=0)
+        ) as mock_delete_sessions,
+    ):
+        result = await session_service.retrieve_sessions(
+            user_id="u1", user_type="admin", current_token_id="650000000000000000000a01"
+        )
+
+    assert result == [current]
+    assert current.is_current is True
+    mock_delete_sessions.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_revoke_session_drops_access_and_refresh_tokens() -> None:
     delete_one_result = MagicMock(deleted_count=1)

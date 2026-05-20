@@ -1,0 +1,132 @@
+================================================================================
+PLATFORM SETTINGS — BACKEND CHANGES FOR FRONTEND (Settings → Platform Settings)
+================================================================================
+Date: 2026-05-20
+Audience: Frontend team (admin settings page)
+Scope: GET/PATCH /v1/platform-settings  AND  GET/PATCH /v1/admins/platform-settings
+
+--------------------------------------------------------------------------------
+TL;DR
+--------------------------------------------------------------------------------
+The "Platform Settings" page is now a SINGLE control: a maintenance-mode toggle.
+
+Every other field the page used to render (platform name, support contact,
+password policy, lockout, session timeout, 2FA enforcement, SMTP, tenant
+defaults, rate limits, signups/public-API/beta/self-onboarding flags) has been
+moved into version-controlled backend code (config/platform_config.py) and is
+NO LONGER returned by the API or editable from the client. Those values are
+changed by a backend deploy, not the UI.
+
+Toggling maintenance mode now requires a two-step OTP flow.
+
+--------------------------------------------------------------------------------
+1. GET /v1/platform-settings   (and /v1/admins/platform-settings)
+--------------------------------------------------------------------------------
+RESPONSE SHRANK. It now returns ONLY:
+
+{
+  "success": true,
+  "message": "Platform settings fetched successfully",
+  "data": {
+    "maintenanceMode": false,
+    "maintenanceMessage": null,
+    "id": "69e38ac1798f7d617e2252cf",
+    "dateCreated": 1776519873,
+    "lastUpdated": 1778264497
+  }
+}
+
+REMOVED fields (do not reference them anymore — they will be absent):
+  platformName, supportEmail, supportPhone, platformUrl,
+  passwordMinLength, passwordMaxLength, passwordRequireUppercase,
+  passwordRequireLowercase, passwordRequireNumber, passwordRequireSpecialChar,
+  passwordExpiryDays, passwordHistoryCount,
+  maxFailedLoginAttempts, lockoutDurationMinutes, sessionTimeoutMinutes,
+  enforceTotpForAdmins, enforceTotpForTenantUsers,
+  maxAdminAccounts, defaultTrialDays, defaultPlanId, maxTenantsPerPlan,
+  smtpHost, smtpPort, smtpUser, smtpFromEmail, smtpFromName, smtpEncryption,
+  signupsEnabled, publicApiEnabled, betaFeaturesEnabled, selfOnboardingEnabled,
+  globalRateLimitPerMinute, globalRateLimitBurst
+
+ACTION: Remove every form field / display row for the settings above. Keep only
+the maintenance-mode toggle (and an optional maintenance-message text field).
+
+--------------------------------------------------------------------------------
+2. CHANGING MAINTENANCE MODE — now a 2-STEP OTP FLOW
+--------------------------------------------------------------------------------
+The old "PATCH the whole settings object" approach is gone. To turn maintenance
+mode on or off:
+
+STEP 1 — Request an OTP:
+  POST /v1/platform-settings/maintenance/request-otp     (no body)
+   → 202 Accepted
+   {
+     "success": true,
+     "message": "Verification code sent",
+     "data": {
+       "otpRequired": true,
+       "otpChallengeId": "65f0a1b2c3d4e5f6a7b8c9d0",
+       "message": "Verification code sent. Submit it with the new maintenance state."
+     }
+   }
+
+  The code is delivered to the admin via their normal MFA channel:
+    - invited admins  → emailed
+    - env primary admin / non-production → the static dev OTP code
+
+STEP 2 — Submit the code + the new state:
+  PATCH /v1/platform-settings
+  Body:
+   {
+     "otpChallengeId": "65f0a1b2c3d4e5f6a7b8c9d0",
+     "otpCode": "123456",
+     "maintenanceMode": true,
+     "maintenanceMessage": "Back at 14:00 UTC"      // optional
+   }
+   → 200 OK, returns the updated settings object (same shape as GET).
+
+  Error responses on PATCH:
+    401 — invalid / expired / already-used OTP  ("Invalid OTP code. N attempt(s) remaining.")
+    429 — too many OTP attempts (request a fresh OTP via step 1)
+    422 — missing/invalid body fields
+    403 — not an application admin
+
+NOTE: There is no longer any partial-update of other fields. PATCH accepts ONLY
+the four fields above.
+
+--------------------------------------------------------------------------------
+3. SETTINGS MANIFEST  (GET /v1/settings)
+--------------------------------------------------------------------------------
+The "platform_settings" section changed:
+
+  {
+    "key": "platform_settings",
+    "label": "Platform Settings",
+    "description": "Maintenance mode toggle. All other platform configuration ...",
+    "readonly": false,            // was: !isPrimaryAdmin
+    "isPrimaryAdmin": <bool>,
+    "otpRequired": true,          // NEW — drive the OTP modal off this
+    "endpoints": {
+      "get": "/v1/platform-settings",
+      "requestOtp": "/v1/platform-settings/maintenance/request-otp",   // NEW
+      "update": "/v1/platform-settings"
+    }
+  }
+
+ACTION:
+  - Use endpoints.requestOtp for step 1 and endpoints.update for step 2.
+  - When otpRequired is true, show the OTP entry modal between toggle click and
+    the PATCH call.
+  - The section is no longer readonly for non-primary admins; any admin with the
+    permission can toggle maintenance mode (the OTP is the gate now).
+
+--------------------------------------------------------------------------------
+4. WHY
+--------------------------------------------------------------------------------
+Security-critical and operational knobs (password rules, lockout, 2FA
+enforcement, SMTP, rate limits, etc.) should be reviewed in code and shipped via
+deploy, not flipped from an admin UI. They now live in
+backend/config/platform_config.py. Maintenance mode is the only setting that has
+a legitimate "flip it right now" use case, so it stays runtime-editable but is
+protected by OTP.
+================================================================================

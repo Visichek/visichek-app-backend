@@ -64,22 +64,30 @@ DISPARITY-BY-DISPARITY: WHAT TO CHANGE ON THE FRONTEND
    the host record's `pictureUrl` / `signatureUrl`. Don't try to derive a
    preview URL from the object key on the client.
 
-4. PUBLIC UPLOAD AUTH — send the Bearer token, not (only) a cookie.
-   Disparity: the changelog assumes the session COOKIE carries auth on the
-   public upload (`POST /v1/public/tenants/{tenantId}/uploads`). On Free /
-   Starter plans (no anonymous public surface) the backend requires an
-   `Authorization: Bearer <token>` header for a `super_admin` / `dept_admin` /
-   `receptionist` scoped to the same tenant — a cookie alone yields 403.
-   Fix: ensure lib/upload/unified-upload.ts attaches the authenticated tenant
-   Bearer token on the PUBLIC upload call (same as the private call), so the
-   host-form photo upload works regardless of whether the plan grants the
-   anonymous public surface.
+4. PUBLIC UPLOAD AUTH — RETRACTED. The frontend's cookie approach is correct;
+   NO change needed.
+   Original (WRONG) claim: that the public upload required an
+   `Authorization: Bearer` header and a cookie alone would 403.
+   Verified in the backend: the public upload route
+   (`POST /v1/public/tenants/{tenantId}/uploads`) uses
+   `verify_optional_kiosk_token`, and the underlying `_extract_token`
+   (security/auth.py:123) takes the Bearer header FIRST and FALLS BACK to the
+   `ACCESS_TOKEN_COOKIE` httpOnly cookie. So with `withCredentials: true`, the
+   authenticated tenant session cookie authenticates the call exactly as it
+   does for the private upload. On Free / Starter plans (no anonymous surface)
+   the cookie principal must be a `super_admin` / `dept_admin` / `receptionist`
+   scoped to the same tenant — which is exactly who can reach the host form
+   (create/update is gated to super_admin / dept_admin), so the requirement is
+   already satisfied. Keep the photo on visibility="public"; do NOT flip it to
+   private; do NOT try to set an Authorization header.
 
 ================================================================================
 THINGS THE FRONTEND GOT RIGHT (no change)
 ================================================================================
   - Persisting the OBJECT KEY (not `downloadUrl`) into the host record. Correct.
   - PUBLIC for photo, PRIVATE for signature. Correct.
+  - Public upload authenticated via the session cookie (`withCredentials: true`).
+    Correct — the route accepts the cookie; no Bearer header required.
   - Letting the public upload use the backend default purpose `kiosk_form`
     (not forcing `appointment_photo`). Correct — backend default is kiosk_form.
   - Signature private upload with purpose="system". Correct — accepted value.
@@ -94,7 +102,8 @@ NET FRONTEND DIFF (summary)
   - host-form.tsx: feed `pictureUrl` / `signatureUrl` from the loaded host
     record into the ImageUploadField `previewUrl` prop; keep emitting the
     object key on change.
-  - unified-upload.ts: send the Bearer token on the PUBLIC upload path.
+  - unified-upload.ts: NO change. The public upload's `withCredentials: true`
+    cookie auth is correct (item #4 retracted).
   - Re-verify: upload host photo + signature, save, RELOAD edit page, confirm
     both previews render from `pictureUrl` / `signatureUrl` with no
     /v1/documents call in the network tab.

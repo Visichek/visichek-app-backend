@@ -17,6 +17,7 @@ from repositories.tokens_repo import (
     delete_access_token,
     delete_access_tokens_by_ids,
     delete_refresh_tokens_by_previous_access_token,
+    filter_existing_access_token_ids,
 )
 from schemas.session_schema import DeviceType, SessionCreate, SessionOut
 
@@ -119,15 +120,46 @@ async def retrieve_sessions(
     user_type: str,
     current_token_id: str | None = None,
 ) -> List[SessionOut]:
-    """List active sessions for a user, marking the current one."""
+    """List active sessions for a user, marking the current one.
+
+    Only sessions whose backing access token still exists are returned. A
+    token refresh deletes the superseded access token but leaves its session
+    row behind (rotation re-points the row at the new token, but any row a
+    rotation missed — plus rows from logins on networks the user has since
+    left — keep pointing at deleted tokens). Those rows are dead: they can
+    never authenticate a request again, so we filter them out of the list
+    and best-effort prune them. The current session is always retained — we
+    just authenticated with its token.
+    """
     sessions = await get_sessions({"user_id": user_id, "user_type": user_type})
 
-    if current_token_id:
-        for session in sessions:
-            if session.access_token_id == current_token_id:
-                session.is_current = True
+    token_ids = [s.access_token_id for s in sessions if s.access_token_id]
+    live_token_ids = await filter_existing_access_token_ids(token_ids)
 
-    return sessions
+    live_sessions: List[SessionOut] = []
+    dead_session_ids: List[str] = []
+    for session in sessions:
+        is_current = (
+            current_token_id is not None
+            and session.access_token_id == current_token_id
+        )
+        if session.access_token_id in live_token_ids or is_current:
+            if is_current:
+                session.is_current = True
+            live_sessions.append(session)
+        elif session.id:
+            dead_session_ids.append(session.id)
+
+    if dead_session_ids:
+        try:
+            await delete_sessions(
+                {"_id": {"$in": [ObjectId(sid) for sid in dead_session_ids]}}
+            )
+        except Exception:
+            # Pruning is housekeeping — never let it break the read path.
+            pass
+
+    return live_sessions
 
 
 async def revoke_session(

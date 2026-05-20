@@ -43,7 +43,6 @@ from schemas.onboarding_submission_schema import (
 )
 from schemas.tenant_schema import TenantCreate
 from services.audit_service import record_audit_event
-from services.platform_settings_service import retrieve_or_create_platform_settings
 
 logger = logging.getLogger(__name__)
 
@@ -371,8 +370,9 @@ async def complete_onboarding_for_user(
 
 
 async def _ensure_self_onboarding_enabled() -> None:
-    settings = await retrieve_or_create_platform_settings()
-    if not settings.self_onboarding_enabled:
+    from config.platform_config import get_platform_config
+
+    if not get_platform_config().self_onboarding_enabled:
         raise AppException(
             status_code=403,
             code=ErrorCode.FEATURE_DISABLED,

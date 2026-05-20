@@ -276,6 +276,32 @@ async def get_admin_access_tokens(accessToken: str) -> accessTokenOut | None:
     return None
 
 
+async def filter_existing_access_token_ids(access_token_ids: list[str]) -> set[str]:
+    """Return the subset of ``access_token_ids`` that still exist in the DB.
+
+    Used by the Active-Sessions list to drop session rows whose backing
+    access token has been deleted — superseded by a refresh (the old token
+    is removed when a new one is minted), explicitly revoked, or aged out.
+    Without this the sessions list grows unboundedly with dead entries that
+    can never be used again. Invalid ids are skipped silently.
+    """
+    object_ids: list[ObjectId] = []
+    for tid in access_token_ids:
+        if not tid:
+            continue
+        try:
+            object_ids.append(ObjectId(tid))
+        except errors.InvalidId:
+            continue
+    if not object_ids:
+        return set()
+    live: set[str] = set()
+    cursor = db.accessToken.find({"_id": {"$in": object_ids}}, {"_id": 1})
+    async for doc in cursor:
+        live.add(str(doc["_id"]))
+    return live
+
+
 async def get_inactive_access_token(token_id: str) -> accessTokenOut | None:
     try:
         obj_id = ObjectId(token_id)

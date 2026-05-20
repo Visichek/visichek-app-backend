@@ -314,12 +314,19 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
             {
                 "key": "platform_settings",
                 "label": "Platform Settings",
-                "description": "Global platform configuration, feature flags, SMTP, and rate limits.",
-                "readonly": not is_primary,
+                "description": (
+                    "Maintenance mode toggle. All other platform configuration "
+                    "(security policy, SMTP, rate limits, feature flags) is defined "
+                    "in code and changed by a deploy. Toggling maintenance mode "
+                    "requires an OTP verification step."
+                ),
+                "readonly": False,
                 "is_primary_admin": is_primary,
+                "otp_required": True,
                 "endpoints": {
                     "get": "/v1/platform-settings",
-                    "update": "/v1/platform-settings" if is_primary else None,
+                    "request_otp": "/v1/platform-settings/maintenance/request-otp",
+                    "update": "/v1/platform-settings",
                 },
             }
         )

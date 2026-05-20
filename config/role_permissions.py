@@ -437,10 +437,16 @@ ADMIN_PERMISSIONS: list[Permission] = [
         "View platform settings (admin)",
     ),
     _p(
+        "request_maintenance_otp_admin",
+        ["POST"],
+        "/v1/admins/platform-settings/maintenance/request-otp",
+        "Request OTP to change maintenance mode (admin)",
+    ),
+    _p(
         "update_platform_settings_admin",
         ["PATCH"],
         "/v1/admins/platform-settings",
-        "Update platform settings (admin)",
+        "Update maintenance mode (admin)",
     ),
     _p(
         "get_platform_settings_unified",
@@ -449,10 +455,16 @@ ADMIN_PERMISSIONS: list[Permission] = [
         "View platform settings",
     ),
     _p(
+        "request_maintenance_otp_unified",
+        ["POST"],
+        "/v1/platform-settings/maintenance/request-otp",
+        "Request OTP to change maintenance mode",
+    ),
+    _p(
         "update_platform_settings_unified",
         ["PATCH"],
         "/v1/platform-settings",
-        "Update platform settings",
+        "Update maintenance mode",
     ),
     _p(
         "admin_setup_2fa",
