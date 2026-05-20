@@ -493,6 +493,7 @@ async def refresh_tokens(
         message="Tokens refreshed successfully",
         access_token=_attr_or_key(user, "access_token") or "",
         refresh_token=_attr_or_key(user, "refresh_token") or "",
+        previous_access_token_id=principal.access_token_id,
     )
 
 

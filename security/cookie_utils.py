@@ -155,6 +155,7 @@ async def _record_session_safe(
     request: Request,
     payload: Any,
     access_jwt: str,
+    previous_access_token_id: str | None = None,
 ) -> None:
     """Best-effort session capture on every successful login / refresh.
 
@@ -198,6 +199,7 @@ async def _record_session_safe(
             access_token_id=access_token_id,
             ip_address=ip_address,
             user_agent=user_agent,
+            previous_access_token_id=previous_access_token_id,
         )
     except Exception:
         logger.warning("record_session failed for login response", exc_info=True)
@@ -211,6 +213,7 @@ def build_auth_response(
     status_code: int = 200,
     access_token: str | None = None,
     refresh_token: str | None = None,
+    previous_access_token_id: str | None = None,
 ) -> JSONResponse:
     """Build a login/refresh/otp-verify response in one call.
 
@@ -267,6 +270,7 @@ def build_auth_response(
                     request=request,
                     payload=payload,
                     access_jwt=resolved_access,
+                    previous_access_token_id=previous_access_token_id,
                 )
             )
         except RuntimeError:

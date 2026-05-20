@@ -288,6 +288,7 @@ async def refresh_user_tokens(
         request=request,
         payload=user,
         message="Tokens refreshed successfully",
+        previous_access_token_id=principal.access_token_id,
     )
 
 

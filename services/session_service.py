@@ -11,6 +11,7 @@ from repositories.session_repo import (
     get_sessions,
     delete_session,
     delete_sessions,
+    rotate_session_access_token,
 )
 from repositories.tokens_repo import (
     delete_access_token,
@@ -78,8 +79,27 @@ async def record_session(
     access_token_id: str,
     ip_address: str | None = None,
     user_agent: str | None = None,
+    previous_access_token_id: str | None = None,
 ) -> SessionOut:
-    """Record a new session after successful login."""
+    """Record a session after a successful login or token refresh.
+
+    On **login** (``previous_access_token_id`` is ``None``) a fresh row is
+    inserted. On **refresh** the device already has a session row keyed by
+    the now-expired access token; we rotate that row's ``access_token_id``
+    to the new value instead of inserting a duplicate. If no row matches
+    the expired id (e.g. the session predates rotation, or was revoked) we
+    fall back to inserting a new row so the device still shows up.
+    """
+    if previous_access_token_id:
+        rotated = await rotate_session_access_token(
+            old_access_token_id=previous_access_token_id,
+            new_access_token_id=access_token_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        if rotated is not None:
+            return rotated
+
     device_type = _detect_device_type(user_agent)
     device_label = parse_device_label(user_agent)
     data = SessionCreate(

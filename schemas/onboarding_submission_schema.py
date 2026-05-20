@@ -16,6 +16,10 @@ MAX_STRING_BYTES = 4 * 1024
 MAX_LABEL_LENGTH = 200
 MAX_FORM_VERSION_LENGTH = 64
 
+# Optional consent field. Absent from the payload means the user did not opt in,
+# so the validator backfills it to "no" rather than rejecting the submission.
+MARKETING_OPT_IN_KEY = "marketing_opt_in"
+
 # Best-effort key lists for the indexed columns.  Edit freely as field names
 # evolve — old rows still work because their original values live in
 # ``payload``.
@@ -51,6 +55,16 @@ class OnboardingSubmissionRequest(BaseModel):
 
     @model_validator(mode="after")
     def _enforce_shape(self) -> "OnboardingSubmissionRequest":
+        # Marketing opt-in is optional on the form. When the user leaves it
+        # blank the frontend still advertises the field via field_labels /
+        # field_order but drops it from the payload. Rather than 422 on the
+        # key mismatch, treat an omitted opt-in as an explicit "no".
+        if MARKETING_OPT_IN_KEY not in self.payload and (
+            MARKETING_OPT_IN_KEY in self.field_labels
+            or MARKETING_OPT_IN_KEY in self.field_order
+        ):
+            self.payload[MARKETING_OPT_IN_KEY] = "no"
+
         if len(self.payload) > MAX_PAYLOAD_KEYS:
             raise ValueError(f"payload has more than {MAX_PAYLOAD_KEYS} keys")
 
