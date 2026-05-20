@@ -65,7 +65,9 @@ async def list_saved_filters(
     )
 
 
-async def list_all_saved_views(*, user_id: str, role: str) -> dict[str, list[SavedFilterEntry]]:
+async def list_all_saved_views(
+    *, user_id: str, role: str
+) -> dict[str, list[SavedFilterEntry]]:
     user_type = _resolve_user_type(role)
     records = await list_saved_views_for_user(user_id=user_id, user_type=user_type)
     return {r.resource: r.saved_filters for r in records}
@@ -188,9 +190,7 @@ async def remove_saved_filter(
 # ─── Column prefs ─────────────────────────────────────────────────────
 
 
-async def get_column_prefs(
-    *, user_id: str, role: str, resource: str
-) -> ColumnPrefsOut:
+async def get_column_prefs(*, user_id: str, role: str, resource: str) -> ColumnPrefsOut:
     _validate_resource(resource)
     record = await get_saved_view(
         user_id=user_id,

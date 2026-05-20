@@ -49,9 +49,7 @@ async def validate_department_create(
     )
 
     if code:
-        existing_code = await get_department(
-            {"tenant_id": tenant_id, "code": code}
-        )
+        existing_code = await get_department({"tenant_id": tenant_id, "code": code})
         if existing_code:
             raise HTTPException(
                 status_code=409,

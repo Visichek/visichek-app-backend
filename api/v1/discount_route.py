@@ -46,7 +46,9 @@ DISCOUNTS_LIST_SPEC = ListSpec(
             multi=True,
             allowed_values=frozenset({"active", "expired", "disabled", "all"}),
             builder=lambda vs: (
-                {} if "all" in vs else {"status": {"$in": list(vs)} if len(vs) > 1 else vs[0]}
+                {}
+                if "all" in vs
+                else {"status": {"$in": list(vs)} if len(vs) > 1 else vs[0]}
             ),
         ),
         "discountType": FilterDef(

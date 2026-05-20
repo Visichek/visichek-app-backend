@@ -74,9 +74,7 @@ async def get_or_create_visitor_profile(
         msg = str(exc).lower()
         if "duplicate key" not in msg and "e11000" not in msg:
             raise
-        retry = await get_visitor_profile_by_phone(
-            tenant_id=tenant_id, phone=phone
-        )
+        retry = await get_visitor_profile_by_phone(tenant_id=tenant_id, phone=phone)
         if retry is not None:
             return retry
         raise

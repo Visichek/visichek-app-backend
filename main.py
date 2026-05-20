@@ -336,9 +336,7 @@ async def lifespan(app: FastAPI):
         session_backfill_summary = await backfill_session_user_types()
         logger.info("session_user_type backfill summary: %s", session_backfill_summary)
     except Exception:
-        logger.warning(
-            "session_user_type backfill failed at startup", exc_info=True
-        )
+        logger.warning("session_user_type backfill failed at startup", exc_info=True)
 
     # Main super_admin invariant — backfill + auto-heal. Ensures every
     # active tenant has exactly one ``is_main_super_admin=True`` row.
@@ -352,9 +350,7 @@ async def lifespan(app: FastAPI):
         )
 
         main_super_admin_summary = await ensure_main_super_admin_invariant()
-        logger.info(
-            "main_super_admin invariant summary: %s", main_super_admin_summary
-        )
+        logger.info("main_super_admin invariant summary: %s", main_super_admin_summary)
     except Exception:
         logger.warning(
             "main_super_admin invariant backfill failed at startup", exc_info=True
@@ -750,7 +746,7 @@ async def health_check():
     if aps_heartbeat:
         if isinstance(aps_heartbeat, bytes):
             aps_heartbeat = aps_heartbeat.decode("utf-8")
-        age = time.time() - float(aps_heartbeat) # type: ignore
+        age = time.time() - float(aps_heartbeat)  # type: ignore
         services["apscheduler"] = {
             "status": "healthy" if age <= 30 else "degraded",
             "latency_ms": 0,
@@ -869,6 +865,7 @@ from api.v1.addon_route import (
     public_router as v1_addon_public_router,
     tenant_router as v1_addon_tenant_router,
 )
+
 # Blog backend port (visichek-blog-backend merged in). Admin routers
 # live under /v1 alongside the existing /v1/admins admin surface;
 # public website routers live under /api/v1; video streaming sits at

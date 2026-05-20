@@ -302,20 +302,24 @@ class TestRenewalService:
         mock_get_subs,
     ):
         """Test trial conversion when payment fails."""
-        with patch(
-            "services.renewal_service.update_subscription", new_callable=AsyncMock
-        ) as mock_update_sub, patch(
-            "services.renewal_service.get_plan", new_callable=AsyncMock
-        ) as mock_get_plan, patch(
-            "services.renewal_service._get_provider_for_tenant",
-            new_callable=AsyncMock,
-            return_value="stripe",
-        ), patch(
-            "services.subscription_service.transition_tenant_to_free_plan",
-            new_callable=AsyncMock,
-        ) as mock_transition, patch(
-            "services.renewal_service.PaymentManager"
-        ) as mock_payment_mgr:
+        with (
+            patch(
+                "services.renewal_service.update_subscription", new_callable=AsyncMock
+            ) as mock_update_sub,
+            patch(
+                "services.renewal_service.get_plan", new_callable=AsyncMock
+            ) as mock_get_plan,
+            patch(
+                "services.renewal_service._get_provider_for_tenant",
+                new_callable=AsyncMock,
+                return_value="stripe",
+            ),
+            patch(
+                "services.subscription_service.transition_tenant_to_free_plan",
+                new_callable=AsyncMock,
+            ) as mock_transition,
+            patch("services.renewal_service.PaymentManager") as mock_payment_mgr,
+        ):
             now = int(time.time())
             trial_sub = _make_subscription_out(
                 **{

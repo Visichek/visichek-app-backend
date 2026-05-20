@@ -52,9 +52,7 @@ async def test_total_is_counted_directly_not_summed() -> None:
             new=AsyncMock(return_value={"visitors": 1}),
         ),
     ):
-        state = await compute_notification_state(
-            user_id="u1", user_type="system_user"
-        )
+        state = await compute_notification_state(user_id="u1", user_type="system_user")
 
     assert state["total"] == 3
     assert state["counts"] == {"visitors": 1}
@@ -85,9 +83,7 @@ def test_bucket_specific_patterns_win_over_generic() -> None:
     # /support-cases must beat the generic ordering.
     assert _classify_link_to_bucket("/app/support-cases/123") == "support_cases"
     # /tenants/onboarding is tested BEFORE /visitors etc.
-    assert (
-        _classify_link_to_bucket("/admin/tenants/onboarding/9") == "onboarding_queue"
-    )
+    assert _classify_link_to_bucket("/admin/tenants/onboarding/9") == "onboarding_queue"
     assert _classify_link_to_bucket("/app/checkins/5") == "visitors"
     assert _classify_link_to_bucket("/app/visitors/5") == "visitors"
     assert _classify_link_to_bucket("/app/appointments/5") == "appointments"
@@ -193,8 +189,6 @@ async def test_publish_created_noop_without_user_identity() -> None:
         body="y",
         type=NotificationType.INFO,
     )
-    with patch(
-        "services.notification_stream_service._publish", new=AsyncMock()
-    ) as pub:
+    with patch("services.notification_stream_service._publish", new=AsyncMock()) as pub:
         await publish_notification_created(notif)
     pub.assert_not_awaited()

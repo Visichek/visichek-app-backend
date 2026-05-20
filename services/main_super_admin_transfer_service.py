@@ -124,9 +124,7 @@ async def _assert_actor_can_transfer(
         )
 
 
-async def _validate_target(
-    *, target_user_id: str, tenant_id: str
-) -> SystemUserOut:
+async def _validate_target(*, target_user_id: str, tenant_id: str) -> SystemUserOut:
     if not ObjectId.is_valid(target_user_id):
         raise HTTPException(status_code=400, detail="Invalid target user ID format")
 
@@ -333,9 +331,7 @@ async def verify_and_complete_transfer(
     # Excluding the target lets this be safely re-run if step 2 fails
     # mid-way (target already has True from a prior partial run → keep
     # it, drop everything else).
-    await clear_main_super_admin_flag_for_tenant(
-        tenant_id, except_user_id=target.id
-    )
+    await clear_main_super_admin_flag_for_tenant(tenant_id, except_user_id=target.id)
     # Step 2: set True on the target.
     await set_main_super_admin_flag(
         user_id=target.id or "", tenant_id=tenant_id, value=True
@@ -357,7 +353,9 @@ async def verify_and_complete_transfer(
             },
         )
     except Exception:
-        logger.warning("audit record for main super_admin transfer failed", exc_info=True)
+        logger.warning(
+            "audit record for main super_admin transfer failed", exc_info=True
+        )
 
     # Drop the gate snapshots so both users see fresh state on their
     # next authenticated request.

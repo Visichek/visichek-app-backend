@@ -243,13 +243,17 @@ class CheckoutResult(BaseModel):
 
     # Timing — same names regardless of source
     eligible_since: Optional[int] = None
-    eligible_since_field: Optional[str] = None  # "check_in_time" / "approved_at" / "scheduled_datetime"
+    eligible_since_field: Optional[str] = (
+        None  # "check_in_time" / "approved_at" / "scheduled_datetime"
+    )
     checked_out_at: int
 
     actual_duration_seconds: Optional[int] = None
     actual_duration_minutes: Optional[float] = None
     expected_duration_minutes: Optional[int] = None
-    duration_variance_seconds: Optional[int] = None  # actual - expected*60; negative = early
+    duration_variance_seconds: Optional[int] = (
+        None  # actual - expected*60; negative = early
+    )
 
     check_out_method: Optional[CheckOutMethod] = None
 

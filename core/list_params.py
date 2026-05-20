@@ -210,7 +210,9 @@ class ListQuery:
     def mongo_sort(self) -> list[tuple[str, int]]:
         """Return the sort spec including the stable-id tiebreaker."""
         sort_spec = list(self.sort)
-        if not any(field_name == DEFAULT_SORT_TIEBREAKER[0] for field_name, _ in sort_spec):
+        if not any(
+            field_name == DEFAULT_SORT_TIEBREAKER[0] for field_name, _ in sort_spec
+        ):
             sort_spec.append(DEFAULT_SORT_TIEBREAKER)
         return sort_spec
 
@@ -228,7 +230,9 @@ def _parse_int(raw: Any, field_name: str, *, minimum: int = 0) -> int:
     return v
 
 
-def _resolve_allowlisted_field(field_name: str, allowlist: frozenset[str]) -> Optional[str]:
+def _resolve_allowlisted_field(
+    field_name: str, allowlist: frozenset[str]
+) -> Optional[str]:
     """Match ``field_name`` against ``allowlist`` accepting either case form.
 
     Public query params follow the camelCase convention enforced for bodies

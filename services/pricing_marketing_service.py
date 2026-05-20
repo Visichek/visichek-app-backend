@@ -402,7 +402,11 @@ def _build_plan_card(
         tagline=(copy.tagline if copy else None) or plan.description,
         price_monthly=None if enterprise else plan.base_price_monthly,
         price_yearly=None if enterprise else plan.base_price_yearly,
-        currency=(overlay.currency_display if overlay and overlay.currency_display else plan.currency),
+        currency=(
+            overlay.currency_display
+            if overlay and overlay.currency_display
+            else plan.currency
+        ),
         cta_label=cta_label,
         cta_url=(copy.cta_url if copy else None),
         badge=(copy.badge if copy else None),
@@ -488,9 +492,7 @@ def _row_inventory(plans: List[PlanOut]) -> List[Dict[str, Any]]:
         # already a value, and Enterprise's None becomes "Custom".
         row_key = f"cap.{cap_field}"
 
-        def _compute_cap(
-            plan: PlanOut, _field: str = cap_field
-        ) -> tuple[Any, str]:
+        def _compute_cap(plan: PlanOut, _field: str = cap_field) -> tuple[Any, str]:
             caps = getattr(plan, "tenant_caps", None)
             value = getattr(caps, _field, None) if caps else None
             display = _format_int_or_unlimited(value, enterprise=_is_enterprise(plan))
@@ -518,10 +520,16 @@ def _row_inventory(plans: List[PlanOut]) -> List[Dict[str, Any]]:
             storage = getattr(plan, "storage_limits", None)
             value = getattr(storage, _field, None) if storage else None
             if _field == "max_storage_mb":
-                return (value, _format_storage_mb(value, enterprise=_is_enterprise(plan)))
+                return (
+                    value,
+                    _format_storage_mb(value, enterprise=_is_enterprise(plan)),
+                )
             if _field == "max_file_size_mb":
                 return (value, _format_file_size_mb(value))
-            return (value, _format_int_or_unlimited(value, enterprise=_is_enterprise(plan)))
+            return (
+                value,
+                _format_int_or_unlimited(value, enterprise=_is_enterprise(plan)),
+            )
 
         seen.setdefault(
             row_key,
@@ -553,7 +561,10 @@ def _row_inventory(plans: List[PlanOut]) -> List[Dict[str, Any]]:
             plan: PlanOut, _c: str = collection, _o: str = op
         ) -> tuple[Any, str]:
             value = _crud_limit_for(plan, _c, _o)
-            return (value, _format_int_or_unlimited(value, enterprise=_is_enterprise(plan)))
+            return (
+                value,
+                _format_int_or_unlimited(value, enterprise=_is_enterprise(plan)),
+            )
 
         seen.setdefault(
             row_key,
@@ -577,11 +588,12 @@ def _row_inventory(plans: List[PlanOut]) -> List[Dict[str, Any]]:
         row_key = f"limit.read.{collection}"
         label = f"{collection.replace('_', ' ').title()} — reads"
 
-        def _compute_read(
-            plan: PlanOut, _c: str = collection
-        ) -> tuple[Any, str]:
+        def _compute_read(plan: PlanOut, _c: str = collection) -> tuple[Any, str]:
             value = _retrieval_quota_for(plan, _c)
-            return (value, _format_int_or_unlimited(value, enterprise=_is_enterprise(plan)))
+            return (
+                value,
+                _format_int_or_unlimited(value, enterprise=_is_enterprise(plan)),
+            )
 
         seen.setdefault(
             row_key,
@@ -630,14 +642,13 @@ def _build_sections(
     by_cat: Dict[str, List[PricingComparisonRow]] = {}
     for meta in rows_meta:
         copy = features_copy.get(meta["row_key"])
-        category_key = (copy.category_key if copy and copy.category_key else None) or meta[
-            "category_key"
-        ]
+        category_key = (
+            copy.category_key if copy and copy.category_key else None
+        ) or meta["category_key"]
         label = (copy.label if copy and copy.label else None) or meta["label"]
         description = (
-            (copy.description if copy and copy.description else None)
-            or meta.get("description")
-        )
+            copy.description if copy and copy.description else None
+        ) or meta.get("description")
 
         cells: List[PricingComparisonCell] = []
         for plan in plans:
@@ -696,7 +707,9 @@ async def render_pricing_marketing() -> PricingMarketingOut:
         else (visible[0].currency if visible else "NGN")
     )
 
-    headline = (overlay.headline if overlay and overlay.headline else None) or DEFAULT_HEADLINE
+    headline = (
+        overlay.headline if overlay and overlay.headline else None
+    ) or DEFAULT_HEADLINE
     subheadline = (
         overlay.subheadline if overlay and overlay.subheadline else None
     ) or DEFAULT_SUBHEADLINE
@@ -707,7 +720,9 @@ async def render_pricing_marketing() -> PricingMarketingOut:
         currency=currency,
         plans=plan_cards,
         sections=sections,
-        last_updated=int(overlay.last_updated) if overlay and overlay.last_updated else int(time.time()),
+        last_updated=int(overlay.last_updated)
+        if overlay and overlay.last_updated
+        else int(time.time()),
     )
 
 
@@ -731,13 +746,21 @@ def _merge_list(
         return []
     by_key: Dict[str, Any] = {}
     for item in existing:
-        k = item.get(key_attr) if isinstance(item, dict) else getattr(item, key_attr, None)
+        k = (
+            item.get(key_attr)
+            if isinstance(item, dict)
+            else getattr(item, key_attr, None)
+        )
         if k:
             by_key[k] = item
     out: List[Any] = []
     for item in incoming:
         # ``incoming`` is a list of pydantic models from the patch — convert.
-        as_dict = item.model_dump(exclude_none=True) if hasattr(item, "model_dump") else dict(item)
+        as_dict = (
+            item.model_dump(exclude_none=True)
+            if hasattr(item, "model_dump")
+            else dict(item)
+        )
         key = as_dict.get(key_attr)
         if not key:
             continue
@@ -746,7 +769,11 @@ def _merge_list(
     # then any new keys appended at the end.
     existing_keys = []
     for item in existing:
-        k = item.get(key_attr) if isinstance(item, dict) else getattr(item, key_attr, None)
+        k = (
+            item.get(key_attr)
+            if isinstance(item, dict)
+            else getattr(item, key_attr, None)
+        )
         if k and k in by_key and k not in existing_keys:
             existing_keys.append(k)
     out.extend(by_key[k] for k in existing_keys)
@@ -842,7 +869,9 @@ async def delete_overlay_row(kind: str, key: str) -> PricingMarketingOverlayOut:
         ]
     elif kind == "category":
         current_dict["categories"] = [
-            c for c in current_dict.get("categories", []) if c.get("category_key") != key
+            c
+            for c in current_dict.get("categories", [])
+            if c.get("category_key") != key
         ]
     else:
         raise ValueError(f"Unknown pricing_marketing row kind: {kind}")

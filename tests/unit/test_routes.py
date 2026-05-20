@@ -285,12 +285,15 @@ class TestDepartmentRoutes:
             MOCK_SUPER_ADMIN_PRINCIPAL
         )
 
-        with patch(
-            "api.v1.department_route.validate_department_create",
-            new_callable=AsyncMock,
-        ), patch(
-            "api.v1.department_route.enqueue_write", new_callable=AsyncMock
-        ) as mock_enqueue:
+        with (
+            patch(
+                "api.v1.department_route.validate_department_create",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "api.v1.department_route.enqueue_write", new_callable=AsyncMock
+            ) as mock_enqueue,
+        ):
             mock_enqueue.return_value = {
                 "id": "dept-001",
                 "job_id": "job-abc-123",
@@ -395,12 +398,15 @@ class TestDepartmentRoutes:
             MOCK_SUPER_ADMIN_PRINCIPAL
         )
 
-        with patch(
-            "api.v1.department_route.validate_department_update",
-            new_callable=AsyncMock,
-        ), patch(
-            "api.v1.department_route.enqueue_write", new_callable=AsyncMock
-        ) as mock_enqueue:
+        with (
+            patch(
+                "api.v1.department_route.validate_department_update",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "api.v1.department_route.enqueue_write", new_callable=AsyncMock
+            ) as mock_enqueue,
+        ):
             mock_enqueue.return_value = {
                 "id": "dept-001",
                 "job_id": "job-upd-456",

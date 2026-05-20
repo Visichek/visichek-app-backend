@@ -52,28 +52,18 @@ def enqueue_refresh(tenant_id: str, target_type: str | None = None) -> None:
     except RuntimeError:
         return
 
-    targets = (
-        [target_type]
-        if target_type
-        else [t.value for t in FormTargetType]
-    )
+    targets = [target_type] if target_type else [t.value for t in FormTargetType]
 
     payloads: list[dict[str, Any]] = [
         {"tenant_id": tenant_id, "resource": RESOURCE_LIST}
     ]
     for target in targets:
-        payloads.append(
-            {"tenant_id": tenant_id, "resource": resource_active(target)}
-        )
-        payloads.append(
-            {"tenant_id": tenant_id, "resource": resource_public(target)}
-        )
+        payloads.append({"tenant_id": tenant_id, "resource": resource_active(target)})
+        payloads.append({"tenant_id": tenant_id, "resource": resource_public(target)})
 
     for payload in payloads:
         try:
-            qm.enqueue(
-                task_key="precompute.tenant_resource", payload=payload
-            )
+            qm.enqueue(task_key="precompute.tenant_resource", payload=payload)
         except Exception:
             logger.warning(
                 "tenant_form_writer: refresh enqueue failed payload=%s",
@@ -92,9 +82,7 @@ async def _precompute_form_list(tenant_id: str) -> List[Dict[str, Any]]:
 
 
 async def _precompute_active(tenant_id: str, target_type: str) -> Any:
-    form = await retrieve_active_by_target(
-        tenant_id=tenant_id, target_type=target_type
-    )
+    form = await retrieve_active_by_target(tenant_id=tenant_id, target_type=target_type)
     if form is None:
         return None
     return form.model_dump(mode="json", by_alias=True)
@@ -130,9 +118,7 @@ async def _precompute_active_checkin(tenant_id: str) -> Any:
     scope=PrecomputeScope.TENANT,
 )
 async def _precompute_active_visit_session(tenant_id: str) -> Any:
-    return await _precompute_active(
-        tenant_id, FormTargetType.VISIT_SESSION.value
-    )
+    return await _precompute_active(tenant_id, FormTargetType.VISIT_SESSION.value)
 
 
 @register_precompute(
@@ -156,6 +142,4 @@ async def _precompute_public_checkin(tenant_id: str) -> Any:
     scope=PrecomputeScope.TENANT,
 )
 async def _precompute_public_visit_session(tenant_id: str) -> Any:
-    return await _precompute_public(
-        tenant_id, FormTargetType.VISIT_SESSION.value
-    )
+    return await _precompute_public(tenant_id, FormTargetType.VISIT_SESSION.value)

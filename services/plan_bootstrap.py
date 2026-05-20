@@ -359,13 +359,9 @@ async def migrate_tenants_to_free(name_to_id: Optional[dict[str, str]] = None) -
             if did_create:
                 created += 1
         except Exception:
-            logger.exception(
-                "plan_bootstrap: backfill failed for tenant %s", tenant_id
-            )
+            logger.exception("plan_bootstrap: backfill failed for tenant %s", tenant_id)
     if created:
-        logger.info(
-            "plan_bootstrap: backfilled %s tenant(s) onto free plan", created
-        )
+        logger.info("plan_bootstrap: backfilled %s tenant(s) onto free plan", created)
     return created
 
 

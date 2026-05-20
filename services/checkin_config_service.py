@@ -148,9 +148,7 @@ def _form_field_to_checkin_field(field: FormFieldDefinition) -> CheckinFieldDef:
     form fields are always considered ``tenant_specific`` (BIO fields
     are system-managed and emitted separately by ``DEFAULT_REQUIRED_FIELDS``).
     """
-    field_type = (
-        field.type.value if hasattr(field.type, "value") else str(field.type)
-    )
+    field_type = field.type.value if hasattr(field.type, "value") else str(field.type)
     options_payload: Optional[list[dict]] = None
     if field.options:
         options_payload = [

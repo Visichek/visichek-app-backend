@@ -76,9 +76,7 @@ async def get_current_admin(
 @router.post("/login/verify-otp")
 @document_response(
     message="OTP verified, login successful",
-    description=(
-        "Alias of ``POST /v1/admins/verify-otp``. Step 2 of admin 2FA login."
-    ),
+    description=("Alias of ``POST /v1/admins/verify-otp``. Step 2 of admin 2FA login."),
     summary="Verify admin OTP (alias)",
 )
 async def verify_admin_otp_alias(request: Request, otp_data: OtpVerifyRequest):
@@ -153,9 +151,7 @@ async def request_admin_mfa(
     from core.database import db
     from bson import ObjectId
 
-    doc = await db.admins.find_one(
-        {"_id": ObjectId(principal.user_id)}, {"email": 1}
-    )
+    doc = await db.admins.find_one({"_id": ObjectId(principal.user_id)}, {"email": 1})
     if not doc:
         raise auth_invalid_token()
     result = await setup_two_factor(

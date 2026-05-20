@@ -207,9 +207,7 @@ async def submit_checkin_for_tenant_endpoint(
             "either source satisfies the requirement."
         ),
     ),
-    email: Optional[str] = Form(
-        None, description="Optional. May be omitted entirely."
-    ),
+    email: Optional[str] = Form(None, description="Optional. May be omitted entirely."),
     purpose: str = Form(..., description="JSON object"),
     bio_data: str = Form("{}", description="JSON object — fields from the ID"),
     tenant_specific_data: str = Form("{}", description="JSON object"),

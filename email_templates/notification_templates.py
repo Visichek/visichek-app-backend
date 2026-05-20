@@ -66,12 +66,14 @@ def _wrap_text(*, title_line: str, intro: str, body: str, link: str | None) -> s
     parts = [title_line, "", intro, "", body]
     if link:
         parts.extend(["", f"Open: {link}"])
-    parts.extend([
-        "",
-        "—",
-        "You're receiving this because the matching email toggle is on in "
-        "your VisiChek notification settings.",
-    ])
+    parts.extend(
+        [
+            "",
+            "—",
+            "You're receiving this because the matching email toggle is on in "
+            "your VisiChek notification settings.",
+        ]
+    )
     return "\n".join(parts)
 
 
@@ -92,7 +94,20 @@ def _make_template(
 
     def render_html(context: dict[str, Any]) -> str:
         safe_context = {
-            k: _safe(context, k, "") for k in {"title", "body", "link", "recipient_name", "tenant_name", "visitor_name", "appointment_id", "incident_id", "dsr_id", "message", "new_user_name"}
+            k: _safe(context, k, "")
+            for k in {
+                "title",
+                "body",
+                "link",
+                "recipient_name",
+                "tenant_name",
+                "visitor_name",
+                "appointment_id",
+                "incident_id",
+                "dsr_id",
+                "message",
+                "new_user_name",
+            }
         }
         title_line = title_template.format(**safe_context)
         intro = intro_template.format(**safe_context)
@@ -105,7 +120,20 @@ def _make_template(
 
     def render_text(context: dict[str, Any]) -> str:
         safe_context = {
-            k: _safe(context, k, "") for k in {"title", "body", "link", "recipient_name", "tenant_name", "visitor_name", "appointment_id", "incident_id", "dsr_id", "message", "new_user_name"}
+            k: _safe(context, k, "")
+            for k in {
+                "title",
+                "body",
+                "link",
+                "recipient_name",
+                "tenant_name",
+                "visitor_name",
+                "appointment_id",
+                "incident_id",
+                "dsr_id",
+                "message",
+                "new_user_name",
+            }
         }
         title_line = title_template.format(**safe_context)
         intro = intro_template.format(**safe_context)

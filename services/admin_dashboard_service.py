@@ -62,17 +62,13 @@ def _start_of_week_ts(now: Optional[int] = None) -> int:
     base = now if now is not None else int(time.time())
     dt = datetime.fromtimestamp(base, tz=timezone.utc)
     monday = dt - timedelta(days=dt.weekday())
-    return int(
-        monday.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    )
+    return int(monday.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
 
 def _start_of_month_ts(now: Optional[int] = None) -> int:
     base = now if now is not None else int(time.time())
     dt = datetime.fromtimestamp(base, tz=timezone.utc)
-    return int(
-        dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
-    )
+    return int(dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
 
 
 def _shift_month(ts: int, months: int) -> int:
@@ -98,7 +94,9 @@ def _start_of_year_ts(now: Optional[int] = None) -> int:
     base = now if now is not None else int(time.time())
     dt = datetime.fromtimestamp(base, tz=timezone.utc)
     return int(
-        dt.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+        dt.replace(
+            month=1, day=1, hour=0, minute=0, second=0, microsecond=0
+        ).timestamp()
     )
 
 
@@ -348,9 +346,7 @@ async def _subscription_overview(*, now: int) -> Dict[str, Any]:
         {"date_created": {"$gte": start_last_month, "$lt": start_month}}
     )
 
-    active_at_period_start = (
-        breakdown.active + breakdown.trialing + cancelled_30d
-    )
+    active_at_period_start = breakdown.active + breakdown.trialing + cancelled_30d
     churn_rate = (
         round((cancelled_30d / active_at_period_start) * 100, 1)
         if active_at_period_start
@@ -453,7 +449,9 @@ async def _plan_analytics() -> Dict[str, Any]:
                 percentage=pct,
             )
         )
-        plan_tier_counts[plan_tier] = plan_tier_counts.get(plan_tier, 0) + entry["count"]
+        plan_tier_counts[plan_tier] = (
+            plan_tier_counts.get(plan_tier, 0) + entry["count"]
+        )
     plan_distribution.sort(key=lambda p: p.subscriber_count, reverse=True)
 
     billing_cycle_counts = await _group_count(
@@ -535,15 +533,11 @@ async def _revenue_billing(*, now: int) -> Dict[str, Any]:
         _sum({**paid_match, "paid_at": {"$gte": start_7d}}),
         _sum({**paid_match, "paid_at": {"$gte": start_30d}}),
         _sum({**paid_match, "paid_at": {"$gte": start_week}}),
-        _sum(
-            {**paid_match, "paid_at": {"$gte": start_last_week, "$lt": start_week}}
-        ),
+        _sum({**paid_match, "paid_at": {"$gte": start_last_week, "$lt": start_week}}),
     )
     rev_this_month, rev_last_month = await asyncio.gather(
         _sum({**paid_match, "paid_at": {"$gte": start_month}}),
-        _sum(
-            {**paid_match, "paid_at": {"$gte": start_last_month, "$lt": start_month}}
-        ),
+        _sum({**paid_match, "paid_at": {"$gte": start_last_month, "$lt": start_month}}),
     )
 
     invoice_status_counts = await _group_count("invoices", {}, "status")
@@ -577,15 +571,12 @@ async def _revenue_billing(*, now: int) -> Dict[str, Any]:
         + payment_status_counts.get("success", 0)
         + payment_status_counts.get("paid", 0)
     )
-    payments_failed = (
-        payment_status_counts.get("failed", 0)
-        + payment_status_counts.get("error", 0)
-    )
+    payments_failed = payment_status_counts.get(
+        "failed", 0
+    ) + payment_status_counts.get("error", 0)
     total_attempts = payments_succeeded + payments_failed
     payment_success = (
-        round((payments_succeeded / total_attempts) * 100, 1)
-        if total_attempts
-        else 0.0
+        round((payments_succeeded / total_attempts) * 100, 1) if total_attempts else 0.0
     )
 
     dunning_queue = await db.subscriptions.count_documents({"status": "past_due"})
@@ -834,9 +825,7 @@ async def _onboarding_pipeline(*, now: int) -> Dict[str, Any]:
     )
     status_counts = await _group_count("onboarding_submissions", {}, "status")
     decided = accepted_30d + rejected_30d
-    acceptance = (
-        round((accepted_30d / decided) * 100, 1) if decided else 0.0
-    )
+    acceptance = round((accepted_30d / decided) * 100, 1) if decided else 0.0
     return {
         "onboarding_total": total,
         "onboarding_new": new,
@@ -871,11 +860,7 @@ async def _support_overview(*, now: int) -> Dict[str, Any]:
                 "open": {
                     "$sum": {
                         "$cond": [
-                            {
-                                "$not": [
-                                    {"$in": ["$status", ["resolved", "closed"]]}
-                                ]
-                            },
+                            {"$not": [{"$in": ["$status", ["resolved", "closed"]]}]},
                             1,
                             0,
                         ]
@@ -923,9 +908,7 @@ async def _compliance_cross_tenant(*, now: int) -> Dict[str, Any]:
     dsr_30d = await db.data_subject_requests.count_documents(
         {"date_created": {"$gte": start_30d}}
     )
-    dsr_status_counts = await _group_count(
-        "data_subject_requests", {}, "status"
-    )
+    dsr_status_counts = await _group_count("data_subject_requests", {}, "status")
 
     deadline_in_24h = now + 24 * 3600
     incidents_approaching = await db.incident_logs.count_documents(
@@ -1006,11 +989,7 @@ async def _heatmaps_block(*, now: int) -> Dict[str, Any]:
         {"$match": match},
         {
             "$group": {
-                "_id": {
-                    "$hour": {
-                        "$toDate": {"$multiply": ["$check_in_time", 1000]}
-                    }
-                },
+                "_id": {"$hour": {"$toDate": {"$multiply": ["$check_in_time", 1000]}}},
                 "count": {"$sum": 1},
             }
         },
@@ -1053,17 +1032,13 @@ async def _recent_activity(*, now: int) -> Dict[str, Any]:
     start_30d = _start_of_day(now) - 29 * 86400
 
     # Recent signups: 10 newest tenants.
-    recent_cursor = (
-        db.tenant_companies.find({}).sort("date_created", -1).limit(10)
-    )
+    recent_cursor = db.tenant_companies.find({}).sort("date_created", -1).limit(10)
     recent_signups: List[TenantBriefRow] = []
     async for doc in recent_cursor:
         sub = await db.subscriptions.find_one({"tenant_id": str(doc["_id"])})
         plan_doc = None
         if sub and sub.get("plan_id"):
-            plan_doc = await db.plans.find_one(
-                {"_id": _safe_objectid(sub["plan_id"])}
-            )
+            plan_doc = await db.plans.find_one({"_id": _safe_objectid(sub["plan_id"])})
         recent_signups.append(
             TenantBriefRow(
                 id=str(doc["_id"]),
@@ -1097,9 +1072,7 @@ async def _recent_activity(*, now: int) -> Dict[str, Any]:
         sub = await db.subscriptions.find_one({"tenant_id": tenant_id})
         plan_doc = None
         if sub and sub.get("plan_id"):
-            plan_doc = await db.plans.find_one(
-                {"_id": _safe_objectid(sub["plan_id"])}
-            )
+            plan_doc = await db.plans.find_one({"_id": _safe_objectid(sub["plan_id"])})
         recently_active.append(
             TenantBriefRow(
                 id=tenant_id,
@@ -1137,15 +1110,20 @@ async def get_admin_dashboard_stats() -> AdminDashboardStats:
         _revenue_billing(now=now),
         _incident_overview(now=now),
     )
-    visitors, top_revenue, geography, onboarding, support, compliance = (
-        await asyncio.gather(
-            _visitor_cross_tenant(now=now),
-            _top_tenants_by_revenue(),
-            _geography(),
-            _onboarding_pipeline(now=now),
-            _support_overview(now=now),
-            _compliance_cross_tenant(now=now),
-        )
+    (
+        visitors,
+        top_revenue,
+        geography,
+        onboarding,
+        support,
+        compliance,
+    ) = await asyncio.gather(
+        _visitor_cross_tenant(now=now),
+        _top_tenants_by_revenue(),
+        _geography(),
+        _onboarding_pipeline(now=now),
+        _support_overview(now=now),
+        _compliance_cross_tenant(now=now),
     )
     time_series, heatmaps, recent = await asyncio.gather(
         _time_series_block(now=now),

@@ -87,6 +87,7 @@ def _is_default_public_media_listing(request: Request) -> bool:
 )
 async def list_public_media(request: Request) -> Any:
     if _is_default_public_media_listing(request):
+
         async def _loader():
             cursor = (
                 db.media.find({})
@@ -135,9 +136,7 @@ async def list_public_media(request: Request) -> Any:
 @router.get("/recent")
 @document_response(
     message="Recent media retrieved",
-    description=(
-        "Shortcut for ``GET /api/v1/media?sort=-date_created&limit=50``."
-    ),
+    description=("Shortcut for ``GET /api/v1/media?sort=-date_created&limit=50``."),
     summary="List recent public media (shortcut)",
     include_meta=True,
 )

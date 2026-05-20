@@ -55,9 +55,7 @@ async def get_tenant_form_by_row_id(row_id: str) -> Optional[TenantFormOut]:
     return await get_tenant_form({"_id": ObjectId(row_id)})
 
 
-async def get_head_for_form_id(
-    tenant_id: str, form_id: str
-) -> Optional[TenantFormOut]:
+async def get_head_for_form_id(tenant_id: str, form_id: str) -> Optional[TenantFormOut]:
     """Return the draft/active row for a form_id, or None."""
     return await get_tenant_form(
         {

@@ -98,9 +98,7 @@ async def _enforce_tenant_geofence(
     raise AppException(
         status_code=403,
         code=ErrorCode.GEOFENCE_VIOLATION,
-        message=message_map.get(
-            result.reason or "", "Geofence verification failed"
-        ),
+        message=message_map.get(result.reason or "", "Geofence verification failed"),
         details={"reason": result.reason, **(result.details or {})},
     )
 
@@ -186,13 +184,9 @@ async def _collect_returning_visitor_fallback(
 
     profile = None
     if phone:
-        profile = await get_visitor_profile_by_phone(
-            tenant_id=tenant_id, phone=phone
-        )
+        profile = await get_visitor_profile_by_phone(tenant_id=tenant_id, phone=phone)
     if profile is None and email:
-        profile = await get_visitor_profile_by_email(
-            tenant_id=tenant_id, email=email
-        )
+        profile = await get_visitor_profile_by_email(tenant_id=tenant_id, email=email)
 
     if profile is not None:
         if profile.full_name and "full_name" not in fallback:
@@ -242,13 +236,9 @@ async def _upsert_visitor_profile_from_submit(
 
     profile = None
     if phone:
-        profile = await get_visitor_profile_by_phone(
-            tenant_id=tenant_id, phone=phone
-        )
+        profile = await get_visitor_profile_by_phone(tenant_id=tenant_id, phone=phone)
     if profile is None and email:
-        profile = await get_visitor_profile_by_email(
-            tenant_id=tenant_id, email=email
-        )
+        profile = await get_visitor_profile_by_email(tenant_id=tenant_id, email=email)
 
     if profile is None:
         profile = await get_or_create_visitor_profile(
@@ -825,7 +815,8 @@ async def _submit_verified_checkin_core(
             email=email,
             phone=phone,
             full_name=str(merged_bio_data.get("full_name") or visitor.full_name),
-            company=merged_bio_data.get("company") or merged_bio_data.get("organization"),
+            company=merged_bio_data.get("company")
+            or merged_bio_data.get("organization"),
             portrait_url=visitor.portrait_url,
             verified=visitor.verified,
             id_type=(id_type.value if id_type is not None else None),
@@ -1072,7 +1063,9 @@ async def submit_checkin(
         tenant_id
     )
     initial_state = (
-        CheckinState.PENDING_VERIFICATION if kyc_available else CheckinState.PENDING_APPROVAL
+        CheckinState.PENDING_VERIFICATION
+        if kyc_available
+        else CheckinState.PENDING_APPROVAL
     )
     logger.info(
         "legacy checkin submit: kyc decision tenant=%s visitor=%s "
@@ -1333,9 +1326,7 @@ async def list_pending_approvals_for_tenant(
     return paged, total
 
 
-async def get_checkin_detail(
-    tenant_id: str, checkin_id: str
-) -> CheckinWithVisitorOut:
+async def get_checkin_detail(tenant_id: str, checkin_id: str) -> CheckinWithVisitorOut:
     """Get check-in detail with tenant validation. Enriched with the
     visitor snapshot so the approver sees the visitor's name + contact +
     verification state."""
@@ -1416,10 +1407,13 @@ async def _send_visitor_badge_email_if_enabled(
             from core.storage.manager import DocumentStorageManager
 
             storage = DocumentStorageManager.get_instance()
-            badge_url = storage.provider.download_url(
-                object_key=badge_pdf_object_key,
-                expires_in=24 * 3600,
-            ) or ""
+            badge_url = (
+                storage.provider.download_url(
+                    object_key=badge_pdf_object_key,
+                    expires_in=24 * 3600,
+                )
+                or ""
+            )
         except Exception:
             badge_url = ""
 

@@ -393,7 +393,9 @@ class TestDiscountRoutes:
         assert resp.json()["data"]["jobId"] == "job-disc-bulk-disable"
         mock_bulk_enqueue.assert_awaited_once()
         mock_single_enqueue.assert_not_awaited()
-        assert mock_bulk_enqueue.await_args.kwargs["writer_key"] == "discount.bulk_disable"
+        assert (
+            mock_bulk_enqueue.await_args.kwargs["writer_key"] == "discount.bulk_disable"
+        )
         assert mock_bulk_enqueue.await_args.kwargs["ids"] == ids
 
     @patch("api.v1.discount_route.enqueue_write", new_callable=AsyncMock)

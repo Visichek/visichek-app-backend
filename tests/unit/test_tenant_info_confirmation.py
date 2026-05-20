@@ -38,8 +38,8 @@ def cleanup_dependency_overrides():
 @pytest.mark.unit
 async def test_get_tenant_confirmation_success(cleanup_dependency_overrides):
     """GET returns the review payload with onboarding context attached."""
-    app.dependency_overrides[verify_super_admin_token] = (
-        lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+    app.dependency_overrides[verify_super_admin_token] = lambda: (
+        MOCK_SUPER_ADMIN_PRINCIPAL
     )
 
     with patch(
@@ -55,8 +55,14 @@ async def test_get_tenant_confirmation_success(cleanup_dependency_overrides):
             "onboarding_info_confirmed": False,
             "onboarding_info_confirmed_at": None,
             "onboarding_submission_id": "64f1a2b3c4d5e6f7a8b9c0d1",
-            "onboarding_fields": {"company": "Acme Clinics", "email": "ops@acme.example.com"},
-            "onboarding_field_labels": {"company": "Company name", "email": "Work email"},
+            "onboarding_fields": {
+                "company": "Acme Clinics",
+                "email": "ops@acme.example.com",
+            },
+            "onboarding_field_labels": {
+                "company": "Company name",
+                "email": "Work email",
+            },
             "onboarding_field_order": ["company", "email"],
         }
 
@@ -80,8 +86,8 @@ async def test_get_tenant_confirmation_success(cleanup_dependency_overrides):
 @pytest.mark.unit
 async def test_confirm_tenant_info_success(cleanup_dependency_overrides):
     """POST confirms (and edits) tenant info synchronously, returns 200."""
-    app.dependency_overrides[verify_super_admin_token] = (
-        lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+    app.dependency_overrides[verify_super_admin_token] = lambda: (
+        MOCK_SUPER_ADMIN_PRINCIPAL
     )
 
     with patch(
@@ -128,8 +134,8 @@ async def test_confirm_tenant_info_success(cleanup_dependency_overrides):
 @pytest.mark.unit
 async def test_confirm_tenant_info_empty_body_is_valid(cleanup_dependency_overrides):
     """A bare confirmation (no edits) is accepted — every field is optional."""
-    app.dependency_overrides[verify_super_admin_token] = (
-        lambda: MOCK_SUPER_ADMIN_PRINCIPAL
+    app.dependency_overrides[verify_super_admin_token] = lambda: (
+        MOCK_SUPER_ADMIN_PRINCIPAL
     )
 
     with patch(

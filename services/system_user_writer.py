@@ -61,14 +61,17 @@ def _invalidate_gate_roles(user_id: str) -> None:
         )
 
 
-@write_handler("system_user.invite", invalidates=[
+@write_handler(
+    "system_user.invite",
+    invalidates=[
         "system_users.list",
         # actor_summary / host_summary / assigned_to_summary embedded across views
         "incidents.list",
         "appointments.list",
         "support_cases.list",
         "support_cases.admin_list",
-    ])
+    ],
+)
 async def _system_user_invite(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     user = SystemUserCreate(**data)
     result = await add_system_user(user_data=user, preassigned_id=resource_id)
@@ -81,14 +84,17 @@ async def _system_user_invite(resource_id: str, data: dict[str, Any]) -> dict[st
     }
 
 
-@write_handler("system_user.update", invalidates=[
+@write_handler(
+    "system_user.update",
+    invalidates=[
         "system_users.list",
         # actor_summary / host_summary / assigned_to_summary embedded across views
         "incidents.list",
         "appointments.list",
         "support_cases.list",
         "support_cases.admin_list",
-    ])
+    ],
+)
 async def _system_user_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
     upd = SystemUserUpdate(**data)
@@ -100,14 +106,17 @@ async def _system_user_update(resource_id: str, data: dict[str, Any]) -> dict[st
     return {"id": result.id, "email": result.email}
 
 
-@write_handler("system_user.delete", invalidates=[
+@write_handler(
+    "system_user.delete",
+    invalidates=[
         "system_users.list",
         # actor_summary / host_summary / assigned_to_summary embedded across views
         "incidents.list",
         "appointments.list",
         "support_cases.list",
         "support_cases.admin_list",
-    ])
+    ],
+)
 async def _system_user_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.get("tenant_id", "") or ""
     await remove_system_user(user_id=resource_id, tenant_id=tenant_id)
@@ -116,14 +125,17 @@ async def _system_user_delete(resource_id: str, data: dict[str, Any]) -> dict[st
     return {"id": resource_id, "deleted": True}
 
 
-@write_handler("system_user.set_mfa", invalidates=[
+@write_handler(
+    "system_user.set_mfa",
+    invalidates=[
         "system_users.list",
         # actor_summary / host_summary / assigned_to_summary embedded across views
         "incidents.list",
         "appointments.list",
         "support_cases.list",
         "support_cases.admin_list",
-    ])
+    ],
+)
 async def _system_user_set_mfa(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -141,14 +153,17 @@ async def _system_user_set_mfa(
     return {"id": result.id, "mfa_enabled": result.mfa_enabled}
 
 
-@write_handler("system_user.assign_department", invalidates=[
+@write_handler(
+    "system_user.assign_department",
+    invalidates=[
         "system_users.list",
         # actor_summary / host_summary / assigned_to_summary embedded across views
         "incidents.list",
         "appointments.list",
         "support_cases.list",
         "support_cases.admin_list",
-    ])
+    ],
+)
 async def _system_user_assign_department(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -200,7 +215,9 @@ async def _system_user_bulk_delete(
             raise PermissionError("USER_DELETE_PROTECTED: cross-tenant blocked")
         if is_protected_main_super_admin(target):
             raise PermissionError("MAIN_SUPER_ADMIN_LOCKED")
-        target_role = target.role.value if hasattr(target.role, "value") else target.role
+        target_role = (
+            target.role.value if hasattr(target.role, "value") else target.role
+        )
         if target_role == "super_admin":
             raise PermissionError("USER_DELETE_PROTECTED: super_admin")
         await remove_system_user(user_id=user_id, tenant_id=target.tenant_id or "")

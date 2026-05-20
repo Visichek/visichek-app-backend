@@ -1493,9 +1493,7 @@ class TestLoginPasswordWhitespaceStripping:
         assert payload.password == "MyP@ssw0rd!"
 
     def test_system_user_login_strips_whitespace(self):
-        payload = SystemUserLogin(
-            email="user@example.com", password="  Str0ng#Pass!  "
-        )
+        payload = SystemUserLogin(email="user@example.com", password="  Str0ng#Pass!  ")
         assert payload.password == "Str0ng#Pass!"
 
     def test_system_user_tenant_login_strips_whitespace(self):

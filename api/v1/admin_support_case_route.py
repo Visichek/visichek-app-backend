@@ -49,7 +49,15 @@ from services.support_case_service import (
 
 
 _SUPPORT_STATUSES = frozenset(
-    {"open", "acknowledged", "in_progress", "awaiting_tenant", "resolved", "closed", "reopened"}
+    {
+        "open",
+        "acknowledged",
+        "in_progress",
+        "awaiting_tenant",
+        "resolved",
+        "closed",
+        "reopened",
+    }
 )
 _SUPPORT_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
 
@@ -61,8 +69,12 @@ SUPPORT_CASES_LIST_SPEC = ListSpec(
     default_sort=(("date_created", -1),),
     search_fields=("title", "summary", "case_number"),
     filters={
-        "status": FilterDef(name="status", multi=True, allowed_values=_SUPPORT_STATUSES),
-        "priority": FilterDef(name="priority", multi=True, allowed_values=_SUPPORT_PRIORITIES),
+        "status": FilterDef(
+            name="status", multi=True, allowed_values=_SUPPORT_STATUSES
+        ),
+        "priority": FilterDef(
+            name="priority", multi=True, allowed_values=_SUPPORT_PRIORITIES
+        ),
         "tenantId": FilterDef(name="tenantId", mongo_field="tenant_id"),
         "assigneeId": FilterDef(name="assigneeId", mongo_field="assigned_admin_id"),
         "category": FilterDef(name="category"),
@@ -70,7 +82,11 @@ SUPPORT_CASES_LIST_SPEC = ListSpec(
         "slaState": FilterDef(
             name="slaState",
             allowed_values=frozenset({"on_track", "at_risk", "breached"}),
-            builder=lambda vs: {"sla_state": vs[0]} if len(vs) == 1 else {"sla_state": {"$in": list(vs)}},
+            builder=lambda vs: (
+                {"sla_state": vs[0]}
+                if len(vs) == 1
+                else {"sla_state": {"$in": list(vs)}}
+            ),
         ),
     },
     range_filters={"createdAt": "date_created"},
@@ -86,7 +102,9 @@ def _is_default_sc_listing(request: Request) -> bool:
         return False
     skip_raw = qp.get("skip", "0")
     limit_raw = qp.get("limit", str(SUPPORT_CASES_LIST_SPEC.default_limit))
-    return skip_raw in ("0", "") and limit_raw == str(SUPPORT_CASES_LIST_SPEC.default_limit)
+    return skip_raw in ("0", "") and limit_raw == str(
+        SUPPORT_CASES_LIST_SPEC.default_limit
+    )
 
 
 def _map_sc_doc(doc: dict[str, Any]) -> dict[str, Any]:
@@ -106,6 +124,7 @@ async def _sc_status_facet(
         out[v] = await collection.count_documents({**base, "status": v})
     out["all"] = sum(out.values())
     return out
+
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +287,7 @@ async def admin_reply_on_support_case(
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),
     )
+
 
 # ─── Bulk endpoints ───────────────────────────────────────────────────
 

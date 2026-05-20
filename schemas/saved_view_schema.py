@@ -104,9 +104,7 @@ class ColumnPrefs(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self):
-        _validate_size(
-            self.model_dump(), _MAX_COLUMN_PREFS_BYTES, "column_prefs"
-        )
+        _validate_size(self.model_dump(), _MAX_COLUMN_PREFS_BYTES, "column_prefs")
         return self
 
 

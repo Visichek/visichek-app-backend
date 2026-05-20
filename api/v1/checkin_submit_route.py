@@ -74,9 +74,7 @@ async def submit_checkin_endpoint(
             "either source satisfies the requirement."
         ),
     ),
-    email: Optional[str] = Form(
-        None, description="Optional. May be omitted entirely."
-    ),
+    email: Optional[str] = Form(None, description="Optional. May be omitted entirely."),
     purpose: str = Form(..., description="JSON object: { purpose, ... }"),
     bio_data: str = Form("{}", description="JSON object — bio fields"),
     tenant_specific_data: str = Form("{}", description="JSON object"),
@@ -109,16 +107,12 @@ async def submit_checkin_endpoint(
     # system user with visitor permissions. Resolve the config first so
     # we know which tenant the plan check applies to (the path key is
     # checkin_config_id, not tenant_id).
-    config = await get_checkin_config(
-        {"_id": checkin_config_id, "active": True}
-    )
+    config = await get_checkin_config({"_id": checkin_config_id, "active": True})
     if not config:
         raise resource_not_found(
             resource="CheckinConfig", resource_id=checkin_config_id
         )
-    await enforce_kiosk_submit_access(
-        tenant_id=config.tenant_id, principal=principal
-    )
+    await enforce_kiosk_submit_access(tenant_id=config.tenant_id, principal=principal)
 
     bio_dict = _parse_json_dict(bio_data, "bio_data")
     tsd_dict = _parse_json_dict(tenant_specific_data, "tenant_specific_data")

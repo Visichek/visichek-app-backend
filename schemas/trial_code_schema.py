@@ -105,7 +105,9 @@ class TrialClaimResponse(BaseModel):
     plan_name: str
     plan_display_name: str
     trial_days: int
-    trial_ends_at_preview: int  # what trial_ends_at would be if checkout were paid right now
+    trial_ends_at_preview: (
+        int  # what trial_ends_at would be if checkout were paid right now
+    )
     base_price_monthly: float
     base_price_yearly: float
     currency: str

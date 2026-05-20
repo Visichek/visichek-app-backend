@@ -55,12 +55,15 @@ def _pop_actor(data: dict[str, Any]) -> tuple[str, str, str | None]:
     return actor_id, actor_role, request_id
 
 
-@write_handler("appointment.create", invalidates=[
+@write_handler(
+    "appointment.create",
+    invalidates=[
         "appointments.list",
         # appointment_summary referenced from active visit lists / dashboard
         "dashboard.visitors_active",
         "dashboard.visitors_page1",
-    ])
+    ],
+)
 async def _appointment_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     actor_id, actor_role, request_id = _pop_actor(data)
     appt = AppointmentCreate(**data)
@@ -89,12 +92,15 @@ async def _appointment_create(resource_id: str, data: dict[str, Any]) -> dict[st
     }
 
 
-@write_handler("appointment.update", invalidates=[
+@write_handler(
+    "appointment.update",
+    invalidates=[
         "appointments.list",
         # appointment_summary referenced from active visit lists / dashboard
         "dashboard.visitors_active",
         "dashboard.visitors_page1",
-    ])
+    ],
+)
 async def _appointment_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     actor_id, actor_role, request_id = _pop_actor(data)
     tenant_id = data.pop("tenant_id", "") or ""
@@ -117,12 +123,15 @@ async def _appointment_update(resource_id: str, data: dict[str, Any]) -> dict[st
     return {"id": after.id, "status": after.status, "changed_fields": list(changes)}
 
 
-@write_handler("appointment.delete", invalidates=[
+@write_handler(
+    "appointment.delete",
+    invalidates=[
         "appointments.list",
         # appointment_summary referenced from active visit lists / dashboard
         "dashboard.visitors_active",
         "dashboard.visitors_page1",
-    ])
+    ],
+)
 async def _appointment_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     actor_id, actor_role, request_id = _pop_actor(data)
     tenant_id = data.get("tenant_id", "") or ""

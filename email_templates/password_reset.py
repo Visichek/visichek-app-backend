@@ -108,7 +108,9 @@ def render_text(context: dict[str, Any]) -> str:
         lines.extend(["", f"This reset applies to your account in {tenant_label}."])
 
     if reset_url:
-        lines.extend(["", "Open this link to set a new password:", "", f"  {reset_url}"])
+        lines.extend(
+            ["", "Open this link to set a new password:", "", f"  {reset_url}"]
+        )
 
     lines.extend(
         [

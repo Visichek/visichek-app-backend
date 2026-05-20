@@ -41,13 +41,8 @@ class KYCManager:
         providers: dict[str, KYCProvider] = {}
 
         if settings.dojah_app_id and settings.dojah_secret_key:
-            base_url = (
-                settings.dojah_base_url
-                or (
-                    DOJAH_PRODUCTION_BASE
-                    if settings.is_production
-                    else DOJAH_SANDBOX_BASE
-                )
+            base_url = settings.dojah_base_url or (
+                DOJAH_PRODUCTION_BASE if settings.is_production else DOJAH_SANDBOX_BASE
             )
             try:
                 providers["dojah"] = DojahKYCProvider(
@@ -61,9 +56,7 @@ class KYCManager:
                 logger.warning("Dojah provider unavailable: %s", exc)
 
         with cls._lock:
-            cls._instance = cls(
-                providers=providers, default_provider="dojah"
-            )
+            cls._instance = cls(providers=providers, default_provider="dojah")
             return cls._instance
 
     @classmethod

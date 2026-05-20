@@ -244,7 +244,11 @@ async def ensure_main_super_admin_invariant() -> dict[str, Any]:
         async for tenant_doc in cursor:
             summary["tenants_scanned"] += 1
             tenant_id_obj = tenant_doc.get("_id")
-            tenant_id = str(tenant_id_obj) if isinstance(tenant_id_obj, ObjectId) else str(tenant_id_obj)
+            tenant_id = (
+                str(tenant_id_obj)
+                if isinstance(tenant_id_obj, ObjectId)
+                else str(tenant_id_obj)
+            )
             if tenant_doc.get("is_active") is False:
                 summary["skipped_inactive_tenants"] += 1
                 continue

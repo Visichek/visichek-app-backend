@@ -87,9 +87,7 @@ class PlatformSettingsBase(BaseModel):
         if self.password_min_length < 8:
             raise ValueError("password_min_length must be at least 8")
         if self.password_min_length > self.password_max_length:
-            raise ValueError(
-                "password_min_length cannot exceed password_max_length"
-            )
+            raise ValueError("password_min_length cannot exceed password_max_length")
         if self.password_max_length > 256:
             raise ValueError("password_max_length must be at most 256")
         if self.password_history_count < 0 or self.password_history_count > 24:
@@ -100,10 +98,7 @@ class PlatformSettingsBase(BaseModel):
             raise ValueError("lockout_duration_minutes must be at least 1")
         if self.session_timeout_minutes < 5:
             raise ValueError("session_timeout_minutes must be at least 5")
-        if (
-            self.password_expiry_days is not None
-            and self.password_expiry_days < 1
-        ):
+        if self.password_expiry_days is not None and self.password_expiry_days < 1:
             raise ValueError("password_expiry_days must be at least 1 if set")
         return self
 
@@ -177,24 +172,16 @@ class PlatformSettingsUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_security_updates(self):
-        if (
-            self.password_min_length is not None
-            and self.password_min_length < 8
-        ):
+        if self.password_min_length is not None and self.password_min_length < 8:
             raise ValueError("password_min_length must be at least 8")
-        if (
-            self.password_max_length is not None
-            and self.password_max_length > 256
-        ):
+        if self.password_max_length is not None and self.password_max_length > 256:
             raise ValueError("password_max_length must be at most 256")
         if (
             self.password_min_length is not None
             and self.password_max_length is not None
             and self.password_min_length > self.password_max_length
         ):
-            raise ValueError(
-                "password_min_length cannot exceed password_max_length"
-            )
+            raise ValueError("password_min_length cannot exceed password_max_length")
         if self.password_history_count is not None and (
             self.password_history_count < 0 or self.password_history_count > 24
         ):
@@ -214,10 +201,7 @@ class PlatformSettingsUpdate(BaseModel):
             and self.session_timeout_minutes < 5
         ):
             raise ValueError("session_timeout_minutes must be at least 5")
-        if (
-            self.password_expiry_days is not None
-            and self.password_expiry_days < 1
-        ):
+        if self.password_expiry_days is not None and self.password_expiry_days < 1:
             raise ValueError("password_expiry_days must be at least 1 if set")
         return self
 

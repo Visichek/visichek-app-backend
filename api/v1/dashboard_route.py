@@ -38,19 +38,46 @@ _all_tenant_roles = verify_system_user_token(
             "change_percent": 11.4,
         },
         "visit_status_distribution": [
-            {"key": "checked_out", "label": "Checked out", "value": 980, "percentage": 78.4},
+            {
+                "key": "checked_out",
+                "label": "Checked out",
+                "value": 980,
+                "percentage": 78.4,
+            },
             {"key": "checked_in", "label": "Checked in", "value": 8, "percentage": 0.6},
         ],
         "check_in_method_distribution": [
-            {"key": "qr_registration", "label": "QR registration", "value": 720, "percentage": 57.6},
-            {"key": "manual_entry", "label": "Manual entry", "value": 410, "percentage": 32.8},
+            {
+                "key": "qr_registration",
+                "label": "QR registration",
+                "value": 720,
+                "percentage": 57.6,
+            },
+            {
+                "key": "manual_entry",
+                "label": "Manual entry",
+                "value": 410,
+                "percentage": 32.8,
+            },
             {"key": "id_scan", "label": "ID scan", "value": 120, "percentage": 9.6},
         ],
         "top_departments": [
-            {"id": "dept-1", "label": "Engineering", "value": 412, "percentage": 33.0, "extra": {"code": "ENG"}},
+            {
+                "id": "dept-1",
+                "label": "Engineering",
+                "value": 412,
+                "percentage": 33.0,
+                "extra": {"code": "ENG"},
+            },
         ],
         "top_companies": [
-            {"id": None, "label": "Acme Corp", "value": 38, "percentage": 3.0, "extra": {}},
+            {
+                "id": None,
+                "label": "Acme Corp",
+                "value": 38,
+                "percentage": 3.0,
+                "extra": {},
+            },
         ],
         "hourly_distribution": [{"hour": 9, "label": "09:00", "value": 81}],
         "day_of_week_distribution": [{"day": 1, "label": "Tue", "value": 220}],
@@ -92,6 +119,7 @@ async def dashboard_stats(
         department_id=department_id,
         role=principal.role,
     )
+
 
 @router.get("/visitors")
 @document_response(

@@ -160,7 +160,9 @@ async def _send_reset_email(
             )
         )
     except Exception:
-        logger.warning("password reset email send failed for %s", to_email, exc_info=True)
+        logger.warning(
+            "password reset email send failed for %s", to_email, exc_info=True
+        )
 
 
 _ROLE_LABELS: dict[str, str] = {
@@ -412,7 +414,9 @@ async def reset_password_with_token(
 
     now = int(time.time())
     if row.get("used"):
-        raise HTTPException(status_code=400, detail="This reset link has already been used")
+        raise HTTPException(
+            status_code=400, detail="This reset link has already been used"
+        )
     if int(row.get("expires_at", 0)) < now:
         raise HTTPException(status_code=400, detail="This reset link has expired")
 

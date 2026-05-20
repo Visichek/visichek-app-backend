@@ -1227,9 +1227,14 @@ def get_default_permissions_for_role(role: str) -> PermissionList:
 # don't accidentally grant a content-only admin a permission that
 # wasn't in the original platform-admin list.
 
+
 # Helper — match permission keys by path prefix.
 def _admin_perms_by_path_prefix(prefixes: tuple[str, ...]) -> list[Permission]:
-    return [p for p in ADMIN_PERMISSIONS if any(p.path.startswith(pref) for pref in prefixes)]
+    return [
+        p
+        for p in ADMIN_PERMISSIONS
+        if any(p.path.startswith(pref) for pref in prefixes)
+    ]
 
 
 # Account / profile / health permissions every admin keeps — they
@@ -1282,7 +1287,9 @@ ADMIN_CONTENT_PERMISSIONS: list[Permission] = (
 # operational dashboard views support teams rely on (attention queue,
 # email outbox). Onboarding triage is included so support can accept
 # or reject incoming tenant signups during off-hours coverage.
-ADMIN_SUPPORT_PERMISSIONS: list[Permission] = list(_ADMIN_BASE_KEEP) + _admin_perms_by_path_prefix(
+ADMIN_SUPPORT_PERMISSIONS: list[Permission] = list(
+    _ADMIN_BASE_KEEP
+) + _admin_perms_by_path_prefix(
     (
         "/v1/admins/support-cases",
         "/v1/admins/dashboard/attention",
@@ -1294,14 +1301,18 @@ ADMIN_SUPPORT_PERMISSIONS: list[Permission] = list(_ADMIN_BASE_KEEP) + _admin_pe
 
 # ``content_support`` — both editorial + support workflows.
 ADMIN_CONTENT_SUPPORT_PERMISSIONS: list[Permission] = list(
-    {p.key: p for p in (*ADMIN_CONTENT_PERMISSIONS, *ADMIN_SUPPORT_PERMISSIONS)}.values()
+    {
+        p.key: p for p in (*ADMIN_CONTENT_PERMISSIONS, *ADMIN_SUPPORT_PERMISSIONS)
+    }.values()
 )
 
 
 # ``billing_only`` — plans, subscriptions, discounts, usage, invoices,
 # payment webhooks, and the billing dashboard. The full write set on
 # those resources, but no tenants/content/support.
-ADMIN_BILLING_PERMISSIONS: list[Permission] = list(_ADMIN_BASE_KEEP) + _admin_perms_by_path_prefix(
+ADMIN_BILLING_PERMISSIONS: list[Permission] = list(
+    _ADMIN_BASE_KEEP
+) + _admin_perms_by_path_prefix(
     (
         "/v1/plans",
         "/v1/subscriptions",

@@ -490,8 +490,8 @@ async def _accept_internal(
 
     company_name = (payload.company_name or submission.organization_name or "").strip()
     admin_full_name = (payload.admin_full_name or submission.full_name or "").strip()
-    admin_email = str(payload.admin_email) if payload.admin_email else (
-        submission.email or ""
+    admin_email = (
+        str(payload.admin_email) if payload.admin_email else (submission.email or "")
     )
     admin_email = admin_email.strip()
 

@@ -157,7 +157,9 @@ class TenantDashboardStats(BaseModel):
     avg_visit_duration_seconds: Optional[int] = None  # raw seconds, frontend can format
     longest_visit_today_minutes: Optional[float] = None
     shortest_visit_today_minutes: Optional[float] = None
-    overdue_checkouts: Optional[int] = None  # currently active visits past expected_duration
+    overdue_checkouts: Optional[int] = (
+        None  # currently active visits past expected_duration
+    )
 
     # ─── Visitor acquisition / marketing (paid — null on Free) ────────
     new_signups_today: Optional[int] = None

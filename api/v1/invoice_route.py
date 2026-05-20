@@ -44,7 +44,9 @@ def _coerce_amount(raw):
 
 
 INVOICES_ADMIN_LIST_SPEC = ListSpec(
-    sortable_fields=frozenset({"issued_at", "amount", "status", "date_created", "invoice_number"}),
+    sortable_fields=frozenset(
+        {"issued_at", "amount", "status", "date_created", "invoice_number"}
+    ),
     default_sort=(("issued_at", -1),),
     search_fields=("invoice_number",),
     filters={
@@ -74,7 +76,9 @@ INVOICES_ADMIN_LIST_SPEC = ListSpec(
 
 
 INVOICES_TENANT_LIST_SPEC = ListSpec(
-    sortable_fields=frozenset({"issued_at", "amount", "status", "date_created", "invoice_number"}),
+    sortable_fields=frozenset(
+        {"issued_at", "amount", "status", "date_created", "invoice_number"}
+    ),
     default_sort=(("issued_at", -1),),
     search_fields=("invoice_number",),
     filters={
@@ -98,13 +102,13 @@ INVOICES_TENANT_LIST_SPEC = ListSpec(
 )
 
 
-def _is_default(request: Request, spec: ListSpec, *, allow_keys: tuple[str, ...] = ()) -> bool:
+def _is_default(
+    request: Request, spec: ListSpec, *, allow_keys: tuple[str, ...] = ()
+) -> bool:
     qp = request.query_params
     if any(qp.get(k) for k in ("q", "sort", "facets")):
         return False
-    extra = {
-        k for k in qp.keys() if k not in {"skip", "limit", *allow_keys}
-    }
+    extra = {k for k in qp.keys() if k not in {"skip", "limit", *allow_keys}}
     if extra:
         return False
     skip_raw = qp.get("skip", "0")

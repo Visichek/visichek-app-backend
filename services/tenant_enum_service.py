@@ -37,7 +37,9 @@ DEFAULT_PURPOSES_OF_VISIT: List[TenantEnumOption] = [
     TenantEnumOption(value="meeting", label="Meeting", sort_order=10),
     TenantEnumOption(value="interview", label="Interview", sort_order=20),
     TenantEnumOption(value="delivery", label="Delivery", sort_order=30),
-    TenantEnumOption(value="contractor", label="Contractor / Maintenance", sort_order=40),
+    TenantEnumOption(
+        value="contractor", label="Contractor / Maintenance", sort_order=40
+    ),
     TenantEnumOption(value="event", label="Event Attendance", sort_order=50),
     TenantEnumOption(value="tour", label="Office Tour", sort_order=60),
     TenantEnumOption(value="personal", label="Personal Visit", sort_order=70),
@@ -49,7 +51,9 @@ DEFAULT_ID_TYPES: List[TenantEnumOption] = [
     TenantEnumOption(value="drivers_license", label="Driver's License", sort_order=20),
     TenantEnumOption(value="passport", label="International Passport", sort_order=30),
     TenantEnumOption(value="voters_card", label="Voter's Card", sort_order=40),
-    TenantEnumOption(value="employee_id", label="Employee ID", sort_order=50, active=False),
+    TenantEnumOption(
+        value="employee_id", label="Employee ID", sort_order=50, active=False
+    ),
 ]
 
 DEFAULT_VISITOR_CATEGORIES: List[TenantEnumOption] = [
@@ -100,9 +104,7 @@ async def seed_tenant_enums(tenant_id: str) -> List[TenantEnumOut]:
     return out
 
 
-async def get_or_seed_enum(
-    tenant_id: str, kind: TenantEnumKind
-) -> TenantEnumOut:
+async def get_or_seed_enum(tenant_id: str, kind: TenantEnumKind) -> TenantEnumOut:
     """Return the row for one kind, seeding the default if absent.
 
     The kiosk reads through this helper so a tenant that hasn't yet
@@ -296,5 +298,3 @@ def validate_enum_value(
                 "accepted": [opt.value for opt in enum_view.options],
             },
         )
-
-

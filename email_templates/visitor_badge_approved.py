@@ -60,9 +60,7 @@ def render_html(context: dict[str, Any]) -> str:
     if department:
         visit_meta.append(f"<strong>Department:</strong> {department}")
     visit_meta_html = (
-        "<p style='color:#444;font-size:14px'>"
-        + "<br/>".join(visit_meta)
-        + "</p>"
+        "<p style='color:#444;font-size:14px'>" + "<br/>".join(visit_meta) + "</p>"
         if visit_meta
         else ""
     )

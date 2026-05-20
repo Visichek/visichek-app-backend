@@ -89,7 +89,9 @@ async def _send_admin_otp_email(user_id: str, code: str) -> None:
             )
         )
     except Exception:
-        logger.warning("admin OTP email send failed for user_id=%s", user_id, exc_info=True)
+        logger.warning(
+            "admin OTP email send failed for user_id=%s", user_id, exc_info=True
+        )
 
 
 async def create_otp_challenge(

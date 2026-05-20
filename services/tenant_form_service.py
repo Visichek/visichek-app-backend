@@ -240,9 +240,7 @@ def _warnings_for_draft(
 # ─── Public retrieval ───────────────────────────────────────────
 
 
-async def retrieve_form_by_id(
-    tenant_id: str, form_id: str
-) -> Optional[TenantFormOut]:
+async def retrieve_form_by_id(tenant_id: str, form_id: str) -> Optional[TenantFormOut]:
     """Return the head row (active or draft) for a form_id."""
     return await get_head_for_form_id(tenant_id=tenant_id, form_id=form_id)
 
@@ -283,9 +281,7 @@ async def retrieve_active_by_target(
     tenant_id: str, target_type: str
 ) -> Optional[TenantFormOut]:
     """Active row for (tenant, target_type), or None."""
-    return await get_active_by_target(
-        tenant_id=tenant_id, target_type=target_type
-    )
+    return await get_active_by_target(tenant_id=tenant_id, target_type=target_type)
 
 
 async def retrieve_public_active_by_target(
@@ -294,9 +290,7 @@ async def retrieve_public_active_by_target(
     """Kiosk-facing read — published state only, no draft fields."""
     if not ObjectId.is_valid(tenant_id):
         return None
-    form = await get_active_by_target(
-        tenant_id=tenant_id, target_type=target_type
-    )
+    form = await get_active_by_target(tenant_id=tenant_id, target_type=target_type)
     if not form:
         return None
     return _to_public(form)
@@ -305,9 +299,7 @@ async def retrieve_public_active_by_target(
 async def retrieve_head_by_target(
     tenant_id: str, target_type: str
 ) -> Optional[TenantFormOut]:
-    return await get_head_by_target(
-        tenant_id=tenant_id, target_type=target_type
-    )
+    return await get_head_by_target(tenant_id=tenant_id, target_type=target_type)
 
 
 # ─── Mutations ───────────────────────────────────────────
@@ -407,9 +399,7 @@ async def bootstrap_draft_for_target(
     Used by ``POST /v1/tenant-forms/draft/{target_type}`` so the
     autosave loop always has a stable form_id to PATCH against.
     """
-    head = await get_head_by_target(
-        tenant_id=tenant_id, target_type=target_type
-    )
+    head = await get_head_by_target(tenant_id=tenant_id, target_type=target_type)
     if head:
         return head
     return await create_form_shell(
@@ -479,9 +469,7 @@ async def autosave_draft(
     # Draft writes don't change the published form, but they still bust
     # the form list cache so the builder UI sees the updated draft_*
     # state on a refresh.
-    _invalidate_form_caches(
-        tenant_id=tenant_id, target_type=head.target_type.value
-    )
+    _invalidate_form_caches(tenant_id=tenant_id, target_type=head.target_type.value)
 
     warnings = _warnings_for_draft(patch.name, patch.fields)
 
@@ -533,9 +521,7 @@ async def publish_form(
             details={"form_id": form_id, "status": head.status.value},
         )
 
-    candidate_name = (
-        head.draft_name if head.draft_name is not None else head.name
-    )
+    candidate_name = head.draft_name if head.draft_name is not None else head.name
     candidate_description = (
         head.draft_description
         if head.draft_description is not None
@@ -587,9 +573,7 @@ async def publish_form(
     )
     assert promoted is not None
 
-    _invalidate_form_caches(
-        tenant_id=tenant_id, target_type=promoted.target_type.value
-    )
+    _invalidate_form_caches(tenant_id=tenant_id, target_type=promoted.target_type.value)
 
     try:
         await record_audit_event(
@@ -630,9 +614,7 @@ async def discard_draft(
     if not cleared:
         raise resource_not_found(resource="TenantForm", resource_id=form_id)
 
-    _invalidate_form_caches(
-        tenant_id=tenant_id, target_type=cleared.target_type.value
-    )
+    _invalidate_form_caches(tenant_id=tenant_id, target_type=cleared.target_type.value)
 
     try:
         await record_audit_event(
@@ -777,9 +759,7 @@ async def archive_form(
     if not result:
         raise resource_not_found(resource="TenantForm", resource_id=form_id)
 
-    _invalidate_form_caches(
-        tenant_id=tenant_id, target_type=result.target_type.value
-    )
+    _invalidate_form_caches(tenant_id=tenant_id, target_type=result.target_type.value)
 
     try:
         await record_audit_event(
@@ -809,18 +789,14 @@ async def clone_form(
     """Duplicate the source form's published shape into a new form_id
     as a fresh draft. Useful for trial redesigns.
     """
-    source = await get_head_for_form_id(
-        tenant_id=tenant_id, form_id=source_form_id
-    )
+    source = await get_head_for_form_id(tenant_id=tenant_id, form_id=source_form_id)
     if not source:
         # Allow cloning archived forms too — they're not in the head set.
         source = await get_tenant_form(
             {"tenant_id": tenant_id, "form_id": source_form_id, "status": "archived"}
         )
     if not source:
-        raise resource_not_found(
-            resource="TenantForm", resource_id=source_form_id
-        )
+        raise resource_not_found(resource="TenantForm", resource_id=source_form_id)
 
     base_name = name or source.name or "Form copy"
     new_name = base_name if "(copy)" in base_name.lower() else f"{base_name} (copy)"
@@ -856,9 +832,7 @@ async def clone_form(
 
 
 async def count_active_forms(tenant_id: str) -> int:
-    return await count_tenant_forms(
-        {"tenant_id": tenant_id, "status": "active"}
-    )
+    return await count_tenant_forms({"tenant_id": tenant_id, "status": "active"})
 
 
 async def serialize_form(form: TenantFormOut) -> Dict[str, Any]:

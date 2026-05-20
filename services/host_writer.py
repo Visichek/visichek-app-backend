@@ -108,9 +108,7 @@ async def _host_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]
     tenant_id = data.get("tenant_id", "") or ""
     snapshot = None
     try:
-        snapshot = await retrieve_host_by_id(
-            host_id=resource_id, tenant_id=tenant_id
-        )
+        snapshot = await retrieve_host_by_id(host_id=resource_id, tenant_id=tenant_id)
     except Exception:
         # 404 / invalid id paths still surface from remove_host; the
         # snapshot is best-effort context for the audit row.

@@ -110,20 +110,14 @@ async def remove_blog(blog_id: str) -> bool:
     return True
 
 
-async def update_blog_by_id(
-    blog_id: str, blog_data: BlogUpdate
-) -> Optional[BlogOut]:
+async def update_blog_by_id(blog_id: str, blog_data: BlogUpdate) -> Optional[BlogOut]:
     if not ObjectId.is_valid(blog_id):
         raise HTTPException(status_code=400, detail="Invalid blog ID format")
 
-    if blog_data.featureImage is not None and _needs_fallback(
-        blog_data.featureImage
-    ):
+    if blog_data.featureImage is not None and _needs_fallback(blog_data.featureImage):
         existing = await get_blog({"_id": ObjectId(blog_id)})
         title = (
-            blog_data.title
-            if blog_data.title
-            else (existing.title if existing else "")
+            blog_data.title if blog_data.title else (existing.title if existing else "")
         ) or ""
         fallback_url = await resolve_feature_image_url(title)
         blog_data.featureImage = MediaAsset(
@@ -134,9 +128,7 @@ async def update_blog_by_id(
 
     result = await update_blog({"_id": ObjectId(blog_id)}, blog_data)
     if not result:
-        raise HTTPException(
-            status_code=404, detail="Blog not found or update failed"
-        )
+        raise HTTPException(status_code=404, detail="Blog not found or update failed")
     await _ensure_feature_image(result)
     return result
 
@@ -181,9 +173,7 @@ async def retrieve_blogs(
             sort_order=sort_order,
         )
     elif clean_filters:
-        results = await get_blogs(
-            filter_dict=clean_filters, start=start, stop=stop
-        )
+        results = await get_blogs(filter_dict=clean_filters, start=start, stop=stop)
     elif sort_field and sort_order:
         results = await get_blogs(
             start=start, stop=stop, sort_field=sort_field, sort_order=sort_order

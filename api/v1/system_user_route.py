@@ -180,9 +180,7 @@ async def login_system_user(request: Request, login_data: SystemUserLogin):
         },
     },
 )
-async def select_tenant_after_login(
-    request: Request, payload: TenantSelectionRequest
-):
+async def select_tenant_after_login(request: Request, payload: TenantSelectionRequest):
     result = await complete_login_after_tenant_selection(
         selection_token=payload.selection_token,
         tenant_id=payload.tenant_id,
@@ -519,7 +517,9 @@ async def verify_system_user_otp_endpoint(request: Request, otp_data: OtpVerifyR
     )
 
 
-@router.post("/transfer-main-super-admin/initiate", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/transfer-main-super-admin/initiate", status_code=status.HTTP_202_ACCEPTED
+)
 @document_response(
     message="Verification code sent",
     status_code=status.HTTP_202_ACCEPTED,
@@ -647,8 +647,6 @@ async def logout_system_user(request: Request):
     )
     clear_auth_cookies(response)
     return response
-
-
 
 
 @router.post("/bulk/reset-password")
@@ -846,10 +844,14 @@ async def list_system_users(
 
     tenant_id = principal.tenant_id or ""
     if not tenant_id:
-        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+        return {
+            "items": [],
+            "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False},
+        }
 
     spec = SYSTEM_USERS_LIST_SPEC
     if _is_default_su_listing(request):
+
         async def _load() -> list:
             users = await retrieve_system_users(tenant_id=tenant_id, start=0, stop=100)
             return [
@@ -929,7 +931,9 @@ def _is_default_su_listing(request: Request) -> bool:
         return False
     skip_raw = qp.get("skip", "0")
     limit_raw = qp.get("limit", str(SYSTEM_USERS_LIST_SPEC.default_limit))
-    return skip_raw in ("0", "") and limit_raw == str(SYSTEM_USERS_LIST_SPEC.default_limit)
+    return skip_raw in ("0", "") and limit_raw == str(
+        SYSTEM_USERS_LIST_SPEC.default_limit
+    )
 
 
 def _map_su_doc(doc: dict[str, Any]) -> dict[str, Any]:

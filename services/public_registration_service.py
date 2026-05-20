@@ -236,8 +236,7 @@ async def register_visitor_public(
             import logging
 
             logging.getLogger(__name__).warning(
-                "visit_session.registered_via_qr audit record failed "
-                "for session %s",
+                "visit_session.registered_via_qr audit record failed for session %s",
                 session.id,
                 exc_info=True,
             )

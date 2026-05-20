@@ -324,11 +324,7 @@ async def replay_activate_addon_endpoint(
     payment_reference: str,
     _principal: AuthPrincipal = Depends(verify_admin_token),
 ):
-    row = await activate_tenant_addon_by_reference(
-        payment_reference=payment_reference
-    )
+    row = await activate_tenant_addon_by_reference(payment_reference=payment_reference)
     if row is None:
-        raise resource_not_found(
-            resource="TenantAddon", resource_id=payment_reference
-        )
+        raise resource_not_found(resource="TenantAddon", resource_id=payment_reference)
     return row

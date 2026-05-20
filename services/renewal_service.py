@@ -520,5 +520,3 @@ async def _downgrade_trial_to_free(
             f"Failed to downgrade trial {subscription.id} to Free: {e}",
             exc_info=True,
         )
-
-

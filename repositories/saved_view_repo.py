@@ -51,9 +51,7 @@ async def list_saved_views_for_user(
     return [SavedViewRecord(**doc) async for doc in cursor]
 
 
-async def delete_saved_view(
-    *, user_id: str, user_type: str, resource: str
-) -> int:
+async def delete_saved_view(*, user_id: str, user_type: str, resource: str) -> int:
     result = await db[COLLECTION].delete_one(
         {"user_id": user_id, "user_type": user_type, "resource": resource}
     )

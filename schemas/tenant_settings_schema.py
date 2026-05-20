@@ -118,9 +118,7 @@ class TenantSettingsBase(BaseModel):
                 "visitor_badge_expiry_hours is required when badge expiry is set to 'hours'"
             )
         if self.geofencing_radius_meters < 5 or self.geofencing_radius_meters > 5000:
-            raise ValueError(
-                "geofencing_radius_meters must be between 5 and 5000"
-            )
+            raise ValueError("geofencing_radius_meters must be between 5 and 5000")
         has_lat = self.geofencing_reference_lat is not None
         has_lng = self.geofencing_reference_lng is not None
         if has_lat != has_lng:
@@ -204,10 +202,11 @@ class TenantSettingsUpdate(BaseModel):
     @model_validator(mode="after")
     def validate_settings(self):
         if self.geofencing_radius_meters is not None:
-            if self.geofencing_radius_meters < 5 or self.geofencing_radius_meters > 5000:
-                raise ValueError(
-                    "geofencing_radius_meters must be between 5 and 5000"
-                )
+            if (
+                self.geofencing_radius_meters < 5
+                or self.geofencing_radius_meters > 5000
+            ):
+                raise ValueError("geofencing_radius_meters must be between 5 and 5000")
         has_lat = self.geofencing_reference_lat is not None
         has_lng = self.geofencing_reference_lng is not None
         if has_lat != has_lng:

@@ -78,9 +78,7 @@ class DojahKYCProvider:
 
     # ── Public surface ───────────────────────────────────────────────
 
-    async def initiate(
-        self, request: KYCInitiateRequest
-    ) -> KYCInitiateResponse:
+    async def initiate(self, request: KYCInitiateRequest) -> KYCInitiateResponse:
         """Build the kiosk widget config.
 
         We use ``checkin_id`` as the visichek-side correlator. It rides
@@ -129,9 +127,7 @@ class DojahKYCProvider:
             expires_at=None,
         )
 
-    async def fetch_details(
-        self, reference_id: str
-    ) -> KYCVerificationDetails:
+    async def fetch_details(self, reference_id: str) -> KYCVerificationDetails:
         """Polling fallback for the webhook.
 
         Dojah's verification-detail endpoint:
@@ -182,14 +178,10 @@ class DojahKYCProvider:
         )
         data = _select_verification_entity(payload=payload, nested_data=nested_data)
         reference_id = str(
-            data.get("reference_id")
-            or payload.get("reference_id")
-            or ""
+            data.get("reference_id") or payload.get("reference_id") or ""
         )
         event_id = str(
-            payload.get("id")
-            or payload.get("event_id")
-            or _hash_payload(body)
+            payload.get("id") or payload.get("event_id") or _hash_payload(body)
         )
 
         # Dojah echoes our ``initiate`` metadata back in the webhook —
@@ -199,10 +191,10 @@ class DojahKYCProvider:
         # always does on the first webhook because we persist the
         # checkin_id placeholder until the real Dojah ref arrives).
         metadata_raw = (
-            data.get("metadata")
-            if isinstance(data, dict)
-            else None
-        ) or payload.get("metadata") or {}
+            (data.get("metadata") if isinstance(data, dict) else None)
+            or payload.get("metadata")
+            or {}
+        )
         metadata = _normalise_metadata(
             metadata_raw if isinstance(metadata_raw, dict) else {}
         )
@@ -238,9 +230,7 @@ class DojahKYCProvider:
         # Header lookup is case-insensitive at the HTTP layer; downstream
         # frameworks normalise to lowercase. Try both for safety.
         v1 = headers.get("x-dojah-signature") or headers.get("X-Dojah-Signature")
-        v2 = headers.get("x-dojah-signature-v2") or headers.get(
-            "X-Dojah-Signature-V2"
-        )
+        v2 = headers.get("x-dojah-signature-v2") or headers.get("X-Dojah-Signature-V2")
         body_sha8 = hashlib.sha256(body or b"").hexdigest()[:8]
         webhook_secret = self._webhook_secret
         secret_is_separate = webhook_secret != self._secret_key
@@ -305,9 +295,7 @@ class DojahKYCProvider:
                 msg=webhook_secret.encode("utf-8"),
                 digestmod=hashlib.sha256,
             ).hexdigest()
-            expected_plain = hashlib.sha256(
-                webhook_secret.encode("utf-8")
-            ).hexdigest()
+            expected_plain = hashlib.sha256(webhook_secret.encode("utf-8")).hexdigest()
             ok_hmac = hmac.compare_digest(expected_hmac, v2)
             ok_plain = hmac.compare_digest(expected_plain, v2)
             ok = ok_hmac or ok_plain
@@ -495,12 +483,7 @@ def _entity_to_details(
     id_step_data = id_step.get("data") if isinstance(id_step, dict) else {}
     id_data = id_step_data.get("id_data") if isinstance(id_step_data, dict) else {}
     selfie = entity.get("selfie") or {}
-    gov = (
-        entity.get("government_data")
-        or entity.get("government")
-        or id_data
-        or {}
-    )
+    gov = entity.get("government_data") or entity.get("government") or id_data or {}
 
     return KYCVerificationDetails(
         reference_id=reference_id,
@@ -509,7 +492,8 @@ def _entity_to_details(
         or _safe_float(entity.get("confidence")),
         extracted_full_name=_first_truthy(
             gov.get("full_name"),
-            gov.get("first_name") and gov.get("last_name")
+            gov.get("first_name")
+            and gov.get("last_name")
             and f"{gov.get('first_name')} {gov.get('last_name')}",
             entity.get("full_name"),
         ),

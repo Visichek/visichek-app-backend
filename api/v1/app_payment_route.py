@@ -167,9 +167,7 @@ async def render_app_checkout_page(reference: str, request: Request) -> HTMLResp
             html_body = _render_page(
                 reference=reference,
                 session_id=row.id or "",
-                plan_display=(
-                    f"Addon: {row.addon_kind.value} x{row.quantity}"
-                ),
+                plan_display=(f"Addon: {row.addon_kind.value} x{row.quantity}"),
                 amount=f"{row.currency_snapshot.upper()} {amount:,.2f}",
                 base_price=f"{row.currency_snapshot.upper()} {amount:,.2f}",
                 percent_off=0.0,
@@ -238,16 +236,12 @@ async def complete_app_checkout(
 
         row = await get_tenant_addon_by_reference(reference)
         if row is None or row.id is None:
-            raise HTTPException(
-                status_code=404, detail="Addon purchase not found"
-            )
+            raise HTTPException(status_code=404, detail="Addon purchase not found")
         if payload.outcome == "success":
             activated = await activate_tenant_addon_by_reference(
                 payment_reference=reference
             )
-            status_value = (
-                activated.status.value if activated else "active"
-            )
+            status_value = activated.status.value if activated else "active"
         else:
             cancelled = await cancel_tenant_addon(
                 row.id,

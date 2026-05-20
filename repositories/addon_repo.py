@@ -42,9 +42,7 @@ async def list_addons(
     return [AddonOut(**doc) async for doc in cursor]
 
 
-async def update_addon(
-    addon_id: str, payload: AddonUpdate
-) -> Optional[AddonOut]:
+async def update_addon(addon_id: str, payload: AddonUpdate) -> Optional[AddonOut]:
     if not ObjectId.is_valid(addon_id):
         return None
     update_fields = payload.model_dump(exclude_unset=True)

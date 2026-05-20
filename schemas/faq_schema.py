@@ -43,10 +43,12 @@ class FaqItem(BaseModel):
     looking rows. Empty strings are rejected for required fields.
     """
 
-    item_key: str           # short slug — eg "billing-how-it-works"
+    item_key: str  # short slug — eg "billing-how-it-works"
     question: str
     answer: str
-    category_key: Optional[str] = None  # null → falls into the default "general" section
+    category_key: Optional[str] = (
+        None  # null → falls into the default "general" section
+    )
     sort_order: int = 0
 
     @model_validator(mode="after")

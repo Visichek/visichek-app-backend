@@ -210,9 +210,7 @@ async def get_tenant_usage_summary(
     # ── Storage (best-effort). We only count documents we know about
     #    in MongoDB; bytes-on-disk comes from the storage provider and
     #    is not always available in test envs.
-    documents_count = await db["documents"].count_documents(
-        {"tenant_id": tenant_id}
-    )
+    documents_count = await db["documents"].count_documents({"tenant_id": tenant_id})
     storage_caps = plan_data.get("storage_limits", {}) or {}
     storage: dict = {
         "documents_used": documents_count,

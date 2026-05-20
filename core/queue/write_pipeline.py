@@ -126,9 +126,7 @@ def register_writer(writer_key: str, func: WriterFunc) -> None:
     _WRITE_REGISTRY[writer_key] = func
 
 
-def register_writer_invalidations(
-    writer_key: str, resources: Iterable[str]
-) -> None:
+def register_writer_invalidations(writer_key: str, resources: Iterable[str]) -> None:
     """Record which precompute resources a writer invalidates.
 
     Called from :func:`write_handler` when ``invalidates`` is provided.
@@ -451,8 +449,7 @@ async def record_inline_completed_write(
         )
     except Exception:
         logger.exception(
-            "Failed to persist inline-completed queue_job_log "
-            "for task_id=%s writer=%s",
+            "Failed to persist inline-completed queue_job_log for task_id=%s writer=%s",
             task_id,
             writer_key,
         )

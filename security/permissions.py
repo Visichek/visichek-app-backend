@@ -90,7 +90,10 @@ def find_unregistered_admin_routes(app: FastAPI) -> list[str]:
     )
 
     def _dep_uses_admin_gate(dep) -> bool:
-        if getattr(dep.call, "__name__", "") == check_admin_account_status_and_permissions.__name__:
+        if (
+            getattr(dep.call, "__name__", "")
+            == check_admin_account_status_and_permissions.__name__
+        ):
             return True
         return any(_dep_uses_admin_gate(sub) for sub in dep.dependencies)
 

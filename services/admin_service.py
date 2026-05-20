@@ -70,7 +70,12 @@ def _is_primary_env_admin_id(admin_id: str | None, email: str | None = None) -> 
 
 
 async def _send_admin_invite_email(
-    *, full_name: str, email: str, temp_password: str, access_preset: str | None, inviter_name: str
+    *,
+    full_name: str,
+    email: str,
+    temp_password: str,
+    access_preset: str | None,
+    inviter_name: str,
 ) -> None:
     """Mail the welcome / first-login instructions to an invited admin.
 
@@ -388,7 +393,10 @@ async def update_admin_access_preset(
     if not existing:
         raise HTTPException(status_code=404, detail="Admin not found")
 
-    if _is_primary_env_admin_id(existing.id, existing.email) and new_preset != "all_controls":
+    if (
+        _is_primary_env_admin_id(existing.id, existing.email)
+        and new_preset != "all_controls"
+    ):
         raise HTTPException(
             status_code=403,
             detail="The primary platform admin must remain on the all_controls preset.",

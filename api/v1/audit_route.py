@@ -167,8 +167,31 @@ async def list_audit_logs(
 ):
     tenant_id = principal.tenant_id or ""
     qp = request.query_params
-    legacy_keys = {"actor_id", "action", "resource_type", "resource_id", "date_from", "date_to", "start", "stop"}
-    new_keys = {"actorUserId", "actorRole", "operation", "resourceType", "resourceId", "tenantId", "timestampGte", "timestampLte", "q", "sort", "facets", "skip", "limit"}
+    legacy_keys = {
+        "actor_id",
+        "action",
+        "resource_type",
+        "resource_id",
+        "date_from",
+        "date_to",
+        "start",
+        "stop",
+    }
+    new_keys = {
+        "actorUserId",
+        "actorRole",
+        "operation",
+        "resourceType",
+        "resourceId",
+        "tenantId",
+        "timestampGte",
+        "timestampLte",
+        "q",
+        "sort",
+        "facets",
+        "skip",
+        "limit",
+    }
     has_new_param = any(k in qp for k in new_keys if qp.get(k))
     has_legacy = any(k in qp for k in legacy_keys if qp.get(k))
 
@@ -354,7 +377,11 @@ async def export_tenant_audit_logs_csv(
 
     async def _row_iter():
         async for doc in cursor:
-            doc["_id"] = str(doc["_id"]) if isinstance(doc.get("_id"), ObjectId) else doc.get("_id")
+            doc["_id"] = (
+                str(doc["_id"])
+                if isinstance(doc.get("_id"), ObjectId)
+                else doc.get("_id")
+            )
             yield doc
 
     columns = [

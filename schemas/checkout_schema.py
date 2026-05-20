@@ -63,9 +63,7 @@ class CheckoutCreateRequest(BaseModel):
         if self.trial_days < 0:
             raise ValueError("trial_days must be non-negative")
         if self.trial_code and self.discount_ids:
-            raise ValueError(
-                "trial_code cannot be combined with discount_ids"
-            )
+            raise ValueError("trial_code cannot be combined with discount_ids")
         return self
 
 

@@ -71,9 +71,8 @@ async def submit_onboarding_endpoint(
     submission: OnboardingSubmissionRequest,
     request: Request,
 ):
-    client_ip = (
-        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        or (request.client.host if request.client else None)
+    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (
+        request.client.host if request.client else None
     )
     user_agent = request.headers.get("User-Agent")
     result = await submit_onboarding(

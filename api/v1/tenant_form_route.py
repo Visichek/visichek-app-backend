@@ -56,9 +56,7 @@ from services.tenant_form_writer import (
 
 
 router = APIRouter(prefix="/tenant-forms", tags=["Tenant Forms"])
-public_router = APIRouter(
-    prefix="/public/tenant-forms", tags=["Tenant Forms (Public)"]
-)
+public_router = APIRouter(prefix="/public/tenant-forms", tags=["Tenant Forms (Public)"])
 
 
 def _validate_target(target_type: str) -> str:
@@ -137,9 +135,7 @@ async def get_form_by_target_endpoint(
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     target = _validate_target(target_type)
-    head = await retrieve_head_by_target(
-        tenant_id=tenant_id, target_type=target
-    )
+    head = await retrieve_head_by_target(tenant_id=tenant_id, target_type=target)
     if head is None:
         raise resource_not_found(resource="TenantForm", resource_id=target)
     return head.model_dump(mode="json", by_alias=True)
@@ -458,9 +454,7 @@ async def get_active_form_endpoint(
 
 
 async def _load_active_form(tenant_id: str, target_type: str) -> Any:
-    form = await retrieve_active_by_target(
-        tenant_id=tenant_id, target_type=target_type
-    )
+    form = await retrieve_active_by_target(tenant_id=tenant_id, target_type=target_type)
     if form is None:
         return None
     return form.model_dump(mode="json", by_alias=True)
@@ -482,9 +476,7 @@ async def _load_active_form(tenant_id: str, target_type: str) -> Any:
     summary="Get active tenant form (public)",
     response_codes={404: "No active form configured"},
 )
-async def public_active_form_endpoint(
-    tenant_id: str, target_type: str
-) -> Any:
+async def public_active_form_endpoint(tenant_id: str, target_type: str) -> Any:
     target = _validate_target(target_type)
     payload = await get_or_compute(
         scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",

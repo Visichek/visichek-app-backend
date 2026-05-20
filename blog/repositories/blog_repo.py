@@ -104,9 +104,7 @@ async def get_blogs(
         )
 
 
-async def update_blog(
-    filter_dict: dict, blog_data: BlogUpdate
-) -> Optional[BlogOut]:
+async def update_blog(filter_dict: dict, blog_data: BlogUpdate) -> Optional[BlogOut]:
     result = await db[COLLECTION].find_one_and_update(
         filter_dict,
         {"$set": blog_data.model_dump(exclude_none=True)},
@@ -126,9 +124,7 @@ async def delete_blog(filter_dict: dict):
 # ---------------------------------------------------------------------------
 
 
-async def search_blogs_repo(
-    filters: dict, skip: int, limit: int
-):
+async def search_blogs_repo(filters: dict, skip: int, limit: int):
     """Execute a Mongo ``find`` for the website's search UI.
 
     Imported here rather than in a separate module so the search path

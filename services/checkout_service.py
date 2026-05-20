@@ -585,9 +585,7 @@ async def maybe_complete_checkout_from_reference(
             )
 
             if outcome == "success":
-                await activate_tenant_addon_by_reference(
-                    payment_reference=reference
-                )
+                await activate_tenant_addon_by_reference(payment_reference=reference)
             else:
                 row = await get_tenant_addon_by_reference(reference)
                 if row and row.id:
@@ -598,7 +596,8 @@ async def maybe_complete_checkout_from_reference(
                     )
         except Exception:
             logger.warning(
-                "addon webhook fallback failed for reference=%s", reference,
+                "addon webhook fallback failed for reference=%s",
+                reference,
                 exc_info=True,
             )
     return None

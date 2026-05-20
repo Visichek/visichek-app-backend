@@ -178,9 +178,11 @@ async def subscribe_tenant(
     if existing:
         from config.plan_tiers import FREE_PLAN_NAME
 
-        existing_plan = await get_plan({"_id": ObjectId(existing.plan_id)}) if (
-            existing.plan_id and ObjectId.is_valid(existing.plan_id)
-        ) else None
+        existing_plan = (
+            await get_plan({"_id": ObjectId(existing.plan_id)})
+            if (existing.plan_id and ObjectId.is_valid(existing.plan_id))
+            else None
+        )
         is_free_plan = bool(existing_plan and existing_plan.name == FREE_PLAN_NAME)
 
         if not is_free_plan:

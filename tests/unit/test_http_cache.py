@@ -255,13 +255,11 @@ async def test_confirm_checkin_invalidates_tenant_scoped_checkin_list(
         ) as client:
             await client.get("/v1/tenants/t1/checkins?state=pending_approval")
             assert any(
-                k.startswith("httpcache:anon:v1-checkins:")
-                for k in fake_cache.store
+                k.startswith("httpcache:anon:v1-checkins:") for k in fake_cache.store
             )
             await client.post("/v1/checkins/c1/confirm", json={"action": "approve"})
             assert not any(
-                k.startswith("httpcache:anon:v1-checkins:")
-                for k in fake_cache.store
+                k.startswith("httpcache:anon:v1-checkins:") for k in fake_cache.store
             )
 
 

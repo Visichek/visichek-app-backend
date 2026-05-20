@@ -66,10 +66,7 @@ async def run_list(
     sort_spec = query.mongo_sort()
 
     cursor = (
-        collection.find(filter_doc)
-        .sort(sort_spec)
-        .skip(query.skip)
-        .limit(query.limit)
+        collection.find(filter_doc).sort(sort_spec).skip(query.skip).limit(query.limit)
     )
 
     async def _gather_page() -> list[Any]:
@@ -84,9 +81,7 @@ async def run_list(
     facet_tasks: dict[str, asyncio.Task[dict[str, int]]] = {}
     runner = facet_runner or _facet_status_with_all
     for field in query.facets:
-        facet_tasks[field] = asyncio.create_task(
-            runner(collection, filter_doc, field)
-        )
+        facet_tasks[field] = asyncio.create_task(runner(collection, filter_doc, field))
 
     items, total = await asyncio.gather(page_task, count_task)
     facets: dict[str, dict[str, int]] = {}

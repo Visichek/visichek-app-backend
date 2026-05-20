@@ -52,7 +52,9 @@ def _status_filter_builder(values):
     return {"is_active": {"$in": bools}}
 
 
-_PLAN_TIERS = frozenset({"free", "starter", "professional", "enterprise", "custom", "none"})
+_PLAN_TIERS = frozenset(
+    {"free", "starter", "professional", "enterprise", "custom", "none"}
+)
 _SUB_STATUSES = frozenset(
     {"active", "trialing", "past_due", "cancelled", "suspended", "expired", "none"}
 )
@@ -75,7 +77,9 @@ TENANTS_LIST_SPEC = ListSpec(
         "subscriptionStatus": FilterDef(
             name="subscriptionStatus", multi=True, allowed_values=_SUB_STATUSES
         ),
-        "isActive": FilterDef(name="isActive", coerce=coerce_bool, mongo_field="is_active"),
+        "isActive": FilterDef(
+            name="isActive", coerce=coerce_bool, mongo_field="is_active"
+        ),
     },
     range_filters={"createdAt": "date_created"},
     facet_fields=frozenset({"status"}),
@@ -258,7 +262,9 @@ async def list_tenants(
                     "hasMore": False,
                 },
             }
-        base_filter["_id"] = {"$in": [ObjectId(t) for t in matched_tids if ObjectId.is_valid(t)]}
+        base_filter["_id"] = {
+            "$in": [ObjectId(t) for t in matched_tids if ObjectId.is_valid(t)]
+        }
 
     # Drop sub-side filters from the parsed query so they don't get
     # applied against the tenant collection (where they'd never match).
@@ -283,7 +289,9 @@ async def _status_facet(
         return {}
     base_filter = {k: v for k, v in filter_doc.items() if k != "is_active"}
     active_total = await collection.count_documents({**base_filter, "is_active": True})
-    inactive_total = await collection.count_documents({**base_filter, "is_active": False})
+    inactive_total = await collection.count_documents(
+        {**base_filter, "is_active": False}
+    )
     return {
         "active": active_total,
         "inactive": inactive_total,

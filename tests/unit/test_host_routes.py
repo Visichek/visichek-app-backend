@@ -35,11 +35,12 @@ class TestHostRoutes:
             MOCK_SUPER_ADMIN_PRINCIPAL
         )
 
-        with patch(
-            "api.v1.host_route.validate_host_create", new_callable=AsyncMock
-        ), patch(
-            "api.v1.host_route.enqueue_write", new_callable=AsyncMock
-        ) as mock_enqueue:
+        with (
+            patch("api.v1.host_route.validate_host_create", new_callable=AsyncMock),
+            patch(
+                "api.v1.host_route.enqueue_write", new_callable=AsyncMock
+            ) as mock_enqueue,
+        ):
             mock_enqueue.return_value = {
                 "id": "host-001",
                 "job_id": "job-abc-123",
@@ -144,11 +145,12 @@ class TestHostRoutes:
             MOCK_SUPER_ADMIN_PRINCIPAL
         )
 
-        with patch(
-            "api.v1.host_route.validate_host_update", new_callable=AsyncMock
-        ), patch(
-            "api.v1.host_route.enqueue_write", new_callable=AsyncMock
-        ) as mock_enqueue:
+        with (
+            patch("api.v1.host_route.validate_host_update", new_callable=AsyncMock),
+            patch(
+                "api.v1.host_route.enqueue_write", new_callable=AsyncMock
+            ) as mock_enqueue,
+        ):
             mock_enqueue.return_value = {
                 "id": "host-001",
                 "job_id": "job-upd-456",

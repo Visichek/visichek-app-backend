@@ -168,7 +168,11 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
     ("departments", [("tenant_id", ASCENDING), ("name", ASCENDING)], {}),
     ("hosts", [("tenant_id", ASCENDING), ("name", ASCENDING)], {}),
     ("hosts", [("tenant_id", ASCENDING), ("department_id", ASCENDING)], {}),
-    ("hosts", [("tenant_id", ASCENDING), ("source_system_user_id", ASCENDING)], {"sparse": True}),
+    (
+        "hosts",
+        [("tenant_id", ASCENDING), ("source_system_user_id", ASCENDING)],
+        {"sparse": True},
+    ),
     (
         "visitors",
         [("tenant_id", ASCENDING), ("check_in_time", DESCENDING)],

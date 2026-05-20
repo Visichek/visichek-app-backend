@@ -192,9 +192,7 @@ async def revoke_all_sessions_except_current(
             "access_token_id": {"$ne": current_token_id},
         }
     )
-    access_token_ids = [
-        s.access_token_id for s in targets if s.access_token_id
-    ]
+    access_token_ids = [s.access_token_id for s in targets if s.access_token_id]
 
     for atid in access_token_ids:
         await delete_refresh_tokens_by_previous_access_token(atid)

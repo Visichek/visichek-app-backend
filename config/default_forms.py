@@ -191,8 +191,7 @@ _DEFAULT_DESCRIPTION_BY_TARGET: dict[str, str] = {
         "data the tenant configures."
     ),
     FormTargetType.VISIT_SESSION.value: (
-        "Fields captured during the visit (badge issuance, escort "
-        "assignment, etc)."
+        "Fields captured during the visit (badge issuance, escort assignment, etc)."
     ),
 }
 

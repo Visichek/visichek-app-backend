@@ -144,9 +144,7 @@ async def admin_delete_addon(
 # ─── Public catalog reads ───────────────────────────────────────────
 
 
-async def list_public_addons(
-    *, kind: Optional[AddonKind] = None
-) -> List[AddonOut]:
+async def list_public_addons(*, kind: Optional[AddonKind] = None) -> List[AddonOut]:
     """Return active addons available for purchase.
 
     Filters by ``kind`` when supplied so a UI page rendering "buy
@@ -198,9 +196,7 @@ def _create_intent_with_fallback(
             intent = provider.create_intent(intent_request)
             return name, intent
         except Exception as err:
-            logger.warning(
-                "addon: provider '%s' create_intent failed: %s", name, err
-            )
+            logger.warning("addon: provider '%s' create_intent failed: %s", name, err)
             last_error = err
 
     raise AppException(
@@ -239,7 +235,10 @@ async def initiate_addon_purchase(
             code=ErrorCode.VALIDATION_FAILED,
             message="quantity must be >= 1",
         )
-    if addon.max_units_per_purchase is not None and quantity > addon.max_units_per_purchase:
+    if (
+        addon.max_units_per_purchase is not None
+        and quantity > addon.max_units_per_purchase
+    ):
         raise AppException(
             status_code=400,
             code=ErrorCode.VALIDATION_FAILED,
@@ -330,9 +329,7 @@ async def activate_tenant_addon_by_reference(
 
     now = completed_at or int(time.time())
     addon = await get_addon_by_id(row.addon_id)
-    validity_days = (
-        addon.validity_days if addon else None
-    )  # None = perpetual
+    validity_days = addon.validity_days if addon else None  # None = perpetual
     expires_at = now + validity_days * 86400 if validity_days else None
 
     update = TenantAddonUpdate(
@@ -379,9 +376,7 @@ async def cancel_tenant_addon(
     """
     row = await get_tenant_addon_by_id(tenant_addon_id)
     if row is None:
-        raise resource_not_found(
-            resource="TenantAddon", resource_id=tenant_addon_id
-        )
+        raise resource_not_found(resource="TenantAddon", resource_id=tenant_addon_id)
     if row.status in (TenantAddonStatus.CANCELLED, TenantAddonStatus.EXPIRED):
         return row
 
@@ -418,9 +413,7 @@ async def cancel_tenant_addon(
 async def list_tenant_addon_history(
     tenant_id: str, *, skip: int = 0, limit: int = 200
 ) -> List[TenantAddonOut]:
-    return await list_tenant_addons(
-        {"tenant_id": tenant_id}, skip=skip, limit=limit
-    )
+    return await list_tenant_addons({"tenant_id": tenant_id}, skip=skip, limit=limit)
 
 
 async def get_tenant_addon_detail(
@@ -428,9 +421,7 @@ async def get_tenant_addon_detail(
 ) -> TenantAddonOut:
     row = await get_tenant_addon_by_id(tenant_addon_id)
     if row is None or row.tenant_id != tenant_id:
-        raise resource_not_found(
-            resource="TenantAddon", resource_id=tenant_addon_id
-        )
+        raise resource_not_found(resource="TenantAddon", resource_id=tenant_addon_id)
     return row
 
 

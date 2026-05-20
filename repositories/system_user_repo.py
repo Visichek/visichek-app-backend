@@ -90,9 +90,7 @@ async def get_raw_system_users_by_email(email: str) -> list[dict]:
 
 async def get_main_super_admin(tenant_id: str) -> Optional[SystemUserOut]:
     """Return the tenant's main super_admin row, or None if not set."""
-    return await get_system_user(
-        {"tenant_id": tenant_id, "is_main_super_admin": True}
-    )
+    return await get_system_user({"tenant_id": tenant_id, "is_main_super_admin": True})
 
 
 async def count_active_super_admins(tenant_id: str) -> int:
@@ -112,16 +110,13 @@ async def list_active_super_admins_oldest_first(tenant_id: str) -> List[SystemUs
     Used by the invariant backfill to pick which row should hold the main
     flag when one is missing or duplicated.
     """
-    cursor = (
-        db.system_users.find(
-            {
-                "tenant_id": tenant_id,
-                "role": "super_admin",
-                "account_status": "ACTIVE",
-            }
-        )
-        .sort("date_created", 1)
-    )
+    cursor = db.system_users.find(
+        {
+            "tenant_id": tenant_id,
+            "role": "super_admin",
+            "account_status": "ACTIVE",
+        }
+    ).sort("date_created", 1)
     rows: List[SystemUserOut] = []
     async for doc in cursor:
         rows.append(SystemUserOut(**doc))

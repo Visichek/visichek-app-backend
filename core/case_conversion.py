@@ -92,7 +92,7 @@ def _is_signed_webhook(path: str, method: str) -> bool:
     # reaches this branch.
     prefix = "/v1/payments/webhooks/"
     if path.startswith(prefix):
-        suffix = path[len(prefix):]
+        suffix = path[len(prefix) :]
         if suffix and "/" not in suffix:
             return True
     return False
@@ -115,9 +115,10 @@ class CaseConversionMiddleware(BaseHTTPMiddleware):
         # ── Normalise inbound body ───────────────────────────────────
         content_type = request.headers.get("content-type", "")
         path = request.url.path
-        if (
-            "application/json" in content_type
-            and request.method in ("POST", "PUT", "PATCH")
+        if "application/json" in content_type and request.method in (
+            "POST",
+            "PUT",
+            "PATCH",
         ):
             signed = _is_signed_webhook(path, request.method)
             # Trace the bypass decision for any path that smells like a

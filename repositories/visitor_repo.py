@@ -95,9 +95,7 @@ async def get_visitors_by_ids(
     oids = [ObjectId(v) for v in visitor_ids if ObjectId.is_valid(v)]
     if not oids:
         return []
-    cursor = db[COLLECTION].find(
-        {"_id": {"$in": oids}, "tenant_id": tenant_id}
-    )
+    cursor = db[COLLECTION].find({"_id": {"$in": oids}, "tenant_id": tenant_id})
     items: list[VisitorOut] = []
     async for doc in cursor:
         items.append(VisitorOut(**doc))

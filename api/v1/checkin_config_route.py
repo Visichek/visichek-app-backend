@@ -97,9 +97,7 @@ async def submit_visitor_checkin(
     from services.checkin_service import submit_checkin as submit_checkin_service
 
     config = await resolve_public_config(checkin_config_id)
-    await enforce_kiosk_submit_access(
-        tenant_id=config.tenant_id, principal=principal
-    )
+    await enforce_kiosk_submit_access(tenant_id=config.tenant_id, principal=principal)
     return await submit_checkin_service(checkin_config_id, payload)
 
 

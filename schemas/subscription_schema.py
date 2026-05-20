@@ -117,9 +117,7 @@ class SubscriptionOut(SubscriptionBase):
     # tenant_id / plan_id / applied_discount_ids without follow-up requests.
     tenant_summary: Optional[TenantBriefSummary] = None
     plan_summary: Optional[PlanBriefSummary] = None
-    applied_discount_summaries: List[DiscountBriefSummary] = Field(
-        default_factory=list
-    )
+    applied_discount_summaries: List[DiscountBriefSummary] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod

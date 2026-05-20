@@ -52,6 +52,7 @@ _MAX_ENTRIES = 2000
 def _pick_ttl() -> int:
     return random.randint(MIN_TTL_SECONDS, MAX_TTL_SECONDS)
 
+
 # key -> (expires_at_epoch, token_out)
 _cache: "OrderedDict[str, tuple[float, accessTokenOut]]" = OrderedDict()
 _lock = Lock()

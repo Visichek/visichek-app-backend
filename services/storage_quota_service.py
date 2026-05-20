@@ -118,9 +118,7 @@ async def get_storage_quota(tenant_id: str) -> StorageQuotaOut:
     )
 
 
-async def enforce_storage_quota(
-    tenant_id: Optional[str], new_file_bytes: int
-) -> None:
+async def enforce_storage_quota(tenant_id: Optional[str], new_file_bytes: int) -> None:
     """Reject a pending upload if it would breach plan + addon budget.
 
     Mirrors the legacy ``plan_limits.enforce_storage_limits`` shape

@@ -220,7 +220,9 @@ def _build_distribution(
         label = label_map.get(key, key.replace("_", " ").title() if key else "Unknown")
         pct = round((value / total) * 100, 1) if total else 0.0
         slices.append(
-            DistributionSlice(key=key or "unknown", label=label, value=value, percentage=pct)
+            DistributionSlice(
+                key=key or "unknown", label=label, value=value, percentage=pct
+            )
         )
     slices.sort(key=lambda s: s.value, reverse=True)
     return slices
@@ -377,9 +379,7 @@ async def _overview_counts(
         {"tenant_id": tenant_id, "is_active": True}
     )
     total_branches = await db.branches.count_documents({"tenant_id": tenant_id})
-    total_system_users = await db.system_users.count_documents(
-        {"tenant_id": tenant_id}
-    )
+    total_system_users = await db.system_users.count_documents({"tenant_id": tenant_id})
     incident_filter: Dict[str, Any] = {"tenant_id": tenant_id}
     total_incidents = await db.incident_logs.count_documents(incident_filter)
     open_incidents = await db.incident_logs.count_documents(
@@ -401,9 +401,7 @@ async def _overview_counts(
     }
 
 
-async def _live_state(
-    tenant_id: str, department_id: Optional[str]
-) -> Dict[str, Any]:
+async def _live_state(tenant_id: str, department_id: Optional[str]) -> Dict[str, Any]:
     (
         checked_in_sessions,
         approved_checkins,
@@ -676,9 +674,7 @@ async def _signup_periods(tenant_id: str, *, now: int) -> Dict[str, Any]:
             {**base, "date_created": {"$gte": start_last_month, "$lt": start_month}}
         ),
         _count({**base, "date_created": {"$gte": start_week}}),
-        _count(
-            {**base, "date_created": {"$gte": start_last_week, "$lt": start_week}}
-        ),
+        _count({**base, "date_created": {"$gte": start_last_week, "$lt": start_week}}),
     )
     return {
         "new_signups_today": today,
@@ -706,9 +702,7 @@ async def _duration_stats(
         {
             "$group": {
                 "_id": None,
-                "avg": {
-                    "$avg": {"$subtract": ["$check_out_time", "$check_in_time"]}
-                },
+                "avg": {"$avg": {"$subtract": ["$check_out_time", "$check_in_time"]}},
             }
         },
     ]
@@ -728,12 +722,8 @@ async def _duration_stats(
         {
             "$group": {
                 "_id": None,
-                "max": {
-                    "$max": {"$subtract": ["$check_out_time", "$check_in_time"]}
-                },
-                "min": {
-                    "$min": {"$subtract": ["$check_out_time", "$check_in_time"]}
-                },
+                "max": {"$max": {"$subtract": ["$check_out_time", "$check_in_time"]}},
+                "min": {"$min": {"$subtract": ["$check_out_time", "$check_in_time"]}},
             }
         },
     ]
@@ -746,7 +736,9 @@ async def _duration_stats(
 
     return {
         "avg_visit_duration_seconds": avg_seconds,
-        "avg_visit_duration_minutes": round(avg_seconds / 60.0, 1) if avg_seconds else 0.0,
+        "avg_visit_duration_minutes": round(avg_seconds / 60.0, 1)
+        if avg_seconds
+        else 0.0,
         "longest_visit_today_minutes": round(longest / 60.0, 1) if longest else 0.0,
         "shortest_visit_today_minutes": round(shortest / 60.0, 1) if shortest else 0.0,
     }
@@ -820,9 +812,7 @@ async def _distributions(
             {**base, "badge_format": {"$ne": None}},
             "badge_format",
         ),
-        _group_count(
-            "visit_sessions", {**base, "purpose": {"$ne": None}}, "purpose"
-        ),
+        _group_count("visit_sessions", {**base, "purpose": {"$ne": None}}, "purpose"),
         _group_count(
             "checkins",
             {**checkin_base, "purpose.purpose": {"$nin": [None, ""]}},
@@ -882,9 +872,7 @@ async def _distributions(
         "incident_status_distribution": _build_distribution(
             incident_status, _INCIDENT_STATUS_LABELS
         ),
-        "kyc_status_distribution": _build_distribution(
-            kyc_status, _KYC_STATUS_LABELS
-        ),
+        "kyc_status_distribution": _build_distribution(kyc_status, _KYC_STATUS_LABELS),
         "_raw": {
             "visit_status": visit_status,
             "verification_status": verification_status,
@@ -924,16 +912,12 @@ async def _resolve_id_labels(
         sid = str(doc.get("_id"))
         labels[sid] = str(doc.get(label_field) or "Unknown")
         extras[sid] = {
-            k: doc.get(k)
-            for k in ("code", "is_active", "company_name")
-            if k in doc
+            k: doc.get(k) for k in ("code", "is_active", "company_name") if k in doc
         }
     return labels, extras
 
 
-async def _top_lists(
-    tenant_id: str, department_id: Optional[str]
-) -> Dict[str, Any]:
+async def _top_lists(tenant_id: str, department_id: Optional[str]) -> Dict[str, Any]:
     base = _base_visit_match(tenant_id, department_id)
     checkin_base = _checkin_match(tenant_id, department_id)
 
@@ -1013,9 +997,7 @@ async def _top_lists(
             cursor = db.system_users.find({"_id": {"$in": ids}})
             async for doc in cursor:
                 host_label_map[str(doc["_id"])] = (
-                    doc.get("full_name")
-                    or doc.get("email")
-                    or "Unknown host"
+                    doc.get("full_name") or doc.get("email") or "Unknown host"
                 )
 
     visitor_label_map: Dict[str, str] = {}
@@ -1233,11 +1215,7 @@ async def _heatmaps(
         {"$match": match},
         {
             "$group": {
-                "_id": {
-                    "$hour": {
-                        "$toDate": {"$multiply": ["$check_in_time", 1000]}
-                    }
-                },
+                "_id": {"$hour": {"$toDate": {"$multiply": ["$check_in_time", 1000]}}},
                 "count": {"$sum": 1},
             }
         },
@@ -1249,11 +1227,7 @@ async def _heatmaps(
         {"$match": checkin_match},
         {
             "$group": {
-                "_id": {
-                    "$hour": {
-                        "$toDate": {"$multiply": ["$date_created", 1000]}
-                    }
-                },
+                "_id": {"$hour": {"$toDate": {"$multiply": ["$date_created", 1000]}}},
                 "count": {"$sum": 1},
             }
         },
@@ -1289,9 +1263,7 @@ async def _heatmaps(
         {
             "$group": {
                 "_id": {
-                    "$isoDayOfWeek": {
-                        "$toDate": {"$multiply": ["$date_created", 1000]}
-                    }
+                    "$isoDayOfWeek": {"$toDate": {"$multiply": ["$date_created", 1000]}}
                 },
                 "count": {"$sum": 1},
             }
@@ -1328,9 +1300,7 @@ async def _appointment_metrics(
     total = scheduled + checked_in + fulfilled + no_show + cancelled
     fulfillment = round((fulfilled / total) * 100, 1) if total else 0.0
     no_show_rate = round(((no_show + cancelled) / total) * 100, 1) if total else 0.0
-    conversion = (
-        round((fulfilled / total_visits) * 100, 1) if total_visits else 0.0
-    )
+    conversion = round((fulfilled / total_visits) * 100, 1) if total_visits else 0.0
     return {
         "appointments_scheduled": scheduled,
         "appointments_fulfilled": fulfilled,
@@ -1362,9 +1332,7 @@ async def _quality_metrics(
 
     consent_total = sum(consent_counts.values()) or 0
     granted = consent_counts.get("true", 0)
-    consent_rate = (
-        round((granted / consent_total) * 100, 1) if consent_total else 0.0
-    )
+    consent_rate = round((granted / consent_total) * 100, 1) if consent_total else 0.0
     consent_withdrawal_count = await db.visit_sessions.count_documents(
         {**base, "consent_withdrawal_at": {"$ne": None}}
     )
@@ -1375,9 +1343,7 @@ async def _quality_metrics(
     badge_issued = await db.visit_sessions.count_documents(
         {**base, "badge_qr_token": {"$ne": None}}
     )
-    badge_rate = (
-        round((badge_issued / total_visits) * 100, 1) if total_visits else 0.0
-    )
+    badge_rate = round((badge_issued / total_visits) * 100, 1) if total_visits else 0.0
 
     kyc_terminal = (
         kyc_counts.get("success", 0)
@@ -1428,9 +1394,7 @@ async def _real_time_samples(
         )
 
     checkin_docs: List[Dict[str, Any]] = []
-    async for doc in (
-        db.checkins.find(checkin_base).sort("date_created", -1).limit(10)
-    ):
+    async for doc in db.checkins.find(checkin_base).sort("date_created", -1).limit(10):
         checkin_docs.append(doc)
     if checkin_docs:
         from repositories.visitor_repo import get_visitors_by_ids
@@ -1461,8 +1425,7 @@ async def _real_time_samples(
                     id=str(doc.get("_id") or ""),
                     visitor_name=visitor.full_name if visitor is not None else None,
                     company=(
-                        (bio or {}).get("company")
-                        or (bio or {}).get("organization")
+                        (bio or {}).get("company") or (bio or {}).get("organization")
                     ),
                     department_name=None,
                     host_name=None,
@@ -1511,9 +1474,7 @@ async def _compliance_summary(tenant_id: str) -> Dict[str, Any]:
     open_dsr = await db.data_subject_requests.count_documents(
         {"tenant_id": tenant_id, "status": {"$nin": ["completed", "rejected"]}}
     )
-    total_dsr = await db.data_subject_requests.count_documents(
-        {"tenant_id": tenant_id}
-    )
+    total_dsr = await db.data_subject_requests.count_documents({"tenant_id": tenant_id})
     now = int(time.time())
     dsr_30d = await db.data_subject_requests.count_documents(
         {"tenant_id": tenant_id, "date_created": {"$gte": now - 30 * 86400}}
@@ -1521,15 +1482,11 @@ async def _compliance_summary(tenant_id: str) -> Dict[str, Any]:
     incidents_approaching = await get_incidents_approaching_deadline(
         tenant_id=tenant_id, start=0, stop=200
     )
-    privacy_notices = await db.privacy_notices.count_documents(
-        {"tenant_id": tenant_id}
-    )
+    privacy_notices = await db.privacy_notices.count_documents({"tenant_id": tenant_id})
     retention_policies = await db.retention_policies.count_documents(
         {"tenant_id": tenant_id}
     )
-    sub_processors = await db.sub_processors.count_documents(
-        {"tenant_id": tenant_id}
-    )
+    sub_processors = await db.sub_processors.count_documents({"tenant_id": tenant_id})
     return {
         "open_dsr_requests": open_dsr,
         "total_dsr_requests": total_dsr,
@@ -1541,7 +1498,9 @@ async def _compliance_summary(tenant_id: str) -> Dict[str, Any]:
     }
 
 
-async def _audit_summary(tenant_id: str, *, start_today: int, now: int) -> Dict[str, Any]:
+async def _audit_summary(
+    tenant_id: str, *, start_today: int, now: int
+) -> Dict[str, Any]:
     total = await db.audit_trail.count_documents({"tenant_id": tenant_id})
     today = await db.audit_trail.count_documents(
         {"tenant_id": tenant_id, "timestamp": {"$gte": start_today}}
@@ -1556,9 +1515,7 @@ async def _audit_summary(tenant_id: str, *, start_today: int, now: int) -> Dict[
     }
 
 
-async def _overdue_checkouts(
-    tenant_id: str, department_id: Optional[str]
-) -> int:
+async def _overdue_checkouts(tenant_id: str, department_id: Optional[str]) -> int:
     """Count active visits whose expected duration window has elapsed.
 
     The expected duration is stored on the originating ``checkin`` doc.
@@ -1645,15 +1602,11 @@ async def _build_basic_stats_for_free(
     total_departments = await db.departments.count_documents(
         {"tenant_id": tenant_id, "is_active": True}
     )
-    total_system_users = await db.system_users.count_documents(
-        {"tenant_id": tenant_id}
-    )
+    total_system_users = await db.system_users.count_documents({"tenant_id": tenant_id})
 
     checked_in_sessions, approved_checkins, pending_approval = await asyncio.gather(
         count_awaiting_checkout_sessions(tenant_id=tenant_id),
-        db.checkins.count_documents(
-            _checkin_match(tenant_id, None, state="approved")
-        ),
+        db.checkins.count_documents(_checkin_match(tenant_id, None, state="approved")),
         db.checkins.count_documents(
             _checkin_match(tenant_id, None, state="pending_approval")
         ),
@@ -1827,12 +1780,8 @@ async def get_dashboard_stats(
         total_visitors=overview["total_visitors"],
     )
 
-    visits_growth_dod = _growth(
-        period["today_visits"], period["yesterday_visits"]
-    )
-    visits_growth_wow = _growth(
-        period["visits_this_week"], period["visits_last_week"]
-    )
+    visits_growth_dod = _growth(period["today_visits"], period["yesterday_visits"])
+    visits_growth_wow = _growth(period["visits_this_week"], period["visits_last_week"])
     visits_growth_mom = _growth(
         period["visits_this_month"], period["visits_last_month"]
     )

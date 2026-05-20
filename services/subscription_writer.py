@@ -249,9 +249,7 @@ async def _precompute_subscription_active(tenant_id: str) -> Any:
                 "id": plan.id,
                 "name": plan.name,
                 "displayName": plan.display_name,
-                "tier": plan.tier.value
-                if hasattr(plan.tier, "value")
-                else plan.tier,
+                "tier": plan.tier.value if hasattr(plan.tier, "value") else plan.tier,
                 "basePriceMonthly": plan.base_price_monthly,
                 "basePriceYearly": plan.base_price_yearly,
                 "currency": plan.currency,

@@ -203,7 +203,13 @@ def _audit_row(log: Any) -> list:
 
     resource_label: Optional[str] = None
     if resource_summary is not None:
-        for attr in ("company_name", "full_name", "name", "display_name", "invoice_number"):
+        for attr in (
+            "company_name",
+            "full_name",
+            "name",
+            "display_name",
+            "invoice_number",
+        ):
             value = getattr(resource_summary, attr, None)
             if value:
                 resource_label = str(value)
@@ -215,7 +221,9 @@ def _audit_row(log: Any) -> list:
         _format_timestamp(log.timestamp) if getattr(log, "timestamp", None) else ""
     )
     details = getattr(log, "details", None) or {}
-    details_str = json.dumps(details, default=str, ensure_ascii=False) if details else ""
+    details_str = (
+        json.dumps(details, default=str, ensure_ascii=False) if details else ""
+    )
 
     return [
         timestamp_str,

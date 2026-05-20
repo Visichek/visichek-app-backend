@@ -35,7 +35,9 @@ from core.queue.write_pipeline import enqueue_write
 DEFAULT_MAX_BATCH = 500
 
 
-def _bulk_error(message: str, code: str, details: Optional[dict[str, Any]] = None) -> AppException:
+def _bulk_error(
+    message: str, code: str, details: Optional[dict[str, Any]] = None
+) -> AppException:
     detail_payload: dict[str, Any] = {"code": code}
     if details:
         detail_payload.update(details)
@@ -161,7 +163,11 @@ async def run_bulk_handlers(
                 entry["result"] = result
             succeeded.append(entry)
         except AppException as exc:
-            detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+            detail = (
+                exc.detail
+                if isinstance(exc.detail, dict)
+                else {"message": str(exc.detail)}
+            )
             failed.append(
                 {
                     "id": resource_id,

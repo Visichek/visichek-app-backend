@@ -67,7 +67,11 @@ class MediaOut(MediaCreate):
     @model_validator(mode="before")
     @classmethod
     def coerce_objectid(cls, values: Any) -> Any:
-        if isinstance(values, dict) and "_id" in values and isinstance(values["_id"], ObjectId):
+        if (
+            isinstance(values, dict)
+            and "_id" in values
+            and isinstance(values["_id"], ObjectId)
+        ):
             values["_id"] = str(values["_id"])
         return values
 
@@ -100,7 +104,7 @@ class MediaOutUser(MediaCreate):
     @staticmethod
     def _http_to_https(value: str) -> str:
         if isinstance(value, str) and value.startswith("http://"):
-            return "https://" + value[len("http://"):]
+            return "https://" + value[len("http://") :]
         return value
 
     @model_validator(mode="before")

@@ -220,9 +220,7 @@ async def _build_plan_block(
             },
             projection={"admin_notes": 1},
         )
-        if sub_doc and (sub_doc.get("admin_notes") or "").startswith(
-            "Auto-downgraded"
-        ):
+        if sub_doc and (sub_doc.get("admin_notes") or "").startswith("Auto-downgraded"):
             is_free_fallback = True
 
     display_name: Optional[str] = plan_data.get("plan_display_name")

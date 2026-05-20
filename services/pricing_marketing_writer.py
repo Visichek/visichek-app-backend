@@ -67,9 +67,7 @@ async def _pricing_marketing_update(
             request_id=request_id,
         )
     except Exception:
-        logger.warning(
-            "pricing_marketing.updated audit failed", exc_info=True
-        )
+        logger.warning("pricing_marketing.updated audit failed", exc_info=True)
     return {"id": refreshed.id or "singleton", "status": "updated"}
 
 
@@ -102,9 +100,7 @@ async def _pricing_marketing_delete_row(
             request_id=request_id,
         )
     except Exception:
-        logger.warning(
-            "pricing_marketing.row_deleted audit failed", exc_info=True
-        )
+        logger.warning("pricing_marketing.row_deleted audit failed", exc_info=True)
 
     return {
         "id": refreshed.id or "singleton",

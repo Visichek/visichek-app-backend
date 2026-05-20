@@ -41,9 +41,7 @@ class MediaAsset(BaseModel):
     altText: str = Field(
         ..., description="A brief description of the image for accessibility."
     )
-    credit: Optional[str] = Field(
-        None, description="Image credit/source information."
-    )
+    credit: Optional[str] = Field(None, description="Image credit/source information.")
 
 
 # ---------------------------------------------------------------------------
@@ -345,8 +343,7 @@ def parse_block_dict(block_dict: Dict[str, Any]) -> BaseBlock:
         base = BaseBlock.model_validate(block_dict)
         if base.children:
             base.children = [
-                parse_block_dict(c) if isinstance(c, dict) else c
-                for c in base.children
+                parse_block_dict(c) if isinstance(c, dict) else c for c in base.children
             ]
         return base
 

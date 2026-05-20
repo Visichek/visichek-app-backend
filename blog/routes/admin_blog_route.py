@@ -123,6 +123,7 @@ async def list_blogs_endpoint(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> Any:
     if _is_default_admin_blog_listing(request):
+
         async def _loader():
             cursor = (
                 db.blogs.find({})

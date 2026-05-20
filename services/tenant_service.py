@@ -340,9 +340,7 @@ def _build_confirmation_out(
     )
 
 
-async def get_tenant_info_confirmation(
-    *, tenant_id: str
-) -> TenantInfoConfirmationOut:
+async def get_tenant_info_confirmation(*, tenant_id: str) -> TenantInfoConfirmationOut:
     """Build the first-login review payload for a tenant's super_admin."""
     tenant = await retrieve_tenant_by_id(tenant_id)
     submission = await _load_onboarding_context(tenant_id)

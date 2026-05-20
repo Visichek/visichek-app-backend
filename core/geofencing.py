@@ -115,7 +115,9 @@ def store_user_location(
         "ts": int(ts if ts is not None else time.time()),
     }
     try:
-        cache_db.setex(_location_key(user_id), LOCATION_TTL_SECONDS, json.dumps(payload))
+        cache_db.setex(
+            _location_key(user_id), LOCATION_TTL_SECONDS, json.dumps(payload)
+        )
         # Secondary index so the enforcement path can find tenant approvers
         # in O(1) without scanning the whole keyspace. Each member expires
         # from the set when its primary key is evicted — we re-add every
@@ -135,9 +137,9 @@ def store_user_location(
 def _iter_tenant_locations(tenant_id: str) -> Iterable[dict[str, Any]]:
     """Yield every live location for the tenant, pruning dead index entries."""
     try:
-        raw_members = cast(
-            set[str], cache_db.smembers(_tenant_index_key(tenant_id))
-        ) or set()
+        raw_members = (
+            cast(set[str], cache_db.smembers(_tenant_index_key(tenant_id))) or set()
+        )
     except Exception:
         logger.warning(
             "geofencing: smembers failed tenant_id=%s", tenant_id, exc_info=True
@@ -172,9 +174,7 @@ def _iter_tenant_locations(tenant_id: str) -> Iterable[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def haversine_meters(
-    lat1: float, lng1: float, lat2: float, lng2: float
-) -> float:
+def haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     """Great-circle distance between two lat/lng points in metres."""
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)

@@ -80,9 +80,7 @@ async def _dsr_bulk_acknowledge(
 
 
 @write_handler("dsr.bulk_reject", invalidates=["dsr.list"])
-async def _dsr_bulk_reject(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _dsr_bulk_reject(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     ids = list(data.get("ids", []))
     atomic = bool(data.get("atomic", False))
     extras = data.get("extras", {}) or {}

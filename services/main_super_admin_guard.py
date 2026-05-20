@@ -79,8 +79,14 @@ def guard_system_user_update(
     touched: list[str] = []
 
     if update.role is not None:
-        new_role = update.role.value if hasattr(update.role, "value") else str(update.role)
-        old_role = existing.role.value if hasattr(existing.role, "value") else str(existing.role)
+        new_role = (
+            update.role.value if hasattr(update.role, "value") else str(update.role)
+        )
+        old_role = (
+            existing.role.value
+            if hasattr(existing.role, "value")
+            else str(existing.role)
+        )
         if new_role != old_role:
             touched.append("role")
 

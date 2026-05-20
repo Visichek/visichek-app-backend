@@ -182,9 +182,7 @@ async def _dispatch_email_for_notification(
 
     # ── Per-event preference check ────────────────────────────────
     try:
-        prefs = await retrieve_or_create_notification_preferences(
-            user_id, user_type
-        )
+        prefs = await retrieve_or_create_notification_preferences(user_id, user_type)
         per_event_enabled = bool(getattr(prefs, preference_flag, True))
         channel_enabled = bool(getattr(prefs, "email_enabled", True))
         if not channel_enabled or not per_event_enabled:
@@ -945,8 +943,7 @@ async def notify_checkin_pending_approval(
         )
         if not approvers:
             logger.warning(
-                "checkin notification: no active approvers found tenant=%s "
-                "checkin=%s",
+                "checkin notification: no active approvers found tenant=%s checkin=%s",
                 tenant_id,
                 checkin_id,
             )
@@ -964,9 +961,7 @@ async def notify_checkin_pending_approval(
                     resource_id=checkin_id,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to notify approver {user.id}", exc_info=True
-                )
+                logger.warning(f"Failed to notify approver {user.id}", exc_info=True)
         logger.info(
             "checkin notification: pending approval completed tenant=%s "
             "checkin=%s attempted_recipients=%d",
@@ -1009,9 +1004,7 @@ async def notify_checkin_approved(
                     resource_id=checkin_id,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to notify approver {user.id}", exc_info=True
-                )
+                logger.warning(f"Failed to notify approver {user.id}", exc_info=True)
     except Exception:
         logger.warning("Failed to send check-in approved notification", exc_info=True)
 
@@ -1044,9 +1037,7 @@ async def notify_checkin_rejected(
                     resource_id=checkin_id,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to notify approver {user.id}", exc_info=True
-                )
+                logger.warning(f"Failed to notify approver {user.id}", exc_info=True)
     except Exception:
         logger.warning("Failed to send check-in rejected notification", exc_info=True)
 
@@ -1468,9 +1459,7 @@ async def compute_notification_state(
     overwrites the client's view.
     """
     total = await get_unread_count(user_id=user_id, user_type=user_type)
-    counts = await get_notification_bucket_summary(
-        user_id=user_id, user_type=user_type
-    )
+    counts = await get_notification_bucket_summary(user_id=user_id, user_type=user_type)
     return {"total": total, "counts": counts}
 
 
@@ -1606,9 +1595,8 @@ async def send_test_notification(
     # respects ``EMAIL_QUEUE_ENABLED`` (background send via Celery)
     # while local dev sends synchronously.
     try:
-        from_email = (
-            getattr(settings, "email_from_email", None)
-            or getattr(settings, "email_username", None)
+        from_email = getattr(settings, "email_from_email", None) or getattr(
+            settings, "email_username", None
         )
         manager = EmailManager.get_instance()
         result = await manager.send_template(
@@ -1617,9 +1605,7 @@ async def send_test_notification(
                 template_key="notification_test",
                 context={
                     "recipient_name": recipient_name or recipient_email,
-                    "platform_name": getattr(
-                        settings, "platform_name", "VisiChek"
-                    ),
+                    "platform_name": getattr(settings, "platform_name", "VisiChek"),
                     "triggered_at": datetime.now(timezone.utc)
                     .replace(microsecond=0)
                     .isoformat()

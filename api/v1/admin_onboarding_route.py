@@ -56,7 +56,9 @@ _ONBOARDING_STATUSES = frozenset(
 
 
 ONBOARDING_LIST_SPEC = ListSpec(
-    sortable_fields=frozenset({"submitted_at", "status", "organization_name", "date_created"}),
+    sortable_fields=frozenset(
+        {"submitted_at", "status", "organization_name", "date_created"}
+    ),
     default_sort=(("submitted_at", -1),),
     search_fields=("organization_name", "full_name", "email"),
     filters={

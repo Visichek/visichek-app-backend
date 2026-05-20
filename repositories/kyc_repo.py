@@ -19,15 +19,14 @@ WEBHOOK_EVENT_COLLECTION = "kyc_webhook_events"
 
 # ── Verification rows ────────────────────────────────────────────────
 
+
 async def create_kyc_verification(
     payload: KYCVerificationCreate,
 ) -> KYCVerificationOut:
     doc = payload.model_dump()
     doc["status"] = payload.status.value
     result = await db[VERIFICATION_COLLECTION].insert_one(doc)
-    fetched = await db[VERIFICATION_COLLECTION].find_one(
-        {"_id": result.inserted_id}
-    )
+    fetched = await db[VERIFICATION_COLLECTION].find_one({"_id": result.inserted_id})
     return KYCVerificationOut(**fetched)
 
 
@@ -77,9 +76,8 @@ async def delete_kyc_verification(filter_dict: dict) -> int:
 
 # ── Webhook idempotency ──────────────────────────────────────────────
 
-async def is_webhook_event_processed(
-    *, provider: str, event_id: str
-) -> bool:
+
+async def is_webhook_event_processed(*, provider: str, event_id: str) -> bool:
     """Idempotency check.
 
     The unique sparse index on ``event_id`` already enforces this at the

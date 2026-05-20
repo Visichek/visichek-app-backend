@@ -150,6 +150,7 @@ async def list_published_blogs(
     request: Request,
 ) -> Any:
     if _is_default_public_blog_listing(request):
+
         async def _loader():
             cursor = (
                 db.blogs.find(PUBLISHED_FILTER)
@@ -313,9 +314,7 @@ async def get_published_blog_by_id(
 async def search_published_blogs_legacy(
     query_params: SearchQuery = Depends(),
 ):
-    if (
-        not query_params.title or not query_params.title.strip()
-    ) and (
+    if (not query_params.title or not query_params.title.strip()) and (
         not query_params.author or not query_params.author.strip()
     ):
         raise HTTPException(

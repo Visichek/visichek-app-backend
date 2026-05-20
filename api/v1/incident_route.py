@@ -34,7 +34,14 @@ _INCIDENT_STATUSES = frozenset(
     {"open", "investigating", "contained", "reported_to_ndpc", "closed"}
 )
 _INCIDENT_TYPES = frozenset(
-    {"data_breach", "unauthorized_access", "data_export_exposure", "device_loss", "misconfiguration", "third_party"}
+    {
+        "data_breach",
+        "unauthorized_access",
+        "data_export_exposure",
+        "device_loss",
+        "misconfiguration",
+        "third_party",
+    }
 )
 _RISK_LEVELS = frozenset({"low", "medium", "high", "critical"})
 
@@ -45,7 +52,9 @@ def _approaching_builder(values):
     if not values or values[0].lower() != "true":
         return {}
     now = int(time.time())
-    return {"notification_deadline": {"$gte": now, "$lte": now + _DEADLINE_WINDOW_SECONDS}}
+    return {
+        "notification_deadline": {"$gte": now, "$lte": now + _DEADLINE_WINDOW_SECONDS}
+    }
 
 
 INCIDENTS_LIST_SPEC = ListSpec(
@@ -55,13 +64,23 @@ INCIDENTS_LIST_SPEC = ListSpec(
     default_sort=(("date_created", -1),),
     search_fields=("description", "summary"),
     filters={
-        "status": FilterDef(name="status", multi=True, allowed_values=_INCIDENT_STATUSES),
-        "incidentType": FilterDef(
-            name="incidentType", mongo_field="incident_type", allowed_values=_INCIDENT_TYPES
+        "status": FilterDef(
+            name="status", multi=True, allowed_values=_INCIDENT_STATUSES
         ),
-        "riskLevel": FilterDef(name="riskLevel", mongo_field="risk_level", allowed_values=_RISK_LEVELS),
-        "ndpcNotified": FilterDef(name="ndpcNotified", mongo_field="ndpc_notified", coerce=coerce_bool),
-        "approachingDeadline": FilterDef(name="approachingDeadline", builder=_approaching_builder),
+        "incidentType": FilterDef(
+            name="incidentType",
+            mongo_field="incident_type",
+            allowed_values=_INCIDENT_TYPES,
+        ),
+        "riskLevel": FilterDef(
+            name="riskLevel", mongo_field="risk_level", allowed_values=_RISK_LEVELS
+        ),
+        "ndpcNotified": FilterDef(
+            name="ndpcNotified", mongo_field="ndpc_notified", coerce=coerce_bool
+        ),
+        "approachingDeadline": FilterDef(
+            name="approachingDeadline", builder=_approaching_builder
+        ),
     },
     range_filters={"dateCreated": "date_created"},
     facet_fields=frozenset({"status"}),
@@ -151,7 +170,10 @@ async def list_incidents(
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     if not tenant_id:
-        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+        return {
+            "items": [],
+            "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False},
+        }
     if _is_default_inc_listing(request):
         cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",

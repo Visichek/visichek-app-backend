@@ -79,14 +79,15 @@ def _enqueue_list_refresh() -> None:
 
 
 @write_handler(
-    "plan.create", invalidates=[
+    "plan.create",
+    invalidates=[
         "plans.list",
         "plans.public_list",
         "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
-    ]
+    ],
 )
 async def _plan_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     plan = PlanCreate(**data)
@@ -96,14 +97,15 @@ async def _plan_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]
 
 
 @write_handler(
-    "plan.update", invalidates=[
+    "plan.update",
+    invalidates=[
         "plans.list",
         "plans.public_list",
         "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
-    ]
+    ],
 )
 async def _plan_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     upd = PlanUpdate(**data)
@@ -114,14 +116,15 @@ async def _plan_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]
 
 
 @write_handler(
-    "plan.activate", invalidates=[
+    "plan.activate",
+    invalidates=[
         "plans.list",
         "plans.public_list",
         "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
-    ]
+    ],
 )
 async def _plan_activate(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     result = await activate_plan(plan_id=resource_id)
@@ -131,14 +134,15 @@ async def _plan_activate(resource_id: str, data: dict[str, Any]) -> dict[str, An
 
 
 @write_handler(
-    "plan.archive", invalidates=[
+    "plan.archive",
+    invalidates=[
         "plans.list",
         "plans.public_list",
         "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
-    ]
+    ],
 )
 async def _plan_archive(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     result = await archive_plan(plan_id=resource_id)
@@ -148,14 +152,15 @@ async def _plan_archive(resource_id: str, data: dict[str, Any]) -> dict[str, Any
 
 
 @write_handler(
-    "plan.clone", invalidates=[
+    "plan.clone",
+    invalidates=[
         "plans.list",
         "plans.public_list",
         "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
-    ]
+    ],
 )
 async def _plan_clone(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     new_name = data.get("new_name", "") or ""
@@ -172,14 +177,15 @@ async def _plan_clone(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
 
 
 @write_handler(
-    "plan.delete", invalidates=[
+    "plan.delete",
+    invalidates=[
         "plans.list",
         "plans.public_list",
         "pricing_marketing.template",
         # plan_summary embedded on subscription views
         "subscriptions.list",
         "subscription.active",
-    ]
+    ],
 )
 async def _plan_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     await remove_plan(plan_id=resource_id)
@@ -189,17 +195,16 @@ async def _plan_delete(resource_id: str, data: dict[str, Any]) -> dict[str, Any]
 
 
 @write_handler(
-    "plan.set_feature", invalidates=[
+    "plan.set_feature",
+    invalidates=[
         "plans.list",
         "plans.public_list",
         "pricing_marketing.template",
         "subscriptions.list",
         "subscription.active",
-    ]
+    ],
 )
-async def _plan_set_feature(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _plan_set_feature(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     """Toggle a single named feature on a plan.
 
     Backed by ``services.plan_feature_service.set_plan_feature``. The

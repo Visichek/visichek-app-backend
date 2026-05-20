@@ -313,8 +313,7 @@ async def check_in_from_appointment(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Cannot check in from an appointment in terminal state "
-                f"({appt_status})"
+                f"Cannot check in from an appointment in terminal state ({appt_status})"
             ),
         )
 
@@ -563,9 +562,7 @@ async def confirm_check_in(
         except Exception as e:
             import logging
 
-            logging.getLogger(__name__).warning(
-                "Badge PDF storage failed: %s", e
-            )
+            logging.getLogger(__name__).warning("Badge PDF storage failed: %s", e)
             badge_object_key = None
 
     # Update session: set status to CHECKED_IN. On Free, the badge_*
@@ -862,9 +859,7 @@ async def _checkout_checkin_by_badge_qr(
     )
 
 
-async def check_out_visitor(
-    request: CheckOutRequest, tenant_id: str
-) -> CheckoutResult:
+async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> CheckoutResult:
     """Check out a visitor by visit session, approved check-in, appointment, or QR."""
     session = None
 
@@ -977,7 +972,9 @@ def _visit_session_to_checkout_item(
     session: VisitSessionWithSummaryOut,
 ) -> AwaitingCheckoutItem:
     visitor_s = session.visitor_profile_summary
-    verified = _enum_value(session.verification_status) == VerificationStatus.VERIFIED.value
+    verified = (
+        _enum_value(session.verification_status) == VerificationStatus.VERIFIED.value
+    )
     return AwaitingCheckoutItem(
         id=session.id or "",
         source_type="visit_session",
@@ -1131,7 +1128,9 @@ async def _approved_checkins_to_checkout_items(
     visitors_by_id = {v.id: v for v in visitors if v.id}
 
     checkin_ids = [c.id for c in checkins if c.id]
-    badges = await get_badges_by_checkin_ids(tenant_id=tenant_id, checkin_ids=checkin_ids)
+    badges = await get_badges_by_checkin_ids(
+        tenant_id=tenant_id, checkin_ids=checkin_ids
+    )
     badges_by_checkin_id: dict[str, Any] = {}
     for badge in badges:
         badges_by_checkin_id.setdefault(badge.checkin_id, badge)

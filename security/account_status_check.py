@@ -233,9 +233,8 @@ async def check_admin_account_status_and_permissions(
     # because the upgrade can't find their preset.
     permission_list = getattr(admin, "permissionList", None)
     stored_preset = getattr(admin, "access_preset", None)
-    needs_backfill = (
-        permission_list is None
-        or not getattr(permission_list, "permissions", None)
+    needs_backfill = permission_list is None or not getattr(
+        permission_list, "permissions", None
     )
 
     # Drift detection — when ADMIN_PERMISSIONS grows (a new admin route
@@ -273,7 +272,9 @@ async def check_admin_account_status_and_permissions(
     else:
         expected = get_default_permissions_for_admin_preset(stored_preset)
         stored_keys = {
-            p.key for p in permission_list.permissions if p.key  # type: ignore[union-attr]
+            p.key
+            for p in permission_list.permissions
+            if p.key  # type: ignore[union-attr]
         }
         expected_keys = {p.key for p in expected.permissions if p.key}
         if stored_keys != expected_keys:

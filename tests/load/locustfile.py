@@ -56,12 +56,17 @@ def _safe_random_password(prefix: str = "LoadTest") -> str:
     while True:
         digits = "".join(random.choice(alphabet) for _ in range(6))
         # 4+ repeated run (e.g. "1111")
-        if any(digits[i] == digits[i + 1] == digits[i + 2] == digits[i + 3] for i in range(len(digits) - 3)):
+        if any(
+            digits[i] == digits[i + 1] == digits[i + 2] == digits[i + 3]
+            for i in range(len(digits) - 3)
+        ):
             continue
+
         # 4+ ascending or descending run
         def _is_seq(chunk: str) -> bool:
             a, b, c, d = (ord(x) for x in chunk)
             return (b - a, c - b, d - c) in ((1, 1, 1), (-1, -1, -1))
+
         if any(_is_seq(digits[i : i + 4]) for i in range(len(digits) - 3)):
             continue
         break
@@ -999,7 +1004,9 @@ class BootstrapLoadUser(HttpUser):
             verify_name="/v1/admins/verify-otp (bootstrap)",
         )
         if data is None:
-            logger.warning("Admin bootstrap login failed — bootstrap tasks will be skipped")
+            logger.warning(
+                "Admin bootstrap login failed — bootstrap tasks will be skipped"
+            )
             self.headers = {}
             return
 
@@ -1058,9 +1065,7 @@ class BootstrapLoadUser(HttpUser):
             )
             logger.debug(f"Bootstrapped tenant: {payload['company_name']}")
         else:
-            logger.warning(
-                f"Bootstrap failed: {resp.status_code} - {resp.text[:300]}"
-            )
+            logger.warning(f"Bootstrap failed: {resp.status_code} - {resp.text[:300]}")
 
     @task(3)
     @tag("bootstrap", "login")
@@ -1161,9 +1166,7 @@ class BillingLoadUser(HttpUser):
             )
             raise StopUser()
 
-        self.admin_headers = {
-            "Authorization": f"Bearer {access_token_of(admin_data)}"
-        }
+        self.admin_headers = {"Authorization": f"Bearer {access_token_of(admin_data)}"}
         logger.info("Authenticated as application admin for billing")
 
         # Also try to get super_admin/tenant auth for tenant-scoped reads

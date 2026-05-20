@@ -93,9 +93,7 @@ class BlogBase(BaseModel):
                 "You must provide EITHER 'pages' OR 'currentPageBody', not both."
             )
         if self.pages is None and self.currentPageBody is None:
-            raise ValueError(
-                "You must provide one of: 'pages' OR 'currentPageBody'."
-            )
+            raise ValueError("You must provide one of: 'pages' OR 'currentPageBody'.")
         return self
 
 
@@ -209,9 +207,9 @@ class BlogOutLessDetail(BaseModel):
             not values.get("excerpt")
             or values.get("excerpt") == "Article content is currently empty."
         ):
-            values["excerpt"] = _generate_excerpt(values.get("currentPageBody", [])) or (
-                "Article content is currently empty."
-            )
+            values["excerpt"] = _generate_excerpt(
+                values.get("currentPageBody", [])
+            ) or ("Article content is currently empty.")
         return values
 
     @model_validator(mode="after")
@@ -250,7 +248,11 @@ class BlogOut(BlogBase):
     @model_validator(mode="before")
     @classmethod
     def coerce_objectid(cls, values: Any) -> Any:
-        if isinstance(values, dict) and "_id" in values and isinstance(values["_id"], ObjectId):
+        if (
+            isinstance(values, dict)
+            and "_id" in values
+            and isinstance(values["_id"], ObjectId)
+        ):
             values["_id"] = str(values["_id"])
         return values
 
@@ -304,7 +306,11 @@ class BlogOutLessDetailUserVersion(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def coerce_objectid(cls, values: Any) -> Any:
-        if isinstance(values, dict) and "_id" in values and isinstance(values["_id"], ObjectId):
+        if (
+            isinstance(values, dict)
+            and "_id" in values
+            and isinstance(values["_id"], ObjectId)
+        ):
             values["_id"] = str(values["_id"])
         return values
 
@@ -340,7 +346,11 @@ class BlogOutUserVersion(BlogBase):
     @model_validator(mode="before")
     @classmethod
     def coerce_objectid(cls, values: Any) -> Any:
-        if isinstance(values, dict) and "_id" in values and isinstance(values["_id"], ObjectId):
+        if (
+            isinstance(values, dict)
+            and "_id" in values
+            and isinstance(values["_id"], ObjectId)
+        ):
             values["_id"] = str(values["_id"])
         return values
 

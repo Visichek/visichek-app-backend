@@ -141,8 +141,7 @@ async def publish_notification_created(notification) -> None:
         state = await compute_notification_state(user_id=user_id, user_type=user_type)
     except Exception:
         logger.warning(
-            "notification_stream: state compute failed for created event "
-            "user_id=%s",
+            "notification_stream: state compute failed for created event user_id=%s",
             user_id,
             exc_info=True,
         )
@@ -179,8 +178,7 @@ async def publish_notification_changed(user_id: str, user_type: str) -> None:
         state = await compute_notification_state(user_id=user_id, user_type=user_type)
     except Exception:
         logger.warning(
-            "notification_stream: state compute failed for changed event "
-            "user_id=%s",
+            "notification_stream: state compute failed for changed event user_id=%s",
             user_id,
             exc_info=True,
         )
@@ -334,9 +332,7 @@ async def stream_notifications(
             await pubsub.unsubscribe(channel)
             # redis-py renamed PubSub.close() → aclose() across versions;
             # prefer aclose() and fall back so teardown works on both.
-            closer = getattr(pubsub, "aclose", None) or getattr(
-                pubsub, "close", None
-            )
+            closer = getattr(pubsub, "aclose", None) or getattr(pubsub, "close", None)
             if closer is not None:
                 result = closer()
                 if asyncio.iscoroutine(result):

@@ -460,7 +460,9 @@ class TestDiscountService:
     async def test_disable_discount_raises_when_status_did_not_change(
         self, mock_update
     ):
-        mock_update.return_value = _make_discount_out(status=DiscountStatus.ACTIVE.value)
+        mock_update.return_value = _make_discount_out(
+            status=DiscountStatus.ACTIVE.value
+        )
 
         from services.discount_service import disable_discount
         from fastapi import HTTPException

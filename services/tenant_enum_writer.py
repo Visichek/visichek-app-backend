@@ -43,9 +43,7 @@ def _enqueue_refresh(tenant_id: str) -> None:
 
 
 @write_handler("tenant_enum.update", invalidates=["tenant_enums.list"])
-async def _tenant_enum_update(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _tenant_enum_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
     kind_value = data.pop("kind", "") or ""
     actor_id = data.pop("_actor_id", "") or ""
@@ -66,9 +64,7 @@ async def _tenant_enum_update(
 
 
 @write_handler("tenant_enum.reset", invalidates=["tenant_enums.list"])
-async def _tenant_enum_reset(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _tenant_enum_reset(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
     kind_value = data.pop("kind", "") or ""
     actor_id = data.pop("_actor_id", "") or ""

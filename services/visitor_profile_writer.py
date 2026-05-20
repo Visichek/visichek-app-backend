@@ -38,14 +38,17 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
         )
 
 
-@write_handler("visitor_profile.update", invalidates=[
+@write_handler(
+    "visitor_profile.update",
+    invalidates=[
         "visitor_profiles.list",
         # visitor_profile_summary embedded across active visit / appointment / incident views
         "dashboard.visitors_active",
         "dashboard.visitors_page1",
         "appointments.list",
         "incidents.list",
-    ])
+    ],
+)
 async def _visitor_profile_update(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:

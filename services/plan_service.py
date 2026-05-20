@@ -184,10 +184,10 @@ async def update_plan_by_id(plan_id: str, plan_data: PlanUpdate) -> Optional[Pla
             # Top-level fields outside the per-tier allowlist are blocked.
             # ``last_updated`` is allowed implicitly because the schema
             # always sets it.
-            allow_top_level = (
-                {"last_updated", "tenant_caps"}
-                | canonical.adjustable_plan_fields
-            )
+            allow_top_level = {
+                "last_updated",
+                "tenant_caps",
+            } | canonical.adjustable_plan_fields
             for key in sent.keys():
                 if key not in allow_top_level:
                     disallowed.append(key)

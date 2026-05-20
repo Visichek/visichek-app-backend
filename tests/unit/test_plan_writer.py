@@ -48,18 +48,14 @@ class TestPlanActivateWriter:
         mock_activate.return_value = _plan_out(status=PlanStatus.ACTIVE.value)
         mock_qm.get_instance.return_value = MagicMock()
 
-        result = await _plan_activate(
-            resource_id="507f1f77bcf86cd799439011", data={}
-        )
+        result = await _plan_activate(resource_id="507f1f77bcf86cd799439011", data={})
 
         mock_activate.assert_awaited_once_with(plan_id="507f1f77bcf86cd799439011")
         assert result == {"id": "507f1f77bcf86cd799439011", "status": "active"}
 
     @patch("services.plan_writer.QueueManager")
     @patch("services.plan_writer.activate_plan", new_callable=AsyncMock)
-    async def test_writer_refreshes_both_list_precomputes(
-        self, mock_activate, mock_qm
-    ):
+    async def test_writer_refreshes_both_list_precomputes(self, mock_activate, mock_qm):
         """Regression guard: ``_enqueue_list_refresh`` must enqueue refreshes
         for BOTH ``plans.list`` (admin view) and ``plans.public_list``
         (public catalogue). Refreshing only one was the cause of public
@@ -83,9 +79,7 @@ class TestPlanActivateWriter:
 
     @patch("services.plan_writer.QueueManager")
     @patch("services.plan_writer.activate_plan", new_callable=AsyncMock)
-    async def test_writer_propagates_service_exceptions(
-        self, mock_activate, mock_qm
-    ):
+    async def test_writer_propagates_service_exceptions(self, mock_activate, mock_qm):
         """If activate_plan raises (e.g. silent persistence failure), the
         writer must re-raise so the dispatcher marks the job as failed and
         ``notify_job_failure`` notifies the actor admin.

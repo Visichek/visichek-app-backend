@@ -97,17 +97,33 @@ async def test_forgot_password_send_returns_202():
 async def test_lookup_resolves_admin_and_each_tenant():
     admin = SimpleNamespace(id="admin-1", email="jane@acme.com", full_name="Jane A")
     sys_rows = [
-        {"_id": "su-1", "email": "jane@acme.com", "full_name": "Jane A",
-         "tenant_id": "t-1", "role": "super_admin"},
-        {"_id": "su-2", "email": "jane@acme.com", "full_name": "Jane A",
-         "tenant_id": "t-2", "role": "receptionist"},
+        {
+            "_id": "su-1",
+            "email": "jane@acme.com",
+            "full_name": "Jane A",
+            "tenant_id": "t-1",
+            "role": "super_admin",
+        },
+        {
+            "_id": "su-2",
+            "email": "jane@acme.com",
+            "full_name": "Jane A",
+            "tenant_id": "t-2",
+            "role": "receptionist",
+        },
     ]
-    with patch.object(svc, "get_admin", new=AsyncMock(return_value=admin)), \
+    with (
+        patch.object(svc, "get_admin", new=AsyncMock(return_value=admin)),
         patch.object(
             svc, "get_raw_system_users_by_email", new=AsyncMock(return_value=sys_rows)
-        ), \
-        patch.object(svc, "_tenant_label", new=AsyncMock(side_effect=["Acme", "Globex"])), \
-        patch.object(svc, "create_reset_selection", new=AsyncMock(return_value="sel-id")) as mock_create:
+        ),
+        patch.object(
+            svc, "_tenant_label", new=AsyncMock(side_effect=["Acme", "Globex"])
+        ),
+        patch.object(
+            svc, "create_reset_selection", new=AsyncMock(return_value="sel-id")
+        ) as mock_create,
+    ):
         result = await svc.lookup_reset_accounts(email="jane@acme.com")
 
     accounts = result["accounts"]
@@ -122,11 +138,18 @@ async def test_lookup_resolves_admin_and_each_tenant():
 
 @pytest.mark.asyncio
 async def test_lookup_excludes_primary_admin_but_still_returns_selection():
-    admin = SimpleNamespace(id=svc.PRIMARY_ADMIN_ID, email="root@acme.com",
-                            full_name="Root")
-    with patch.object(svc, "get_admin", new=AsyncMock(return_value=admin)), \
-        patch.object(svc, "get_raw_system_users_by_email", new=AsyncMock(return_value=[])), \
-        patch.object(svc, "create_reset_selection", new=AsyncMock(return_value="sel-id")):
+    admin = SimpleNamespace(
+        id=svc.PRIMARY_ADMIN_ID, email="root@acme.com", full_name="Root"
+    )
+    with (
+        patch.object(svc, "get_admin", new=AsyncMock(return_value=admin)),
+        patch.object(
+            svc, "get_raw_system_users_by_email", new=AsyncMock(return_value=[])
+        ),
+        patch.object(
+            svc, "create_reset_selection", new=AsyncMock(return_value="sel-id")
+        ),
+    ):
         result = await svc.lookup_reset_accounts(email="root@acme.com")
 
     assert result["accounts"] == []
@@ -147,22 +170,40 @@ def _selection_row(*, consumed=False, expired=False):
         "consumed": consumed,
         "expires_at": now - 10 if expired else now + 600,
         "accounts": [
-            {"ref": "ref-1", "user_type": "system_user", "user_id": "su-1",
-             "tenant_id": "t-1", "email": "jane@acme.com", "full_name": "Jane A"},
-            {"ref": "ref-2", "user_type": "admin", "user_id": "admin-1",
-             "tenant_id": None, "email": "jane@acme.com", "full_name": "Jane A"},
+            {
+                "ref": "ref-1",
+                "user_type": "system_user",
+                "user_id": "su-1",
+                "tenant_id": "t-1",
+                "email": "jane@acme.com",
+                "full_name": "Jane A",
+            },
+            {
+                "ref": "ref-2",
+                "user_type": "admin",
+                "user_id": "admin-1",
+                "tenant_id": None,
+                "email": "jane@acme.com",
+                "full_name": "Jane A",
+            },
         ],
     }
 
 
 @pytest.mark.asyncio
 async def test_send_only_emails_selected_refs():
-    with patch.object(
-        svc, "get_reset_selection_by_hash", new=AsyncMock(return_value=_selection_row())
-    ), \
-        patch.object(svc, "mark_reset_selection_consumed", new=AsyncMock()) as mock_consume, \
-        patch.object(svc, "create_reset_token", new=AsyncMock(return_value="tok-id")), \
-        patch.object(svc, "_send_reset_email", new=AsyncMock()) as mock_email:
+    with (
+        patch.object(
+            svc,
+            "get_reset_selection_by_hash",
+            new=AsyncMock(return_value=_selection_row()),
+        ),
+        patch.object(
+            svc, "mark_reset_selection_consumed", new=AsyncMock()
+        ) as mock_consume,
+        patch.object(svc, "create_reset_token", new=AsyncMock(return_value="tok-id")),
+        patch.object(svc, "_send_reset_email", new=AsyncMock()) as mock_email,
+    ):
         result = await svc.send_reset_for_selection(
             selection_token="sel-tok", account_refs=["ref-1"]
         )

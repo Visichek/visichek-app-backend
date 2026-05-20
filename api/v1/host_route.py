@@ -135,7 +135,10 @@ async def list_hosts(
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     if not tenant_id:
-        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+        return {
+            "items": [],
+            "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False},
+        }
     if _is_default_host_listing(request):
         cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",

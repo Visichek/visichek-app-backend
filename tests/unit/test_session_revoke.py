@@ -30,9 +30,17 @@ def _session_stub(access_token_id: str = _ACCESS_TOKEN_ID) -> MagicMock:
 async def test_revoke_session_drops_access_and_refresh_tokens() -> None:
     delete_one_result = MagicMock(deleted_count=1)
     with (
-        patch.object(session_service, "get_session", new=AsyncMock(return_value=_session_stub())),
-        patch.object(session_service, "delete_session", new=AsyncMock(return_value=delete_one_result)) as mock_delete_session,
-        patch.object(session_service, "delete_access_token", new=AsyncMock()) as mock_delete_access,
+        patch.object(
+            session_service, "get_session", new=AsyncMock(return_value=_session_stub())
+        ),
+        patch.object(
+            session_service,
+            "delete_session",
+            new=AsyncMock(return_value=delete_one_result),
+        ) as mock_delete_session,
+        patch.object(
+            session_service, "delete_access_token", new=AsyncMock()
+        ) as mock_delete_access,
         patch.object(
             session_service,
             "delete_refresh_tokens_by_previous_access_token",
@@ -68,7 +76,9 @@ async def test_revoke_all_except_current_kills_tokens_in_bulk() -> None:
         _session_stub(access_token_id=""),  # missing id is skipped, not crashed
     ]
     with (
-        patch.object(session_service, "get_sessions", new=AsyncMock(return_value=targets)),
+        patch.object(
+            session_service, "get_sessions", new=AsyncMock(return_value=targets)
+        ),
         patch.object(
             session_service,
             "delete_refresh_tokens_by_previous_access_token",
@@ -79,7 +89,9 @@ async def test_revoke_all_except_current_kills_tokens_in_bulk() -> None:
             "delete_access_tokens_by_ids",
             new=AsyncMock(return_value=2),
         ) as mock_delete_access_bulk,
-        patch.object(session_service, "delete_sessions", new=AsyncMock(return_value=2)) as mock_delete_sessions,
+        patch.object(
+            session_service, "delete_sessions", new=AsyncMock(return_value=2)
+        ) as mock_delete_sessions,
     ):
         result = await session_service.revoke_all_sessions_except_current(
             user_id="u1", user_type="admin", current_token_id="at_current"

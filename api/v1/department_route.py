@@ -45,13 +45,16 @@ def _is_default_dept_listing(request: Request) -> bool:
         return False
     skip_raw = qp.get("skip", "0")
     limit_raw = qp.get("limit", str(DEPARTMENTS_LIST_SPEC.default_limit))
-    return skip_raw in ("0", "") and limit_raw == str(DEPARTMENTS_LIST_SPEC.default_limit)
+    return skip_raw in ("0", "") and limit_raw == str(
+        DEPARTMENTS_LIST_SPEC.default_limit
+    )
 
 
 def _map_dept_doc(doc: dict[str, Any]) -> dict[str, Any]:
     if "_id" in doc and isinstance(doc["_id"], ObjectId):
         doc["_id"] = str(doc["_id"])
     return doc
+
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
 
@@ -128,7 +131,10 @@ async def list_departments(
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     if not tenant_id:
-        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+        return {
+            "items": [],
+            "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False},
+        }
     if _is_default_dept_listing(request):
         cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",

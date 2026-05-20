@@ -119,7 +119,9 @@ async def render_faqs() -> FaqOut:
     overlay = await get_overlay()
     sections = _build_sections(overlay)
 
-    headline = (overlay.headline if overlay and overlay.headline else None) or DEFAULT_HEADLINE
+    headline = (
+        overlay.headline if overlay and overlay.headline else None
+    ) or DEFAULT_HEADLINE
     subheadline = (
         overlay.subheadline if overlay and overlay.subheadline else None
     ) or DEFAULT_SUBHEADLINE
@@ -152,18 +154,30 @@ def _merge_list(
         return []
     by_key: Dict[str, Any] = {}
     for item in existing:
-        k = item.get(key_attr) if isinstance(item, dict) else getattr(item, key_attr, None)
+        k = (
+            item.get(key_attr)
+            if isinstance(item, dict)
+            else getattr(item, key_attr, None)
+        )
         if k:
             by_key[k] = item
     for item in incoming:
-        as_dict = item.model_dump(exclude_none=True) if hasattr(item, "model_dump") else dict(item)
+        as_dict = (
+            item.model_dump(exclude_none=True)
+            if hasattr(item, "model_dump")
+            else dict(item)
+        )
         key = as_dict.get(key_attr)
         if not key:
             continue
         by_key[key] = as_dict
     existing_keys: List[str] = []
     for item in existing:
-        k = item.get(key_attr) if isinstance(item, dict) else getattr(item, key_attr, None)
+        k = (
+            item.get(key_attr)
+            if isinstance(item, dict)
+            else getattr(item, key_attr, None)
+        )
         if k and k in by_key and k not in existing_keys:
             existing_keys.append(k)
     out: List[Any] = [by_key[k] for k in existing_keys]

@@ -285,7 +285,5 @@ async def list_recent_jobs(
             principal.tenant_id, start=start, stop=stop
         )
     else:
-        logs = await list_job_logs_for_actor(
-            principal.user_id, start=start, stop=stop
-        )
+        logs = await list_job_logs_for_actor(principal.user_id, start=start, stop=stop)
     return list(await asyncio.gather(*[_enrich_log(log) for log in logs]))

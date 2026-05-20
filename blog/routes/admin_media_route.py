@@ -156,15 +156,24 @@ async def upload_media(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> dict:
     content_type = (file.content_type or "").lower()
-    if not (_is_image_content_type(content_type) or _is_video_content_type(content_type)):
+    if not (
+        _is_image_content_type(content_type) or _is_video_content_type(content_type)
+    ):
         await file.close()
         raise HTTPException(
             status_code=400, detail=f"Unsupported file type: {content_type}"
         )
 
-    writer_key = "media.upload_image" if _is_image_content_type(content_type) else "media.upload_video"
+    writer_key = (
+        "media.upload_image"
+        if _is_image_content_type(content_type)
+        else "media.upload_video"
+    )
     url, filename, ctype = await _stream_upload_or_400(
-        file, "video/mp4" if _is_video_content_type(content_type) else "application/octet-stream"
+        file,
+        "video/mp4"
+        if _is_video_content_type(content_type)
+        else "application/octet-stream",
     )
     return await record_inline_completed_write(
         writer_key=writer_key,
@@ -195,7 +204,9 @@ async def upload_media_with_category(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> dict:
     content_type = (file.content_type or "").lower()
-    if not (_is_image_content_type(content_type) or _is_video_content_type(content_type)):
+    if not (
+        _is_image_content_type(content_type) or _is_video_content_type(content_type)
+    ):
         await file.close()
         raise HTTPException(
             status_code=400, detail=f"Unsupported file type: {content_type}"
@@ -309,6 +320,7 @@ async def list_media(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> Any:
     if _is_default_admin_media_listing(request):
+
         async def _loader():
             cursor = (
                 db.media.find({})

@@ -93,9 +93,7 @@ async def perform_upload(
     checksum = hashlib.md5(payload).hexdigest()
 
     provider = DocumentStorageManager.get_instance().provider
-    provider.upload_bytes(
-        object_key=object_key, payload=payload, mime_type=mime_type
-    )
+    provider.upload_bytes(object_key=object_key, payload=payload, mime_type=mime_type)
     backend = StorageBackend(provider.backend_name).value
 
     now = int(time.time())

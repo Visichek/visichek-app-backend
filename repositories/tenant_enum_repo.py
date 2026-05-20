@@ -26,9 +26,7 @@ async def create_tenant_enum(payload: TenantEnumCreate) -> TenantEnumOut:
 async def get_tenant_enum(
     tenant_id: str, kind: TenantEnumKind
 ) -> Optional[TenantEnumOut]:
-    doc = await db[COLLECTION].find_one(
-        {"tenant_id": tenant_id, "kind": kind.value}
-    )
+    doc = await db[COLLECTION].find_one({"tenant_id": tenant_id, "kind": kind.value})
     if doc is None:
         return None
     return TenantEnumOut(**doc)

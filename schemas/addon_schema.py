@@ -110,8 +110,10 @@ class AddonOut(AddonBase):
     @model_validator(mode="before")
     @classmethod
     def _convert_objectid(cls, values: Any) -> Any:
-        if isinstance(values, dict) and "_id" in values and isinstance(
-            values["_id"], ObjectId
+        if (
+            isinstance(values, dict)
+            and "_id" in values
+            and isinstance(values["_id"], ObjectId)
         ):
             values["_id"] = str(values["_id"])
         return values
@@ -175,8 +177,10 @@ class TenantAddonOut(TenantAddonBase):
     @model_validator(mode="before")
     @classmethod
     def _convert_objectid(cls, values: Any) -> Any:
-        if isinstance(values, dict) and "_id" in values and isinstance(
-            values["_id"], ObjectId
+        if (
+            isinstance(values, dict)
+            and "_id" in values
+            and isinstance(values["_id"], ObjectId)
         ):
             values["_id"] = str(values["_id"])
         return values

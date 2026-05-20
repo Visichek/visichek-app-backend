@@ -277,9 +277,7 @@ async def _load_active_subscription(tenant_id: str) -> Any:
                 "id": plan.id,
                 "name": plan.name,
                 "displayName": plan.display_name,
-                "tier": plan.tier.value
-                if hasattr(plan.tier, "value")
-                else plan.tier,
+                "tier": plan.tier.value if hasattr(plan.tier, "value") else plan.tier,
                 "basePriceMonthly": plan.base_price_monthly,
                 "basePriceYearly": plan.base_price_yearly,
                 "currency": plan.currency,
@@ -356,9 +354,7 @@ async def cancel_subscription_endpoint(
             raise auth_permission_denied(permission_key="subscription.cancel")
         actor_role = "super_admin"
     else:
-        raise auth_role_mismatch(
-            required_role="admin", actual_role=principal.role
-        )
+        raise auth_role_mismatch(required_role="admin", actual_role=principal.role)
 
     return await enqueue_write(
         writer_key="subscription.cancel",

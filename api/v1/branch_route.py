@@ -35,7 +35,9 @@ BRANCHES_LIST_SPEC = ListSpec(
             multi=True,
             allowed_values=frozenset({"active", "inactive", "all"}),
             builder=lambda vs: (
-                {} if "all" in vs else {"is_active": vs[0] == "active"}
+                {}
+                if "all" in vs
+                else {"is_active": vs[0] == "active"}
                 if len(vs) == 1
                 else {"is_active": {"$in": [v == "active" for v in vs]}}
             ),
@@ -74,6 +76,7 @@ async def _branch_status_facet(
     active = await collection.count_documents({**base, "is_active": True})
     inactive = await collection.count_documents({**base, "is_active": False})
     return {"active": active, "inactive": inactive, "all": active + inactive}
+
 
 # Only super_admin can manage branches
 _super_admin_dep = verify_system_user_token("super_admin")
@@ -140,7 +143,10 @@ async def list_branches(
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     if not tenant_id:
-        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+        return {
+            "items": [],
+            "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False},
+        }
     if _is_default_branch_listing(request):
         cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",

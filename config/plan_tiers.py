@@ -78,7 +78,9 @@ CANONICAL_PLAN_NAMES: Tuple[str, ...] = SINGLETON_PLAN_NAMES
 # To deny a feature on a tier, add a FeatureRule with enabled=False.
 # Patterns use fnmatch syntax — ``/v1/foo/*`` matches ``/v1/foo`` and
 # everything below it.
-def _deny(pattern: str, description: str, methods: Optional[List[str]] = None) -> FeatureRule:
+def _deny(
+    pattern: str, description: str, methods: Optional[List[str]] = None
+) -> FeatureRule:
     return FeatureRule(
         endpoint_pattern=pattern,
         methods=methods or ["GET", "POST", "PUT", "PATCH", "DELETE"],
@@ -87,7 +89,9 @@ def _deny(pattern: str, description: str, methods: Optional[List[str]] = None) -
     )
 
 
-def _allow(pattern: str, description: str, methods: Optional[List[str]] = None) -> FeatureRule:
+def _allow(
+    pattern: str, description: str, methods: Optional[List[str]] = None
+) -> FeatureRule:
     return FeatureRule(
         endpoint_pattern=pattern,
         methods=methods or ["GET", "POST", "PUT", "PATCH", "DELETE"],
@@ -149,10 +153,16 @@ FREE_DENIED_FEATURES: List[FeatureRule] = [
     _deny("/v1/incidents/*", "Incident logging requires Premium or Enterprise"),
     _deny("/v1/dsr", "Data subject requests require Premium or Enterprise"),
     _deny("/v1/dsr/*", "Data subject requests require Premium or Enterprise"),
-    _deny("/v1/sub-processors", "Sub-processor register requires Premium or Enterprise"),
-    _deny("/v1/sub-processors/*", "Sub-processor register requires Premium or Enterprise"),
+    _deny(
+        "/v1/sub-processors", "Sub-processor register requires Premium or Enterprise"
+    ),
+    _deny(
+        "/v1/sub-processors/*", "Sub-processor register requires Premium or Enterprise"
+    ),
     _deny("/v1/retention-policies", "Retention policies require Premium or Enterprise"),
-    _deny("/v1/retention-policies/*", "Retention policies require Premium or Enterprise"),
+    _deny(
+        "/v1/retention-policies/*", "Retention policies require Premium or Enterprise"
+    ),
     _deny("/v1/audit-logs", "Audit log access requires Premium or Enterprise"),
     _deny("/v1/audit-logs/*", "Audit log access requires Premium or Enterprise"),
     _deny("/v1/compliance/*", "Compliance register requires Premium or Enterprise"),
@@ -352,7 +362,9 @@ FREE_PLAN = CanonicalPlan(
         max_visitors_per_month=50,
         max_appointments_per_month=0,
     ),
-    storage_limits=StorageLimit(max_documents=10, max_storage_mb=10, max_file_size_mb=2),
+    storage_limits=StorageLimit(
+        max_documents=10, max_storage_mb=10, max_file_size_mb=2
+    ),
     # Daily write throttle on Free — caps the burst rate that the
     # monthly tenant_caps don't. Reset interval is DAILY so the counter
     # rolls over at 00:00 UTC.

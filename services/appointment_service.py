@@ -170,9 +170,7 @@ async def describe_appointment_form_requirements(tenant_id: str) -> dict:
                 {
                     "key": f.field_id,
                     "label": f.label or f.field_id,
-                    "type": (
-                        f.type.value if hasattr(f.type, "value") else str(f.type)
-                    ),
+                    "type": (f.type.value if hasattr(f.type, "value") else str(f.type)),
                     "required": bool(f.required),
                     "placeholder": f.placeholder,
                     "help_text": f.help_text,

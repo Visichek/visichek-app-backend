@@ -36,7 +36,15 @@ _admin_roles = verify_system_user_token("dept_admin", "super_admin", "receptioni
 
 
 _APPT_STATUSES = frozenset(
-    {"scheduled", "checked_in", "checked_out", "no_show", "cancelled", "fulfilled", "missed"}
+    {
+        "scheduled",
+        "checked_in",
+        "checked_out",
+        "no_show",
+        "cancelled",
+        "fulfilled",
+        "missed",
+    }
 )
 
 
@@ -65,7 +73,9 @@ def _is_default_appt_listing(request: Request) -> bool:
         return False
     skip_raw = qp.get("skip", "0")
     limit_raw = qp.get("limit", str(APPOINTMENTS_LIST_SPEC.default_limit))
-    return skip_raw in ("0", "") and limit_raw == str(APPOINTMENTS_LIST_SPEC.default_limit)
+    return skip_raw in ("0", "") and limit_raw == str(
+        APPOINTMENTS_LIST_SPEC.default_limit
+    )
 
 
 def _map_appt_doc(doc: dict[str, Any]) -> dict[str, Any]:
@@ -168,7 +178,10 @@ async def list_appointments(
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     if not tenant_id:
-        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+        return {
+            "items": [],
+            "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False},
+        }
     if _is_default_appt_listing(request):
         cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
@@ -367,9 +380,7 @@ async def check_in_appointment_endpoint(
 ):
     tenant_id = principal.tenant_id or ""
     badge_format_value = (
-        request.badge_format.value
-        if request.badge_format is not None
-        else "A7"
+        request.badge_format.value if request.badge_format is not None else "A7"
     )
     return await check_in_from_appointment(
         appointment_id=appointment_id,
@@ -430,6 +441,7 @@ async def delete_appointment_endpoint(
 
 
 # ─── Cancel + bulk endpoints ──────────────────────────────────────────
+
 
 @router.post("/bulk/cancel")
 @document_response(
@@ -523,6 +535,7 @@ async def bulk_delete_appointments(
         status_code=status.HTTP_202_ACCEPTED,
     )
     return response
+
 
 @router.post("/{appointment_id}/cancel")
 @document_response(

@@ -111,7 +111,9 @@ def _validate_payload_value(key: str, value: Any) -> None:
     """Allow str/int/float/bool or a list of those.  No nested objects."""
     if isinstance(value, str):
         if len(value.encode("utf-8")) > MAX_STRING_BYTES:
-            raise ValueError(f"payload[{key!r}] string exceeds {MAX_STRING_BYTES} bytes")
+            raise ValueError(
+                f"payload[{key!r}] string exceeds {MAX_STRING_BYTES} bytes"
+            )
         return
     if isinstance(value, bool):  # bool is a subclass of int — check first
         return

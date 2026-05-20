@@ -49,7 +49,9 @@ PLANS_LIST_SPEC = ListSpec(
         "tier": FilterDef(
             name="tier",
             multi=True,
-            allowed_values=frozenset({"free", "starter", "professional", "enterprise", "custom"}),
+            allowed_values=frozenset(
+                {"free", "starter", "professional", "enterprise", "custom"}
+            ),
         ),
         "includedFeature": FilterDef(
             name="includedFeature",
@@ -228,6 +230,7 @@ async def update_plan_endpoint(
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),
     )
+
 
 # ─── Bulk endpoints ───────────────────────────────────────────────────
 
@@ -510,6 +513,7 @@ async def list_plan_features_endpoint() -> List[PlanFeatureCatalogEntry]:
         )
         for spec in get_feature_catalog()
     ]
+
 
 @router.post("/{plan_id}/features/{feature_key}")
 @document_response(

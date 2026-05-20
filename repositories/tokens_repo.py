@@ -101,9 +101,7 @@ async def delete_refresh_tokens_by_previous_access_token(
     """
     if not access_token_id:
         return 0
-    result = await db.refreshToken.delete_many(
-        {"previousAccessToken": access_token_id}
-    )
+    result = await db.refreshToken.delete_many({"previousAccessToken": access_token_id})
     return int(getattr(result, "deleted_count", 0) or 0)
 
 

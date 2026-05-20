@@ -118,9 +118,7 @@ def include_enterprise_apps(parent: FastAPI) -> None:
             prefix=f"/v1/enterprise/{slug}",
             tags=[f"Enterprise ({slug})"],
         )
-        logger.info(
-            "enterprise_apps: mounted slug=%s at /v1/enterprise/%s", slug, slug
-        )
+        logger.info("enterprise_apps: mounted slug=%s at /v1/enterprise/%s", slug, slug)
 
 
 def is_enterprise_app_path(path: str) -> bool:

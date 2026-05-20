@@ -106,9 +106,7 @@ async def _checkin_bulk_reject(
     return await run_bulk_handlers(ids, _handle, atomic=atomic)
 
 
-@write_handler(
-    "checkin.bulk_force_approve_pending", invalidates=_CHECKIN_INVALIDATES
-)
+@write_handler("checkin.bulk_force_approve_pending", invalidates=_CHECKIN_INVALIDATES)
 async def _checkin_bulk_force_approve_pending(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:

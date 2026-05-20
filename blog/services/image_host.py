@@ -64,9 +64,7 @@ async def upload_to_freeimage_service(file: UploadFile) -> str:
     api_key = _api_key_or_raise()
     try:
         file_content = await file.read()
-        files_payload = {
-            "source": (file.filename, file_content, file.content_type)
-        }
+        files_payload = {"source": (file.filename, file_content, file.content_type)}
     finally:
         await file.close()
 

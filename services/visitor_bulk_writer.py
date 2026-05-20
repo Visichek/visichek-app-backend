@@ -64,9 +64,7 @@ async def _visitor_bulk_host_approve(
 
 
 @write_handler("visitor.bulk_deny", invalidates=_VISITOR_INVALIDATES)
-async def _visitor_bulk_deny(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
+async def _visitor_bulk_deny(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     ids = list(data.get("ids", []))
     atomic = bool(data.get("atomic", False))
     extras = data.get("extras", {}) or {}
@@ -166,7 +164,9 @@ async def _visitor_bulk_check_out(
     extras = data.get("extras", {}) or {}
     tenant_scope = str(extras.get("tenant_scope") or "")
     method = str(extras.get("method") or "manual")
-    method_enum = CheckOutMethod.QR_SCAN if method == "qr_scan" else CheckOutMethod.MANUAL
+    method_enum = (
+        CheckOutMethod.QR_SCAN if method == "qr_scan" else CheckOutMethod.MANUAL
+    )
 
     async def _handle(session_id: str) -> dict[str, Any]:
         body = CheckOutRequest(

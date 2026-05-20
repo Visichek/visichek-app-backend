@@ -50,7 +50,15 @@ from services.support_case_service import (
 
 
 _SUPPORT_STATUSES = frozenset(
-    {"open", "acknowledged", "in_progress", "awaiting_tenant", "resolved", "closed", "reopened"}
+    {
+        "open",
+        "acknowledged",
+        "in_progress",
+        "awaiting_tenant",
+        "resolved",
+        "closed",
+        "reopened",
+    }
 )
 _SUPPORT_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
 
@@ -62,13 +70,21 @@ SUPPORT_CASES_TENANT_LIST_SPEC = ListSpec(
     default_sort=(("date_created", -1),),
     search_fields=("title", "summary", "case_number"),
     filters={
-        "status": FilterDef(name="status", multi=True, allowed_values=_SUPPORT_STATUSES),
-        "priority": FilterDef(name="priority", multi=True, allowed_values=_SUPPORT_PRIORITIES),
+        "status": FilterDef(
+            name="status", multi=True, allowed_values=_SUPPORT_STATUSES
+        ),
+        "priority": FilterDef(
+            name="priority", multi=True, allowed_values=_SUPPORT_PRIORITIES
+        ),
         "category": FilterDef(name="category"),
         "slaState": FilterDef(
             name="slaState",
             allowed_values=frozenset({"on_track", "at_risk", "breached"}),
-            builder=lambda vs: {"sla_state": vs[0]} if len(vs) == 1 else {"sla_state": {"$in": list(vs)}},
+            builder=lambda vs: (
+                {"sla_state": vs[0]}
+                if len(vs) == 1
+                else {"sla_state": {"$in": list(vs)}}
+            ),
         ),
     },
     range_filters={"createdAt": "date_created"},
@@ -88,11 +104,17 @@ def _normalize_legacy_pagination(request: Request) -> None:
     except (TypeError, ValueError):
         start = 0
     try:
-        stop = int(qp.get("stop", str(start + SUPPORT_CASES_TENANT_LIST_SPEC.default_limit)))
+        stop = int(
+            qp.get("stop", str(start + SUPPORT_CASES_TENANT_LIST_SPEC.default_limit))
+        )
     except (TypeError, ValueError):
         stop = start + SUPPORT_CASES_TENANT_LIST_SPEC.default_limit
     limit = max(stop - start, 1)
-    pairs = [(k, v) for k, v in qp.multi_items() if k not in ("start", "stop", "skip", "limit")]
+    pairs = [
+        (k, v)
+        for k, v in qp.multi_items()
+        if k not in ("start", "stop", "skip", "limit")
+    ]
     pairs.append(("skip", str(max(start, 0))))
     pairs.append(("limit", str(limit)))
     new_qp = QueryParams(pairs)
@@ -109,7 +131,9 @@ def _is_default_sc_listing(request: Request) -> bool:
         return False
     skip_raw = qp.get("skip", "0")
     limit_raw = qp.get("limit", str(SUPPORT_CASES_TENANT_LIST_SPEC.default_limit))
-    return skip_raw in ("0", "") and limit_raw == str(SUPPORT_CASES_TENANT_LIST_SPEC.default_limit)
+    return skip_raw in ("0", "") and limit_raw == str(
+        SUPPORT_CASES_TENANT_LIST_SPEC.default_limit
+    )
 
 
 def _map_sc_doc(doc: dict[str, Any]) -> dict[str, Any]:
@@ -129,6 +153,7 @@ async def _sc_status_facet(
         out[v] = await collection.count_documents({**base, "status": v})
     out["all"] = sum(out.values())
     return out
+
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +263,10 @@ async def list_my_support_cases(
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     if not tenant_id:
-        return {"items": [], "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False}}
+        return {
+            "items": [],
+            "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False},
+        }
     _normalize_legacy_pagination(request)
     if _is_default_sc_listing(request):
         cached = await get_or_compute(

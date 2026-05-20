@@ -103,9 +103,7 @@ def _is_match(rule: FeatureRule, spec: FeatureToggleSpec) -> bool:
     # same pattern but a different method list is treated as unrelated
     # (it expresses a finer-grained intent that we don't want to
     # clobber).
-    return set(m.upper() for m in rule.methods) == set(
-        m.upper() for m in spec.methods
-    )
+    return set(m.upper() for m in rule.methods) == set(m.upper() for m in spec.methods)
 
 
 async def set_plan_feature(
@@ -172,9 +170,7 @@ async def set_plan_feature(
         # writing or auditing.
         return plan
 
-    updated = await update_plan_by_id(
-        plan_id, PlanUpdate(feature_rules=new_rules)
-    )
+    updated = await update_plan_by_id(plan_id, PlanUpdate(feature_rules=new_rules))
     if updated is None:
         raise AppException(
             status_code=409,

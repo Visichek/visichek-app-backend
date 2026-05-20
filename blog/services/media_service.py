@@ -119,9 +119,7 @@ async def change_media_category(
 ) -> Optional[MediaOut]:
     if not ObjectId.is_valid(media_id):
         raise HTTPException(status_code=400, detail="Invalid media ID format")
-    return await update_media_category(
-        {"_id": ObjectId(media_id)}, update
-    )
+    return await update_media_category({"_id": ObjectId(media_id)}, update)
 
 
 async def remove_media(media_id: str) -> bool:

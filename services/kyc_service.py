@@ -156,6 +156,7 @@ async def kyc_available_for_tenant(
 
 # ── Initiate ────────────────────────────────────────────────────────
 
+
 async def initiate_kyc_for_checkin(
     *,
     checkin_id: str,
@@ -173,7 +174,10 @@ async def initiate_kyc_for_checkin(
     if not checkin:
         raise resource_not_found(resource="Checkin", resource_id=checkin_id)
 
-    if checkin.state not in (CheckinState.PENDING_VERIFICATION, CheckinState.PENDING_APPROVAL):
+    if checkin.state not in (
+        CheckinState.PENDING_VERIFICATION,
+        CheckinState.PENDING_APPROVAL,
+    ):
         raise AppException(
             status_code=409,
             code=ErrorCode.VALIDATION_FAILED,
@@ -294,6 +298,7 @@ async def _build_widget_config(provider, checkin, existing: KYCVerificationOut) 
 
 # ── Skip (visitor opts out) ─────────────────────────────────────────
 
+
 async def skip_kyc_for_checkin(
     *,
     checkin_id: str,
@@ -307,9 +312,7 @@ async def skip_kyc_for_checkin(
     if not checkin:
         raise resource_not_found(resource="Checkin", resource_id=checkin_id)
 
-    available, required, _provider = await kyc_available_for_tenant(
-        checkin.tenant_id
-    )
+    available, required, _provider = await kyc_available_for_tenant(checkin.tenant_id)
     if available and required:
         raise AppException(
             status_code=403,
@@ -373,6 +376,7 @@ async def skip_kyc_for_checkin(
 
 
 # ── Webhook handler ─────────────────────────────────────────────────
+
 
 async def process_webhook_event(
     *,
@@ -518,8 +522,7 @@ async def process_webhook_event(
     # checkin_id placeholder until the real Dojah ref arrives).
     metadata_checkin_id: Optional[str] = None
     raw_checkin_id = (
-        event.metadata.get("checkin_id")
-        or event.metadata.get("checkinId")
+        event.metadata.get("checkin_id") or event.metadata.get("checkinId")
         if event.metadata
         else None
     )
@@ -528,8 +531,7 @@ async def process_webhook_event(
         if ObjectId.is_valid(candidate):
             metadata_checkin_id = candidate
     logger.info(
-        "dojah webhook: correlation ref=%s metadata_checkin_id=%s "
-        "metadata_keys=%s",
+        "dojah webhook: correlation ref=%s metadata_checkin_id=%s metadata_keys=%s",
         event.reference_id,
         metadata_checkin_id,
         sorted(event.metadata.keys()) if event.metadata else [],
@@ -706,9 +708,7 @@ async def _apply_to_checkin(record: KYCVerificationOut) -> None:
             )
             await _emit_pending_notification(checkin, verified=True)
         else:
-            await repo_update_checkin(
-                record.checkin_id, CheckinUpdate(verified=True)
-            )
+            await repo_update_checkin(record.checkin_id, CheckinUpdate(verified=True))
 
         # Update the visitor profile's verification metadata.
         try:
@@ -740,8 +740,7 @@ async def _apply_to_checkin(record: KYCVerificationOut) -> None:
                         },
                         VisitorProfileUpdate(
                             verification_status="verified",
-                            verification_method=record.extracted_id_type
-                            or "dojah_kyc",
+                            verification_method=record.extracted_id_type or "dojah_kyc",
                             last_verification_date=int(_time.time()),
                             id_type=record.extracted_id_type,
                             id_number=record.extracted_id_number,
@@ -759,8 +758,7 @@ async def _apply_to_checkin(record: KYCVerificationOut) -> None:
                 record.checkin_id,
                 CheckinUpdate(
                     state=CheckinState.REJECTED,
-                    rejection_reason=record.failure_reason
-                    or "KYC verification failed",
+                    rejection_reason=record.failure_reason or "KYC verification failed",
                 ),
             )
     elif record.status == KYCStatus.EXPIRED:
@@ -814,6 +812,7 @@ async def _emit_pending_notification(checkin, *, verified: bool) -> None:
 
 
 # ── Manual replay (super_admin recovery) ────────────────────────────
+
 
 async def replay_stored_kyc_webhook_for_checkin(
     *,
@@ -916,6 +915,7 @@ async def replay_stored_kyc_webhook_for_checkin(
 
 
 # ── Status polling ──────────────────────────────────────────────────
+
 
 async def get_kyc_status_for_checkin(checkin_id: str) -> KYCStatusOut:
     """Return the current KYC status without polling Dojah.

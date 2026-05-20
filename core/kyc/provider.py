@@ -21,13 +21,9 @@ class KYCProvider(Protocol):
 
     provider_name: str
 
-    async def initiate(
-        self, request: KYCInitiateRequest
-    ) -> KYCInitiateResponse: ...
+    async def initiate(self, request: KYCInitiateRequest) -> KYCInitiateResponse: ...
 
-    async def fetch_details(
-        self, reference_id: str
-    ) -> KYCVerificationDetails: ...
+    async def fetch_details(self, reference_id: str) -> KYCVerificationDetails: ...
 
     def parse_webhook(
         self,

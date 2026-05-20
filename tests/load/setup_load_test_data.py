@@ -49,15 +49,11 @@ async def _complete_otp_challenge(
         headers=INCLUDE_TOKENS,
     )
     if resp.status_code != 200:
-        raise Exception(
-            f"OTP verification failed: {resp.status_code} - {resp.text}"
-        )
+        raise Exception(f"OTP verification failed: {resp.status_code} - {resp.text}")
     return resp.json().get("data", {}) or {}
 
 
-async def login_admin(
-    client: httpx.AsyncClient, email: str, password: str
-) -> dict:
+async def login_admin(client: httpx.AsyncClient, email: str, password: str) -> dict:
     """Log in as application admin, handling the 2FA challenge if required."""
     resp = await client.post(
         f"{BASE_URL}/v1/admins/login",
@@ -164,9 +160,7 @@ async def bootstrap_tenant(
         headers=admin_headers,
     )
     if resp.status_code not in (200, 201):
-        raise Exception(
-            f"Bootstrap failed: {resp.status_code} - {resp.text}"
-        )
+        raise Exception(f"Bootstrap failed: {resp.status_code} - {resp.text}")
 
     data = resp.json().get("data", {}) or {}
     tenant = data.get("tenant") or {}
@@ -211,9 +205,9 @@ async def _pick_active_plan_id(
     # this, but older server responses sometimes leak archived plans through).
     tier_order = {"free": 0, "starter": 1, "professional": 2, "enterprise": 3}
     active = [
-        p for p in plans
-        if isinstance(p, dict)
-        and (p.get("status") or "").lower() == "active"
+        p
+        for p in plans
+        if isinstance(p, dict) and (p.get("status") or "").lower() == "active"
     ]
     candidates = active or [p for p in plans if isinstance(p, dict)]
     if not candidates:
@@ -302,7 +296,7 @@ async def ensure_tenant_subscription(
         return None
 
     # The writer assigns its own id; prefer the one recorded in the job log.
-    subscription_id = (job.get("resource_id") or job.get("resourceId") or data.get("id"))
+    subscription_id = job.get("resource_id") or job.get("resourceId") or data.get("id")
     print(f"✓ Subscribed tenant to plan {plan_id} (subscription_id={subscription_id})")
     return subscription_id
 
@@ -543,12 +537,8 @@ async def main():
 
         # Creds for the application admin that bootstraps the tenant.
         # Defaults match the seeded dev superadmin (see seed.py / SUPER_ADMIN_EMAIL).
-        admin_email = os.getenv(
-            "LOAD_TEST_ADMIN_EMAIL", "superadmin@visicheck.com"
-        )
-        admin_password = os.getenv(
-            "LOAD_TEST_ADMIN_PASSWORD", "@ViViVheck123!"
-        )
+        admin_email = os.getenv("LOAD_TEST_ADMIN_EMAIL", "superadmin@visicheck.com")
+        admin_password = os.getenv("LOAD_TEST_ADMIN_PASSWORD", "@ViViVheck123!")
 
         # Step 1: Log in as application admin — needed in every branch because
         # the subscription provisioning step below requires admin auth.

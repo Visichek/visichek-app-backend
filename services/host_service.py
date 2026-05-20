@@ -189,10 +189,10 @@ async def retrieve_host_by_id(host_id: str, tenant_id: str) -> HostOut:
     return result
 
 
-async def retrieve_hosts(tenant_id: str, start: int = 0, stop: int = 100) -> List[HostOut]:
-    return await get_hosts(
-        filter_dict={"tenant_id": tenant_id}, start=start, stop=stop
-    )
+async def retrieve_hosts(
+    tenant_id: str, start: int = 0, stop: int = 100
+) -> List[HostOut]:
+    return await get_hosts(filter_dict={"tenant_id": tenant_id}, start=start, stop=stop)
 
 
 async def count_tenant_hosts(tenant_id: str) -> int:
