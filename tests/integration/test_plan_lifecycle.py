@@ -124,13 +124,16 @@ class TestPlanCRUD:
         admin_auth_headers: dict,
     ):
         ts = int(time.time())
-        # Create two plans
+        # Create two plans. Use a NON-singleton tier (professional) — plans
+        # default to tier=free, and only ONE free/starter/premium plan may
+        # exist, so two default plans would 409 on the second create.
         for i in range(2):
             resp = await integration_client.post(
                 "/v1/plans",
                 json={
                     "name": f"list-plan-{ts}-{i}",
                     "display_name": f"List Plan {ts} #{i}",
+                    "tier": "professional",
                 },
                 headers=admin_auth_headers,
             )

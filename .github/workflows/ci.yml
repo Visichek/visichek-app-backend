@@ -119,6 +119,14 @@ jobs:
       # away from `writes` and starves it, so create-then-read polls time out.
       # Reads don't need the worker — precompute misses fall through to the live
       # loader and the gate cache falls through to a sync DB lookup.
+      #
+      # DB_NAME MUST equal the database the in-process test app uses. The
+      # integration conftest loads .env.test with override=True, and .env.test
+      # pins DB_NAME=test_visichek — so that value WINS for the test process
+      # regardless of what CI exports. The worker (a separate process) does NOT
+      # load .env.test, so it would otherwise use the CI value and write to a
+      # DIFFERENT database, leaving every queued job stuck at "queued" from the
+      # test's point of view. Keep DB_NAME below in sync with .env.test.
       - name: Run integration tests
         run: |
           set -uo pipefail
@@ -141,7 +149,7 @@ jobs:
         env:
           CELERY_CUSTOM_WORKER_POOL: celery_aio_pool.pool:AsyncIOPool
           DB_TYPE: mongodb
-          DB_NAME: test_visichek_ci
+          DB_NAME: test_visichek          # MUST match .env.test (conftest loads it override=True)
           ENV: testing
           SECRET_KEY: test-secret-key-for-ci
           SESSION_SECRET_KEY: test-session-key-for-ci
