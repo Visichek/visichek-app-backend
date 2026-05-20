@@ -41,7 +41,59 @@ _PURPOSE_PREFIX: dict[UploadPurpose, str] = {
     UploadPurpose.APPOINTMENT_PHOTO: "appointment-photos",
     UploadPurpose.BRANDING: "branding",
     UploadPurpose.SYSTEM: "system",
+    UploadPurpose.HOST_PHOTO: "host-photos",
+    UploadPurpose.HOST_SIGNATURE: "host-signatures",
 }
+
+# Purposes that MUST be raster images. Scoped intentionally to the host
+# roster fields so generic buckets (kiosk ``file`` / ``id_document`` that
+# legitimately carry PDFs, ``system`` catch-all) keep accepting any type.
+_IMAGE_ONLY_PURPOSES: frozenset[UploadPurpose] = frozenset(
+    {UploadPurpose.HOST_PHOTO, UploadPurpose.HOST_SIGNATURE}
+)
+
+# SVG is deliberately excluded — it can carry inline script and these slots
+# render straight into an <img>/badge, so an attacker-supplied SVG would be a
+# stored-XSS vector.
+_ALLOWED_IMAGE_MIME_TYPES: frozenset[str] = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "image/bmp",
+        "image/heic",
+        "image/heif",
+    }
+)
+
+
+def _enforce_image_mime(purpose: UploadPurpose, mime_type: str) -> None:
+    """Reject a non-image upload for an image-only purpose (HTTP 415).
+
+    The declared ``mime_type`` is the browser-supplied content type; this is
+    a UX / defence-in-depth guard, not a content-sniffing security control.
+    Matches the client-side ``accept="image/*"`` so the user gets a precise
+    error instead of a silently-stored non-image.
+    """
+    if purpose not in _IMAGE_ONLY_PURPOSES:
+        return
+    normalized = (mime_type or "").split(";", 1)[0].strip().lower()
+    if normalized in _ALLOWED_IMAGE_MIME_TYPES:
+        return
+    raise AppException(
+        status_code=415,
+        code=ErrorCode.UNSUPPORTED_MEDIA_TYPE,
+        message=(
+            "Unsupported file type for an image field. Upload a JPEG, PNG, "
+            "WebP, GIF, BMP, or HEIC/HEIF image."
+        ),
+        details={
+            "received_mime_type": normalized or None,
+            "allowed_mime_types": sorted(_ALLOWED_IMAGE_MIME_TYPES),
+            "purpose": purpose.value,
+        },
+    )
 
 
 def _object_key_for(
@@ -83,6 +135,11 @@ async def perform_upload(
             message="File too large (hard cap 50 MB)",
             details={"max_size_bytes": 50 * 1024 * 1024},
         )
+
+    # Image-only MIME guard for image-semantic purposes (host photo /
+    # signature). Runs before quota/storage so we reject the wrong type
+    # without consuming budget. No-op for every other purpose.
+    _enforce_image_mime(purpose, mime_type)
 
     # plan + addon enforcement — single source of truth.
     await enforce_storage_quota(tenant_id, size)

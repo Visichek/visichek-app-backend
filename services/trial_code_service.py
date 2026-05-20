@@ -23,12 +23,14 @@ trial code:
 
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 from typing import Optional
 
 from bson import ObjectId
 from fastapi import status
+from pymongo.errors import DuplicateKeyError
 
 from core.errors import AppException, ErrorCode, resource_not_found
 from repositories.plan_repo import get_plan
@@ -48,6 +50,8 @@ from schemas.trial_code_schema import (
     TrialCodeUpdate,
 )
 from services.audit_service import record_audit_event
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -299,14 +303,27 @@ async def mark_trial_code_used(
         return None
     if trial.status == TrialCodeStatus.USED:
         return trial
-    updated = await update_trial_code(
-        {"_id": ObjectId(trial.id)},
-        TrialCodeUpdate(
-            status=TrialCodeStatus.USED,
-            subscription_id=subscription_id,
-            used_at=int(time.time()),
-        ),
-    )
+    try:
+        updated = await update_trial_code(
+            {"_id": ObjectId(trial.id)},
+            TrialCodeUpdate(
+                status=TrialCodeStatus.USED,
+                subscription_id=subscription_id,
+                used_at=int(time.time()),
+            ),
+        )
+    except DuplicateKeyError:
+        # The tenant_used_trial_unique partial-unique index fired: another
+        # redemption already won the race and marked a different code USED
+        # for this tenant. One-time-trial invariant holds — never fail
+        # subscription provisioning on this. Return the winning row.
+        logger.warning(
+            "trial.redeem race: tenant=%s already has a redeemed trial; "
+            "leaving code=%s pending (DuplicateKeyError on tenant_used_trial_unique)",
+            tenant_id,
+            code,
+        )
+        return await get_tenant_redeemed_trial(tenant_id)
     try:
         await record_audit_event(
             actor_id="system",

@@ -874,6 +874,27 @@ async def retrieve_support_case_by_id(
     }
 
 
+async def enrich_support_case_dicts(
+    docs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Re-attach tenant/opener/assignee summaries to raw list docs.
+
+    The unfiltered first page is served pre-enriched from the precompute
+    cache (``_precompute_support_cases_admin_list``). The live ``run_list``
+    path returns raw Mongo docs with only ``_id`` stringified, so the
+    summary snapshots the frontend renders (company name, assignee name)
+    would be missing the moment any filter/sort/search is applied. Enrich
+    them here so both paths return an identical ``SupportCaseWithSummaryOut``
+    shape. Re-resolving per request is cheap: the page is capped at the
+    list limit (<= 200) and the summary resolvers are individually cached.
+    """
+    if not docs:
+        return []
+    cases = [SupportCaseOut(**d) for d in docs]
+    enriched = await asyncio.gather(*[_enrich_support_case(c) for c in cases])
+    return [e.model_dump(mode="json", by_alias=True) for e in enriched]
+
+
 async def retrieve_support_cases(
     *,
     tenant_id: Optional[str] = None,
@@ -1068,6 +1089,7 @@ __all__ = [
     "assign_support_case",
     "auto_close_resolved_cases",
     "alert_sla_breaches",
+    "enrich_support_case_dicts",
     "nudge_awaiting_tenant_cases",
     "retrieve_cases_approaching_sla",
     "retrieve_messages_for_case",

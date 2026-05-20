@@ -524,6 +524,17 @@ async def lifespan(app: FastAPI):
         name="Appointment No-Show Sweeper",
         replace_existing=True,
     )
+    # Trial integrity watchdog: detect any tenant that ended up with more
+    # than one redeemed ("used") trial (legacy data / races) and raise a
+    # support case. The tenant_used_trial_unique DB index prevents new
+    # duplicates; this is the periodic alarm. See trial_watchdog_service.
+    scheduler.add_job(
+        "services.trial_watchdog_service:reconcile_trial_integrity",
+        trigger=IntervalTrigger(hours=6),
+        id="trial_integrity_watchdog",
+        name="Trial Integrity Watchdog",
+        replace_existing=True,
+    )
 
     try:
         yield
@@ -542,6 +553,7 @@ async def lifespan(app: FastAPI):
 
 from core.case_conversion import CaseConversionMiddleware
 from core.http_cache import HttpCacheMiddleware
+from core.maintenance_mode import MaintenanceModeMiddleware
 from core.plan_enforcement import PlanEnforcementMiddleware
 
 app = FastAPI(lifespan=lifespan, title="VisiChek REST API")
@@ -556,6 +568,9 @@ app.add_middleware(
 )
 app.add_middleware(HttpCacheMiddleware)
 app.add_middleware(PlanEnforcementMiddleware)
+# Mounted just outside plan enforcement so a tenant request hits the
+# maintenance gate (and short-circuits with 503) before any plan/quota work.
+app.add_middleware(MaintenanceModeMiddleware)
 app.add_middleware(RateLimitingMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 _cors_origins = list(settings.cors_origins) if settings.cors_origins else []

@@ -87,6 +87,19 @@ async def add_plan(
             ),
         )
 
+    # Enterprise plans are custom-priced per tenant (sales-quoted) and do
+    # NOT offer a self-service free trial. Block trial_days > 0 so an admin
+    # can't accidentally attach one to a bespoke plan (free trials are a
+    # paid-singleton entitlement only — see config/plan_tiers.py).
+    if plan_tier_value == "enterprise" and (plan_data.trial_days or 0) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Enterprise plans are custom-priced per tenant and cannot "
+                "offer a self-service free trial. Set trial_days to 0."
+            ),
+        )
+
     # Check for duplicate plan name
     existing = await get_plan({"name": plan_data.name})
     if existing:
@@ -161,6 +174,25 @@ async def update_plan_by_id(plan_id: str, plan_data: PlanUpdate) -> Optional[Pla
     # (e.g. ``max_visitors_per_month``) but not flip features that the
     # tier is supposed to deny. Enterprise is bespoke so anything goes.
     existing = await get_plan({"_id": ObjectId(plan_id)})
+
+    # Enterprise plans never carry a self-service trial (custom-priced).
+    # Guard here too because enterprise slugs are bespoke and skip the
+    # canonical tier-editability block below.
+    if existing is not None and (plan_data.trial_days or 0) > 0:
+        existing_tier = (
+            existing.tier.value
+            if hasattr(existing.tier, "value")
+            else str(existing.tier)
+        )
+        if existing_tier == "enterprise":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Enterprise plans are custom-priced per tenant and cannot "
+                    "offer a self-service free trial. Set trial_days to 0."
+                ),
+            )
+
     if existing and existing.name:
         from config.plan_tiers import get_canonical_plan
 

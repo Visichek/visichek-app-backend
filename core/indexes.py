@@ -113,6 +113,22 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
         {"unique": True, "sparse": True},
     ),
     ("discounts", [("status", ASCENDING), ("valid_until", ASCENDING)], {}),
+    # Trial codes — one redeemed ("used") trial per tenant is a hard
+    # invariant of the billing system. The partial-unique index rejects a
+    # second redemption at the DB layer even if two requests race past the
+    # app-level get_tenant_redeemed_trial() check in trial_code_service.
+    # Mirrors the tenant_main_super_admin_unique partial-unique pattern.
+    ("trial_codes", [("code", ASCENDING)], {"unique": True}),
+    ("trial_codes", [("tenant_id", ASCENDING), ("status", ASCENDING)], {}),
+    (
+        "trial_codes",
+        [("tenant_id", ASCENDING)],
+        {
+            "unique": True,
+            "partialFilterExpression": {"status": "used"},
+            "name": "tenant_used_trial_unique",
+        },
+    ),
     # Usage aggregates — hot on every authenticated request (quota checks).
     (
         "usage_aggregates",

@@ -56,6 +56,7 @@ public_router = APIRouter(prefix="/public/tenants", tags=["Uploads (Public)"])
         400: "Empty / invalid file",
         401: "Unauthorized — bearer token required",
         413: "File exceeds plan max_file_size_mb or hard 50 MB cap",
+        415: "Non-image file for an image-only purpose (host_photo / host_signature)",
         429: "Storage quota or document-count cap reached",
     },
 )
@@ -98,6 +99,7 @@ async def private_upload_endpoint(
         400: "Empty / invalid file",
         403: "Plan denies public uploads and no valid system user token was presented",
         413: "File exceeds plan max_file_size_mb or hard 50 MB cap",
+        415: "Non-image file for an image-only purpose (host_photo / host_signature)",
         429: "Storage quota or document-count cap reached",
     },
 )

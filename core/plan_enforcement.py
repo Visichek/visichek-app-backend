@@ -205,7 +205,9 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
 
         role = (access_token.role or "").lower()
 
-        # Application admins bypass plan enforcement
+        # Application admins bypass plan enforcement. Maintenance-mode gating
+        # for tenant traffic lives in MaintenanceModeMiddleware, which runs
+        # just outside this middleware.
         if role in APP_ROLES:
             return await call_next(request)
 

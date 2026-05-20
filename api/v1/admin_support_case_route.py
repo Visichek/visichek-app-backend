@@ -41,6 +41,7 @@ from services.notification_service import (
     schedule_resource_read_receipt,
 )
 from services.support_case_service import (
+    enrich_support_case_dicts,
     retrieve_cases_approaching_sla,
     retrieve_messages_for_case,
     retrieve_support_case_by_id,
@@ -64,10 +65,13 @@ _SUPPORT_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
 
 SUPPORT_CASES_LIST_SPEC = ListSpec(
     sortable_fields=frozenset(
-        {"date_created", "sla_deadline", "priority", "status", "last_updated"}
+        {"date_created", "sla_due_at", "priority", "status", "last_updated"}
     ),
     default_sort=(("date_created", -1),),
-    search_fields=("title", "summary", "case_number"),
+    # The support_cases collection stores the user-facing text on `subject`
+    # and `description` (see SupportCaseBase) — not title/summary/case_number,
+    # which never existed on these docs and made `q` match nothing.
+    search_fields=("subject", "description"),
     filters={
         "status": FilterDef(
             name="status", multi=True, allowed_values=_SUPPORT_STATUSES
@@ -177,6 +181,12 @@ async def admin_list_support_cases(
         map_doc=_map_sc_doc,
         facet_runner=_sc_status_facet,
     )
+    # run_list returns raw docs; enrich them with the same tenant/opener/
+    # assignee summaries the cached default page carries so the response
+    # shape is identical whether or not filters are applied.
+    raw_items = result.get("items", [])
+    items_list: list[dict[str, Any]] = list(raw_items) if isinstance(raw_items, list) else []
+    result["items"] = await enrich_support_case_dicts(items_list)
     _auto_read_admin_support_cases(admin, result)
     return result
 

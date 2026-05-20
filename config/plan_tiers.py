@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, FrozenSet, List, Optional, Tuple
 
+from config.platform_config import get_platform_config
 from schemas.imports import SupportTier
 from schemas.plan_schema import (
     CrudLimit,
@@ -52,6 +53,13 @@ SINGLETON_PLAN_NAMES: Tuple[str, ...] = (
     STARTER_PLAN_NAME,
     PREMIUM_PLAN_NAME,
 )
+
+# Free-trial length (in days) applied to the PAID singleton plans
+# (Starter, Premium). Sourced from the deploy-time platform config so
+# there is a single knob to change. Free and Enterprise never carry a
+# trial: Free is already free, and Enterprise is bespoke / custom-priced
+# per tenant (sales-quoted), so it is excluded by design.
+PAID_PLAN_TRIAL_DAYS: int = get_platform_config().default_trial_days
 
 # Enterprise plans, by contrast, are bespoke — sales/admin creates one
 # per customer with a unique slug (the plan ``name``) so each tenant on
@@ -335,6 +343,10 @@ class CanonicalPlan:
     support_tier: SupportTier = SupportTier.NONE
     is_public: bool = True
     sort_order: int = 0
+    # Free-trial length in days. 0 = the plan offers no trial (Free,
+    # Enterprise). Paid singletons (Starter, Premium) set this > 0 so
+    # tenants can claim a one-time trial via POST /v1/trials/claim.
+    trial_days: int = 0
 
     # Subset of plan / tenant_cap field names an application admin may
     # change via PUT /v1/plans/{id}. Anything outside this set is
@@ -454,6 +466,7 @@ STARTER_PLAN = CanonicalPlan(
     api_access=False,
     support_tier=SupportTier.STANDARD,
     sort_order=20,
+    trial_days=PAID_PLAN_TRIAL_DAYS,
     adjustable_cap_fields=frozenset(
         {"max_visitors_per_month", "max_departments", "max_system_users"}
     ),
@@ -491,6 +504,7 @@ PREMIUM_PLAN = CanonicalPlan(
     api_access=True,
     support_tier=SupportTier.STANDARD,
     sort_order=30,
+    trial_days=PAID_PLAN_TRIAL_DAYS,
     adjustable_cap_fields=frozenset(
         {
             "max_visitors_per_month",

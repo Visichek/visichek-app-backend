@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+from typing import Any, cast
+
 from fastapi import HTTPException
 
+from core.redis_cache import cache_db
 from repositories.platform_settings_repo import (
     create_platform_settings,
     get_platform_settings,
@@ -14,6 +18,12 @@ from schemas.platform_settings_schema import (
     MaintenanceModeUpdateRequest,
 )
 from services.audit_service import record_audit_event
+
+# Short-TTL cache for the maintenance flag so the hot request path
+# (PlanEnforcementMiddleware) doesn't read the singleton from Mongo on every
+# tenant request. Invalidated explicitly whenever the flag is toggled.
+_MAINTENANCE_CACHE_KEY = "platform:maintenance_state"
+_MAINTENANCE_CACHE_TTL = 30  # seconds
 
 
 async def retrieve_or_create_platform_settings() -> PlatformSettingsOut:
@@ -29,6 +39,50 @@ async def retrieve_or_create_platform_settings() -> PlatformSettingsOut:
     # First access — create default settings
     defaults = PlatformSettingsCreate()
     return await create_platform_settings(defaults)
+
+
+async def get_maintenance_state() -> dict:
+    """Return ``{"mode": bool, "message": Optional[str]}`` for the platform.
+
+    Reads from a short-TTL Redis cache, falling back to a direct DB read on a
+    cache miss. Designed for the hot request path. Fails OPEN — any cache/DB
+    error resolves to "not in maintenance" so a transient infra blip can never
+    lock every tenant out of the platform.
+    """
+    try:
+        raw = cast(Any, cache_db.get(_MAINTENANCE_CACHE_KEY))
+        if raw is not None:
+            return json.loads(raw)
+    except Exception:
+        pass  # Cache miss/failure → fall through to DB
+
+    state: dict[str, Any] = {"mode": False, "message": None}
+    try:
+        settings = await get_platform_settings()
+        if settings:
+            state = {
+                "mode": bool(settings.maintenance_mode),
+                "message": settings.maintenance_message,
+            }
+    except Exception:
+        # Never block the platform because of a DB blip.
+        return {"mode": False, "message": None}
+
+    try:
+        cache_db.setex(
+            _MAINTENANCE_CACHE_KEY, _MAINTENANCE_CACHE_TTL, json.dumps(state)
+        )
+    except Exception:
+        pass  # Non-critical: re-read from DB next time
+    return state
+
+
+def invalidate_maintenance_cache() -> None:
+    """Drop the cached maintenance flag so the next read sees fresh state."""
+    try:
+        cache_db.delete(_MAINTENANCE_CACHE_KEY)
+    except Exception:
+        pass
 
 
 async def request_maintenance_mode_otp(actor_id: str) -> str:
@@ -75,6 +129,9 @@ async def update_maintenance_mode(
         raise HTTPException(
             status_code=500, detail="Failed to update platform settings"
         )
+
+    # Drop the cached flag so the middleware picks up the new state at once.
+    invalidate_maintenance_cache()
 
     # Record audit event (fire-and-forget)
     try:

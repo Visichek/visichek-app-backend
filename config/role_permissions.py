@@ -1222,6 +1222,59 @@ def get_default_permissions_for_role(role: str) -> PermissionList:
 
 
 # ---------------------------------------------------------------------------
+# Maintenance-mode path classification (derived from the permission lists)
+# ---------------------------------------------------------------------------
+#
+# When the platform is in maintenance mode every TENANT-facing operation is
+# locked out, while the application-admin / platform control plane stays up so
+# admins can still log in and toggle maintenance back off. Rather than hand-
+# maintaining two URL lists, we derive the split from the role permissions
+# above: the top-level resource segment of every admin/user route is a
+# "platform" segment, every tenant-role route is a "tenant" segment, and any
+# segment shared by both (e.g. ``tenants``, ``usage``, ``audit-logs``) is
+# treated as tenant-facing for unauthenticated callers — authenticated app
+# admins reach those via the role short-circuit in the middleware instead.
+
+
+def _top_path_segment(path: str) -> str | None:
+    """Return the resource segment after the ``/v1`` prefix (e.g.
+    ``/v1/system-users/{id}`` -> ``system-users``)."""
+    parts = path.strip("/").split("/")
+    if len(parts) >= 2 and parts[0] == "v1":
+        return parts[1]
+    return None
+
+
+def _segments_for(*permission_lists: list[Permission]) -> set[str]:
+    segments: set[str] = set()
+    for plist in permission_lists:
+        for perm in plist:
+            seg = _top_path_segment(perm.path)
+            if seg:
+                segments.add(seg)
+    return segments
+
+
+# Segments used by the 6 tenant roles — these are tenant operations.
+TENANT_PATH_SEGMENTS: set[str] = _segments_for(
+    SUPER_ADMIN_PERMISSIONS,
+    DEPT_ADMIN_PERMISSIONS,
+    RECEPTIONIST_PERMISSIONS,
+    AUDITOR_PERMISSIONS,
+    SECURITY_OFFICER_PERMISSIONS,
+    DPO_PERMISSIONS,
+)
+
+# Segments used ONLY by the application-admin / application-user surface (admin
+# login, billing, platform settings, public marketing). These stay reachable
+# during maintenance. Overlapping segments are intentionally excluded so they
+# default to tenant-facing for unauthenticated callers.
+PLATFORM_ONLY_PATH_SEGMENTS: frozenset[str] = frozenset(
+    _segments_for(ADMIN_PERMISSIONS, USER_PERMISSIONS) - TENANT_PATH_SEGMENTS
+)
+
+
+# ---------------------------------------------------------------------------
 # Application-admin access presets (Issue 10 backend)
 # ---------------------------------------------------------------------------
 #

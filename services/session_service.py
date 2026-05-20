@@ -140,8 +140,7 @@ async def retrieve_sessions(
     dead_session_ids: List[str] = []
     for session in sessions:
         is_current = (
-            current_token_id is not None
-            and session.access_token_id == current_token_id
+            current_token_id is not None and session.access_token_id == current_token_id
         )
         if session.access_token_id in live_token_ids or is_current:
             if is_current:

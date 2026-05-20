@@ -152,7 +152,9 @@ async def get_platform_settings(
     return await retrieve_or_create_platform_settings()
 
 
-@router.post("/platform-settings/maintenance/request-otp", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/platform-settings/maintenance/request-otp", status_code=status.HTTP_202_ACCEPTED
+)
 @document_response(
     message="Verification code sent",
     status_code=status.HTTP_202_ACCEPTED,

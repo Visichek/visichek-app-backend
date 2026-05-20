@@ -82,6 +82,7 @@ def _canonical_to_plan_create(canonical: CanonicalPlan) -> PlanCreate:
         support_tier=canonical.support_tier,
         is_public=canonical.is_public,
         sort_order=canonical.sort_order,
+        trial_days=canonical.trial_days,
     )
 
 
@@ -110,6 +111,11 @@ def _canonical_to_plan_update(canonical: CanonicalPlan) -> PlanUpdate:
         support_tier=canonical.support_tier,
         is_public=canonical.is_public,
         sort_order=canonical.sort_order,
+        # trial_days is a tier-level entitlement, not an admin-tuned knob,
+        # so we always refresh it from the canonical config on boot. This
+        # is what flips existing Starter/Premium rows from 0 → the
+        # configured trial length without a manual migration.
+        trial_days=canonical.trial_days,
     )
     # Pricing — only refresh if the admin has not customised it. Because
     # we store pricing in ``base_price_monthly`` we have no easy "is this

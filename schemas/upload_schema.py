@@ -36,6 +36,12 @@ class UploadPurpose(str, Enum):
     APPOINTMENT_PHOTO = "appointment_photo"
     BRANDING = "branding"
     SYSTEM = "system"
+    # Host roster image fields. Distinct from the generic buckets above so
+    # the upload service can enforce image-only MIME on them (see
+    # ``_IMAGE_ONLY_PURPOSES`` in services/upload_service.py) without
+    # restricting kiosk ``file`` / ``id_document`` fields that take PDFs.
+    HOST_PHOTO = "host_photo"
+    HOST_SIGNATURE = "host_signature"
 
 
 class UploadResponse(BaseModel):
