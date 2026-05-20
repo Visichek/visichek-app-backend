@@ -19,6 +19,10 @@ from services.data_subject_request_service import (
     retrieve_dsr_by_id,
     retrieve_dsrs,
 )
+from services.notification_service import (
+    extract_resource_ids,
+    schedule_resource_read_receipt,
+)
 
 router = APIRouter(prefix="/dsr", tags=["Data Subject Requests"])
 _dpo_roles = verify_system_user_token("super_admin", "dpo")
@@ -136,7 +140,7 @@ async def list_dsrs(
         )
         items = cached if isinstance(cached, list) else []
         limited = items[: DSR_LIST_SPEC.default_limit]
-        return {
+        result = {
             "items": limited,
             "meta": {
                 "total": len(items),
@@ -145,13 +149,27 @@ async def list_dsrs(
                 "hasMore": len(items) > DSR_LIST_SPEC.default_limit,
             },
         }
+        _auto_read_dsrs(principal, result)
+        return result
     query = parse_list_query(request, DSR_LIST_SPEC)
-    return await run_list(
+    result = await run_list(
         collection=db.dsrs,
         query=query,
         base_filter={"tenant_id": tenant_id},
         map_doc=_map_dsr_doc,
         facet_runner=_dsr_status_facet,
+    )
+    _auto_read_dsrs(principal, result)
+    return result
+
+
+def _auto_read_dsrs(principal: AuthPrincipal, result: Any) -> None:
+    """Auto-mark DSR notifications read for ids surfaced in this read."""
+    schedule_resource_read_receipt(
+        user_id=principal.user_id,
+        user_role=principal.role,
+        resource_type="dsr",
+        resource_ids=extract_resource_ids(result),
     )
 
 
@@ -176,11 +194,18 @@ async def _load_dsrs_for_tenant(tenant_id: str) -> List[Any]:
 )
 async def get_dsr_endpoint(dsr_id: str, principal: AuthPrincipal = Depends(_dpo_roles)):
     tenant_id = principal.tenant_id or ""
-    return await get_or_compute_entity(
+    result = await get_or_compute_entity(
         entity_type="dsr",
         entity_id=dsr_id,
         loader=lambda: retrieve_dsr_by_id(dsr_id=dsr_id, tenant_id=tenant_id),
     )
+    schedule_resource_read_receipt(
+        user_id=principal.user_id,
+        user_role=principal.role,
+        resource_type="dsr",
+        resource_ids=[dsr_id],
+    )
+    return result
 
 
 @router.patch("/{dsr_id}")

@@ -291,6 +291,18 @@ class TestSubscriptionRoutes:
 
     @patch("api.v1.subscription_route.enqueue_write", new_callable=AsyncMock)
     async def test_cancel_subscription(self, mock_enqueue, client):
+        # The cancel route authorises via verify_any_token (app admins → any
+        # tenant; super_admins → own tenant), not the admin-permission gate the
+        # client fixture overrides. Override it with an app-admin principal.
+        from security.auth import verify_any_token
+        from security.principal import AuthPrincipal
+
+        app.dependency_overrides[verify_any_token] = lambda: AuthPrincipal(
+            user_id="admin1",
+            role="admin",
+            access_token_id="tok",
+            jwt_token="tok",
+        )
         mock_enqueue.return_value = {
             "id": "sub_test",
             "job_id": "job-sub-cancel",

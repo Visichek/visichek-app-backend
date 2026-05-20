@@ -32,7 +32,7 @@ import hashlib
 import logging
 import os
 import secrets
-from typing import Any
+import time
 
 from bson import ObjectId
 from fastapi import HTTPException, Request
@@ -42,9 +42,12 @@ from core.email_utils import normalize_email
 from core.settings import get_settings
 from repositories.admin_repo import get_admin
 from repositories.password_reset_repo import (
+    create_reset_selection,
     create_reset_token,
+    get_reset_selection_by_hash,
     get_reset_token_by_hash,
     invalidate_outstanding_reset_tokens,
+    mark_reset_selection_consumed,
     mark_reset_token_used,
 )
 from repositories.system_user_repo import get_raw_system_users_by_email
@@ -63,6 +66,9 @@ logger = logging.getLogger(__name__)
 
 PRIMARY_ADMIN_ID = "656f7ac12b9d4f6c9e2b9f7d"
 RESET_TOKEN_TTL_SECONDS = 60 * 60  # 1 hour
+# Step 1 (account lookup) → step 2 (send) window. Short-lived: the user
+# is expected to pick an account immediately after entering their email.
+SELECTION_TTL_SECONDS = 15 * 60  # 15 minutes
 
 
 def _hash_reset_token(token: str) -> str:
@@ -157,123 +163,230 @@ async def _send_reset_email(
         logger.warning("password reset email send failed for %s", to_email, exc_info=True)
 
 
-async def _issue_reset_for_admin(
-    *, admin_doc: Any, requesting_ip: str | None
-) -> None:
-    """Mint a reset token for an application admin and email it."""
-    admin_id = str(admin_doc.id or "") if hasattr(admin_doc, "id") else str(admin_doc.get("_id"))
-    email = getattr(admin_doc, "email", None) or admin_doc.get("email", "")  # type: ignore[union-attr]
-    full_name = getattr(admin_doc, "full_name", None) or admin_doc.get("full_name", "")  # type: ignore[union-attr]
-
-    if _is_primary_env_admin(admin_id, email):
-        # The env primary admin cannot be reset via this flow.
-        return
-
-    token = secrets.token_urlsafe(32)
-    await create_reset_token(
-        token_hash=_hash_reset_token(token),
-        user_id=admin_id,
-        user_type="admin",
-        tenant_id=None,
-        ttl_seconds=RESET_TOKEN_TTL_SECONDS,
-        requesting_ip=requesting_ip,
-    )
-    await _send_reset_email(
-        to_email=email,
-        recipient_name=full_name,
-        token=token,
-        tenant_id=None,
-        requesting_ip=requesting_ip,
-    )
+_ROLE_LABELS: dict[str, str] = {
+    "admin": "Platform Administrator",
+    "super_admin": "Tenant Super Admin",
+    "dept_admin": "Department Admin",
+    "receptionist": "Receptionist",
+    "auditor": "Auditor",
+    "security_officer": "Security Officer",
+    "dpo": "Data Protection Officer",
+}
 
 
-async def _issue_reset_for_system_user(
-    *, raw_doc: dict, requesting_ip: str | None
-) -> None:
-    """Mint a reset token for a tenant system user and email it."""
-    user_id = str(raw_doc.get("_id"))
-    email = str(raw_doc.get("email") or "")
-    full_name = str(raw_doc.get("full_name") or "")
-    tenant_id = raw_doc.get("tenant_id")
-
-    token = secrets.token_urlsafe(32)
-    await create_reset_token(
-        token_hash=_hash_reset_token(token),
-        user_id=user_id,
-        user_type="system_user",
-        tenant_id=tenant_id,
-        ttl_seconds=RESET_TOKEN_TTL_SECONDS,
-        requesting_ip=requesting_ip,
-    )
-    await _send_reset_email(
-        to_email=email,
-        recipient_name=full_name,
-        token=token,
-        tenant_id=tenant_id,
-        requesting_ip=requesting_ip,
-    )
+def _role_label(role: str | None) -> str:
+    return _ROLE_LABELS.get(str(role or ""), str(role or "").replace("_", " ").title())
 
 
-async def request_password_reset(
-    *,
-    email: str,
-    request: Request | None = None,
-) -> None:
-    """Stage 1: accept an email and dispatch reset link(s).
+async def _resolve_matching_accounts(
+    raw_email: str,
+) -> list[dict]:
+    """Find every account that shares ``raw_email``.
 
-    Silently no-ops when nothing matches — the route returns the same
-    202 envelope so attackers cannot enumerate accounts via the
-    response shape or timing. Side-channel timing is bounded by the
-    fixed number of DB lookups regardless of match count.
+    Returns server-side descriptors (with real ids) for one platform
+    admin (if matched) plus one entry per tenant system_user row. The
+    env-pinned primary admin is excluded — its recovery is OTP-based.
+
+    Each descriptor: ``{user_type, user_id, tenant_id, email, full_name,
+    role, type, tenant_name, label}``. ``type`` is ``"platform"`` for the
+    application admin and ``"tenant"`` for system users; ``label`` /
+    ``tenant_name`` are display-only fields for the selection UI.
     """
-    raw_email = (email or "").strip()
-    if not raw_email:
-        return
-
-    # Match by exact email AND by normalized email (catches +alias /
-    # gmail-dot variants) to mirror how the invite path dedupes.
     normalized = normalize_email(raw_email)
-    requesting_ip = _client_ip(request)
+    accounts: list[dict] = []
 
-    # ------------------- admins -------------------
+    # ------------------- application admin -------------------
     admin = await get_admin({"email": raw_email})
     if not admin and normalized != raw_email:
         admin = await get_admin({"email": normalized})
     if admin:
+        admin_id = str(admin.id or "")
+        admin_email = admin.email or raw_email
+        if not _is_primary_env_admin(admin_id, admin_email):
+            accounts.append(
+                {
+                    "user_type": "admin",
+                    "user_id": admin_id,
+                    "tenant_id": None,
+                    "email": admin_email,
+                    "full_name": admin.full_name or "",
+                    "role": "admin",
+                    "type": "platform",
+                    "tenant_name": None,
+                    "label": "Platform Administrator",
+                }
+            )
+
+    # --------------- tenant system users -----------------
+    # Same email can be the same person across multiple tenants — one
+    # descriptor per tenant so the user picks which account(s) to reset.
+    rows = await get_raw_system_users_by_email(raw_email)
+    if not rows and normalized != raw_email:
+        rows = await get_raw_system_users_by_email(normalized)
+    for row in rows:
+        tenant_id = row.get("tenant_id")
+        tenant_name = await _tenant_label(tenant_id)
+        role = row.get("role")
+        accounts.append(
+            {
+                "user_type": "system_user",
+                "user_id": str(row.get("_id")),
+                "tenant_id": tenant_id,
+                "email": str(row.get("email") or raw_email),
+                "full_name": str(row.get("full_name") or ""),
+                "role": role,
+                "type": "tenant",
+                "tenant_name": tenant_name or "",
+                "label": tenant_name or "Your organization",
+            }
+        )
+
+    return accounts
+
+
+def _public_account_view(ref: str, account: dict) -> dict:
+    """Project a server-side account descriptor into the client shape.
+
+    Only opaque, display-safe fields cross the wire — never the raw
+    ``user_id``. The frontend renders this list so the user can tell a
+    platform login apart from each tenant login.
+    """
+    return {
+        "account_ref": ref,
+        "type": account["type"],
+        "label": account["label"],
+        "email": account["email"],
+        "tenant_id": account.get("tenant_id"),
+        "tenant_name": account.get("tenant_name"),
+        "role": account.get("role"),
+        "role_label": _role_label(account.get("role")),
+    }
+
+
+async def lookup_reset_accounts(
+    *,
+    email: str,
+    request: Request | None = None,
+) -> dict:
+    """Step 1: resolve every account sharing an email (no email sent).
+
+    Returns ``{selection_token, accounts, expires_in}``. ``accounts`` is
+    the display list the frontend renders so the user can pick which
+    login(s) to reset; ``selection_token`` is echoed back to
+    ``send_reset_for_selection`` in step 2. When nothing matches we still
+    return a (single-use, empty) selection so the response shape is
+    uniform.
+
+    NOTE: returning the matched-account list is an intentional product
+    decision — it trades the old "uniform 202 regardless of match"
+    anti-enumeration guarantee for a usable multi-account picker. Step 2
+    is what actually sends mail, and it can only target accounts found
+    here, always to the server-stored address.
+    """
+    raw_email = (email or "").strip()
+    requesting_ip = _client_ip(request)
+
+    accounts: list[dict] = []
+    if raw_email:
         try:
-            await _issue_reset_for_admin(admin_doc=admin, requesting_ip=requesting_ip)
+            accounts = await _resolve_matching_accounts(raw_email)
         except Exception:
             logger.warning(
-                "request_password_reset: admin issue failed for %s",
+                "lookup_reset_accounts: resolution failed for %s",
                 raw_email,
                 exc_info=True,
             )
+            accounts = []
 
-    # --------------- system users -----------------
-    # One email can be the same person across multiple tenants. We mint
-    # one reset row + one email PER tenant so the recipient picks the
-    # right tenant on the FE form.
-    try:
-        rows = await get_raw_system_users_by_email(raw_email)
-        if not rows and normalized != raw_email:
-            rows = await get_raw_system_users_by_email(normalized)
-        for row in rows:
-            try:
-                await _issue_reset_for_system_user(
-                    raw_doc=row, requesting_ip=requesting_ip
-                )
-            except Exception:
-                logger.warning(
-                    "request_password_reset: system_user issue failed for %s",
-                    raw_email,
-                    exc_info=True,
-                )
-    except Exception:
-        logger.warning(
-            "request_password_reset: system_user lookup failed for %s",
-            raw_email,
-            exc_info=True,
+    # Attach an opaque per-account ref the client uses to choose in step 2.
+    for account in accounts:
+        account["ref"] = secrets.token_urlsafe(16)
+
+    selection_token = secrets.token_urlsafe(32)
+    await create_reset_selection(
+        selection_token_hash=_hash_reset_token(selection_token),
+        email=raw_email,
+        accounts=accounts,
+        ttl_seconds=SELECTION_TTL_SECONDS,
+        requesting_ip=requesting_ip,
+    )
+
+    return {
+        "selection_token": selection_token,
+        "accounts": [_public_account_view(a["ref"], a) for a in accounts],
+        "expires_in": SELECTION_TTL_SECONDS,
+    }
+
+
+async def send_reset_for_selection(
+    *,
+    selection_token: str,
+    account_refs: list[str],
+    request: Request | None = None,
+) -> dict:
+    """Step 2: email a single-use reset link for each chosen account.
+
+    Looks up the selection minted by step 1, validates it is neither
+    expired nor already consumed, then mints one reset token + sends one
+    link per selected ref. Refs not in the original selection are
+    ignored. Marks the selection consumed (single-use) so the same token
+    can't be replayed to spam mail. Returns ``{sent}``.
+    """
+    requesting_ip = _client_ip(request)
+
+    if not selection_token or not isinstance(selection_token, str):
+        raise HTTPException(status_code=400, detail="Selection token is required")
+
+    row = await get_reset_selection_by_hash(_hash_reset_token(selection_token))
+    if not row:
+        raise HTTPException(status_code=400, detail="Invalid or expired selection")
+
+    now = int(time.time())
+    if row.get("consumed"):
+        raise HTTPException(
+            status_code=400, detail="This selection has already been used"
         )
+    if int(row.get("expires_at", 0)) < now:
+        raise HTTPException(status_code=400, detail="This selection has expired")
+
+    # Consume up-front so a double-submit can't double-send. Failures
+    # below are per-account and fire-and-forget.
+    await mark_reset_selection_consumed(str(row.get("_id")))
+
+    chosen = set(account_refs or [])
+    accounts = [a for a in (row.get("accounts") or []) if a.get("ref") in chosen]
+
+    sent = 0
+    for account in accounts:
+        email = str(account.get("email") or "")
+        if not email:
+            continue
+        token = secrets.token_urlsafe(32)
+        try:
+            await create_reset_token(
+                token_hash=_hash_reset_token(token),
+                user_id=str(account.get("user_id") or ""),
+                user_type=str(account.get("user_type") or ""),
+                tenant_id=account.get("tenant_id"),
+                ttl_seconds=RESET_TOKEN_TTL_SECONDS,
+                requesting_ip=requesting_ip,
+            )
+            await _send_reset_email(
+                to_email=email,
+                recipient_name=str(account.get("full_name") or ""),
+                token=token,
+                tenant_id=account.get("tenant_id"),
+                requesting_ip=requesting_ip,
+            )
+            sent += 1
+        except Exception:
+            logger.warning(
+                "send_reset_for_selection: issue failed for ref %s",
+                account.get("ref"),
+                exc_info=True,
+            )
+
+    return {"sent": sent}
 
 
 async def reset_password_with_token(

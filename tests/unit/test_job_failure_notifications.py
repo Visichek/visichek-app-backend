@@ -269,13 +269,17 @@ async def test_dispatcher_invokes_notify_on_writer_failure() -> None:
             new=AsyncMock(),
         ) as notify_mock,
     ):
-        with pytest.raises(AppException):
+        # The dispatcher re-raises a plain RuntimeError (celery can't pickle
+        # AppException/HTTPException) but preserves the original as __cause__
+        # and forwards the original to notify_job_failure.
+        with pytest.raises(RuntimeError) as exc_info:
             await tasks_module._db_write_dispatcher(
                 writer_key="discount.delete",
                 resource_id="disc-1",
                 data={},
                 task_id="celery-task-xyz",
             )
+    assert exc_info.value.__cause__ is exc
 
     mark_failed_mock.assert_awaited_once()
     notify_mock.assert_awaited_once()

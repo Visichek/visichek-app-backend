@@ -606,6 +606,12 @@ SUPER_ADMIN_PERMISSIONS: list[Permission] = [
         "/v1/departments/{department_id}",
         "Delete department",
     ),
+    # Host management
+    _p("create_host", ["POST"], "/v1/hosts", "Create host"),
+    _p("list_hosts", ["GET"], "/v1/hosts", "List hosts"),
+    _p("get_host", ["GET"], "/v1/hosts/{host_id}", "View host"),
+    _p("update_host", ["PATCH"], "/v1/hosts/{host_id}", "Update host"),
+    _p("delete_host", ["DELETE"], "/v1/hosts/{host_id}", "Delete host"),
     # Tenant config
     _p("list_tenants", ["GET"], "/v1/tenants/", "List own tenant"),
     _p("get_tenant", ["GET"], "/v1/tenants/{tenant_id}", "View own tenant"),
@@ -856,6 +862,11 @@ DEPT_ADMIN_PERMISSIONS: list[Permission] = [
         "/v1/departments/{department_id}",
         "Update department",
     ),
+    # Host management
+    _p("create_host", ["POST"], "/v1/hosts", "Create host"),
+    _p("list_hosts", ["GET"], "/v1/hosts", "List hosts"),
+    _p("get_host", ["GET"], "/v1/hosts/{host_id}", "View host"),
+    _p("update_host", ["PATCH"], "/v1/hosts/{host_id}", "Update host"),
     # Dashboard
     _p("dashboard_stats", ["GET"], "/v1/dashboard/stats", "View dashboard stats"),
     _p("dashboard_visitors", ["GET"], "/v1/dashboard/visitors", "View visitor log"),

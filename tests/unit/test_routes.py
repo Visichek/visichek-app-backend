@@ -163,7 +163,7 @@ class TestTenantRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/tenants?start=0&stop=100",
+                    "/v1/tenants",
                     headers={"Authorization": "Bearer token-123"},
                 )
 
@@ -286,6 +286,9 @@ class TestDepartmentRoutes:
         )
 
         with patch(
+            "api.v1.department_route.validate_department_create",
+            new_callable=AsyncMock,
+        ), patch(
             "api.v1.department_route.enqueue_write", new_callable=AsyncMock
         ) as mock_enqueue:
             mock_enqueue.return_value = {
@@ -343,7 +346,7 @@ class TestDepartmentRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/departments?start=0&stop=100",
+                    "/v1/departments",
                     headers={"Authorization": "Bearer token-123"},
                 )
 
@@ -393,6 +396,9 @@ class TestDepartmentRoutes:
         )
 
         with patch(
+            "api.v1.department_route.validate_department_update",
+            new_callable=AsyncMock,
+        ), patch(
             "api.v1.department_route.enqueue_write", new_callable=AsyncMock
         ) as mock_enqueue:
             mock_enqueue.return_value = {
@@ -734,7 +740,7 @@ class TestSystemUserRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/system-users?start=0&stop=100",
+                    "/v1/system-users",
                     headers={"Authorization": "Bearer token-123"},
                 )
 
@@ -1053,7 +1059,7 @@ class TestAppointmentRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/appointments?start=0&stop=100",
+                    "/v1/appointments",
                     headers={"Authorization": "Bearer token-789"},
                 )
 
@@ -1377,7 +1383,7 @@ class TestIncidentRoutes:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/incidents?start=0&stop=100",
+                    "/v1/incidents",
                     headers={"Authorization": "Bearer token-999"},
                 )
 

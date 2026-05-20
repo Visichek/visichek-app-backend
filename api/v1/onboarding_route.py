@@ -27,12 +27,20 @@ from schemas.onboarding_submission_schema import (
     OnboardingSubmissionOut,
     OnboardingSubmissionRequest,
 )
+from schemas.tenant_schema import (
+    TenantInfoConfirmRequest,
+    TenantInfoConfirmationOut,
+)
 from security.auth import verify_super_admin_token
 from security.principal import AuthPrincipal
 from services.onboarding_submission_service import (
     complete_onboarding_for_user,
     get_pending_fields_for_user,
     submit_onboarding,
+)
+from services.tenant_service import (
+    confirm_tenant_info,
+    get_tenant_info_confirmation,
 )
 
 router = APIRouter(prefix="/onboarding", tags=["Self-Onboarding"])
@@ -125,4 +133,66 @@ async def complete_my_onboarding(
         payload,
         user_id=principal.user_id,
         tenant_id=principal.tenant_id,
+    )
+
+
+@router.get("/me/tenant-confirmation")
+@document_response(
+    message="Tenant info fetched for confirmation",
+    description=(
+        "Returns the company details carried over from onboarding for the "
+        "calling super_admin to review on first login: company name, DPO "
+        "contact email, privacy policy URL, country of hosting, plus the "
+        "confirmation status. When the tenant was provisioned from a "
+        "self-onboarding submission, the original form values + labels + "
+        "order are attached under onboarding_fields / onboarding_field_labels "
+        "/ onboarding_field_order so the UI can show 'this is what you told "
+        "us'. This is a soft prompt — the API does NOT block other calls when "
+        "onboarding_info_confirmed is false; the frontend decides when to show "
+        "the review screen."
+    ),
+    summary="Get my tenant info for first-login confirmation",
+    response_codes={
+        401: "Unauthorized",
+        403: "Not a super_admin",
+        404: "Tenant not found",
+    },
+)
+async def get_my_tenant_confirmation(
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+) -> TenantInfoConfirmationOut:
+    return await get_tenant_info_confirmation(tenant_id=principal.tenant_id or "")
+
+
+@router.post("/me/tenant-confirmation")
+@document_response(
+    message="Tenant info confirmed",
+    description=(
+        "Confirm — and optionally correct — the company details for the "
+        "calling super_admin's tenant. Every field in the body is optional; "
+        "omitting one keeps the current value. Submitting the request (with "
+        "or without edits) sets onboarding_info_confirmed=true and stamps "
+        "onboarding_info_confirmed_at. Any edits are applied to the tenant "
+        "record and audited with a field-level diff. Returns the refreshed "
+        "confirmation payload."
+    ),
+    summary="Confirm my tenant info (first login)",
+    response_codes={
+        401: "Unauthorized",
+        403: "Not a super_admin",
+        404: "Tenant not found",
+        422: "Validation error",
+    },
+)
+async def confirm_my_tenant_info(
+    payload: TenantInfoConfirmRequest,
+    request: Request,
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+) -> TenantInfoConfirmationOut:
+    return await confirm_tenant_info(
+        payload,
+        tenant_id=principal.tenant_id or "",
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
     )

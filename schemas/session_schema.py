@@ -173,9 +173,30 @@ class AccountDeleteRequest(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    """Public request body for POST /v1/auth/forgot-password."""
+    """Public request body for POST /v1/auth/forgot-password (step 1).
+
+    Step 1 is a *lookup* only — it never sends an email. The server
+    returns the list of accounts that share this address (platform
+    admin and/or tenant system users) plus an opaque ``selection_token``
+    the frontend echoes back in step 2 to choose which account(s) to
+    actually email a reset link to.
+    """
 
     email: EmailStr
+
+
+class ForgotPasswordSendRequest(BaseModel):
+    """Public request body for POST /v1/auth/forgot-password/send (step 2).
+
+    Carries the opaque ``selection_token`` returned by step 1 plus the
+    ``account_refs`` the user selected. The server mints one single-use
+    reset link per chosen account and emails it. Refs that were not part
+    of the original selection are ignored. The selection expires shortly
+    after step 1, so the token is short-lived and single-use.
+    """
+
+    selection_token: str
+    account_refs: List[str] = Field(default_factory=list)
 
 
 class ResetPasswordWithTokenRequest(BaseModel):

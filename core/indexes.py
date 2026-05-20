@@ -39,6 +39,23 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
         [("user_id", ASCENDING), ("role", ASCENDING), ("changed_at", DESCENDING)],
         {},
     ),
+    # Self-service password reset: tokens are looked up by hash on every
+    # consume; selections by hash on every step-2 send.
+    (
+        "password_reset_tokens",
+        [("token_hash", ASCENDING)],
+        {"unique": True},
+    ),
+    (
+        "password_reset_tokens",
+        [("user_id", ASCENDING), ("user_type", ASCENDING), ("used", ASCENDING)],
+        {},
+    ),
+    (
+        "password_reset_selections",
+        [("selection_token_hash", ASCENDING)],
+        {"unique": True},
+    ),
     # ── tenants ──────────────────────────────────────────────────────
     (
         "tenant_companies",
@@ -149,6 +166,9 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
     ("branches", [("tenant_id", ASCENDING), ("name", ASCENDING)], {}),
     ("departments", [("tenant_id", ASCENDING)], {}),
     ("departments", [("tenant_id", ASCENDING), ("name", ASCENDING)], {}),
+    ("hosts", [("tenant_id", ASCENDING), ("name", ASCENDING)], {}),
+    ("hosts", [("tenant_id", ASCENDING), ("department_id", ASCENDING)], {}),
+    ("hosts", [("tenant_id", ASCENDING), ("source_system_user_id", ASCENDING)], {"sparse": True}),
     (
         "visitors",
         [("tenant_id", ASCENDING), ("check_in_time", DESCENDING)],
@@ -247,6 +267,19 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
     (
         "notifications",
         [("user_id", ASCENDING), ("read", ASCENDING), ("date_created", DESCENDING)],
+        {},
+    ),
+    # Backs the read-receipt auto-mark: flip a user's unread notifications
+    # to read when they read the resource that triggered them.
+    (
+        "notifications",
+        [
+            ("user_id", ASCENDING),
+            ("user_type", ASCENDING),
+            ("resource_type", ASCENDING),
+            ("resource_id", ASCENDING),
+            ("read", ASCENDING),
+        ],
         {},
     ),
     (

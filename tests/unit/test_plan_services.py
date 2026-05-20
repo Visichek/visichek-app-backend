@@ -154,14 +154,17 @@ class TestPlanService:
         mock_update.assert_not_called()
 
     @patch("services.plan_service.retrieve_plan_by_id", new_callable=AsyncMock)
-    @patch("services.plan_service.update_plan_by_id", new_callable=AsyncMock)
+    @patch("services.plan_service.update_plan", new_callable=AsyncMock)
     async def test_archive_plan(self, mock_update, mock_retrieve):
-        expected = _make_plan_out(status=PlanStatus.ARCHIVED.value)
-        mock_update.return_value = expected
+        # archive_plan first loads the plan to reject singleton plans, then
+        # flips status via update_plan (NOT update_plan_by_id). The id must be
+        # a valid ObjectId because archive_plan wraps it in ObjectId(plan_id).
+        mock_retrieve.return_value = _make_plan_out()  # non-singleton "test-plan"
+        mock_update.return_value = _make_plan_out(status=PlanStatus.ARCHIVED.value)
 
         from services.plan_service import archive_plan
 
-        await archive_plan("plan_123")
+        await archive_plan("507f1f77bcf86cd799439011")
         mock_update.assert_called_once()
 
     @patch("services.plan_service.retrieve_plan_by_id", new_callable=AsyncMock)

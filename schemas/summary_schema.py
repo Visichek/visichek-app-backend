@@ -96,6 +96,16 @@ class BranchBriefSummary(BaseModel):
     is_active: Optional[bool] = None
 
 
+class HostBriefSummary(BaseModel):
+    id: str
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    department_id: Optional[str] = None
+    picture_image_url: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 class VisitSessionBriefSummary(BaseModel):
     id: str
     status: Optional[str] = None

@@ -77,6 +77,7 @@ class AppointmentOut(AppointmentBase):
 from schemas.summary_schema import (  # noqa: E402
     TenantBriefSummary,
     DepartmentBriefSummary,
+    HostBriefSummary,
     UserBriefSummary,
     VisitorProfileBriefSummary,
 )
@@ -87,6 +88,9 @@ class AppointmentWithSummaryOut(AppointmentOut):
 
     tenant_summary: Optional[TenantBriefSummary] = None
     department_summary: Optional[DepartmentBriefSummary] = None
-    host_summary: Optional[UserBriefSummary] = None
+    # host_summary resolves the host roster record (hosts collection).
+    # For appointments created before the host rewire, host_id points at a
+    # system_user and is mapped into the same HostBriefSummary shape.
+    host_summary: Optional[HostBriefSummary] = None
     visitor_profile_summary: Optional[VisitorProfileBriefSummary] = None
     created_by_summary: Optional[UserBriefSummary] = None

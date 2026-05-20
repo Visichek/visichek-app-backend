@@ -11,6 +11,7 @@ from schemas.admin_schema import AdminRefresh
 from schemas.session_schema import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
+    ForgotPasswordSendRequest,
     ResetPasswordWithTokenRequest,
     TwoFactorVerifyRequest,
     TwoFactorDisableRequest,
@@ -28,8 +29,9 @@ from services.password_change_service import (
 )
 from services.system_user_service import refresh_system_user_tokens
 from services.forgot_password_service import (
-    request_password_reset,
+    lookup_reset_accounts,
     reset_password_with_token,
+    send_reset_for_selection,
 )
 from services.two_factor_service import (
     setup_two_factor,
@@ -124,32 +126,95 @@ async def change_password(
 # ═══════════════════════════════════════════════════════════════════
 
 
-@router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/forgot-password")
 @document_response(
-    message="If the email matches an account, a reset link has been sent.",
-    status_code=status.HTTP_202_ACCEPTED,
-    success_example={"requested": True},
+    message="Account lookup complete.",
+    success_example={
+        "selectionToken": "x9aF…opaque",
+        "expiresIn": 900,
+        "accounts": [
+            {
+                "accountRef": "k3l…opaque",
+                "type": "platform",
+                "label": "Platform Administrator",
+                "email": "jane@acme.com",
+                "tenantId": None,
+                "tenantName": None,
+                "role": "admin",
+                "roleLabel": "Platform Administrator",
+            },
+            {
+                "accountRef": "p7q…opaque",
+                "type": "tenant",
+                "label": "Acme Corp",
+                "email": "jane@acme.com",
+                "tenantId": "665…",
+                "tenantName": "Acme Corp",
+                "role": "super_admin",
+                "roleLabel": "Tenant Super Admin",
+            },
+        ],
+    },
     description=(
-        "Unauthenticated. Submit an email address; the server mints a "
-        "single-use reset token and mails the link (HTML template "
-        "``password_reset``) to the address. The response is the SAME "
-        "202 envelope whether or not the email matches a real account — "
-        "this is the standard defence against account enumeration. The "
-        "actual reset is completed by POST /v1/auth/reset-password.\n\n"
-        "Same email can match one admin AND/OR one or more system users "
-        "across different tenants; one email is dispatched per match. "
-        "The env-pinned primary admin is excluded from this flow — that "
-        "account's recovery uses OTP_DEV_CODE + env credentials."
+        "Step 1 of the two-step forgot-password flow. Unauthenticated. "
+        "Submit an email address; the server returns EVERY account that "
+        "shares it — at most one platform admin plus one entry per tenant "
+        "the email belongs to — each with display fields (type, label, "
+        "tenant name, role) so the frontend can render an account picker. "
+        "NO email is sent at this step.\n\n"
+        "The response also carries an opaque, short-lived (15 min), "
+        "single-use ``selectionToken``. The frontend echoes it back to "
+        "POST /v1/auth/forgot-password/send together with the "
+        "``accountRef`` value(s) the user picked; only then are reset "
+        "links emailed.\n\n"
+        "When nothing matches, ``accounts`` is empty (a selection token is "
+        "still returned so the response shape is uniform). The env-pinned "
+        "primary admin is excluded — its recovery uses OTP_DEV_CODE + env "
+        "credentials."
     ),
-    summary="Request password reset by email",
+    summary="Step 1 — look up accounts for an email",
 )
 async def forgot_password(
     data: ForgotPasswordRequest,
     request: Request,
 ):
-    """Request a password reset email."""
-    await request_password_reset(email=data.email, request=request)
-    return {"requested": True}
+    """Look up accounts that share an email (no email sent)."""
+    return await lookup_reset_accounts(email=data.email, request=request)
+
+
+@router.post("/forgot-password/send", status_code=status.HTTP_202_ACCEPTED)
+@document_response(
+    message="Reset link(s) sent for the selected account(s).",
+    status_code=status.HTTP_202_ACCEPTED,
+    success_example={"sent": 1},
+    description=(
+        "Step 2 of the two-step forgot-password flow. Unauthenticated. "
+        "Submit the ``selectionToken`` from step 1 plus the ``accountRefs`` "
+        "the user selected. The server mints a single-use reset link per "
+        "chosen account and emails it (HTML template ``password_reset`` — "
+        "a button that opens the frontend reset page at "
+        "``{APP_BASE_URL}/reset-password?token=…``; no raw token is shown "
+        "to the user).\n\n"
+        "Refs that were not part of the original selection are ignored. "
+        "The selection is single-use and expires 15 minutes after step 1, "
+        "so a stale or replayed token returns 400. The actual reset is "
+        "completed by POST /v1/auth/reset-password."
+    ),
+    summary="Step 2 — send reset link(s) for selected account(s)",
+    response_codes={
+        400: "Invalid, expired, or already-used selection token",
+    },
+)
+async def forgot_password_send(
+    data: ForgotPasswordSendRequest,
+    request: Request,
+):
+    """Email reset link(s) for the account(s) the user selected."""
+    return await send_reset_for_selection(
+        selection_token=data.selection_token,
+        account_refs=data.account_refs,
+        request=request,
+    )
 
 
 @router.post("/reset-password")

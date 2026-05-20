@@ -223,6 +223,11 @@ class TestTenantService:
 class TestSystemUserService:
     """Test suite for system user service layer."""
 
+    @patch(
+        "services.system_user_service._resolve_branch_ids_for_user_assignment",
+        new_callable=AsyncMock,
+        return_value=["branch-1"],
+    )
     @patch("services.system_user_service.enforce_entity_cap", new_callable=AsyncMock)
     @patch(
         "services.system_user_service.get_system_users",
@@ -238,7 +243,14 @@ class TestSystemUserService:
     @patch("services.system_user_service.create_system_user")
     @patch("services.system_user_service.get_system_user")
     async def test_add_system_user_success(
-        self, mock_get, mock_create, mock_tokens, mock_count, mock_get_many, mock_cap
+        self,
+        mock_get,
+        mock_create,
+        mock_tokens,
+        mock_count,
+        mock_get_many,
+        mock_cap,
+        mock_resolve_branch,
     ):
         """Test adding a new system user."""
         from services.system_user_service import add_system_user
@@ -553,14 +565,23 @@ class TestSystemUserService:
 
         assert exc_info.value.status_code == 400
 
+    @patch("services.system_user_service.record_audit_event", new_callable=AsyncMock)
+    @patch("services.system_user_service.get_system_user", new_callable=AsyncMock)
     @patch("services.system_user_service.update_system_user")
-    async def test_update_system_user_success(self, mock_update):
+    async def test_update_system_user_success(self, mock_update, mock_get, mock_audit):
         """Test updating a system user."""
         from services.system_user_service import update_system_user_by_id
 
         tenant_id = str(ObjectId())
         user_id = str(ObjectId())
         update_data = SystemUserUpdate(full_name="John Updated")
+        existing_user = SystemUserOut(
+            id=user_id,
+            tenant_id=tenant_id,
+            full_name="John Original",
+            email="john@acme.com",
+            role=SystemUserRole.RECEPTIONIST,
+        )
         updated_user = SystemUserOut(
             id=user_id,
             tenant_id=tenant_id,
@@ -569,6 +590,7 @@ class TestSystemUserService:
             role=SystemUserRole.RECEPTIONIST,
         )
 
+        mock_get.return_value = existing_user
         mock_update.return_value = updated_user
 
         result = await update_system_user_by_id(user_id, tenant_id, update_data)
@@ -614,6 +636,19 @@ class TestSystemUserService:
 class TestAppointmentService:
     """Test suite for appointment service layer."""
 
+    @patch(
+        "services.host_service.resolve_host_identity",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    @patch(
+        "services.appointment_service.enforce_feature_enabled",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "services.appointment_service._validate_tenant_form_data_for_appointment",
+        new_callable=AsyncMock,
+    )
     @patch("services.appointment_service.enforce_entity_cap", new_callable=AsyncMock)
     @patch(
         "services.appointment_service.count_appointments",
@@ -621,7 +656,15 @@ class TestAppointmentService:
         return_value=0,
     )
     @patch("services.appointment_service.create_appointment")
-    async def test_add_appointment_success(self, mock_create, mock_count, mock_cap):
+    async def test_add_appointment_success(
+        self,
+        mock_create,
+        mock_count,
+        mock_cap,
+        mock_validate_form,
+        mock_feature,
+        mock_resolve_host,
+    ):
         """Test adding a new appointment."""
         from services.appointment_service import add_appointment
 
@@ -942,8 +985,15 @@ class TestVisitSessionService:
         mock_get_checkin.assert_awaited_once()
         mock_update_checkin.assert_awaited_once()
 
+    @patch(
+        "services.visit_session_service.get_badge_by_qr_value",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
     @patch("services.visit_session_service.verify_badge_token")
-    async def test_check_out_visitor_invalid_badge_token(self, mock_verify):
+    async def test_check_out_visitor_invalid_badge_token(
+        self, mock_verify, mock_get_badge
+    ):
         """Test check out with invalid badge token raises 400."""
         from services.visit_session_service import check_out_visitor
 
@@ -1175,12 +1225,22 @@ class TestVisitSessionService:
 class TestBootstrapTenantService:
     """Test suite for the bootstrap_tenant service function."""
 
+    @patch(
+        "services.branch_service.ensure_default_branch",
+        new_callable=AsyncMock,
+        return_value=MagicMock(id="branch-1"),
+    )
     @patch("services.system_user_service.add_system_user", new_callable=AsyncMock)
     @patch("repositories.system_user_repo.get_system_user", new_callable=AsyncMock)
     @patch("services.tenant_service.create_tenant", new_callable=AsyncMock)
     @patch("services.tenant_service.get_tenant", new_callable=AsyncMock)
     async def test_bootstrap_success(
-        self, mock_get_tenant, mock_create_tenant, mock_get_su, mock_add_su
+        self,
+        mock_get_tenant,
+        mock_create_tenant,
+        mock_get_su,
+        mock_add_su,
+        mock_ensure_branch,
     ):
         """Test successful bootstrap creates tenant + super_admin."""
         from services.tenant_service import bootstrap_tenant
@@ -1286,6 +1346,11 @@ class TestBootstrapTenantService:
         assert exc_info.value.status_code == 409
         assert "super_admin" in exc_info.value.detail.lower()
 
+    @patch(
+        "services.branch_service.ensure_default_branch",
+        new_callable=AsyncMock,
+        return_value=MagicMock(id="branch-1"),
+    )
     @patch("services.tenant_service.delete_tenant", new_callable=AsyncMock)
     @patch("services.system_user_service.add_system_user", new_callable=AsyncMock)
     @patch("repositories.system_user_repo.get_system_user", new_callable=AsyncMock)
@@ -1298,6 +1363,7 @@ class TestBootstrapTenantService:
         mock_get_su,
         mock_add_su,
         mock_delete_tenant,
+        mock_ensure_branch,
     ):
         """Test tenant is deleted if super_admin creation fails."""
         from services.tenant_service import bootstrap_tenant
@@ -1328,3 +1394,136 @@ class TestBootstrapTenantService:
         assert exc_info.value.status_code == 409
         # Verify the tenant rollback was attempted
         mock_delete_tenant.assert_called_once()
+
+
+# ============================================================================
+# AUDIT LOG ENRICHMENT TESTS
+# ============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestAuditLogEnrichment:
+    """Batch enrichment of audit rows with actor / tenant / resource summaries."""
+
+    async def test_enrich_audit_logs_attaches_summaries_and_batches(self):
+        from schemas.audit_log_schema import AuditLogOut
+        from schemas.summary_schema import TenantBriefSummary, UserBriefSummary
+        from services.audit_service import enrich_audit_logs
+
+        tenant_id = str(ObjectId())
+        actor_id = str(ObjectId())
+        # Two rows by the SAME actor in the SAME tenant — the batch resolvers
+        # should be called once each regardless of row count.
+        logs = [
+            AuditLogOut(
+                _id=str(ObjectId()),
+                actor_id=actor_id,
+                actor_role="super_admin",
+                action="user_location.update",
+                resource_type="user_location",
+                resource_id=str(ObjectId()),
+                tenant_id=tenant_id,
+                timestamp=1779240786,
+            ),
+            AuditLogOut(
+                _id=str(ObjectId()),
+                actor_id=actor_id,
+                actor_role="super_admin",
+                action="appointment.created",
+                resource_type="appointment",
+                resource_id=str(ObjectId()),
+                tenant_id=tenant_id,
+                timestamp=1779240900,
+            ),
+        ]
+
+        actor_summary = UserBriefSummary(
+            id=actor_id,
+            full_name="Jane Doe",
+            email="jane@acme.com",
+            role="super_admin",
+            user_type="system_user",
+        )
+        tenant_summary = TenantBriefSummary(
+            id=tenant_id, company_name="Acme Corp", is_active=True
+        )
+
+        with (
+            patch(
+                "services.summary_resolver.resolve_user_summaries_batch",
+                new_callable=AsyncMock,
+                return_value={actor_id: actor_summary},
+            ) as mock_actors,
+            patch(
+                "services.summary_resolver.resolve_tenant_summaries_batch",
+                new_callable=AsyncMock,
+                return_value={tenant_id: tenant_summary},
+            ) as mock_tenants,
+            patch(
+                "services.audit_service._resolve_resource_summary",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            enriched = await enrich_audit_logs(logs)
+
+        # One batch query per collection, not one per row.
+        mock_actors.assert_awaited_once()
+        mock_tenants.assert_awaited_once()
+        assert len(enriched) == 2
+        assert enriched[0].actor_summary is not None
+        assert enriched[0].actor_summary.full_name == "Jane Doe"
+        assert enriched[0].actor_summary.email == "jane@acme.com"
+        assert enriched[0].tenant_summary is not None
+        assert enriched[0].tenant_summary.company_name == "Acme Corp"
+
+    async def test_enrich_audit_logs_deleted_actor_fallback(self):
+        from schemas.audit_log_schema import AuditLogOut
+        from services.audit_service import enrich_audit_logs
+
+        actor_id = str(ObjectId())
+        logs = [
+            AuditLogOut(
+                _id=str(ObjectId()),
+                actor_id=actor_id,
+                actor_role="dpo",
+                action="incident.deleted",
+                resource_type="incident",
+                resource_id=str(ObjectId()),
+                tenant_id=str(ObjectId()),
+                timestamp=1779240786,
+            )
+        ]
+
+        with (
+            patch(
+                "services.summary_resolver.resolve_user_summaries_batch",
+                new_callable=AsyncMock,
+                return_value={},  # actor not found — deleted
+            ),
+            patch(
+                "services.summary_resolver.resolve_tenant_summaries_batch",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+            patch(
+                "services.audit_service._resolve_resource_summary",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            enriched = await enrich_audit_logs(logs)
+
+        assert len(enriched) == 1
+        summary = enriched[0].actor_summary
+        assert summary is not None
+        assert summary.id == actor_id
+        assert summary.role == "dpo"
+        assert summary.user_type == "deleted"
+        assert summary.full_name is None
+
+    async def test_enrich_audit_logs_empty(self):
+        from services.audit_service import enrich_audit_logs
+
+        assert await enrich_audit_logs([]) == []

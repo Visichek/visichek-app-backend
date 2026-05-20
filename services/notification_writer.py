@@ -23,6 +23,7 @@ from services.notification_service import (
     remove_notification,
     update_user_notification_preferences,
 )
+from services.notification_stream_service import publish_notification_changed
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ async def _notification_mark_read(
     result = await mark_notification_read(
         notification_id=resource_id, user_id=user_id, user_type=user_type
     )
+    await publish_notification_changed(user_id=user_id, user_type=user_type)
     return {"id": result.id, "read": result.read}
 
 
@@ -46,6 +48,7 @@ async def _notification_mark_all_read(
     user_id = data.get("user_id", "") or resource_id
     user_type = data.get("user_type", "") or "system_user"
     count = await mark_all_notifications_read(user_id=user_id, user_type=user_type)
+    await publish_notification_changed(user_id=user_id, user_type=user_type)
     return {"user_id": user_id, "marked_count": count}
 
 
@@ -58,6 +61,7 @@ async def _notification_delete(
     await remove_notification(
         notification_id=resource_id, user_id=user_id, user_type=user_type
     )
+    await publish_notification_changed(user_id=user_id, user_type=user_type)
     return {"id": resource_id, "deleted": True}
 
 

@@ -11,6 +11,7 @@ from core.background_tasks import fire_and_forget
 from core.database import db
 from repositories.audit_log_repo import get_audit_logs
 from schemas.audit_log_schema import AuditLogOut, AuditLogWithSummaryOut
+from schemas.summary_schema import UserBriefSummary
 
 logger = logging.getLogger(__name__)
 
@@ -164,22 +165,63 @@ def _user_type_from_role(actor_role: Optional[str]) -> Optional[str]:
     return "system_user"
 
 
-async def _enrich_audit_log(log: AuditLogOut) -> AuditLogWithSummaryOut:
-    """Attach actor / tenant / resource summaries so the frontend never
-    has to round-trip a second request to render an audit row."""
-    from services.summary_resolver import resolve_tenant_summary, resolve_user_summary
+async def enrich_audit_logs(
+    logs: List[AuditLogOut],
+) -> List[AuditLogWithSummaryOut]:
+    """Attach actor / tenant / resource summaries to a page of audit logs.
 
-    actor_user_type = _user_type_from_role(log.actor_role)
-    tenant_summary, actor_summary, resource_summary = await asyncio.gather(
-        resolve_tenant_summary(log.tenant_id),
-        resolve_user_summary(log.actor_id, user_type=actor_user_type),
-        _resolve_resource_summary(log.resource_type, log.resource_id),
+    Actor and tenant summaries are batch-resolved across the whole page (one
+    ``$in`` query per collection) so a 25-row page that points at a handful of
+    distinct actors costs a handful of lookups, not 25. Resource summaries
+    stay per-row because audit resources are polymorphic and typically
+    distinct per row; they fan out concurrently.
+
+    A deleted/missing actor yields a minimal ``{id, role, user_type:"deleted"}``
+    summary rather than ``None`` so the frontend can still render the role
+    instead of falling all the way back to the bare ObjectId.
+    """
+    if not logs:
+        return []
+
+    from services.summary_resolver import (
+        resolve_tenant_summaries_batch,
+        resolve_user_summaries_batch,
     )
-    data = log.model_dump(by_alias=False)
-    data["tenant_summary"] = tenant_summary
-    data["actor_summary"] = actor_summary
-    data["resource_summary"] = resource_summary
-    return AuditLogWithSummaryOut(**data)
+
+    actor_types: Dict[str, Optional[str]] = {}
+    for log in logs:
+        if log.actor_id:
+            actor_types[log.actor_id] = _user_type_from_role(log.actor_role)
+    tenant_ids = [log.tenant_id for log in logs if log.tenant_id]
+
+    actor_map, tenant_map, resource_summaries = await asyncio.gather(
+        resolve_user_summaries_batch(actor_types),
+        resolve_tenant_summaries_batch(tenant_ids),
+        asyncio.gather(
+            *[
+                _resolve_resource_summary(log.resource_type, log.resource_id)
+                for log in logs
+            ]
+        ),
+    )
+
+    enriched: List[AuditLogWithSummaryOut] = []
+    for log, resource_summary in zip(logs, resource_summaries):
+        actor_summary = actor_map.get(log.actor_id) if log.actor_id else None
+        if actor_summary is None and log.actor_id:
+            actor_summary = UserBriefSummary(
+                id=log.actor_id,
+                role=log.actor_role,
+                user_type="deleted",
+            )
+        data = log.model_dump(by_alias=False)
+        data["tenant_summary"] = (
+            tenant_map.get(log.tenant_id) if log.tenant_id else None
+        )
+        data["actor_summary"] = actor_summary
+        data["resource_summary"] = resource_summary
+        enriched.append(AuditLogWithSummaryOut(**data))
+    return enriched
 
 
 async def retrieve_audit_logs_with_summary(
@@ -189,6 +231,4 @@ async def retrieve_audit_logs_with_summary(
 ) -> List[AuditLogWithSummaryOut]:
     """Retrieve audit logs with actor + tenant + resource summaries embedded."""
     logs = await get_audit_logs(filter_dict, start=start, stop=stop)
-    if not logs:
-        return []
-    return list(await asyncio.gather(*[_enrich_audit_log(log) for log in logs]))
+    return await enrich_audit_logs(logs)

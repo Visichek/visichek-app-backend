@@ -304,53 +304,50 @@ class TestRenewalService:
         """Test trial conversion when payment fails."""
         with patch(
             "services.renewal_service.update_subscription", new_callable=AsyncMock
-        ) as mock_update_sub:
-            with patch(
-                "services.renewal_service.get_plan", new_callable=AsyncMock
-            ) as mock_get_plan:
-                with patch(
-                    "services.renewal_service.PaymentManager"
-                ) as mock_payment_mgr:
-                    now = int(time.time())
-                    trial_sub = _make_subscription_out(
-                        **{
-                            "_id": "507f1f77bcf86cd799439116",
-                            "status": SubscriptionStatus.TRIALING.value,
-                            "trial_ends_at": now - 3600,
-                        }
-                    )
-                    mock_get_subs.return_value = [trial_sub]
+        ) as mock_update_sub, patch(
+            "services.renewal_service.get_plan", new_callable=AsyncMock
+        ) as mock_get_plan, patch(
+            "services.renewal_service._get_provider_for_tenant",
+            new_callable=AsyncMock,
+            return_value="stripe",
+        ), patch(
+            "services.subscription_service.transition_tenant_to_free_plan",
+            new_callable=AsyncMock,
+        ) as mock_transition, patch(
+            "services.renewal_service.PaymentManager"
+        ) as mock_payment_mgr:
+            now = int(time.time())
+            trial_sub = _make_subscription_out(
+                **{
+                    "_id": "507f1f77bcf86cd799439116",
+                    "status": SubscriptionStatus.TRIALING.value,
+                    "trial_ends_at": now - 3600,
+                }
+            )
+            mock_get_subs.return_value = [trial_sub]
 
-                    plan = _make_plan_out()
-                    mock_get_plan.return_value = plan
+            plan = _make_plan_out()
+            mock_get_plan.return_value = plan
 
-                    # Payment fails
-                    mock_provider = MagicMock()
-                    mock_provider.create_intent.side_effect = Exception(
-                        "Payment failed"
-                    )
-                    mock_payment_mgr_instance = MagicMock()
-                    mock_payment_mgr_instance.get_provider.return_value = mock_provider
-                    mock_payment_mgr.get_instance.return_value = (
-                        mock_payment_mgr_instance
-                    )
+            # Payment fails
+            mock_provider = MagicMock()
+            mock_provider.create_intent.side_effect = Exception("Payment failed")
+            mock_payment_mgr_instance = MagicMock()
+            mock_payment_mgr_instance.get_provider.return_value = mock_provider
+            mock_payment_mgr.get_instance.return_value = mock_payment_mgr_instance
 
-                    updated_sub = _make_subscription_out(
-                        **{
-                            "_id": "507f1f77bcf86cd799439116",
-                            "status": SubscriptionStatus.PAST_DUE.value,
-                        }
-                    )
-                    mock_update_sub.return_value = updated_sub
+            from services.renewal_service import convert_expiring_trials
 
-                    from services.renewal_service import convert_expiring_trials
+            result = await convert_expiring_trials()
 
-                    result = await convert_expiring_trials()
-
-                    assert result["converted_active"] == 0
-                    assert result["converted_past_due"] == 1
-                    # Should update to PAST_DUE
-                    assert mock_update_sub.called
+            assert result["converted_active"] == 0
+            # A failed trial payment now drops the tenant to Free (counted under
+            # converted_past_due) instead of marking the subscription PAST_DUE.
+            assert result["converted_past_due"] == 1
+            mock_transition.assert_awaited_once()
+            assert mock_transition.await_args.kwargs["tenant_id"] == trial_sub.tenant_id
+            # The PAST_DUE update path is gone — no status flip on payment failure.
+            assert not mock_update_sub.called
 
     @patch("services.renewal_service.PaymentManager")
     async def test_attempt_renewal_payment_manager_not_available(

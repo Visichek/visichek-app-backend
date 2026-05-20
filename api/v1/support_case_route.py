@@ -37,6 +37,10 @@ from schemas.support_case_schema import (
 )
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
+from services.notification_service import (
+    extract_resource_ids,
+    schedule_resource_read_receipt,
+)
 from services.support_case_service import (
     MAX_OPEN_CASES_PER_TENANT,
     retrieve_messages_for_case,
@@ -245,7 +249,7 @@ async def list_my_support_cases(
         )
         items = cached if isinstance(cached, list) else []
         limited = items[: SUPPORT_CASES_TENANT_LIST_SPEC.default_limit]
-        return {
+        result = {
             "items": limited,
             "meta": {
                 "total": len(items),
@@ -254,13 +258,27 @@ async def list_my_support_cases(
                 "hasMore": len(items) > SUPPORT_CASES_TENANT_LIST_SPEC.default_limit,
             },
         }
+        _auto_read_support_cases(principal, result)
+        return result
     query = parse_list_query(request, SUPPORT_CASES_TENANT_LIST_SPEC)
-    return await run_list(
+    result = await run_list(
         collection=db.support_cases,
         query=query,
         base_filter={"tenant_id": tenant_id},
         map_doc=_map_sc_doc,
         facet_runner=_sc_status_facet,
+    )
+    _auto_read_support_cases(principal, result)
+    return result
+
+
+def _auto_read_support_cases(principal: AuthPrincipal, result: Any) -> None:
+    """Auto-mark support-case notifications read for ids in this read."""
+    schedule_resource_read_receipt(
+        user_id=principal.user_id,
+        user_role=principal.role,
+        resource_type="support_case",
+        resource_ids=extract_resource_ids(result),
     )
 
 
@@ -277,11 +295,18 @@ async def get_support_case(
     case_id: str,
     principal: AuthPrincipal = Depends(_tenant_roles),
 ) -> Any:
-    return await retrieve_support_case_by_id(
+    result = await retrieve_support_case_by_id(
         case_id,
         tenant_id=principal.tenant_id,
         requester_role=principal.role,
     )
+    schedule_resource_read_receipt(
+        user_id=principal.user_id,
+        user_role=principal.role,
+        resource_type="support_case",
+        resource_ids=[case_id],
+    )
+    return result
 
 
 @router.get("/{case_id}/messages")

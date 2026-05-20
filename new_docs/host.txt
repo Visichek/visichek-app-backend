@@ -1,0 +1,295 @@
+================================================================================
+HOSTS — Appointment Hosts Feature
+================================================================================
+
+Status:   Shipped
+Scope:    New tenant-scoped resource (`hosts` collection) + full CRUD surface
+Layers:   schema -> repository -> service -> writer -> route (queued-write arch)
+Roles:    super_admin (full), dept_admin (create/list/get/update)
+
+
+--------------------------------------------------------------------------------
+1. PURPOSE
+--------------------------------------------------------------------------------
+
+A "host" is a person a visitor can be scheduled to see / be received by within a
+tenant's organisation (e.g. the employee an appointment is booked with, the
+person who signs a visitor in).
+
+Before this feature there was no first-class "host" entity — appointments
+referenced a tenant `system_user` directly via `host_id`. That only works when
+the host is also a login-capable system user. In practice many hosts are NOT
+system users: contractors, executives, people who never log into VisiChek but
+who still receive visitors.
+
+This feature introduces a dedicated `hosts` collection so a tenant can manage a
+roster of hosts independently of their system-user accounts. A host is either:
+
+  * Backed by a system user  — `source_system_user_id` is set. The host record
+    mirrors that user but keeps its own snapshot of name/phone/email/etc.
+  * A dedicated host          — `source_system_user_id` is null. The host exists
+    only as a host record (no login, no system-user account).
+
+Either way, the host's contact details (name, phone, email, picture, signature)
+are stored as a snapshot ON the host record. Reads never need to follow the
+link back to the system user — this matches the project's precompute / embedded
+summary philosophy (no follow-up request needed to render a label).
+
+
+--------------------------------------------------------------------------------
+2. DATA MODEL
+--------------------------------------------------------------------------------
+
+Collection:  hosts
+
+Field                       Required  Updatable  Notes
+--------------------------  --------  ---------  ----------------------------------
+tenant_id                   yes (sys) n/a        Set by the route from the auth
+                                                 token; never accepted from client.
+name                        yes       yes        Host display name.
+phone                       yes       yes        Host phone number.
+email                       no        yes        Optional contact email.
+department_id               yes       yes        FK -> `departments` collection.
+                                                 Validated to belong to the tenant.
+picture_image_url           no        yes        Optional host portrait/photo URL.
+signature_image_url         no        yes        Optional host signature image URL.
+source_system_user_id       no        no         FK -> `system_users`. Set when the
+                                                 host mirrors a system user; null for
+                                                 dedicated hosts. Not updatable.
+is_active                   no        yes        Soft enable/disable (default true).
+date_created / last_updated auto      auto       Unix epoch seconds.
+
+Schema classes (schemas/host_schema.py):
+  * HostBase            — shared fields.
+  * HostCreate          — client create payload. tenant_id defaulted to "" (the
+                          route injects the real value). @model_validator enforces
+                          name / phone / department_id are present.
+  * HostUpdate          — partial update; ALL fields Optional. The updatable set
+                          is name, phone, email, department_id, picture_image_url,
+                          signature_image_url, is_active.
+  * HostOut             — response model; converts ObjectId _id -> str.
+  * HostWithSummaryOut  — HostOut + embedded tenant_summary, department_summary,
+                          source_system_user_summary.
+
+
+--------------------------------------------------------------------------------
+3. ENDPOINTS
+--------------------------------------------------------------------------------
+
+All under prefix /v1/hosts, tag "Hosts". Auth: tenant system-user token.
+
+METHOD  PATH                      ROLES                    BEHAVIOUR
+------  ------------------------  -----------------------  -----------------------
+POST    /v1/hosts                 super_admin, dept_admin  202 queued -> host.create
+GET     /v1/hosts                 super_admin, dept_admin  List (precompute cache /
+                                                           run_list for filtered)
+GET     /v1/hosts/{host_id}       super_admin, dept_admin  Single host (+summaries),
+                                                           per-entity read cache
+PATCH   /v1/hosts/{host_id}       super_admin, dept_admin  202 queued -> host.update
+DELETE  /v1/hosts/{host_id}       super_admin              202 queued -> host.delete
+POST    /v1/hosts/bulk/delete     super_admin              202 queued (idempotent)
+                                                           -> host.bulk_delete
+
+Queued write responses (POST/PATCH/DELETE/bulk) return:
+  202 Accepted
+  { "id": "<preassigned-or-target-id>", "jobId": "<uuid>", "status": "queued" }
+Clients poll GET /v1/jobs/{job_id} for the real result if needed.
+
+LIST contract (core/list_params + core/list_runner):
+  Sortable fields:  name, date_created, last_updated   (default sort: name asc)
+  Search fields:    name, email, phone                 (?q=...)
+  Filters:          departmentId -> department_id
+                    isActive     -> is_active
+  Default unfiltered first page is served from the per-tenant precompute cache
+  (resource key "hosts.list"); any q / sort / filter / pagination beyond page 1
+  falls through to run_list against db.hosts.
+
+
+--------------------------------------------------------------------------------
+4. REQUEST / RESPONSE EXAMPLES
+--------------------------------------------------------------------------------
+
+Create a dedicated host:
+
+  POST /v1/hosts
+  Authorization: Bearer <super_admin or dept_admin token>
+  {
+    "name": "Jane Host",
+    "phone": "+2348012345678",
+    "email": "jane@acme.com",
+    "departmentId": "64f1a2b3c4d5e6f7a8b9c0d1",
+    "pictureImageUrl": "https://.../jane.jpg",
+    "signatureImageUrl": "https://.../jane-sig.png"
+  }
+  -> 202
+  { "success": true, "message": "Host creation queued",
+    "data": { "id": "...", "jobId": "...", "status": "queued" } }
+
+Create a host that mirrors a system user:
+
+  POST /v1/hosts
+  { "name": "Sam Admin", "phone": "+234...", "departmentId": "...",
+    "sourceSystemUserId": "<system_user _id>" }
+
+Note: request/response bodies are camelCase on the wire (CaseConversionMiddleware
+converts to/from snake_case internally). department_id <-> departmentId, etc.
+
+GET /v1/hosts/{id} returns embedded summaries:
+
+  { "id": "...", "name": "Jane Host", "phone": "...", "departmentId": "...",
+    "departmentSummary": { "id": "...", "name": "Human Resources", "code": "HR-001" },
+    "tenantSummary":     { "id": "...", "companyName": "Acme" },
+    "sourceSystemUserSummary": null }
+
+
+--------------------------------------------------------------------------------
+5. VALIDATION & BUSINESS RULES
+--------------------------------------------------------------------------------
+
+Enforced synchronously at the route (so the client gets a 4xx immediately rather
+than a 202 followed by a failed-job notification), and again inside the service
+layer (defence in depth, since the actual write runs on a worker):
+
+  * name and phone must be non-empty.
+  * department_id must reference a department that belongs to the calling tenant
+    (else 404 "Department not found for this tenant").
+  * source_system_user_id (when provided) must reference a system user in the
+    calling tenant (else 404).
+  * Duplicate guard: a host name must be unique within a tenant (case-insensitive,
+    trimmed) — else 409. On update the host excludes itself from the check.
+
+No plan-level cap is enforced for hosts (plans do not define a max_hosts cap).
+The collection IS registered in PATH_TO_COLLECTION so per-request usage tracking
+applies like other tenant resources.
+
+
+--------------------------------------------------------------------------------
+6. ARCHITECTURE / FILE MAP
+--------------------------------------------------------------------------------
+
+schemas/host_schema.py
+    HostBase / HostCreate / HostUpdate / HostOut / HostWithSummaryOut.
+
+repositories/host_repo.py
+    Pure DB access on collection "hosts": create_host (preassigned_id aware),
+    get_host, get_hosts, count_hosts, update_host (find_one_and_update),
+    delete_host. Returns HostOut objects, never raw dicts.
+
+services/host_service.py
+    Business logic + validation:
+      validate_host_create / validate_host_update  (route-level sync gates)
+      add_host, retrieve_host_by_id, retrieve_hosts, count_tenant_hosts
+      retrieve_hosts_with_summary / retrieve_host_by_id_with_summary  (enrichment)
+      update_host_by_id_with_diff  (returns before/after/changes for audit)
+      update_host_by_id, remove_host
+    Summaries (tenant / department / source system user) are resolved
+    concurrently via asyncio.gather in _enrich_host.
+
+services/host_writer.py
+    Queued write handlers dispatched by the db.write worker:
+      @write_handler("host.create")       invalidates ["hosts.list"]
+      @write_handler("host.update")       invalidates ["hosts.list"]
+      @write_handler("host.delete")       invalidates ["hosts.list"]
+      @write_handler("host.bulk_delete")  invalidates ["hosts.list"]
+      @register_precompute("hosts.list", scope=TENANT)  — builds the cached
+                                                          first page per tenant.
+    Every handler pops _actor_id/_actor_role/_request_id and calls
+    record_audit_event (host.created / host.updated / host.deleted). The update
+    handler includes a field-level `changes` diff in the audit details.
+
+api/v1/host_route.py
+    HTTP layer. Defines HOSTS_LIST_SPEC, the precompute-vs-run_list branch on
+    list, get_or_compute_entity for single GET, and enqueue_write / bulk for
+    mutations.
+
+schemas/summary_schema.py
+    HostBriefSummary added (id, name, phone, email, department_id, is_active) so
+    other resources can embed a host snapshot if/when they reference host_id.
+
+services/summary_resolver.py
+    resolve_host_summary(host_id) — best-effort, returns None on missing/invalid.
+
+
+--------------------------------------------------------------------------------
+7. WIRING / REGISTRATION (the easy-to-forget bits)
+--------------------------------------------------------------------------------
+
+core/queue/registrations.py
+    `from services import host_writer as _host_writer`  — REQUIRED so both the
+    web process and celery workers register the host.* write handlers and the
+    hosts.list precompute loader. Missing this = "Writer 'host.create' not
+    registered" at dispatch time.
+
+main.py
+    Imports v1_host_route_router and mounts it with prefix "/v1" inside the
+    auto-routes block (placed right after the appointment route).
+
+config/role_permissions.py
+    SUPER_ADMIN_PERMISSIONS: create_host, list_hosts, get_host, update_host,
+                             delete_host.
+    DEPT_ADMIN_PERMISSIONS:  create_host, list_hosts, get_host, update_host.
+    (Routes use verify_system_user_token role checks; these keys keep the
+    settings manifest / nav and the documented permission model consistent.)
+
+core/indexes.py
+    hosts: (tenant_id, name)
+           (tenant_id, department_id)
+           (tenant_id, source_system_user_id)  sparse
+
+core/plan_enforcement.py
+    PATH_TO_COLLECTION: "hosts" -> "hosts"  (usage / quota tracking).
+
+
+--------------------------------------------------------------------------------
+8. CACHING & CONSISTENCY
+--------------------------------------------------------------------------------
+
+  * List page 1 (unfiltered): precompute cache key
+    `precomputed:tenant:{tenant_id}:hosts.list`, TTL 60s. Refreshed on every
+    host write (writers enqueue precompute.tenant_resource for "hosts.list").
+  * Single GET: per-entity read-through cache key `entity:host:{id}`, TTL 60s.
+    Auto-invalidated by the write dispatcher because mutations use
+    resource_type="host".
+  * Writers also declare invalidates=["hosts.list"] so the list cache is dropped
+    on every create/update/delete.
+
+
+--------------------------------------------------------------------------------
+9. AUDIT TRAIL
+--------------------------------------------------------------------------------
+
+Every host mutation emits a record_audit_event from the writer (NOT the route —
+the mutation runs on a worker):
+
+  host.created  details: { name, department_id, source_system_user_id }
+  host.updated  details: { changes: { field: {before, after}, ... } }
+  host.deleted  details: { name, department_id, source_system_user_id }
+
+resource_type="host", resource_id=<host id>, tenant_id, actor_id/actor_role/
+request_id threaded through the writer payload via _actor_* keys.
+
+
+--------------------------------------------------------------------------------
+10. TESTS
+--------------------------------------------------------------------------------
+
+tests/unit/test_host_routes.py — patches api.v1.host_route.enqueue_write /
+validate_* / retrieve_* and asserts:
+  * create  -> 202, writer_key host.create
+  * list    -> 200
+  * get     -> 200
+  * update  -> 202, writer_key host.update, resource_id echoed
+  * delete  -> 202, writer_key host.delete
+
+
+--------------------------------------------------------------------------------
+11. NOT DONE / FOLLOW-UPS
+--------------------------------------------------------------------------------
+
+  * Appointments were NOT rewired. Appointment.host_id still references a
+    system_user directly (resolve_system_user_summary). If appointments should
+    select from this new hosts roster instead, that is a separate change to the
+    appointment schema / form flow / host_picker field — not included here.
+  * No plan cap for hosts (intentional — plans define no max_hosts).
+  * No bulk-create / bulk-update endpoints (only bulk delete), matching the
+    department reference slice.

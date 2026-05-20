@@ -118,6 +118,7 @@ async def check_in_visitor(
     # 2B. Handle appointment linkage if provided
     appointment_id = request.appointment_id
     appointment_host_id = None
+    appointment_host_name = None
     appointment_department_id = None
 
     if request.appointment_id:
@@ -148,6 +149,7 @@ async def check_in_visitor(
         # Use appointment's host_id and department_id if not provided in request
         if not request.host_id and appointment.host_id:
             appointment_host_id = appointment.host_id
+            appointment_host_name = appointment.host_name_snapshot
         if not request.department_id and appointment.department_id:
             appointment_department_id = appointment.department_id
 
@@ -165,14 +167,26 @@ async def check_in_visitor(
     if not department:
         raise HTTPException(status_code=404, detail="Department not found")
 
-    # Use appointment's host if request didn't provide one
+    # Use appointment's host if request didn't provide one. host_id may
+    # reference the hosts collection (modern) or a system_user (legacy /
+    # request-supplied), so resolve via the shared host-identity helper
+    # rather than assuming it's a login user — a dedicated host has no
+    # system_user row and must not 404 the check-in.
     host_id = request.host_id or appointment_host_id
     host_name = None
     if host_id and ObjectId.is_valid(host_id):
-        host = await get_system_user({"_id": ObjectId(host_id), "tenant_id": tenant_id})
-        if not host:
+        from services.host_service import resolve_host_identity
+
+        identity = await resolve_host_identity(tenant_id, host_id)
+        if identity is not None:
+            host_name = identity[0]
+        elif request.host_id:
+            # Caller explicitly chose this host — it must resolve.
             raise HTTPException(status_code=404, detail="Host not found in this tenant")
-        host_name = host.full_name if host else None
+        else:
+            # Host came from the appointment; fall back to its name snapshot
+            # so a dedicated (or since-removed) host still labels the session.
+            host_name = appointment_host_name
 
     receptionist = await get_system_user({"_id": ObjectId(receptionist_id)})
     receptionist_name = receptionist.full_name if receptionist else None
@@ -1054,9 +1068,9 @@ def _checkin_to_checkout_item(
 async def _appointment_to_checkout_item(appt: Any) -> AwaitingCheckoutItem:
     import asyncio
     from services.summary_resolver import (
+        resolve_appointment_host_summary,
         resolve_appointment_summary,
         resolve_department_summary,
-        resolve_system_user_summary,
         resolve_tenant_summary,
         resolve_visitor_profile_summary,
     )
@@ -1064,7 +1078,7 @@ async def _appointment_to_checkout_item(appt: Any) -> AwaitingCheckoutItem:
     tenant_s, dept_s, host_s, visitor_s, appt_s = await asyncio.gather(
         resolve_tenant_summary(appt.tenant_id),
         resolve_department_summary(appt.department_id),
-        resolve_system_user_summary(appt.host_id),
+        resolve_appointment_host_summary(appt.host_id),
         resolve_visitor_profile_summary(appt.visitor_profile_id),
         resolve_appointment_summary(appt.id),
     )
@@ -1230,6 +1244,7 @@ async def retrieve_visit_sessions(
 async def _enrich_visit_session(session: VisitSessionOut) -> VisitSessionWithSummaryOut:
     import asyncio
     from services.summary_resolver import (
+        resolve_appointment_host_summary,
         resolve_tenant_summary,
         resolve_department_summary,
         resolve_visitor_profile_summary,
@@ -1251,7 +1266,7 @@ async def _enrich_visit_session(session: VisitSessionOut) -> VisitSessionWithSum
         resolve_tenant_summary(session.tenant_id),
         resolve_department_summary(session.department_id),
         resolve_visitor_profile_summary(session.visitor_profile_id),
-        resolve_system_user_summary(session.host_id),
+        resolve_appointment_host_summary(session.host_id),
         resolve_system_user_summary(session.receptionist_id),
         resolve_appointment_summary(session.appointment_id),
         resolve_system_user_summary(session.verified_by),

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import StreamingResponse
 
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
@@ -12,7 +13,7 @@ from schemas.notification_schema import (
 from security.auth import verify_any_token
 from security.principal import AuthPrincipal
 from services.notification_service import (
-    get_notification_bucket_summary,
+    compute_notification_state,
     get_unread_count,
     retrieve_notifications_with_summary,
     retrieve_or_create_notification_preferences,
@@ -84,29 +85,84 @@ async def get_notification_unread_count(
 @document_response(
     message="Notification summary fetched successfully",
     description=(
-        "Per-bucket unread counts for the sidebar badge layer. Drives the "
-        "frontend `useNotificationBuckets` hook so the visitor / onboarding "
-        "queue / support cases / etc. rows render a numeric badge and the "
-        "collapsed rail shows a pulsing red dot when any child has unread "
-        "work.\n\n"
-        "Response shape: `{ counts: { <bucket>: number } }`. Buckets with "
-        "zero unread items are omitted to keep the payload small. Known "
-        "bucket names: `visitors`, `appointments`, `onboarding_queue`, "
-        "`support_cases`, `jobs`, `incidents`, `content`, `billing`, "
-        "`plans`, `pricing` — kept in sync with `_BUCKET_PATTERNS` in "
+        "Single source of truth for the bell badge AND the sidebar bucket "
+        "badges, so they can never diverge. Drives the frontend "
+        "`useNotificationBuckets` hook so the visitor / onboarding queue / "
+        "support cases / etc. rows render a numeric badge and the collapsed "
+        "rail shows a pulsing red dot when any child has unread work.\n\n"
+        "Response shape: `{ total: number, counts: { <bucket>: number } }`.\n\n"
+        "- `total` is the user's authoritative global unread count — it "
+        "equals `GET /v1/notifications/unread-count`. It is counted "
+        "directly, NOT summed from `counts`: a notification whose link maps "
+        "to no bucket counts toward `total` but to no bucket, so `total` can "
+        "exceed the sum of `counts`.\n"
+        "- `counts` holds per-bucket unread counts; buckets with zero unread "
+        "items are omitted to keep the payload small. Known bucket names: "
+        "`visitors`, `appointments`, `onboarding_queue`, `support_cases`, "
+        "`jobs`, `incidents`, `content`, `billing`, `plans`, `pricing` — "
+        "kept in sync with `_BUCKET_PATTERNS` in "
         "services/notification_service.py and the frontend resolver."
     ),
-    success_example={"counts": {"support_cases": 3, "onboarding_queue": 1}},
-    summary="Get unread notification counts grouped by sidebar bucket",
+    success_example={"total": 4, "counts": {"support_cases": 3, "onboarding_queue": 1}},
+    summary="Get authoritative unread total + per-bucket counts",
     response_codes={401: "Unauthorized"},
 )
 async def get_notification_summary(
     principal: AuthPrincipal = Depends(verify_any_token),
 ) -> Any:
-    counts = await get_notification_bucket_summary(
+    return await compute_notification_state(
         user_id=principal.user_id, user_type=_user_type(principal)
     )
-    return {"counts": counts}
+
+
+# ─── Real-time Stream (SSE) ────────────────────────────────────────
+
+
+@router.get("/stream", include_in_schema=False)
+async def stream_notifications_endpoint(
+    request: Request,
+    principal: AuthPrincipal = Depends(verify_any_token),
+) -> StreamingResponse:
+    """Server-Sent-Events stream of real-time notification state.
+
+    Holds one long-lived ``text/event-stream`` connection per
+    authenticated user + active tenant. Notifications are server→client
+    only, so SSE (which rides plain HTTP, reuses the existing cookie auth,
+    and auto-reconnects) is the right transport — no token in the URL.
+
+    Every event carries the FULL, ABSOLUTE state ``{total, counts}`` (see
+    services/notification_stream_service.py), so a dropped / duplicated /
+    out-of-order event is harmless: the next event corrects the client.
+    The FE de-dupes notifications by id and applies state directly.
+
+    Event types:
+      - ``notification.created`` — a new notification landed; carries the
+        notification id / type / link / server-classified bucket plus the
+        recomputed absolute state.
+      - ``notification.changed`` — a read / read-all / delete happened on
+        ANY of the user's devices; carries only the absolute state.
+
+    Layered on top of polling, not a replacement: if this endpoint is
+    unavailable the FE falls back to polling ``/summary`` and still works.
+    """
+    from services.notification_stream_service import stream_notifications
+
+    generator = stream_notifications(
+        request,
+        user_id=principal.user_id,
+        user_type=_user_type(principal),
+        jwt_token=principal.jwt_token,
+    )
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Disable proxy/Nginx buffering so events flush immediately.
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ─── Mark Single as Read ──────────────────────────────────────────

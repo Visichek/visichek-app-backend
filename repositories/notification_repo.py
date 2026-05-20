@@ -74,6 +74,34 @@ async def mark_all_read(user_id: str, user_type: str) -> int:
     return result.modified_count
 
 
+async def mark_read_by_resource_ids(
+    user_id: str,
+    user_type: str,
+    resource_type: str,
+    resource_ids: List[str],
+) -> int:
+    """Mark every unread notification this user holds for any of
+    ``resource_ids`` (of the given ``resource_type``) as read.
+
+    Backs the read-receipt auto-mark: when a user reads a resource that
+    triggered a notification, the matching unread row(s) flip to read
+    without a manual mark-read call. Returns the number of rows modified.
+    """
+    if not resource_ids:
+        return 0
+    result = await db[COLLECTION].update_many(
+        {
+            "user_id": user_id,
+            "user_type": user_type,
+            "resource_type": resource_type,
+            "resource_id": {"$in": resource_ids},
+            "read": False,
+        },
+        {"$set": {"read": True}},
+    )
+    return result.modified_count
+
+
 async def delete_notification(filter_dict: dict):
     return await db[COLLECTION].delete_one(filter_dict)
 

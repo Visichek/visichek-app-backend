@@ -32,9 +32,15 @@ class TestBranchSchemas:
         with pytest.raises(ValueError, match="Branch name is required"):
             BranchCreate(tenant_id="t1", name="   ")
 
-    def test_branch_create_empty_tenant_fails(self):
-        with pytest.raises(ValueError, match="tenant_id is required"):
-            BranchCreate(tenant_id="  ", name="Lagos")
+    def test_branch_create_blank_tenant_allowed(self):
+        # tenant_id is NOT supplied by the client — the route assigns it from
+        # the authenticated super_admin's token before the writer rebuilds the
+        # model. So BranchCreate defaults tenant_id to "" and does not reject a
+        # blank/omitted value (see schemas/branch_schema.py::BranchCreate).
+        b = BranchCreate(name="Lagos")
+        assert b.tenant_id == ""
+        b2 = BranchCreate(tenant_id="  ", name="Lagos")
+        assert b2.tenant_id == "  "
 
     def test_branch_create_headquarters(self):
         b = BranchCreate(tenant_id="t1", name="Main", is_headquarters=True)

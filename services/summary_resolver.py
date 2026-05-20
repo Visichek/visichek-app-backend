@@ -16,7 +16,7 @@ enrichment is best-effort and must not break a primary response.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Iterable, Mapping, Optional
 
 from bson import ObjectId
 
@@ -25,6 +25,7 @@ from schemas.summary_schema import (
     BranchBriefSummary,
     DepartmentBriefSummary,
     DiscountBriefSummary,
+    HostBriefSummary,
     InvoiceBriefSummary,
     PlanBriefSummary,
     SubscriptionBriefSummary,
@@ -205,6 +206,117 @@ async def resolve_user_summary(
     return await resolve_admin_summary(user_id)
 
 
+# ---------------------------------------------------------------------------
+# Batch resolvers — resolve a whole page's distinct ids in one query per
+# collection instead of one query per row. Used by audit-log enrichment so a
+# 25-row page that points at a handful of distinct actors costs a handful of
+# lookups, not 25. Best-effort: never raise; unresolved ids are simply absent
+# from the returned map and the caller supplies any fallback.
+# ---------------------------------------------------------------------------
+
+
+async def resolve_tenant_summaries_batch(
+    tenant_ids: Iterable[Optional[str]],
+) -> dict[str, TenantBriefSummary]:
+    """Resolve tenant snapshots for many ids with a single ``$in`` query."""
+    out: dict[str, TenantBriefSummary] = {}
+    oids: list[ObjectId] = []
+    seen: set[str] = set()
+    for tid in tenant_ids:
+        if not tid or tid in seen:
+            continue
+        seen.add(tid)
+        oid = _to_object_id(tid)
+        if oid is not None:
+            oids.append(oid)
+    if not oids:
+        return out
+    try:
+        from core.database import db
+
+        cursor = db.tenant_companies.find({"_id": {"$in": oids}})
+        async for doc in cursor:
+            tid = str(doc.get("_id"))
+            out[tid] = TenantBriefSummary(
+                id=tid,
+                company_name=doc.get("company_name"),
+                is_active=doc.get("is_active"),
+                country_of_hosting=doc.get("country_of_hosting"),
+            )
+    except Exception:
+        return out
+    return out
+
+
+async def resolve_user_summaries_batch(
+    user_types: Mapping[str, Optional[str]],
+) -> dict[str, UserBriefSummary]:
+    """Resolve user snapshots for many ids, keyed by id.
+
+    ``user_types`` maps ``user_id -> "admin" | "system_user" | None``. Admin
+    ids hit ``admins``; everything else hits ``system_users``. Admin ids not
+    found in the batch fall back to :func:`resolve_admin_summary` individually
+    so the env-configured static super admin (which has no DB row) still
+    resolves. Best-effort: never raises.
+    """
+    out: dict[str, UserBriefSummary] = {}
+    if not user_types:
+        return out
+
+    system_oids: list[ObjectId] = []
+    admin_ids: list[str] = []
+    for uid, utype in user_types.items():
+        if not uid:
+            continue
+        if utype == "admin":
+            admin_ids.append(uid)
+        else:
+            oid = _to_object_id(uid)
+            if oid is not None:
+                system_oids.append(oid)
+
+    try:
+        from core.database import db
+
+        if system_oids:
+            cursor = db.system_users.find({"_id": {"$in": system_oids}})
+            async for doc in cursor:
+                sid = str(doc.get("_id"))
+                out[sid] = UserBriefSummary(
+                    id=sid,
+                    full_name=doc.get("full_name"),
+                    email=doc.get("email"),
+                    role=doc.get("role"),
+                    user_type="system_user",
+                )
+
+        if admin_ids:
+            admin_oids = [
+                oid for oid in (_to_object_id(a) for a in admin_ids) if oid is not None
+            ]
+            found: set[str] = set()
+            if admin_oids:
+                cursor = db.admins.find({"_id": {"$in": admin_oids}})
+                async for doc in cursor:
+                    aid = str(doc.get("_id"))
+                    found.add(aid)
+                    out[aid] = UserBriefSummary(
+                        id=aid,
+                        full_name=doc.get("full_name"),
+                        email=doc.get("email"),
+                        role="admin",
+                        user_type="admin",
+                    )
+            for aid in admin_ids:
+                if aid not in found and aid not in out:
+                    summary = await resolve_admin_summary(aid)
+                    if summary is not None:
+                        out[aid] = summary
+    except Exception:
+        return out
+    return out
+
+
 async def resolve_visitor_profile_summary(
     visitor_profile_id: Optional[str],
 ) -> Optional[VisitorProfileBriefSummary]:
@@ -271,6 +383,70 @@ async def resolve_branch_summary(
             id=str(branch.id or ""),
             name=branch.name,
             is_active=getattr(branch, "is_active", None),
+        )
+    except Exception:
+        return None
+
+
+async def resolve_host_summary(
+    host_id: Optional[str],
+) -> Optional[HostBriefSummary]:
+    oid = _to_object_id(host_id)
+    if oid is None:
+        return None
+    try:
+        from repositories.host_repo import get_host
+
+        host = await get_host({"_id": oid})
+        if not host:
+            return None
+        return HostBriefSummary(
+            id=str(host.id or ""),
+            name=host.name,
+            phone=host.phone,
+            email=host.email,
+            department_id=host.department_id,
+            is_active=host.is_active,
+        )
+    except Exception:
+        return None
+
+
+async def resolve_appointment_host_summary(
+    host_id: Optional[str],
+) -> Optional[HostBriefSummary]:
+    """Resolve an appointment/visit-session ``host_id`` to a host snapshot.
+
+    ``host_id`` may point at either the ``hosts`` collection (the modern
+    reference) or — for appointments created before the host rewire — a
+    ``system_users`` row. We try the hosts collection first, then fall back
+    to mapping a system user into the same :class:`HostBriefSummary` shape so
+    the frontend always receives ONE consistent host shape regardless of how
+    the appointment was created. Best-effort: returns ``None`` on a missing
+    or invalid id.
+    """
+    oid = _to_object_id(host_id)
+    if oid is None:
+        return None
+    # 1. Modern path — host record.
+    host_summary = await resolve_host_summary(host_id)
+    if host_summary is not None:
+        return host_summary
+    # 2. Legacy fallback — host_id is a system_user id.
+    try:
+        from repositories.system_user_repo import get_system_user
+
+        user = await get_system_user({"_id": oid})
+        if not user:
+            return None
+        return HostBriefSummary(
+            id=str(user.id or ""),
+            name=user.full_name,
+            email=user.email,
+            phone=None,
+            department_id=None,
+            picture_image_url=None,
+            is_active=None,
         )
     except Exception:
         return None

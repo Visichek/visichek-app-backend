@@ -74,6 +74,10 @@ async def test_retrieve_plans_without_public_no_status_filter():
 async def test_archive_plan_sets_is_public_false():
     """archive_plan() should set both status=archived and is_public=False."""
     with patch(
+        "services.plan_service.retrieve_plan_by_id",
+        new_callable=AsyncMock,
+        return_value=_make_plan_out(),
+    ), patch(
         "services.plan_service.update_plan",
         new_callable=AsyncMock,
         return_value=_make_plan_out(status="archived", is_public=False),

@@ -290,28 +290,38 @@ class TestDunningService:
         # For attempts=1, index=2, retry_days=7 (from [1,3,7,14])
         assert update_data.next_retry_at == now + (7 * 86400)
 
+    @patch(
+        "services.subscription_service.transition_tenant_to_free_plan",
+        new_callable=AsyncMock,
+    )
     @patch("services.dunning_service.update_subscription", new_callable=AsyncMock)
-    async def test_suspend_subscription(self, mock_update_sub):
-        """Test subscription suspension."""
+    async def test_suspend_subscription(self, mock_update_sub, mock_transition):
+        """After max dunning attempts the tenant is downgraded to Free.
+
+        Older behaviour set ``status=SUSPENDED`` which left the tenant with no
+        usable subscription (every request 402'd). The service now downgrades
+        to Free via ``transition_tenant_to_free_plan`` so core operations keep
+        working; ``update_subscription`` only stamps the final attempt time.
+        """
         now = int(time.time())
         sub = _make_subscription_out(**{"_id": "507f1f77bcf86cd799439005"})
 
-        suspended_sub = _make_subscription_out(
-            **{
-                "_id": "507f1f77bcf86cd799439005",
-                "status": SubscriptionStatus.SUSPENDED.value,
-            }
-        )
-        mock_update_sub.return_value = suspended_sub
+        mock_update_sub.return_value = sub
 
         from services.dunning_service import _suspend_subscription
 
         await _suspend_subscription(sub, now)
 
+        # Tenant is dropped onto Free rather than left SUSPENDED.
+        mock_transition.assert_awaited_once()
+        assert mock_transition.await_args.kwargs["tenant_id"] == sub.tenant_id
+
+        # The single update_subscription call stamps the final attempt time and
+        # does NOT flip status to SUSPENDED (the Free transition owns status).
         mock_update_sub.assert_called_once()
-        call_args = mock_update_sub.call_args
-        update_data = call_args[1]["sub_data"]
-        assert update_data.status == SubscriptionStatus.SUSPENDED
+        update_data = mock_update_sub.call_args[1]["sub_data"]
+        assert update_data.status is None
+        assert update_data.last_renewal_attempt_at == now
 
     @patch("services.dunning_service.get_settings")
     @patch("services.dunning_service.update_subscription", new_callable=AsyncMock)

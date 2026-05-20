@@ -36,6 +36,10 @@ from schemas.support_case_schema import (
 from security.account_status_check import (
     check_admin_account_status_and_permissions,
 )
+from services.notification_service import (
+    extract_resource_ids,
+    schedule_resource_read_receipt,
+)
 from services.support_case_service import (
     retrieve_cases_approaching_sla,
     retrieve_messages_for_case,
@@ -127,7 +131,6 @@ async def admin_list_support_cases(
     request: Request,
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> Any:
-    _ = admin
     if _is_default_sc_listing(request):
         cached = await get_or_compute(
             scope_key=PrecomputeScope.GLOBAL.value,
@@ -137,7 +140,7 @@ async def admin_list_support_cases(
         )
         items = cached if isinstance(cached, list) else []
         limited = items[: SUPPORT_CASES_LIST_SPEC.default_limit]
-        return {
+        result = {
             "items": limited,
             "meta": {
                 "total": len(items),
@@ -146,12 +149,26 @@ async def admin_list_support_cases(
                 "hasMore": len(items) > SUPPORT_CASES_LIST_SPEC.default_limit,
             },
         }
+        _auto_read_admin_support_cases(admin, result)
+        return result
     query = parse_list_query(request, SUPPORT_CASES_LIST_SPEC)
-    return await run_list(
+    result = await run_list(
         collection=db.support_cases,
         query=query,
         map_doc=_map_sc_doc,
         facet_runner=_sc_status_facet,
+    )
+    _auto_read_admin_support_cases(admin, result)
+    return result
+
+
+def _auto_read_admin_support_cases(admin: AdminOut, result: Any) -> None:
+    """Auto-mark this admin's support-case notifications read for ids read."""
+    schedule_resource_read_receipt(
+        user_id=admin.id or "",
+        user_role="admin",
+        resource_type="support_case",
+        resource_ids=extract_resource_ids(result),
     )
 
 
@@ -181,17 +198,23 @@ async def admin_get_support_case(
     case_id: str,
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> Any:
-    _ = admin
     # Safe to share cache here — admin always sees the unredacted view.
     # Tenant-scope reads use a different entity_type so internal notes
     # never leak across roles.
-    return await get_or_compute_entity(
+    result = await get_or_compute_entity(
         entity_type="support_case_admin",
         entity_id=case_id,
         loader=lambda: retrieve_support_case_by_id(
             case_id, tenant_id=None, requester_role="admin"
         ),
     )
+    schedule_resource_read_receipt(
+        user_id=admin.id or "",
+        user_role="admin",
+        resource_type="support_case",
+        resource_ids=[case_id],
+    )
+    return result
 
 
 @router.get("/{case_id}/messages")

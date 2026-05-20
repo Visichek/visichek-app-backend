@@ -108,6 +108,7 @@ class VisitSessionOut(VisitSessionBase):
 from schemas.summary_schema import (  # noqa: E402
     TenantBriefSummary,
     DepartmentBriefSummary,
+    HostBriefSummary,
     UserBriefSummary,
     VisitorBriefSummary,
     VisitorProfileBriefSummary,
@@ -121,7 +122,9 @@ class VisitSessionWithSummaryOut(VisitSessionOut):
     tenant_summary: Optional[TenantBriefSummary] = None
     department_summary: Optional[DepartmentBriefSummary] = None
     visitor_profile_summary: Optional[VisitorProfileBriefSummary] = None
-    host_summary: Optional[UserBriefSummary] = None
+    # host_summary resolves the host roster record; legacy sessions whose
+    # host_id is a system_user are mapped into the same HostBriefSummary shape.
+    host_summary: Optional[HostBriefSummary] = None
     receptionist_summary: Optional[UserBriefSummary] = None
     appointment_summary: Optional[AppointmentBriefSummary] = None
     verified_by_summary: Optional[UserBriefSummary] = None
@@ -217,7 +220,7 @@ class AwaitingCheckoutItem(BaseModel):
     department_summary: Optional[DepartmentBriefSummary] = None
     visitor_summary: Optional["VisitorBriefSummary"] = None
     visitor_profile_summary: Optional[VisitorProfileBriefSummary] = None
-    host_summary: Optional[UserBriefSummary] = None
+    host_summary: Optional[HostBriefSummary] = None
     receptionist_summary: Optional[UserBriefSummary] = None
     appointment_summary: Optional[AppointmentBriefSummary] = None
     details: dict[str, Any] = Field(default_factory=dict)

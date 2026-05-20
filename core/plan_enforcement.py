@@ -94,6 +94,7 @@ PATH_TO_COLLECTION = {
     "visitors": "visitors",
     "visitor-profiles": "visitor_profiles",
     "appointments": "appointments",
+    "hosts": "hosts",
     "departments": "departments",
     "system-users": "system_users",
     "documents": "documents",

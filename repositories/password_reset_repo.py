@@ -78,3 +78,69 @@ async def invalidate_outstanding_reset_tokens(user_id: str, user_type: str) -> i
         {"$set": {"used": True, "used_at": int(time.time())}},
     )
     return int(getattr(result, "modified_count", 0) or 0)
+
+
+# ---------------------------------------------------------------------------
+# Reset selections (step 1 of the two-step forgot-password flow)
+# ---------------------------------------------------------------------------
+#
+# Step 1 (POST /v1/auth/forgot-password) resolves every account sharing an
+# email and stores them here keyed by opaque per-account refs. Step 2
+# (POST /v1/auth/forgot-password/send) looks the selection up by the hash of
+# the ``selection_token`` returned to the client, and emails reset links only
+# for the refs the user picked. This guarantees step 2 can only target
+# accounts discovered in step 1 (no arbitrary-email injection) and always
+# sends to the address stored server-side (the client can't redirect it).
+#
+# Only ``sha256(selection_token)`` is stored — the plaintext lives only in the
+# client's hands between the two calls.
+
+SELECTION_COLLECTION = "password_reset_selections"
+
+
+async def create_reset_selection(
+    *,
+    selection_token_hash: str,
+    email: str,
+    accounts: list[dict],
+    ttl_seconds: int,
+    requesting_ip: str | None,
+) -> str:
+    """Persist a resolved account list for a forgot-password request.
+
+    ``accounts`` is the server-side list of ``{ref, user_type, user_id,
+    tenant_id, email}`` dicts — the sensitive ids never leave the server;
+    the client only ever sees the opaque ``ref`` values.
+    """
+    now = int(time.time())
+    doc = {
+        "selection_token_hash": selection_token_hash,
+        "email": email,
+        "accounts": accounts,
+        "created_at": now,
+        "expires_at": now + ttl_seconds,
+        "consumed": False,
+        "consumed_at": None,
+        "requesting_ip": requesting_ip,
+    }
+    result = await db[SELECTION_COLLECTION].insert_one(doc)
+    return str(result.inserted_id)
+
+
+async def get_reset_selection_by_hash(selection_token_hash: str) -> dict | None:
+    """Look up a reset selection by the sha256 of its selection token.
+
+    Returns None when no row matches; the service layer checks
+    ``consumed`` / ``expires_at`` after retrieval.
+    """
+    return await db[SELECTION_COLLECTION].find_one(
+        {"selection_token_hash": selection_token_hash}
+    )
+
+
+async def mark_reset_selection_consumed(selection_id: str) -> None:
+    """Idempotently mark a reset selection consumed (single-use)."""
+    await db[SELECTION_COLLECTION].update_one(
+        {"_id": ObjectId(selection_id)},
+        {"$set": {"consumed": True, "consumed_at": int(time.time())}},
+    )

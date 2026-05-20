@@ -24,6 +24,10 @@ from services.appointment_service import (
     retrieve_appointment_by_id_with_summary,
     retrieve_appointments_with_summary,
 )
+from services.notification_service import (
+    extract_resource_ids,
+    schedule_resource_read_receipt,
+)
 from services.visit_session_service import check_in_from_appointment
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
@@ -174,7 +178,7 @@ async def list_appointments(
         )
         items = cached if isinstance(cached, list) else []
         limited = items[: APPOINTMENTS_LIST_SPEC.default_limit]
-        return {
+        result = {
             "items": limited,
             "meta": {
                 "total": len(items),
@@ -183,18 +187,32 @@ async def list_appointments(
                 "hasMore": len(items) > APPOINTMENTS_LIST_SPEC.default_limit,
             },
         }
+        _auto_read_appointments(principal, result)
+        return result
     query = parse_list_query(request, APPOINTMENTS_LIST_SPEC)
     base_filter: dict[str, Any] = {"tenant_id": tenant_id}
     if principal.is_branch_scoped:
         branch_filter = principal.branch_filter()
         if branch_filter:
             base_filter.update(branch_filter)
-    return await run_list(
+    result = await run_list(
         collection=db.expected_appointments,
         query=query,
         base_filter=base_filter,
         map_doc=_map_appt_doc,
         facet_runner=_appt_status_facet,
+    )
+    _auto_read_appointments(principal, result)
+    return result
+
+
+def _auto_read_appointments(principal: AuthPrincipal, result: Any) -> None:
+    """Auto-mark appointment notifications read for ids in this read."""
+    schedule_resource_read_receipt(
+        user_id=principal.user_id,
+        user_role=principal.role,
+        resource_type="appointment",
+        resource_ids=extract_resource_ids(result),
     )
 
 
@@ -224,13 +242,20 @@ async def get_appointment_endpoint(
     principal: AuthPrincipal = Depends(_admin_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
-    return await get_or_compute_entity(
+    result = await get_or_compute_entity(
         entity_type="appointment",
         entity_id=appointment_id,
         loader=lambda: retrieve_appointment_by_id_with_summary(
             appointment_id=appointment_id, tenant_id=tenant_id
         ),
     )
+    schedule_resource_read_receipt(
+        user_id=principal.user_id,
+        user_role=principal.role,
+        resource_type="appointment",
+        resource_ids=[appointment_id],
+    )
+    return result
 
 
 @router.patch("/{appointment_id}")

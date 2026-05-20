@@ -21,6 +21,10 @@ from services.incident_service import (
     retrieve_incidents,
     retrieve_incidents_approaching_deadline,
 )
+from services.notification_service import (
+    extract_resource_ids,
+    schedule_resource_read_receipt,
+)
 
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 _security_roles = verify_system_user_token("super_admin", "security_officer")
@@ -157,7 +161,7 @@ async def list_incidents(
         )
         items = cached if isinstance(cached, list) else []
         limited = items[: INCIDENTS_LIST_SPEC.default_limit]
-        return {
+        result = {
             "items": limited,
             "meta": {
                 "total": len(items),
@@ -166,13 +170,27 @@ async def list_incidents(
                 "hasMore": len(items) > INCIDENTS_LIST_SPEC.default_limit,
             },
         }
+        _auto_read_incidents(principal, result)
+        return result
     query = parse_list_query(request, INCIDENTS_LIST_SPEC)
-    return await run_list(
+    result = await run_list(
         collection=db.incident_logs,
         query=query,
         base_filter={"tenant_id": tenant_id},
         map_doc=_map_inc_doc,
         facet_runner=_inc_status_facet,
+    )
+    _auto_read_incidents(principal, result)
+    return result
+
+
+def _auto_read_incidents(principal: AuthPrincipal, result: Any) -> None:
+    """Auto-mark incident notifications read for ids surfaced in this read."""
+    schedule_resource_read_receipt(
+        user_id=principal.user_id,
+        user_role=principal.role,
+        resource_type="incident",
+        resource_ids=extract_resource_ids(result),
     )
 
 
@@ -236,13 +254,20 @@ async def get_incident(
     incident_id: str, principal: AuthPrincipal = Depends(_security_roles)
 ):
     tenant_id = principal.tenant_id or ""
-    return await get_or_compute_entity(
+    result = await get_or_compute_entity(
         entity_type="incident",
         entity_id=incident_id,
         loader=lambda: retrieve_incident_by_id(
             incident_id=incident_id, tenant_id=tenant_id
         ),
     )
+    schedule_resource_read_receipt(
+        user_id=principal.user_id,
+        user_role=principal.role,
+        resource_type="incident",
+        resource_ids=[incident_id],
+    )
+    return result
 
 
 @router.patch("/{incident_id}")

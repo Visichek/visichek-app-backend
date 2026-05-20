@@ -1,14 +1,14 @@
 """Password-reset email template.
 
-Sent by ``services/forgot_password_service.request_password_reset``
-when an unauthenticated user submits ``POST /v1/auth/forgot-password``
-with an email that matches a real account. Carries the single-use
-reset link (token in the URL) and the friendly fallback for clients
-that can't render HTML.
-
-The endpoint deliberately returns the same 202 envelope regardless of
-whether a match was found — so a no-match call produces NO email and
-NO outbound metadata that would let an attacker enumerate accounts.
+Sent by ``services/forgot_password_service.send_reset_for_selection``
+(step 2 of the forgot-password flow) once an unauthenticated user has
+picked which account(s) to reset. Carries a single-use reset *link* —
+a button that opens the frontend reset page at
+``{APP_BASE_URL}/reset-password?token=…``. The raw token is never
+shown to the user as a value to copy: it only ever rides inside the
+link. If ``APP_BASE_URL`` is unset the email degrades to showing the
+bare URL (which is still empty in that misconfiguration) — operators
+must set ``APP_BASE_URL`` for this flow to work end to end.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ def render_html(context: dict[str, Any]) -> str:
     recipient_name = _safe(context, "recipient_name", "there")
     platform_name = _safe(context, "platform_name", "VisiChek")
     reset_url = _safe(context, "reset_url", "")
-    token = _safe(context, "token", "")
     ttl_minutes = _safe(context, "ttl_minutes", "60")
     requesting_ip = _safe(context, "requesting_ip", "")
     tenant_label = _safe(context, "tenant_label", "")
@@ -52,12 +51,7 @@ def render_html(context: dict[str, Any]) -> str:
         f"ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;"
         f"color:#0F172A'>{reset_url}</p>"
         if reset_url
-        else (
-            "<p style='margin:0 0 6px;color:#475569;font-size:13px'>"
-            "Use this token in the reset form:</p>"
-            "<p style='margin:0 0 18px;font-family:ui-monospace,SFMono-Regular,"
-            f"Menlo,monospace;font-size:14px;font-weight:600'>{token}</p>"
-        )
+        else ""
     )
 
     tenant_block = (
@@ -101,7 +95,6 @@ def render_text(context: dict[str, Any]) -> str:
     recipient_name = _safe(context, "recipient_name", "there")
     platform_name = _safe(context, "platform_name", "VisiChek")
     reset_url = _safe(context, "reset_url", "")
-    token = _safe(context, "token", "")
     ttl_minutes = _safe(context, "ttl_minutes", "60")
     requesting_ip = _safe(context, "requesting_ip", "")
     tenant_label = _safe(context, "tenant_label", "")
@@ -116,8 +109,6 @@ def render_text(context: dict[str, Any]) -> str:
 
     if reset_url:
         lines.extend(["", "Open this link to set a new password:", "", f"  {reset_url}"])
-    else:
-        lines.extend(["", "Use this token in the reset form:", "", f"  {token}"])
 
     lines.extend(
         [

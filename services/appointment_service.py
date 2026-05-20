@@ -129,6 +129,18 @@ async def add_appointment(
         friendly_name="Monthly appointment",
     )
 
+    # Snapshot the host's display name onto the appointment so lists and the
+    # appointment-driven check-in flow are self-describing — they never need
+    # a live host lookup, and the name survives even if the host (dedicated
+    # or system user) is later renamed or removed. host_id may reference the
+    # hosts collection (modern) or a system_user (legacy).
+    if not (appt_data.host_name_snapshot or "").strip() and appt_data.host_id:
+        from services.host_service import resolve_host_identity
+
+        identity = await resolve_host_identity(appt_data.tenant_id, appt_data.host_id)
+        if identity is not None and identity[0]:
+            appt_data.host_name_snapshot = identity[0]
+
     return await create_appointment(appt_data, preassigned_id=preassigned_id)
 
 
@@ -221,7 +233,7 @@ async def _enrich_appointment(appt: AppointmentOut) -> AppointmentWithSummaryOut
     from services.summary_resolver import (
         resolve_tenant_summary,
         resolve_department_summary,
-        resolve_system_user_summary,
+        resolve_appointment_host_summary,
         resolve_user_summary,
         resolve_visitor_profile_summary,
     )
@@ -229,7 +241,7 @@ async def _enrich_appointment(appt: AppointmentOut) -> AppointmentWithSummaryOut
     tenant_s, dept_s, host_s, visitor_s, creator_s = await asyncio.gather(
         resolve_tenant_summary(appt.tenant_id),
         resolve_department_summary(appt.department_id),
-        resolve_system_user_summary(appt.host_id),
+        resolve_appointment_host_summary(appt.host_id),
         resolve_visitor_profile_summary(appt.visitor_profile_id),
         resolve_user_summary(appt.created_by),
     )

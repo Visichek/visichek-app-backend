@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional, Sequence
 
 from bson import ObjectId
 from fastapi import HTTPException
@@ -12,6 +13,7 @@ from repositories.notification_repo import (
     count_notifications,
     update_notification,
     mark_all_read,
+    mark_read_by_resource_ids,
     delete_notification,
     create_notification_preferences,
     get_notification_preferences,
@@ -43,6 +45,8 @@ async def send_notification(
     link: Optional[str] = None,
     tenant_id: Optional[str] = None,
     *,
+    resource_type: Optional[str] = None,
+    resource_id: Optional[str] = None,
     email_template_key: Optional[str] = None,
     email_context: Optional[dict] = None,
     preference_flag: Optional[str] = None,
@@ -81,8 +85,27 @@ async def send_notification(
         type=NotificationType(type),
         link=link,
         tenant_id=tenant_id,
+        resource_type=resource_type,
+        resource_id=resource_id,
     )
     notification = await create_notification(data)
+
+    # Real-time fan-out: push a `notification.created` event (with the
+    # recomputed absolute {total, counts}) to any open SSE stream for this
+    # user across all app instances. Best-effort — a Redis outage degrades
+    # to the polling fallback and never blocks the in-app notification.
+    try:
+        from services.notification_stream_service import (
+            publish_notification_created,
+        )
+
+        await publish_notification_created(notification)
+    except Exception:
+        logger.warning(
+            "send_notification: real-time fan-out failed for user_id=%s",
+            user_id,
+            exc_info=True,
+        )
 
     # Issue 6 fan-out: optionally dispatch email. Never blocks the
     # in-app notification — if email fails, we log and move on.
@@ -451,6 +474,122 @@ async def get_unread_count(user_id: str, user_type: str) -> int:
     )
 
 
+# --- Read-receipt auto-mark ----------------------------------------------
+#
+# When a user reads a resource that triggered a notification (the resource's
+# detail page, or the resource appearing in a list they fetched), the matching
+# unread notification(s) should flip to read on their own — no manual
+# mark-read call. Notifications carry ``resource_type`` + ``resource_id``
+# (set by the ``notify_*`` helpers) so we can match precisely.
+
+
+async def mark_notifications_read_for_resources(
+    *,
+    user_id: str,
+    user_type: str,
+    resource_type: str,
+    resource_ids: Sequence[str],
+) -> int:
+    """Mark this user's unread notifications for the given resource ids as read.
+
+    Fire-and-forget safe: never raises. Returns the number of rows flipped
+    (0 when nothing matched or the inputs were empty).
+    """
+    ids = [str(r) for r in resource_ids if r]
+    if not user_id or not user_type or not resource_type or not ids:
+        return 0
+    try:
+        return await mark_read_by_resource_ids(
+            user_id=user_id,
+            user_type=user_type,
+            resource_type=resource_type,
+            resource_ids=ids,
+        )
+    except Exception:
+        logger.warning(
+            "read-receipt auto-mark failed user_id=%s resource_type=%s",
+            user_id,
+            resource_type,
+            exc_info=True,
+        )
+        return 0
+
+
+# Strong references to in-flight background tasks so the event loop does not
+# garbage-collect them before they finish (see asyncio.create_task docs).
+_read_receipt_tasks: set[asyncio.Task] = set()
+
+
+def schedule_resource_read_receipt(
+    *,
+    user_id: str,
+    user_role: str,
+    resource_type: str,
+    resource_ids: Sequence[str],
+) -> None:
+    """Non-blocking variant of :func:`mark_notifications_read_for_resources`.
+
+    Spawns a background task so the read response is never delayed by the
+    extra write, and swallows every error. Call this from GET handlers right
+    before returning. ``user_role`` is the raw auth role (e.g. ``"admin"``,
+    ``"super_admin"``); it is mapped to the notification ``user_type``.
+    """
+    user_type = _user_type_for_role(user_role)
+    ids = [str(r) for r in resource_ids if r]
+    if not user_type or not user_id or not ids:
+        return
+    try:
+        task = asyncio.create_task(
+            mark_notifications_read_for_resources(
+                user_id=user_id,
+                user_type=user_type,
+                resource_type=resource_type,
+                resource_ids=ids,
+            )
+        )
+    except RuntimeError:
+        # No running event loop (e.g. called outside the request path) —
+        # the read receipt is best-effort, so just skip it.
+        return
+    _read_receipt_tasks.add(task)
+    task.add_done_callback(_read_receipt_tasks.discard)
+
+
+def _id_of(item: Any) -> Optional[str]:
+    """Best-effort id extraction from a list row (dict or model object)."""
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        rid = item.get("id") or item.get("_id")
+    else:
+        rid = getattr(item, "id", None)
+    return str(rid) if rid else None
+
+
+def extract_resource_ids(result: Any) -> List[str]:
+    """Pull resource ids out of a list-endpoint return value.
+
+    Handles the shapes used across the codebase:
+      * ``{"items": [...], "meta": {...}}`` (precompute + run_list lists)
+      * ``([...], {...})`` tuples (``(items, meta)`` returned by some routes)
+      * a bare list of rows
+    Rows may be plain dicts (``id`` / ``_id``) or Pydantic ``*Out`` objects.
+    """
+    items: Any = []
+    if isinstance(result, dict):
+        items = result.get("items", [])
+    elif isinstance(result, tuple):
+        items = result[0] if result else []
+    elif isinstance(result, list):
+        items = result
+    out: List[str] = []
+    for item in items or []:
+        rid = _id_of(item)
+        if rid:
+            out.append(rid)
+    return out
+
+
 async def remove_notification(
     notification_id: str, user_id: str, user_type: str
 ) -> None:
@@ -526,6 +665,8 @@ async def notify_incident_deadline(
             type="warning",
             link=f"/app/incidents/{incident_id}",
             tenant_id=tenant_id,
+            resource_type="incident",
+            resource_id=incident_id,
             email_template_key="notif_incident_deadline",
             email_context={"incident_id": incident_id},
             preference_flag="email_on_incident",
@@ -584,6 +725,8 @@ async def notify_appointment_reminder(
             type="info",
             link=f"/app/appointments/{appointment_id}",
             tenant_id=tenant_id,
+            resource_type="appointment",
+            resource_id=appointment_id,
             email_template_key="notif_appointment_reminder",
             email_context={
                 "visitor_name": visitor_name,
@@ -618,6 +761,8 @@ async def notify_dsr_submitted(
             type="info",
             link=f"/app/dsr/{dsr_id}",
             tenant_id=tenant_id,
+            resource_type="dsr",
+            resource_id=dsr_id,
             email_template_key="notif_dsr_submitted",
             email_context={"dsr_id": dsr_id},
             preference_flag="email_on_dsr_received",
@@ -815,6 +960,8 @@ async def notify_checkin_pending_approval(
                     type="info",
                     link=f"/app/checkins/{checkin_id}",
                     tenant_id=tenant_id,
+                    resource_type="checkin",
+                    resource_id=checkin_id,
                 )
             except Exception:
                 logger.warning(
@@ -858,6 +1005,8 @@ async def notify_checkin_approved(
                     type="success",
                     link=f"/app/checkins/{checkin_id}",
                     tenant_id=tenant_id,
+                    resource_type="checkin",
+                    resource_id=checkin_id,
                 )
             except Exception:
                 logger.warning(
@@ -891,6 +1040,8 @@ async def notify_checkin_rejected(
                     type="warning",
                     link=f"/app/checkins/{checkin_id}",
                     tenant_id=tenant_id,
+                    resource_type="checkin",
+                    resource_id=checkin_id,
                 )
             except Exception:
                 logger.warning(
@@ -1023,6 +1174,8 @@ async def notify_support_case_opened(
                     type="info",
                     link=f"/admin/support-cases/{case_id}",
                     tenant_id=tenant_id,
+                    resource_type="support_case",
+                    resource_id=case_id,
                 )
             except Exception:
                 logger.warning(
@@ -1097,6 +1250,8 @@ async def notify_support_case_reply(
             type="info",
             link=f"/app/support-cases/{case_id}",
             tenant_id=tenant_id,
+            resource_type="support_case",
+            resource_id=case_id,
         )
     except Exception:
         logger.warning("Failed to send support-case reply notification", exc_info=True)
@@ -1121,6 +1276,8 @@ async def notify_support_case_status_change(
             type="info",
             link=f"/app/support-cases/{case_id}",
             tenant_id=tenant_id,
+            resource_type="support_case",
+            resource_id=case_id,
         )
     except Exception:
         logger.warning("Failed to send support-case status notification", exc_info=True)
@@ -1148,6 +1305,8 @@ async def notify_support_case_assigned(
             type="info",
             link=f"/admin/support-cases/{case_id}",
             tenant_id=tenant_id,
+            resource_type="support_case",
+            resource_id=case_id,
         )
     except Exception:
         logger.warning(
@@ -1284,6 +1443,35 @@ async def get_notification_bucket_summary(
             continue
         counts[bucket] = counts.get(bucket, 0) + 1
     return counts
+
+
+async def compute_notification_state(
+    *,
+    user_id: str,
+    user_type: str,
+) -> dict:
+    """Return the user's absolute unread state: ``{total, counts}``.
+
+    This is the single source of truth shared by ``GET /v1/notifications/
+    summary`` and every real-time SSE event. Two deliberate properties:
+
+      - ``total`` is counted DIRECTLY (``count_documents`` via
+        :func:`get_unread_count`), NOT summed from ``counts``. A
+        notification whose link maps to no bucket counts toward ``total``
+        but to no bucket, so ``total`` can exceed ``sum(counts.values())``.
+        It always equals ``GET /v1/notifications/unread-count``.
+      - ``counts`` omits zero buckets (see
+        :func:`get_notification_bucket_summary`).
+
+    Because every SSE event carries this absolute state, a dropped /
+    duplicated / out-of-order event is self-correcting — the next event
+    overwrites the client's view.
+    """
+    total = await get_unread_count(user_id=user_id, user_type=user_type)
+    counts = await get_notification_bucket_summary(
+        user_id=user_id, user_type=user_type
+    )
+    return {"total": total, "counts": counts}
 
 
 # ── Test notifications (Issue 6) ───────────────────────────────────

@@ -26,6 +26,15 @@ class TenantBase(BaseModel):
     mfa_default_for_users: bool = False
     mfa_user_override_allowed: bool = True
 
+    # First-login onboarding info review.
+    # True once the tenant's super_admin has reviewed and confirmed the
+    # company details carried over from onboarding (see the tenant-info
+    # confirmation endpoints in api/v1/onboarding_route.py). Surfaced on
+    # every TenantOut so the frontend can prompt the review screen on first
+    # login. This is a soft prompt — it is NOT enforced by the auth gate.
+    onboarding_info_confirmed: bool = False
+    onboarding_info_confirmed_at: Optional[int] = None
+
 
 class TenantCreate(TenantBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
@@ -50,6 +59,8 @@ class TenantUpdate(BaseModel):
     default_payment_provider: Optional[str] = None
     mfa_default_for_users: Optional[bool] = None
     mfa_user_override_allowed: Optional[bool] = None
+    onboarding_info_confirmed: Optional[bool] = None
+    onboarding_info_confirmed_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
@@ -128,3 +139,44 @@ class TenantWithSummaryOut(TenantOut):
     """TenantOut enriched with plan, subscription, and usage cap summary."""
 
     plan_summary: Optional[TenantPlanSummary] = None
+
+
+class TenantInfoConfirmRequest(BaseModel):
+    """Super_admin's first-login confirmation of their company details.
+
+    Every editable field is Optional — omitting one keeps the value that
+    was carried over from onboarding. Submitting the request (with or
+    without edits) marks the tenant's onboarding info as confirmed.
+    """
+
+    company_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    dpo_contact_email: Optional[EmailStr] = None
+    privacy_policy_url: Optional[str] = None
+    country_of_hosting: Optional[str] = None
+
+
+class TenantInfoConfirmationOut(BaseModel):
+    """First-login review payload.
+
+    Carries the tenant identity fields the super_admin should eyeball,
+    the confirmation status, and — best-effort — the original onboarding
+    form submission (verbatim values + labels + order) so the frontend can
+    render the "this is what you told us" context next to the editable
+    fields. Onboarding context is ``None``/empty for tenants created via
+    the legacy bootstrap path (which has no submission record).
+    """
+
+    tenant_id: str
+    company_name: str
+    dpo_contact_email: Optional[str] = None
+    privacy_policy_url: Optional[str] = None
+    country_of_hosting: Optional[str] = None
+
+    onboarding_info_confirmed: bool = False
+    onboarding_info_confirmed_at: Optional[int] = None
+
+    # Read-only onboarding context (the form the tenant originally submitted).
+    onboarding_submission_id: Optional[str] = None
+    onboarding_fields: dict = Field(default_factory=dict)
+    onboarding_field_labels: dict = Field(default_factory=dict)
+    onboarding_field_order: list = Field(default_factory=list)

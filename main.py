@@ -788,6 +788,7 @@ from api.v1.system_user_route import router as v1_system_user_route_router
 from api.v1.visitor_route import router as v1_visitor_route_router
 from api.v1.visitor_profile_route import router as v1_visitor_profile_route_router
 from api.v1.appointment_route import router as v1_appointment_route_router
+from api.v1.host_route import router as v1_host_route_router
 from api.v1.privacy_notice_route import router as v1_privacy_notice_route_router
 from api.v1.dashboard_route import router as v1_dashboard_route_router
 from api.v1.super_admin_route import router as v1_super_admin_route_router
@@ -899,6 +900,7 @@ app.include_router(v1_system_user_route_router, prefix="/v1")
 app.include_router(v1_visitor_route_router, prefix="/v1")
 app.include_router(v1_visitor_profile_route_router, prefix="/v1")
 app.include_router(v1_appointment_route_router, prefix="/v1")
+app.include_router(v1_host_route_router, prefix="/v1")
 app.include_router(v1_privacy_notice_route_router, prefix="/v1")
 app.include_router(v1_dashboard_route_router, prefix="/v1")
 app.include_router(v1_super_admin_route_router, prefix="/v1")

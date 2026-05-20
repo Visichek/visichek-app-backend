@@ -21,7 +21,8 @@ from security.account_status_check import (
 )
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
-from services.audit_service import retrieve_audit_logs_with_summary
+from schemas.audit_log_schema import AuditLogOut
+from services.audit_service import enrich_audit_logs, retrieve_audit_logs_with_summary
 from services.export_service import export_audit_logs_xlsx
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
@@ -204,18 +205,38 @@ async def list_audit_logs(
     base_filter: dict[str, Any] = {}
     if tenant_id:
         base_filter["tenant_id"] = tenant_id
-    return await run_list(
+    result = await run_list(
         collection=db.audit_trail,
         query=query,
         base_filter=base_filter,
         map_doc=_map_audit_doc,
     )
+    result["items"] = await _enrich_list_items(result["items"])
+    return result
 
 
 def _map_audit_doc(doc: dict[str, Any]) -> dict[str, Any]:
     if "_id" in doc and isinstance(doc["_id"], ObjectId):
         doc["_id"] = str(doc["_id"])
     return doc
+
+
+async def _enrich_list_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Embed actor / tenant / resource summaries on a filtered listing page.
+
+    The ``run_list`` fast path returns bare documents; without this the
+    filtered view would serve rows carrying only ``actor_id`` (no
+    ``actor_summary``), forcing the frontend to render the raw ObjectId.
+    Enrichment is batch-resolved and best-effort — a parse failure falls back
+    to the un-enriched rows rather than failing the whole page."""
+    if not items:
+        return items
+    try:
+        logs = [AuditLogOut(**doc) for doc in items]
+    except Exception:
+        return items
+    enriched = await enrich_audit_logs(logs)
+    return [log.model_dump(mode="json", by_alias=True) for log in enriched]
 
 
 @router.get("/admin")

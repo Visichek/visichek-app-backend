@@ -25,6 +25,7 @@ from services import branding_writer as _branding_writer  # noqa: F401
 
 # Cluster 2 — core tenant CRUD
 from services import appointment_writer as _appointment_writer  # noqa: F401
+from services import host_writer as _host_writer  # noqa: F401
 from services import incident_writer as _incident_writer  # noqa: F401
 from services import visitor_profile_writer as _visitor_profile_writer  # noqa: F401
 from services import checkin_config_writer as _checkin_config_writer  # noqa: F401

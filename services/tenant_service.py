@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from repositories.tenant_repo import (
     create_tenant,
@@ -18,6 +18,8 @@ from schemas.tenant_schema import (
     TenantBootstrapRequest,
     TenantWithSummaryOut,
     TenantPlanSummary,
+    TenantInfoConfirmRequest,
+    TenantInfoConfirmationOut,
 )
 
 
@@ -297,3 +299,116 @@ async def remove_tenant(tenant_id: str):
     result = await delete_tenant({"_id": ObjectId(tenant_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Tenant not found")
+
+
+# ---------------------------------------------------------------------------
+# First-login onboarding info confirmation (tenant super_admin self-service)
+# ---------------------------------------------------------------------------
+
+
+async def _load_onboarding_context(tenant_id: str) -> Optional[Any]:
+    """Best-effort fetch of the onboarding submission tied to a tenant.
+
+    Returns the submission (for its verbatim form payload + labels + order)
+    or ``None`` for tenants with no submission record — e.g. those created
+    via the legacy bootstrap path. Never raises: the confirmation screen
+    must still render even if the submission lookup fails.
+    """
+    try:
+        from repositories.onboarding_submission_repo import get_submission
+
+        return await get_submission({"tenant_id": tenant_id})
+    except Exception:
+        return None
+
+
+def _build_confirmation_out(
+    tenant: TenantOut, submission: Optional[Any]
+) -> TenantInfoConfirmationOut:
+    return TenantInfoConfirmationOut(
+        tenant_id=tenant.id or "",
+        company_name=tenant.company_name,
+        dpo_contact_email=tenant.dpo_contact_email,
+        privacy_policy_url=tenant.privacy_policy_url,
+        country_of_hosting=tenant.country_of_hosting,
+        onboarding_info_confirmed=tenant.onboarding_info_confirmed,
+        onboarding_info_confirmed_at=tenant.onboarding_info_confirmed_at,
+        onboarding_submission_id=getattr(submission, "id", None),
+        onboarding_fields=dict(getattr(submission, "payload", {}) or {}),
+        onboarding_field_labels=dict(getattr(submission, "field_labels", {}) or {}),
+        onboarding_field_order=list(getattr(submission, "field_order", []) or []),
+    )
+
+
+async def get_tenant_info_confirmation(
+    *, tenant_id: str
+) -> TenantInfoConfirmationOut:
+    """Build the first-login review payload for a tenant's super_admin."""
+    tenant = await retrieve_tenant_by_id(tenant_id)
+    submission = await _load_onboarding_context(tenant_id)
+    return _build_confirmation_out(tenant, submission)
+
+
+async def confirm_tenant_info(
+    payload: TenantInfoConfirmRequest,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    actor_role: str = "super_admin",
+    request_id: Optional[str] = None,
+) -> TenantInfoConfirmationOut:
+    """Apply any edits, mark the tenant's onboarding info confirmed, audit it.
+
+    Runs synchronously (mirrors ``POST /v1/onboarding/me/complete``): the
+    first-login UX needs the confirmed state back in the response, and this
+    is a one-shot self-service step rather than a high-volume mutation.
+    """
+    import time
+
+    from core.queue.entity_cache import invalidate_entity
+    from services.audit_service import record_audit_event
+
+    before = await retrieve_tenant_by_id(tenant_id)
+
+    edits = payload.model_dump(exclude_none=True)
+    changes: dict[str, Any] = {}
+    for key, new_value in edits.items():
+        old_value = getattr(before, key, None)
+        if old_value != new_value:
+            changes[key] = {"from": old_value, "to": new_value}
+
+    update = TenantUpdate(
+        **edits,
+        onboarding_info_confirmed=True,
+        onboarding_info_confirmed_at=int(time.time()),
+    )
+    updated = await update_tenant_by_id(tenant_id=tenant_id, tenant_data=update)
+
+    # Sync path bypasses the write queue, so invalidate caches inline.
+    invalidate_entity("tenant", tenant_id)
+    try:
+        from core.queue.manager import QueueManager
+
+        QueueManager.get_instance().enqueue(
+            task_key="precompute.tenant_resource",
+            payload={"tenant_id": "", "resource": "tenants.list"},
+        )
+    except Exception:
+        pass
+
+    try:
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role,
+            action="tenant.onboarding_info_confirmed",
+            resource_type="tenant",
+            resource_id=tenant_id,
+            tenant_id=tenant_id,
+            details={"changes": changes},
+            request_id=request_id,
+        )
+    except Exception:
+        pass
+
+    submission = await _load_onboarding_context(tenant_id)
+    return _build_confirmation_out(updated, submission)

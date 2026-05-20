@@ -60,6 +60,22 @@ class TestAdminDashboardSchema:
 # ---------------------------------------------------------------------------
 
 
+class _FakeCursor:
+    """Chainable async cursor stand-in (supports .sort().limit() then async-for)."""
+
+    def __init__(self, items):
+        self._iter = _AsyncIter(items)
+
+    def sort(self, *a, **kw):
+        return self
+
+    def limit(self, *a, **kw):
+        return self
+
+    def __aiter__(self):
+        return self._iter
+
+
 class _FakeCollection:
     """Lightweight stand-in for a Motor collection."""
 
@@ -76,6 +92,9 @@ class _FakeCollection:
 
     def aggregate(self, *a, **kw):
         return _AsyncIter(self._agg_results)
+
+    def find(self, *a, **kw):
+        return _FakeCursor([])
 
 
 class _AsyncIter:
@@ -94,13 +113,31 @@ class _AsyncIter:
         return item
 
 
+class _FakeDB:
+    """Stand-in for the Motor database.
+
+    The admin-dashboard service mixes attribute access (``db.system_users``)
+    and item access (``db[collection]``); both must resolve to a collection,
+    otherwise an auto-generated ``MagicMock`` leaks into ``asyncio.gather``
+    and raises ``TypeError: ... awaitable is required``.
+    """
+
+    def __init__(self, col):
+        self._col = col
+
+    def __getitem__(self, name):
+        return self._col
+
+    def __getattr__(self, name):
+        return self._col
+
+
 @pytest.mark.asyncio
 async def test_get_admin_dashboard_stats_returns_stats():
     """Service returns AdminDashboardStats with aggregated data."""
-    fake_db = MagicMock()
-    # Default collection returns 0 count and empty aggregates
+    # Default collection returns 5 for every count and empty aggregates.
     default_col = _FakeCollection(count_val=5)
-    fake_db.__getitem__ = MagicMock(return_value=default_col)
+    fake_db = _FakeDB(default_col)
 
     with patch("services.admin_dashboard_service.db", fake_db):
         from services.admin_dashboard_service import get_admin_dashboard_stats

@@ -27,6 +27,11 @@ class BranchBase(BaseModel):
 
 
 class BranchCreate(BranchBase):
+    # tenant_id is NOT supplied by the client — the route always sets it from
+    # the authenticated super_admin's token before the writer rebuilds this
+    # model. Defaulted here so body validation doesn't reject a request that
+    # (correctly) omits it.
+    tenant_id: str = ""
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
@@ -34,8 +39,6 @@ class BranchCreate(BranchBase):
     def validate_on_create(self):
         if not self.name or not self.name.strip():
             raise ValueError("Branch name is required")
-        if not self.tenant_id or not self.tenant_id.strip():
-            raise ValueError("tenant_id is required")
         return self
 
 

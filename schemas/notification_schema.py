@@ -24,6 +24,11 @@ class NotificationBase(BaseModel):
     type: NotificationType = NotificationType.INFO
     read: bool = False
     link: Optional[str] = None  # optional deep-link
+    # The resource that triggered this notification. When set, reading that
+    # resource (detail or in a list) auto-marks this notification as read —
+    # see services.notification_service.mark_notifications_read_for_resources.
+    resource_type: Optional[str] = None  # e.g. "incident", "appointment", "checkin"
+    resource_id: Optional[str] = None
 
 
 class NotificationCreate(NotificationBase):
