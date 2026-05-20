@@ -18,7 +18,7 @@ from httpx import AsyncClient
 
 from schemas.admin_schema import AdminCreate
 from repositories.admin_repo import create_admin
-from tests.integration.conftest import unique_password_suffix
+from tests.integration.conftest import complete_write, unique_password_suffix
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -257,8 +257,14 @@ class TestTenantCreationAuthChange:
             },
             headers=admin_auth_headers,
         )
-        assert resp.status_code == 201, resp.text
-        assert resp.json()["data"]["company_name"] == f"Admin Created Tenant {ts}"
+        # Tenant create is queued (202). Wait for the worker, then read it back.
+        job = await complete_write(integration_client, resp, admin_auth_headers)
+        tenant_id = job["resource_id"]
+        get_resp = await integration_client.get(
+            f"/v1/tenants/{tenant_id}", headers=admin_auth_headers
+        )
+        assert get_resp.status_code == 200, get_resp.text
+        assert get_resp.json()["data"]["company_name"] == f"Admin Created Tenant {ts}"
 
     async def test_tenant_creation_without_auth_rejected(
         self,

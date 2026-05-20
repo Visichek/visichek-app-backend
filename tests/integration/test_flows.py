@@ -323,9 +323,11 @@ class TestVisitorCheckInCheckOutFlow:
 
         checked_out_session = checkout_data["data"]
         assert checked_out_session["status"] == "checked_out"
-        assert checked_out_session["check_out_time"] is not None
-        assert checked_out_session["visit_duration"] is not None
-        assert checked_out_session["visit_duration"] >= 0
+        # CheckoutResult exposes checked_out_at + actual_duration_seconds
+        # (the legacy check_out_time / visit_duration fields were renamed).
+        assert checked_out_session["checked_out_at"] is not None
+        assert checked_out_session["actual_duration_seconds"] is not None
+        assert checked_out_session["actual_duration_seconds"] >= 0
 
     async def test_check_in_without_required_fields_fails(
         self,

@@ -15,8 +15,17 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
+from tests.integration.conftest import complete_write
+
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+def _find(items: list, resource_id: str) -> dict:
+    """Return the list item whose id matches, or fail the test."""
+    match = next((x for x in items if x.get("id") == resource_id), None)
+    assert match is not None, f"resource {resource_id} not found in {items}"
+    return match
 
 
 # ---------------------------------------------------------------------------
@@ -58,8 +67,12 @@ class TestDPRFlow:
         resp = await integration_client.post(
             "/v1/compliance/register", json=_dpr_payload, headers=auth_headers
         )
-        assert resp.status_code in (200, 201), resp.text
-        data = resp.json()["data"]
+        job = await complete_write(integration_client, resp, auth_headers)
+        listing = await integration_client.get(
+            "/v1/compliance/register", headers=auth_headers
+        )
+        assert listing.status_code == 200, listing.text
+        data = _find(listing.json()["data"], job["resource_id"])
         assert data["field_name"] == "visitor_phone"
         assert data["purpose"] == "Emergency contact during visit"
 
@@ -84,7 +97,7 @@ class TestDPRFlow:
             resp = await integration_client.post(
                 "/v1/compliance/register", json=entry, headers=auth_headers
             )
-            assert resp.status_code in (200, 201)
+            await complete_write(integration_client, resp, auth_headers)
 
         resp = await integration_client.get(
             "/v1/compliance/register", headers=auth_headers
@@ -121,8 +134,12 @@ class TestSubProcessorFlow:
         resp = await integration_client.post(
             "/v1/sub-processors", json=_sp_payload, headers=auth_headers
         )
-        assert resp.status_code in (200, 201), resp.text
-        data = resp.json()["data"]
+        job = await complete_write(integration_client, resp, auth_headers)
+        listing = await integration_client.get(
+            "/v1/sub-processors", headers=auth_headers
+        )
+        assert listing.status_code == 200, listing.text
+        data = _find(listing.json()["data"], job["resource_id"])
         assert data["provider"] == "AWS S3"
         assert data["dpa_signed"] is True
 
@@ -133,9 +150,10 @@ class TestSubProcessorFlow:
         _sp_payload: dict,
     ):
         # seed one
-        await integration_client.post(
+        resp = await integration_client.post(
             "/v1/sub-processors", json=_sp_payload, headers=auth_headers
         )
+        await complete_write(integration_client, resp, auth_headers)
         resp = await integration_client.get("/v1/sub-processors", headers=auth_headers)
         assert resp.status_code == 200
         assert len(resp.json()["data"]) >= 1
@@ -149,15 +167,19 @@ class TestSubProcessorFlow:
         create_resp = await integration_client.post(
             "/v1/sub-processors", json=_sp_payload, headers=auth_headers
         )
-        sp_id = create_resp.json()["data"]["id"]
+        job = await complete_write(integration_client, create_resp, auth_headers)
+        sp_id = job["resource_id"]
 
         resp = await integration_client.patch(
             f"/v1/sub-processors/{sp_id}",
             json={"jurisdiction": "US (Virginia)", "uses_data_for_training": True},
             headers=auth_headers,
         )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
+        await complete_write(integration_client, resp, auth_headers)
+        listing = await integration_client.get(
+            "/v1/sub-processors", headers=auth_headers
+        )
+        data = _find(listing.json()["data"], sp_id)
         assert data["jurisdiction"] == "US (Virginia)"
         assert data["uses_data_for_training"] is True
 
@@ -170,12 +192,13 @@ class TestSubProcessorFlow:
         create_resp = await integration_client.post(
             "/v1/sub-processors", json=_sp_payload, headers=auth_headers
         )
-        sp_id = create_resp.json()["data"]["id"]
+        job = await complete_write(integration_client, create_resp, auth_headers)
+        sp_id = job["resource_id"]
 
         resp = await integration_client.delete(
             f"/v1/sub-processors/{sp_id}", headers=auth_headers
         )
-        assert resp.status_code == 200
+        await complete_write(integration_client, resp, auth_headers)
 
         # verify it's gone
         list_resp = await integration_client.get(
@@ -211,8 +234,12 @@ class TestRetentionPolicyFlow:
         resp = await integration_client.post(
             "/v1/retention-policies", json=_policy_payload, headers=auth_headers
         )
-        assert resp.status_code in (200, 201), resp.text
-        data = resp.json()["data"]
+        job = await complete_write(integration_client, resp, auth_headers)
+        listing = await integration_client.get(
+            "/v1/retention-policies", headers=auth_headers
+        )
+        assert listing.status_code == 200, listing.text
+        data = _find(listing.json()["data"], job["resource_id"])
         assert data["scope"] == "visit_sessions"
         assert data["retention_days"] == 365
 
@@ -222,9 +249,10 @@ class TestRetentionPolicyFlow:
         auth_headers: dict,
         _policy_payload: dict,
     ):
-        await integration_client.post(
+        resp = await integration_client.post(
             "/v1/retention-policies", json=_policy_payload, headers=auth_headers
         )
+        await complete_write(integration_client, resp, auth_headers)
         resp = await integration_client.get(
             "/v1/retention-policies", headers=auth_headers
         )
@@ -240,15 +268,19 @@ class TestRetentionPolicyFlow:
         create_resp = await integration_client.post(
             "/v1/retention-policies", json=_policy_payload, headers=auth_headers
         )
-        policy_id = create_resp.json()["data"]["id"]
+        job = await complete_write(integration_client, create_resp, auth_headers)
+        policy_id = job["resource_id"]
 
         resp = await integration_client.patch(
             f"/v1/retention-policies/{policy_id}",
             json={"retention_days": 730, "action": "delete"},
             headers=auth_headers,
         )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
+        await complete_write(integration_client, resp, auth_headers)
+        listing = await integration_client.get(
+            "/v1/retention-policies", headers=auth_headers
+        )
+        data = _find(listing.json()["data"], policy_id)
         assert data["retention_days"] == 730
         assert data["action"] == "delete"
 
@@ -270,7 +302,7 @@ class TestRetentionPolicyFlow:
                 },
                 headers=auth_headers,
             )
-            assert resp.status_code in (200, 201)
+            await complete_write(integration_client, resp, auth_headers)
 
         resp = await integration_client.get(
             "/v1/retention-policies", headers=auth_headers

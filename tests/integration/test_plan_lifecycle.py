@@ -21,7 +21,11 @@ from httpx import AsyncClient
 
 from schemas.admin_schema import AdminCreate
 from repositories.admin_repo import create_admin
-from tests.integration.conftest import unique_password_suffix
+from tests.integration.conftest import (
+    complete_write,
+    expect_write_failure,
+    unique_password_suffix,
+)
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -103,8 +107,12 @@ class TestPlanCRUD:
             },
             headers=admin_auth_headers,
         )
-        assert resp.status_code == 201, resp.text
-        data = resp.json()["data"]
+        job = await complete_write(integration_client, resp, admin_auth_headers)
+        get_resp = await integration_client.get(
+            f"/v1/plans/{job['resource_id']}", headers=admin_auth_headers
+        )
+        assert get_resp.status_code == 200, get_resp.text
+        data = get_resp.json()["data"]
         assert data["name"] == f"test-plan-{ts}"
         assert data["tier"] == "professional"
         assert len(data["feature_rules"]) == 2
@@ -118,7 +126,7 @@ class TestPlanCRUD:
         ts = int(time.time())
         # Create two plans
         for i in range(2):
-            await integration_client.post(
+            resp = await integration_client.post(
                 "/v1/plans",
                 json={
                     "name": f"list-plan-{ts}-{i}",
@@ -126,6 +134,7 @@ class TestPlanCRUD:
                 },
                 headers=admin_auth_headers,
             )
+            await complete_write(integration_client, resp, admin_auth_headers)
 
         resp = await integration_client.get("/v1/plans")
         assert resp.status_code == 200
@@ -142,16 +151,21 @@ class TestPlanCRUD:
             json={"name": f"update-plan-{ts}", "display_name": "To Update"},
             headers=admin_auth_headers,
         )
-        plan_id = create_resp.json()["data"]["id"]
+        job = await complete_write(integration_client, create_resp, admin_auth_headers)
+        plan_id = job["resource_id"]
 
         update_resp = await integration_client.put(
             f"/v1/plans/{plan_id}",
             json={"display_name": "Updated!", "base_price_monthly": 49.99},
             headers=admin_auth_headers,
         )
-        assert update_resp.status_code == 200
-        assert update_resp.json()["data"]["display_name"] == "Updated!"
-        assert update_resp.json()["data"]["base_price_monthly"] == 49.99
+        await complete_write(integration_client, update_resp, admin_auth_headers)
+        get_resp = await integration_client.get(
+            f"/v1/plans/{plan_id}", headers=admin_auth_headers
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["display_name"] == "Updated!"
+        assert get_resp.json()["data"]["base_price_monthly"] == 49.99
 
     async def test_archive_plan(
         self,
@@ -168,14 +182,19 @@ class TestPlanCRUD:
             },
             headers=admin_auth_headers,
         )
-        plan_id = create_resp.json()["data"]["id"]
+        job = await complete_write(integration_client, create_resp, admin_auth_headers)
+        plan_id = job["resource_id"]
 
         archive_resp = await integration_client.post(
             f"/v1/plans/{plan_id}/archive",
             headers=admin_auth_headers,
         )
-        assert archive_resp.status_code == 200
-        assert archive_resp.json()["data"]["status"] == "archived"
+        await complete_write(integration_client, archive_resp, admin_auth_headers)
+        get_resp = await integration_client.get(
+            f"/v1/plans/{plan_id}", headers=admin_auth_headers
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["status"] == "archived"
 
     async def test_duplicate_plan_name_rejected(
         self,
@@ -190,14 +209,14 @@ class TestPlanCRUD:
             json={"name": name, "display_name": "First"},
             headers=admin_auth_headers,
         )
-        assert resp1.status_code == 201
+        await complete_write(integration_client, resp1, admin_auth_headers)
 
         resp2 = await integration_client.post(
             "/v1/plans",
             json={"name": name, "display_name": "Second"},
             headers=admin_auth_headers,
         )
-        assert resp2.status_code == 409
+        await expect_write_failure(integration_client, resp2, admin_auth_headers)
 
 
 class TestSubscriptionLifecycle:
@@ -217,10 +236,10 @@ class TestSubscriptionLifecycle:
             },
             headers=headers,
         )
-        assert plan_resp.status_code == 201
-        plan_id = plan_resp.json()["data"]["id"]
+        plan_job = await complete_write(client, plan_resp, headers)
+        plan_id = plan_job["resource_id"]
 
-        # Create tenant via bootstrap
+        # Create tenant via bootstrap (synchronous endpoint, returns 201)
         tenant_resp = await client.post(
             "/v1/admins/tenants/bootstrap",
             json={
@@ -257,8 +276,13 @@ class TestSubscriptionLifecycle:
             },
             headers=admin_auth_headers,
         )
-        assert resp.status_code == 201, resp.text
-        data = resp.json()["data"]
+        await complete_write(integration_client, resp, admin_auth_headers)
+        active = await integration_client.get(
+            f"/v1/subscriptions/tenant/{tenant_id}/active",
+            headers=admin_auth_headers,
+        )
+        assert active.status_code == 200, active.text
+        data = active.json()["data"]
         assert data["tenant_id"] == tenant_id
         assert data["plan_id"] == plan_id
         assert data["status"] == "active"
@@ -282,15 +306,15 @@ class TestSubscriptionLifecycle:
             json={"tenant_id": tenant_id, "plan_id": plan_id},
             headers=admin_auth_headers,
         )
-        assert resp1.status_code == 201
+        await complete_write(integration_client, resp1, admin_auth_headers)
 
-        # Duplicate
+        # Duplicate — worker rejects (already actively subscribed to this plan)
         resp2 = await integration_client.post(
             "/v1/subscriptions",
             json={"tenant_id": tenant_id, "plan_id": plan_id},
             headers=admin_auth_headers,
         )
-        assert resp2.status_code == 409
+        await expect_write_failure(integration_client, resp2, admin_auth_headers)
 
     async def test_cancel_subscription(
         self,
@@ -304,19 +328,27 @@ class TestSubscriptionLifecycle:
             ts,
         )
 
-        await integration_client.post(
+        sub_resp = await integration_client.post(
             "/v1/subscriptions",
             json={"tenant_id": tenant_id, "plan_id": plan_id},
             headers=admin_auth_headers,
         )
+        sub_job = await complete_write(integration_client, sub_resp, admin_auth_headers)
+        sub_id = sub_job["result"]["id"]
 
         cancel_resp = await integration_client.post(
             "/v1/subscriptions/cancel",
             json={"tenant_id": tenant_id, "immediate": True, "reason": "Testing"},
             headers=admin_auth_headers,
         )
-        assert cancel_resp.status_code == 200
-        assert cancel_resp.json()["data"]["status"] == "cancelled"
+        await complete_write(integration_client, cancel_resp, admin_auth_headers)
+        # Cancellation transitions the tenant to Free; the original subscription
+        # row persists with status=cancelled — read it back by id to confirm.
+        get_resp = await integration_client.get(
+            f"/v1/subscriptions/{sub_id}", headers=admin_auth_headers
+        )
+        assert get_resp.status_code == 200, get_resp.text
+        assert get_resp.json()["data"]["status"] == "cancelled"
 
     async def test_get_tenant_active_subscription(
         self,
@@ -330,11 +362,12 @@ class TestSubscriptionLifecycle:
             ts,
         )
 
-        await integration_client.post(
+        sub_resp = await integration_client.post(
             "/v1/subscriptions",
             json={"tenant_id": tenant_id, "plan_id": plan_id},
             headers=admin_auth_headers,
         )
+        await complete_write(integration_client, sub_resp, admin_auth_headers)
 
         resp = await integration_client.get(
             f"/v1/subscriptions/tenant/{tenant_id}/active",
@@ -367,8 +400,12 @@ class TestDiscountLifecycle:
             },
             headers=admin_auth_headers,
         )
-        assert resp.status_code == 201, resp.text
-        data = resp.json()["data"]
+        job = await complete_write(integration_client, resp, admin_auth_headers)
+        get_resp = await integration_client.get(
+            f"/v1/discounts/{job['resource_id']}", headers=admin_auth_headers
+        )
+        assert get_resp.status_code == 200, get_resp.text
+        data = get_resp.json()["data"]
         assert data["code"] == f"LAUNCH{ts}"
         assert data["value"] == 25.0
 
@@ -385,14 +422,14 @@ class TestDiscountLifecycle:
             json={"code": code, "name": "First", "value": 10.0},
             headers=admin_auth_headers,
         )
-        assert resp1.status_code == 201
+        await complete_write(integration_client, resp1, admin_auth_headers)
 
         resp2 = await integration_client.post(
             "/v1/discounts",
             json={"code": code, "name": "Second", "value": 20.0},
             headers=admin_auth_headers,
         )
-        assert resp2.status_code == 409
+        await expect_write_failure(integration_client, resp2, admin_auth_headers)
 
     async def test_subscription_with_discount(
         self,
@@ -414,8 +451,8 @@ class TestDiscountLifecycle:
             },
             headers=admin_auth_headers,
         )
-        assert disc_resp.status_code == 201
-        disc_id = disc_resp.json()["data"]["id"]
+        disc_job = await complete_write(integration_client, disc_resp, admin_auth_headers)
+        disc_id = disc_job["resource_id"]
 
         # Create plan
         plan_resp = await integration_client.post(
@@ -428,9 +465,10 @@ class TestDiscountLifecycle:
             },
             headers=admin_auth_headers,
         )
-        plan_id = plan_resp.json()["data"]["id"]
+        plan_job = await complete_write(integration_client, plan_resp, admin_auth_headers)
+        plan_id = plan_job["resource_id"]
 
-        # Create tenant
+        # Create tenant (synchronous bootstrap)
         tenant_resp = await integration_client.post(
             "/v1/admins/tenants/bootstrap",
             json={
@@ -453,8 +491,13 @@ class TestDiscountLifecycle:
             },
             headers=admin_auth_headers,
         )
-        assert sub_resp.status_code == 201
-        sub_data = sub_resp.json()["data"]
+        await complete_write(integration_client, sub_resp, admin_auth_headers)
+        active = await integration_client.get(
+            f"/v1/subscriptions/tenant/{tenant_id}/active",
+            headers=admin_auth_headers,
+        )
+        assert active.status_code == 200, active.text
+        sub_data = active.json()["data"]
         # 200 * 0.5 = 100
         assert sub_data["effective_price"] == 100.0
         assert disc_id in sub_data["applied_discount_ids"]
@@ -470,14 +513,19 @@ class TestDiscountLifecycle:
             json={"code": f"DISABLE{ts}", "name": "To Disable", "value": 15.0},
             headers=admin_auth_headers,
         )
-        disc_id = create_resp.json()["data"]["id"]
+        job = await complete_write(integration_client, create_resp, admin_auth_headers)
+        disc_id = job["resource_id"]
 
         disable_resp = await integration_client.post(
             f"/v1/discounts/{disc_id}/disable",
             headers=admin_auth_headers,
         )
-        assert disable_resp.status_code == 200
-        assert disable_resp.json()["data"]["status"] == "disabled"
+        await complete_write(integration_client, disable_resp, admin_auth_headers)
+        get_resp = await integration_client.get(
+            f"/v1/discounts/{disc_id}", headers=admin_auth_headers
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["status"] == "disabled"
 
 
 class TestSubscriptionOverrides:
@@ -506,7 +554,8 @@ class TestSubscriptionOverrides:
             },
             headers=admin_auth_headers,
         )
-        plan_id = plan_resp.json()["data"]["id"]
+        plan_job = await complete_write(integration_client, plan_resp, admin_auth_headers)
+        plan_id = plan_job["resource_id"]
 
         tenant_resp = await integration_client.post(
             "/v1/admins/tenants/bootstrap",
@@ -525,7 +574,8 @@ class TestSubscriptionOverrides:
             json={"tenant_id": tenant_id, "plan_id": plan_id},
             headers=admin_auth_headers,
         )
-        sub_id = sub_resp.json()["data"]["id"]
+        sub_job = await complete_write(integration_client, sub_resp, admin_auth_headers)
+        sub_id = sub_job["result"]["id"]
 
         # Apply overrides: enable audit, increase visitor limit
         override_resp = await integration_client.put(
@@ -537,8 +587,12 @@ class TestSubscriptionOverrides:
             },
             headers=admin_auth_headers,
         )
-        assert override_resp.status_code == 200
-        data = override_resp.json()["data"]
+        await complete_write(integration_client, override_resp, admin_auth_headers)
+        get_resp = await integration_client.get(
+            f"/v1/subscriptions/{sub_id}", headers=admin_auth_headers
+        )
+        assert get_resp.status_code == 200, get_resp.text
+        data = get_resp.json()["data"]
         assert data["feature_overrides"]["/v1/audit/*"]["enabled"] is True
         assert data["crud_limit_overrides"]["visitors"]["max_create"] == 999
         assert data["tenant_cap_overrides"]["max_system_users"] == 100

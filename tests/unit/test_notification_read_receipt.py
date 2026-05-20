@@ -170,6 +170,7 @@ async def test_schedule_admin_role_maps_to_admin() -> None:
         )
         await asyncio.sleep(0)
         await asyncio.sleep(0)
+    assert marker.await_args is not None
     assert marker.await_args.kwargs["user_type"] == "admin"
 
 

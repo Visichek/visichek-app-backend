@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 import time
@@ -19,9 +20,16 @@ env_test_path = Path(__file__).parent.parent.parent / ".env.test"
 if env_test_path.exists():
     load_dotenv(env_test_path, override=True)
 
-# Override DB_TYPE to mongodb for integration tests
+# Override DB_TYPE to mongodb for integration tests.
 os.environ["DB_TYPE"] = "mongodb"
-os.environ["DB_NAME"] = "visichek_test_integration"
+# DB_NAME must be a SINGLE source of truth shared by both this in-process test
+# app AND the out-of-process Celery worker that actually commits queued writes
+# (see .github/workflows/ci.yml). Honour a DB_NAME supplied by the environment
+# (CI sets one) and only fall back to the legacy default when none is given —
+# otherwise the worker writes to one database while the tests read from another
+# and every create-then-read assertion fails.
+os.environ.setdefault("DB_NAME", "visichek_test_integration")
+INTEGRATION_DB_NAME = os.environ["DB_NAME"]
 
 # Add the backend root to the path
 backend_root = Path(__file__).parent.parent.parent
@@ -43,6 +51,94 @@ import core.database
 
 
 settings = get_settings()
+
+
+# ---------------------------------------------------------------------------
+# Queued-write polling helpers
+# ---------------------------------------------------------------------------
+#
+# After the queued-write migration, every POST/PUT/PATCH/DELETE returns
+# ``202 Accepted + { id, job_id, status: "queued" }`` and the real DB mutation
+# runs on the out-of-process Celery worker (started in CI before the test run).
+# Integration flows therefore must (a) accept 202 on writes and (b) wait for the
+# worker to commit before reading the resource back. These helpers encapsulate
+# both so call sites stay one-liners.
+
+
+async def wait_for_job(
+    client: AsyncClient,
+    job_id: str,
+    headers: dict[str, str],
+    *,
+    timeout: float = 20.0,
+    interval: float = 0.1,
+    raise_on_failure: bool = True,
+) -> dict[str, Any]:
+    """Poll ``GET /v1/jobs/{job_id}`` until the queued write reaches a terminal
+    state (``succeeded`` / ``failed``) and return the job's enriched ``data``.
+
+    With ``raise_on_failure`` (the default) a failed job raises so the test
+    surfaces the worker error; pass ``False`` to assert an *expected* failure
+    (duplicate/constraint rejections that the worker — not the route — emits).
+    """
+    deadline = time.monotonic() + timeout
+    last: Any = None
+    while time.monotonic() < deadline:
+        resp = await client.get(f"/v1/jobs/{job_id}", headers=headers)
+        if resp.status_code == 200:
+            last = resp.json()["data"]
+            status = last.get("status")
+            if status == "succeeded":
+                return last
+            if status == "failed":
+                if raise_on_failure:
+                    raise AssertionError(
+                        f"queued job {job_id} failed: {last.get('error')}"
+                    )
+                return last
+        await asyncio.sleep(interval)
+    raise AssertionError(
+        f"queued job {job_id} did not complete within {timeout}s (last={last})"
+    )
+
+
+async def complete_write(
+    client: AsyncClient,
+    resp: Any,
+    headers: dict[str, str],
+    *,
+    expected_status: int = 202,
+) -> dict[str, Any]:
+    """Assert a queued-write response envelope and block until the worker
+    commits it. Returns the terminal job ``data`` (``resource_id``, ``result``,
+    ...) so callers can read the committed resource id.
+    """
+    assert resp.status_code == expected_status, resp.text
+    body = resp.json()["data"]
+    return await wait_for_job(client, body["job_id"], headers)
+
+
+async def expect_write_failure(
+    client: AsyncClient,
+    resp: Any,
+    headers: dict[str, str],
+    *,
+    expected_status: int = 202,
+) -> dict[str, Any]:
+    """Assert a write was accepted (``202``) but the worker REJECTED it.
+
+    Constraint violations (duplicate name/code, "can't delete the last
+    branch", etc.) are no longer raised synchronously by the route — the route
+    enqueues and the writer fails. Returns the terminal job ``data`` whose
+    ``status == "failed"`` and whose ``error`` carries the reason.
+    """
+    assert resp.status_code == expected_status, resp.text
+    body = resp.json()["data"]
+    data = await wait_for_job(client, body["job_id"], headers, raise_on_failure=False)
+    assert data.get("status") == "failed", (
+        f"expected queued job to fail, got status={data.get('status')}: {data}"
+    )
+    return data
 
 
 def unique_password_suffix(length: int = 12) -> str:
@@ -132,7 +228,7 @@ async def mongo_db() -> AsyncGenerator[AsyncIOMotorDatabase, None]:
     uses this connection instead of the stale import-time one.
     """
     mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
-    db_name = "visichek_test_integration"
+    db_name = INTEGRATION_DB_NAME
 
     client: Any = AsyncIOMotorClient(mongo_url)
     db = client[db_name]

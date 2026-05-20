@@ -18,6 +18,7 @@ from httpx import AsyncClient
 
 from schemas.visitor_profile_schema import VisitorProfileCreate
 from repositories.visitor_profile_repo import create_visitor_profile
+from tests.integration.conftest import complete_write
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -130,9 +131,12 @@ class TestVisitorProfileFlow:
             json={"profiling_preference": "opted_out"},
             headers=auth_headers,
         )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["profiling_preference"] == "opted_out"
+        await complete_write(integration_client, resp, auth_headers)
+        get_resp = await integration_client.get(
+            f"/v1/visitor-profiles/{profile_id}", headers=auth_headers
+        )
+        assert get_resp.status_code == 200, get_resp.text
+        assert get_resp.json()["data"]["profiling_preference"] == "opted_out"
 
     async def test_update_profile_company(
         self,
@@ -146,8 +150,12 @@ class TestVisitorProfileFlow:
             json={"company": "Tesla Inc."},
             headers=auth_headers,
         )
-        assert resp.status_code == 200
-        assert resp.json()["data"]["company"] == "Tesla Inc."
+        await complete_write(integration_client, resp, auth_headers)
+        get_resp = await integration_client.get(
+            f"/v1/visitor-profiles/{profile_id}", headers=auth_headers
+        )
+        assert get_resp.status_code == 200, get_resp.text
+        assert get_resp.json()["data"]["company"] == "Tesla Inc."
 
     async def test_get_nonexistent_profile(
         self,

@@ -105,9 +105,31 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
+      # Queued writes (POST/PUT/PATCH/DELETE) commit on the Celery worker, not
+      # inline. Integration flows create-then-read, so a worker MUST be draining
+      # the queues or every read comes back empty. We start it in-line here
+      # (background) so its lifetime is scoped to this step, drain all queues,
+      # and dump its log afterwards for debugging. Its DB_NAME/broker MUST match
+      # the test env below so it writes where the in-process app reads.
       - name: Run integration tests
-        run: pytest tests/integration/ -v --tb=short -q
+        run: |
+          set -uo pipefail
+          nohup celery -A celery_worker worker \
+            --pool=custom --concurrency=4 \
+            -Q writes,precompute,gates,celery \
+            -l info > celery-worker.log 2>&1 &
+          WORKER_PID=$!
+          echo "Started Celery worker pid=$WORKER_PID; waiting for it to come up"
+          sleep 12
+          set +e
+          pytest tests/integration/ -v --tb=short -q
+          STATUS=$?
+          echo "------------------------- celery worker log -------------------------"
+          cat celery-worker.log || true
+          kill "$WORKER_PID" 2>/dev/null || true
+          exit $STATUS
         env:
+          CELERY_CUSTOM_WORKER_POOL: celery_aio_pool.pool:AsyncIOPool
           DB_TYPE: mongodb
           DB_NAME: test_visichek_ci
           ENV: testing

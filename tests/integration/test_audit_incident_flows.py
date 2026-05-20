@@ -12,6 +12,8 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
+from tests.integration.conftest import complete_write
+
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -70,8 +72,15 @@ class TestIncidentLifecycleFlow:
         resp = await integration_client.post(
             "/v1/incidents", json=_incident_payload, headers=auth_headers
         )
-        assert resp.status_code in (200, 201), resp.text
-        data = resp.json()["data"]
+        # Queued write: 202 + job envelope. Wait for the worker to commit, then
+        # read the resource back to verify the persisted fields.
+        job = await complete_write(integration_client, resp, auth_headers)
+        incident_id = job["resource_id"]
+        get_resp = await integration_client.get(
+            f"/v1/incidents/{incident_id}", headers=auth_headers
+        )
+        assert get_resp.status_code == 200, get_resp.text
+        data = get_resp.json()["data"]
         assert data["description"] == _incident_payload["description"]
         assert data["status"] == "open"
 
@@ -81,10 +90,11 @@ class TestIncidentLifecycleFlow:
         auth_headers: dict,
         _incident_payload: dict,
     ):
-        # seed one
-        await integration_client.post(
+        # seed one and wait for the queued write to commit before listing
+        resp = await integration_client.post(
             "/v1/incidents", json=_incident_payload, headers=auth_headers
         )
+        await complete_write(integration_client, resp, auth_headers)
         resp = await integration_client.get("/v1/incidents", headers=auth_headers)
         assert resp.status_code == 200
         items = resp.json()["data"]
@@ -100,7 +110,8 @@ class TestIncidentLifecycleFlow:
         create_resp = await integration_client.post(
             "/v1/incidents", json=_incident_payload, headers=auth_headers
         )
-        incident_id = create_resp.json()["data"]["id"]
+        job = await complete_write(integration_client, create_resp, auth_headers)
+        incident_id = job["resource_id"]
 
         resp = await integration_client.get(
             f"/v1/incidents/{incident_id}", headers=auth_headers
@@ -117,7 +128,8 @@ class TestIncidentLifecycleFlow:
         create_resp = await integration_client.post(
             "/v1/incidents", json=_incident_payload, headers=auth_headers
         )
-        incident_id = create_resp.json()["data"]["id"]
+        job = await complete_write(integration_client, create_resp, auth_headers)
+        incident_id = job["resource_id"]
 
         # transition: open → investigating → contained → closed
         for next_status in ("investigating", "contained", "closed"):
@@ -131,10 +143,14 @@ class TestIncidentLifecycleFlow:
                 json=patch_payload,
                 headers=auth_headers,
             )
-            assert resp.status_code == 200, (
-                f"Failed transitioning to {next_status}: {resp.text}"
+            await complete_write(integration_client, resp, auth_headers)
+            get_resp = await integration_client.get(
+                f"/v1/incidents/{incident_id}", headers=auth_headers
             )
-            assert resp.json()["data"]["status"] == next_status
+            assert get_resp.status_code == 200, (
+                f"Failed transitioning to {next_status}: {get_resp.text}"
+            )
+            assert get_resp.json()["data"]["status"] == next_status
 
     async def test_update_ndpc_notification(
         self,
@@ -145,7 +161,8 @@ class TestIncidentLifecycleFlow:
         create_resp = await integration_client.post(
             "/v1/incidents", json=_incident_payload, headers=auth_headers
         )
-        incident_id = create_resp.json()["data"]["id"]
+        job = await complete_write(integration_client, create_resp, auth_headers)
+        incident_id = job["resource_id"]
 
         resp = await integration_client.patch(
             f"/v1/incidents/{incident_id}",
@@ -156,8 +173,12 @@ class TestIncidentLifecycleFlow:
             },
             headers=auth_headers,
         )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
+        await complete_write(integration_client, resp, auth_headers)
+        get_resp = await integration_client.get(
+            f"/v1/incidents/{incident_id}", headers=auth_headers
+        )
+        assert get_resp.status_code == 200
+        data = get_resp.json()["data"]
         assert data["ndpc_notified"] is True
         assert data["status"] == "reported_to_ndpc"
 

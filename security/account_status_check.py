@@ -270,12 +270,11 @@ async def check_admin_account_status_and_permissions(
         )
         permission_list = get_default_permissions_for_admin_preset(stored_preset)
     else:
+        # ``needs_backfill`` being False guarantees a non-empty
+        # permissionList, but mypy can't narrow through that variable.
+        assert permission_list is not None
         expected = get_default_permissions_for_admin_preset(stored_preset)
-        stored_keys = {
-            p.key
-            for p in permission_list.permissions
-            if p.key  # type: ignore[union-attr]
-        }
+        stored_keys = {p.key for p in permission_list.permissions if p.key}
         expected_keys = {p.key for p in expected.permissions if p.key}
         if stored_keys != expected_keys:
             # Drift: stored list is missing keys the preset now grants

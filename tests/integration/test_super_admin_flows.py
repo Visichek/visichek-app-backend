@@ -15,8 +15,16 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
+from tests.integration.conftest import complete_write, expect_write_failure
+
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+def _find(items: list, resource_id: str) -> dict:
+    match = next((x for x in items if x.get("id") == resource_id), None)
+    assert match is not None, f"resource {resource_id} not found in {items}"
+    return match
 
 
 class TestSuperAdminAnalytics:
@@ -72,8 +80,12 @@ class TestSuperAdminDepartments:
             json=_dept_payload,
             headers=auth_headers,
         )
-        assert resp.status_code in (200, 201), resp.text
-        data = resp.json()["data"]
+        job = await complete_write(integration_client, resp, auth_headers)
+        listing = await integration_client.get(
+            "/v1/super-admin/departments", headers=auth_headers
+        )
+        assert listing.status_code == 200, listing.text
+        data = _find(listing.json()["data"], job["resource_id"])
         assert _dept_payload["name"] in data.get("name", "")
 
     async def test_create_then_list_departments(
@@ -82,11 +94,12 @@ class TestSuperAdminDepartments:
         auth_headers: dict,
         _dept_payload: dict,
     ):
-        await integration_client.post(
+        resp = await integration_client.post(
             "/v1/super-admin/departments",
             json=_dept_payload,
             headers=auth_headers,
         )
+        await complete_write(integration_client, resp, auth_headers)
         resp = await integration_client.get(
             "/v1/super-admin/departments", headers=auth_headers
         )
@@ -128,8 +141,12 @@ class TestSuperAdminUserManagement:
             json=invite_payload,
             headers=auth_headers,
         )
-        assert resp.status_code in (200, 201), resp.text
-        data = resp.json()["data"]
+        job = await complete_write(integration_client, resp, auth_headers)
+        listing = await integration_client.get(
+            "/v1/super-admin/admins", headers=auth_headers
+        )
+        assert listing.status_code == 200, listing.text
+        data = _find(listing.json()["data"], job["resource_id"])
         assert data["full_name"] == "Invited Admin"
         assert data["role"] == "dept_admin"
 
@@ -152,13 +169,11 @@ class TestSuperAdminUserManagement:
         resp1 = await integration_client.post(
             "/v1/super-admin/admins/invite", json=payload, headers=auth_headers
         )
-        assert resp1.status_code in (200, 201)
+        await complete_write(integration_client, resp1, auth_headers)
 
-        # duplicate invite should fail
+        # duplicate invite — worker rejects on email-uniqueness
         payload["full_name"] = "Second Admin"
         resp2 = await integration_client.post(
             "/v1/super-admin/admins/invite", json=payload, headers=auth_headers
         )
-        assert resp2.status_code in (409, 400, 422), (
-            f"Expected duplicate rejection, got {resp2.status_code}: {resp2.text}"
-        )
+        await expect_write_failure(integration_client, resp2, auth_headers)

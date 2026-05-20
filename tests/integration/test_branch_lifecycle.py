@@ -20,6 +20,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from main import app
 from api.v1.branch_route import _super_admin_dep
+from tests.integration.conftest import complete_write, expect_write_failure
 
 
 def _mock_super_admin(tenant_id: str = "integration-tenant-1"):
@@ -40,7 +41,13 @@ async def client(mongo_db: AsyncIOMotorDatabase):
     Depends on mongo_db to ensure the database connection is patched
     to the current event loop before any requests hit the app.
     """
+    from security.auth import verify_any_token
+
     app.dependency_overrides[_super_admin_dep] = lambda: _mock_super_admin()
+    # The queued-write poll helper hits GET /v1/jobs/{job_id}, which is guarded
+    # by verify_any_token (not _super_admin_dep). Override it with the same mock
+    # principal so polling works without a real token.
+    app.dependency_overrides[verify_any_token] = lambda: _mock_super_admin()
 
     async with AsyncClient(
         transport=ASGITransport(app=app),  # type: ignore[arg-type]
@@ -57,7 +64,7 @@ async def test_branch_crud_lifecycle(client):
     """Full CRUD lifecycle for branches."""
     ts = int(time.time() * 1000)
 
-    # 1. Create a branch
+    # 1. Create a branch (queued → 202, committed by the worker)
     create_resp = await client.post(
         "/v1/branches",
         json={
@@ -69,9 +76,11 @@ async def test_branch_crud_lifecycle(client):
             "is_headquarters": True,
         },
     )
-    assert create_resp.status_code in (200, 201), create_resp.text
-    branch_data = create_resp.json()["data"]
-    branch_id = branch_data["id"]
+    job = await complete_write(client, create_resp, dict(client.headers))
+    branch_id = job["resource_id"]
+    get_resp = await client.get(f"/v1/branches/{branch_id}")
+    assert get_resp.status_code == 200, get_resp.text
+    branch_data = get_resp.json()["data"]
     assert branch_data["name"] == f"Branch-{ts}"
     assert branch_data["is_headquarters"] is True
 
@@ -84,8 +93,8 @@ async def test_branch_crud_lifecycle(client):
             "city": "Abuja",
         },
     )
-    assert create_resp2.status_code in (200, 201)
-    branch2_id = create_resp2.json()["data"]["id"]
+    job2 = await complete_write(client, create_resp2, dict(client.headers))
+    branch2_id = job2["resource_id"]
 
     # 3. List branches
     list_resp = await client.get("/v1/branches")
@@ -103,18 +112,21 @@ async def test_branch_crud_lifecycle(client):
         f"/v1/branches/{branch_id}",
         json={"city": "Updated City", "phone": "+234800000"},
     )
-    assert update_resp.status_code == 200
-    assert update_resp.json()["data"]["city"] == "Updated City"
+    await complete_write(client, update_resp, dict(client.headers))
+    get_after_update = await client.get(f"/v1/branches/{branch_id}")
+    assert get_after_update.status_code == 200
+    assert get_after_update.json()["data"]["city"] == "Updated City"
 
     # 6. Deactivate second branch (first one stays active)
     deactivate_resp = await client.post(f"/v1/branches/{branch2_id}/deactivate")
-    assert deactivate_resp.status_code == 200
-    assert deactivate_resp.json()["data"]["status"] == "inactive"
+    await complete_write(client, deactivate_resp, dict(client.headers))
+    get_after_deactivate = await client.get(f"/v1/branches/{branch2_id}")
+    assert get_after_deactivate.status_code == 200
+    assert get_after_deactivate.json()["data"]["status"] == "inactive"
 
-    # 7. Delete second branch
+    # 7. Delete second branch (worker commits the delete)
     delete_resp = await client.delete(f"/v1/branches/{branch2_id}")
-    assert delete_resp.status_code == 200
-    assert delete_resp.json()["data"]["deleted"] is True
+    await complete_write(client, delete_resp, dict(client.headers))
 
 
 @pytest.mark.asyncio
@@ -130,13 +142,13 @@ async def test_cannot_delete_last_branch(client):
             "name": f"Solo-{ts}",
         },
     )
-    assert resp.status_code in (200, 201)
-    branch_id = resp.json()["data"]["id"]
+    job = await complete_write(client, resp, dict(client.headers))
+    branch_id = job["resource_id"]
 
-    # Try to delete it
+    # Try to delete it — the route enqueues (202) and the worker rejects it
+    # because a tenant must keep at least one branch.
     del_resp = await client.delete(f"/v1/branches/{branch_id}")
-    # Should fail because it's the last branch
-    assert del_resp.status_code == 400
+    await expect_write_failure(client, del_resp, dict(client.headers))
 
 
 @pytest.mark.asyncio
@@ -149,10 +161,12 @@ async def test_duplicate_branch_name_fails(client):
         "/v1/branches",
         json={"tenant_id": "integration-tenant-1", "name": name},
     )
-    assert resp1.status_code in (200, 201)
+    # Commit the first branch before posting the duplicate so the worker sees
+    # it (concurrency could otherwise let both run before either commits).
+    await complete_write(client, resp1, dict(client.headers))
 
     resp2 = await client.post(
         "/v1/branches",
         json={"tenant_id": "integration-tenant-1", "name": name},
     )
-    assert resp2.status_code == 409
+    await expect_write_failure(client, resp2, dict(client.headers))
