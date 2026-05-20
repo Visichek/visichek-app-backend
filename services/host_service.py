@@ -199,6 +199,35 @@ async def count_tenant_hosts(tenant_id: str) -> int:
     return await count_hosts({"tenant_id": tenant_id})
 
 
+def _resolve_stored_image_ref(ref: Optional[str]) -> Optional[str]:
+    """Turn a stored image reference into a directly-renderable URL.
+
+    Newly-saved hosts store a storage *object key* (e.g.
+    ``system/shared/abc.png``); the upload pipeline persists the key, not the
+    expiring ``download_url``. Resolve it to a fresh presigned URL on read via
+    the storage provider — mirroring ``branding_service._resolve_logo_urls``.
+
+    Legacy safety: hosts created before the upload migration stored a full
+    ``http(s)://…`` URL or a leading-slash path. Those are already usable, so
+    return them untouched instead of treating them as object keys.
+
+    Best-effort: returns ``None`` if storage is unconfigured or resolution
+    fails, so a storage blip never breaks a host read.
+    """
+    if not ref:
+        return None
+    # Legacy values are already presentable — pass through unchanged.
+    if ref.startswith(("http://", "https://", "/")):
+        return ref
+    try:
+        from core.storage.manager import DocumentStorageManager
+
+        provider = DocumentStorageManager.get_instance().provider
+        return provider.download_url(object_key=ref)
+    except Exception:
+        return None
+
+
 async def _enrich_host(host: HostOut) -> HostWithSummaryOut:
     from services.summary_resolver import (
         resolve_department_summary,
@@ -215,6 +244,10 @@ async def _enrich_host(host: HostOut) -> HostWithSummaryOut:
     data["tenant_summary"] = tenant_s
     data["department_summary"] = dept_s
     data["source_system_user_summary"] = user_s
+    # Resolve stored object keys to presigned URLs the frontend can drop
+    # straight into an <img src> — no client-side /v1/documents round-trip.
+    data["picture_url"] = _resolve_stored_image_ref(host.picture_image_url)
+    data["signature_url"] = _resolve_stored_image_ref(host.signature_image_url)
     return HostWithSummaryOut(**data)
 
 

@@ -70,6 +70,18 @@ class HostOut(HostBase):
     id: Optional[str] = Field(default=None, alias="_id")
     date_created: Optional[int] = None
     last_updated: Optional[int] = None
+    # ``picture_image_url`` / ``signature_image_url`` store a durable storage
+    # *object key* (not an expiring URL). These companion fields hold the
+    # presigned, directly-renderable URL resolved on read — generated, not
+    # stored — mirroring branding's ``logo_object_key`` / ``logo_url`` split.
+    picture_url: Optional[str] = Field(
+        default=None,
+        description="Presigned URL for the host picture. Generated on read, not stored.",
+    )
+    signature_url: Optional[str] = Field(
+        default=None,
+        description="Presigned URL for the host signature. Generated on read, not stored.",
+    )
 
     @model_validator(mode="before")
     @classmethod

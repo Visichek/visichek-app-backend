@@ -1,0 +1,100 @@
+================================================================================
+FRONTEND REPAIRS — Photo / Signature uploads on the host form
+Date: 2026-05-20
+Re: the "CHANGES — Photo / Signature uploads on the host form" changelog
+================================================================================
+
+CONTEXT
+-------
+The host form now stores a storage OBJECT KEY (not a URL) in
+`picture_image_url` / `signature_image_url`. That decision is correct and is
+kept. The disparities were all on the READ / preview-on-reload path. The
+backend has been changed to resolve those object keys for you, so most of the
+frontend's reload logic should be deleted, not patched.
+
+================================================================================
+WHAT THE BACKEND NOW DOES (no frontend work needed for these)
+================================================================================
+Host responses (`GET /v1/hosts`, `GET /v1/hosts/{id}`) now include TWO new
+read-only, presigned fields alongside the stored keys:
+
+    pictureImageUrl    -> the durable OBJECT KEY you saved (unchanged)
+    signatureImageUrl  -> the durable OBJECT KEY you saved (unchanged)
+    pictureUrl         -> NEW: presigned, directly-renderable URL (resolved on read)
+    signatureUrl       -> NEW: presigned, directly-renderable URL (resolved on read)
+
+(Backend fields are `picture_url` / `signature_url`; the camelCase conversion
+middleware serves them as `pictureUrl` / `signatureUrl`.)
+
+These mirror branding's `logoObjectKey` (stored) vs `logoUrl` (computed). They
+are regenerated on every read, baked into the precompute cache, and — for S3 —
+are auth-less presigned URLs that an <img src> can load directly. Legacy host
+rows that still hold a full `http(s)://…` URL or a leading-slash path are
+passed through untouched, so old rows keep rendering.
+
+================================================================================
+DISPARITY-BY-DISPARITY: WHAT TO CHANGE ON THE FRONTEND
+================================================================================
+
+1. RESOLUTION VIA /v1/documents/{objectKey} — REMOVE IT.
+   Disparity: `resolveDocumentUrl('/v1/documents/${encodeURIComponent(objectKey)}')`
+   was wrong on four counts (passes an object key where the route expects the
+   Mongo document `_id`; the route returns a JSON envelope, not image bytes;
+   it requires a Bearer token an <img> can't send; object keys contain slashes
+   that `encodeURIComponent` turns into %2F and break the single path param).
+   Fix: DELETE the documents-endpoint resolution for host images. On reload /
+   edit mode, use the `pictureUrl` / `signatureUrl` fields the host response
+   now returns. There is no client-side resolution step anymore.
+
+2. PREVIEW SOURCE SELECTION — simplify to two sources.
+   Fix: in image-upload-field.tsx, the preview <img src> should be:
+     - just after upload: the fresh `downloadUrl` held in component state
+       (still correct — keep this), OR
+     - on reload / edit: the `pictureUrl` / `signatureUrl` from the host record.
+   Drop the `resolveDocumentUrl(...)` branch and the legacy-URL detection
+   branch entirely — the backend already handles legacy values and returns a
+   ready-to-use URL in `*Url`. The component should treat `*Url` as opaque.
+
+3. WHAT THE FIELD COMPONENT RECEIVES.
+   Note: ImageUploadField is documented as "value is the stored OBJECT KEY".
+   That stays true for the SAVE path (onChange still emits the object key into
+   `pictureImageUrl` / `signatureImageUrl`). But for the DISPLAY path it now
+   needs the resolved URL too. Fix: pass BOTH to the field — e.g. a `value`
+   (object key, for change tracking / save) and a `previewUrl` prop fed from
+   the host record's `pictureUrl` / `signatureUrl`. Don't try to derive a
+   preview URL from the object key on the client.
+
+4. PUBLIC UPLOAD AUTH — send the Bearer token, not (only) a cookie.
+   Disparity: the changelog assumes the session COOKIE carries auth on the
+   public upload (`POST /v1/public/tenants/{tenantId}/uploads`). On Free /
+   Starter plans (no anonymous public surface) the backend requires an
+   `Authorization: Bearer <token>` header for a `super_admin` / `dept_admin` /
+   `receptionist` scoped to the same tenant — a cookie alone yields 403.
+   Fix: ensure lib/upload/unified-upload.ts attaches the authenticated tenant
+   Bearer token on the PUBLIC upload call (same as the private call), so the
+   host-form photo upload works regardless of whether the plan grants the
+   anonymous public surface.
+
+================================================================================
+THINGS THE FRONTEND GOT RIGHT (no change)
+================================================================================
+  - Persisting the OBJECT KEY (not `downloadUrl`) into the host record. Correct.
+  - PUBLIC for photo, PRIVATE for signature. Correct.
+  - Letting the public upload use the backend default purpose `kiosk_form`
+    (not forcing `appointment_photo`). Correct — backend default is kiosk_form.
+  - Signature private upload with purpose="system". Correct — accepted value.
+  - Using the fresh `downloadUrl` for the instant just-uploaded preview. Correct.
+
+================================================================================
+NET FRONTEND DIFF (summary)
+================================================================================
+  - image-upload-field.tsx: remove resolveDocumentUrl + legacy-URL handling;
+    add a `previewUrl` prop and render that (or the fresh post-upload
+    downloadUrl) instead.
+  - host-form.tsx: feed `pictureUrl` / `signatureUrl` from the loaded host
+    record into the ImageUploadField `previewUrl` prop; keep emitting the
+    object key on change.
+  - unified-upload.ts: send the Bearer token on the PUBLIC upload path.
+  - Re-verify: upload host photo + signature, save, RELOAD edit page, confirm
+    both previews render from `pictureUrl` / `signatureUrl` with no
+    /v1/documents call in the network tab.
