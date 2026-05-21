@@ -15,7 +15,12 @@ def hash_password(password: str | bytes) -> bytes:  # type: ignore
         return hashed
 
 
-def check_password(password: str, hashed: bytes | str) -> bool:
+def check_password(password: str, hashed: bytes | str | None) -> bool:
+    # A missing/empty stored hash can never match a supplied password.
+    # Returning False here keeps callers on the normal "invalid credentials"
+    # path instead of crashing inside bcrypt with a TypeError on None.
+    if not hashed:
+        return False
     # if hashed is string, convert to bytes
     if isinstance(hashed, str):
         hashed = hashed.encode("utf-8")

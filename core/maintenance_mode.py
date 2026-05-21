@@ -10,9 +10,20 @@ still log in and toggle maintenance back off.
 "Tenant-facing" is derived from the role-permission config
 (``config/role_permissions.py``) rather than a hand-maintained URL list: any
 route whose resource segment belongs only to the admin/user surface (admin
-login, billing, platform settings, public marketing) stays reachable; every
-authenticated tenant role and every unauthenticated public tenant flow
-(visitor check-in, KYC kiosk, onboarding submission, tenant login) is blocked.
+login, billing, platform settings, public marketing) stays reachable.
+
+Once a request reaches the gate (i.e. it is NOT a platform-only / infra path)
+the lockout is decided by who is asking:
+
+* **Application admins / users** (``APP_ROLES`` Bearer token) — full bypass on
+  every method. They run the platform and must be able to turn maintenance
+  back off.
+* **Authenticated tenant tokens** (the 6 system roles, or any other/expired
+  token) — blocked on EVERY method, GET included. Maintenance exists to take
+  the tenant surface offline.
+* **Unauthenticated / public callers** — safe reads (``GET``/``HEAD``) pass so
+  public screens like plan listing and the active check-in page keep working;
+  public submissions (``POST``/``PUT``/``PATCH``/``DELETE``) are blocked.
 
 Runs ahead of ``PlanEnforcementMiddleware`` so a tenant request short-circuits
 before any plan/quota work. Reads the maintenance flag through a short-TTL
@@ -80,12 +91,12 @@ class MaintenanceModeMiddleware(BaseHTTPMiddleware):
         if not maintenance.get("mode"):
             return await call_next(request)
 
-        # Maintenance is ON and this is a tenant-facing path. Application
-        # admins/users still get through (they manage the platform); every
-        # tenant role and every unauthenticated public tenant flow is locked
-        # out.
+        # Maintenance is ON and this is a tenant-facing path.
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
+            # Authenticated: only application admins/users bypass. Every other
+            # token (the 6 tenant roles, or an unrecognised / expired token
+            # presenting as a tenant) is locked out regardless of method.
             token = auth_header.split(" ", maxsplit=1)[1]
             try:
                 access_token = await get_access_token_allow_expired(accessToken=token)
@@ -93,7 +104,16 @@ class MaintenanceModeMiddleware(BaseHTTPMiddleware):
                 access_token = None
             if access_token and (access_token.role or "").lower() in APP_ROLES:
                 return await call_next(request)
+            return self._maintenance_response(request, maintenance)
 
+        # Unauthenticated / public: safe reads pass, submissions are blocked.
+        if request.method in ("GET", "HEAD"):
+            return await call_next(request)
+
+        return self._maintenance_response(request, maintenance)
+
+    @staticmethod
+    def _maintenance_response(request: Request, maintenance: dict):
         return error_response(
             status_code=503,
             message="Platform under maintenance",

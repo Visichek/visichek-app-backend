@@ -10,11 +10,14 @@ re-classification when permissions change.
 
 from __future__ import annotations
 
+import types
+from unittest.mock import AsyncMock, patch
+
 from config.role_permissions import (
     PLATFORM_ONLY_PATH_SEGMENTS,
     TENANT_PATH_SEGMENTS,
 )
-from core.maintenance_mode import _is_platform_path, _top_segment
+from core.maintenance_mode import MaintenanceModeMiddleware, _is_platform_path, _top_segment
 
 
 class TestTopSegment:
@@ -111,3 +114,108 @@ class TestSegmentDerivation:
         for seg in ("tenants", "usage", "audit-logs"):
             assert seg in TENANT_PATH_SEGMENTS
             assert seg not in PLATFORM_ONLY_PATH_SEGMENTS
+
+
+def _make_request(method: str, path: str, auth: str | None = None):
+    headers: dict[str, str] = {}
+    if auth is not None:
+        headers["Authorization"] = auth
+    return types.SimpleNamespace(
+        method=method,
+        url=types.SimpleNamespace(path=path),
+        headers=headers,
+        state=types.SimpleNamespace(request_id="req-1"),
+    )
+
+
+async def _run_dispatch(
+    request,
+    *,
+    maintenance_on: bool = True,
+    token_role: str | None = None,
+    token_found: bool = True,
+):
+    """Drive MaintenanceModeMiddleware.dispatch with infra/DB calls mocked.
+
+    Returns (result, sentinel, call_next) so callers can assert whether the
+    request passed through (result is sentinel) or was gated (503 response).
+    """
+    mw = MaintenanceModeMiddleware(app=None)  # type: ignore[arg-type]
+    sentinel = object()
+    call_next = AsyncMock(return_value=sentinel)
+
+    access_token = None
+    if token_found and token_role is not None:
+        access_token = types.SimpleNamespace(role=token_role)
+
+    with (
+        patch(
+            "core.settings.get_settings",
+            return_value=types.SimpleNamespace(env="production"),
+        ),
+        patch(
+            "services.platform_settings_service.get_maintenance_state",
+            new=AsyncMock(return_value={"mode": maintenance_on, "message": "down"}),
+        ),
+        patch(
+            "core.maintenance_mode.get_access_token_allow_expired",
+            new=AsyncMock(return_value=access_token),
+        ),
+    ):
+        result = await mw.dispatch(request, call_next)
+    return result, sentinel, call_next
+
+
+class TestDispatchGating:
+    """End-to-end branching of the maintenance gate (token type + method)."""
+
+    async def test_maintenance_off_passes_everything(self):
+        req = _make_request("POST", "/v1/visitors/check-in")
+        result, sentinel, call_next = await _run_dispatch(req, maintenance_on=False)
+        assert result is sentinel
+        call_next.assert_awaited_once()
+
+    async def test_app_admin_token_bypasses_writes(self):
+        req = _make_request("POST", "/v1/appointments", auth="Bearer tok")
+        result, sentinel, _ = await _run_dispatch(req, token_role="admin")
+        assert result is sentinel
+
+    async def test_tenant_token_blocked_on_write(self):
+        req = _make_request("POST", "/v1/appointments", auth="Bearer tok")
+        result, sentinel, call_next = await _run_dispatch(req, token_role="receptionist")
+        assert result is not sentinel
+        assert result.status_code == 503
+        call_next.assert_not_awaited()
+
+    async def test_tenant_token_blocked_on_read(self):
+        # Tenant tokens are locked out on EVERY method, GET included.
+        req = _make_request("GET", "/v1/appointments", auth="Bearer tok")
+        result, sentinel, _ = await _run_dispatch(req, token_role="super_admin")
+        assert result is not sentinel
+        assert result.status_code == 503
+
+    async def test_unrecognised_token_blocked(self):
+        # A token that fails lookup is treated as a (non-admin) tenant caller.
+        req = _make_request("GET", "/v1/appointments", auth="Bearer tok")
+        result, sentinel, _ = await _run_dispatch(req, token_found=False)
+        assert result is not sentinel
+        assert result.status_code == 503
+
+    async def test_unauthenticated_get_passes(self):
+        req = _make_request("GET", "/v1/visitors/check-in")
+        result, sentinel, _ = await _run_dispatch(req)
+        assert result is sentinel
+
+    async def test_unauthenticated_write_blocked(self):
+        req = _make_request("POST", "/v1/visitors/check-in")
+        result, sentinel, call_next = await _run_dispatch(req)
+        assert result is not sentinel
+        assert result.status_code == 503
+        call_next.assert_not_awaited()
+
+    async def test_platform_path_bypasses_anonymous_post(self):
+        # Admin login is an unauthenticated POST on a platform-only segment —
+        # it must survive maintenance so admins can get in and toggle it off.
+        req = _make_request("POST", "/v1/admins/login")
+        result, sentinel, _ = await _run_dispatch(req)
+        assert result is sentinel
