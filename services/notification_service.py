@@ -29,6 +29,7 @@ from schemas.notification_schema import (
     NotificationPreferencesOut,
 )
 from schemas.notification_schema import NotificationType
+from schemas.imports import UserType
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 async def send_notification(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     title: str,
     body: str,
     type: str = "info",
@@ -137,7 +138,7 @@ async def _dispatch_email_for_notification(
     *,
     notification: NotificationOut,
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     email_template_key: str,
     email_context: dict,
     preference_flag: str,
@@ -209,7 +210,7 @@ async def _dispatch_email_for_notification(
     recipient_email: Optional[str] = None
     recipient_name: Optional[str] = None
     try:
-        if user_type == "admin":
+        if user_type == UserType.ADMIN:
             from repositories.admin_repo import get_admin
 
             if ObjectId.is_valid(user_id):
@@ -217,7 +218,7 @@ async def _dispatch_email_for_notification(
                 if admin:
                     recipient_email = admin.email
                     recipient_name = admin.full_name
-        elif user_type == "system_user":
+        elif user_type == UserType.SYSTEM_USER:
             from repositories.system_user_repo import get_system_user
 
             if ObjectId.is_valid(user_id):
@@ -225,7 +226,7 @@ async def _dispatch_email_for_notification(
                 if system_user:
                     recipient_email = system_user.email
                     recipient_name = system_user.full_name
-        elif user_type == "user":
+        elif user_type == UserType.USER:
             from repositories.user_repo import get_user
 
             if ObjectId.is_valid(user_id):
@@ -399,7 +400,7 @@ async def _record_email_outbox_send(
 
 async def retrieve_notifications(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     read: Optional[bool] = None,
     skip: int = 0,
     limit: int = 20,
@@ -430,7 +431,7 @@ async def _enrich_notification(notif: NotificationOut) -> NotificationWithSummar
 
 async def retrieve_notifications_with_summary(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     read: Optional[bool] = None,
     skip: int = 0,
     limit: int = 20,
@@ -445,7 +446,7 @@ async def retrieve_notifications_with_summary(
 
 
 async def mark_notification_read(
-    notification_id: str, user_id: str, user_type: str
+    notification_id: str, user_id: str, user_type: UserType
 ) -> NotificationOut:
     """Mark a single notification as read."""
     if not ObjectId.is_valid(notification_id):
@@ -460,12 +461,12 @@ async def mark_notification_read(
     return result
 
 
-async def mark_all_notifications_read(user_id: str, user_type: str) -> int:
+async def mark_all_notifications_read(user_id: str, user_type: UserType) -> int:
     """Mark all notifications as read for a user. Returns count modified."""
     return await mark_all_read(user_id, user_type)
 
 
-async def get_unread_count(user_id: str, user_type: str) -> int:
+async def get_unread_count(user_id: str, user_type: UserType) -> int:
     """Get unread notification count for badge display."""
     return await count_notifications(
         {"user_id": user_id, "user_type": user_type, "read": False}
@@ -484,7 +485,7 @@ async def get_unread_count(user_id: str, user_type: str) -> int:
 async def mark_notifications_read_for_resources(
     *,
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     resource_type: str,
     resource_ids: Sequence[str],
 ) -> int:
@@ -540,7 +541,7 @@ def schedule_resource_read_receipt(
         task = asyncio.create_task(
             mark_notifications_read_for_resources(
                 user_id=user_id,
-                user_type=user_type,
+                user_type=UserType(user_type),
                 resource_type=resource_type,
                 resource_ids=ids,
             )
@@ -589,7 +590,7 @@ def extract_resource_ids(result: Any) -> List[str]:
 
 
 async def remove_notification(
-    notification_id: str, user_id: str, user_type: str
+    notification_id: str, user_id: str, user_type: UserType
 ) -> None:
     """Delete a single notification."""
     if not ObjectId.is_valid(notification_id):
@@ -607,7 +608,7 @@ async def remove_notification(
 
 async def retrieve_or_create_notification_preferences(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
 ) -> NotificationPreferencesOut:
     """Get notification preferences, auto-creating defaults on first access."""
     existing = await get_notification_preferences(
@@ -622,7 +623,7 @@ async def retrieve_or_create_notification_preferences(
 
 async def update_user_notification_preferences(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     data: NotificationPreferencesUpdate,
 ) -> NotificationPreferencesOut:
     """Update notification preferences, creating defaults first if needed."""
@@ -644,7 +645,7 @@ async def update_user_notification_preferences(
 
 async def notify_incident_deadline(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     incident_id: str,
     tenant_id: str,
 ) -> None:
@@ -675,7 +676,7 @@ async def notify_incident_deadline(
 
 async def notify_visitor_check_in(
     host_user_id: str,
-    user_type: str,
+    user_type: UserType,
     visitor_name: str,
     tenant_id: str,
 ) -> None:
@@ -703,7 +704,7 @@ async def notify_visitor_check_in(
 
 async def notify_appointment_reminder(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     appointment_id: str,
     visitor_name: str,
     tenant_id: str,
@@ -740,7 +741,7 @@ async def notify_appointment_reminder(
 
 async def notify_dsr_submitted(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     dsr_id: str,
     tenant_id: str,
 ) -> None:
@@ -771,7 +772,7 @@ async def notify_dsr_submitted(
 
 async def notify_subscription_alert(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     message: str,
     tenant_id: Optional[str] = None,
 ) -> None:
@@ -800,7 +801,7 @@ async def notify_subscription_alert(
 
 async def notify_new_user_added(
     admin_user_id: str,
-    user_type: str,
+    user_type: UserType,
     new_user_name: str,
     tenant_id: str,
 ) -> None:
@@ -951,7 +952,7 @@ async def notify_checkin_pending_approval(
             try:
                 await send_notification(
                     user_id=user.id or "",
-                    user_type="system_user",
+                    user_type=UserType.SYSTEM_USER,
                     title="Pending Check-In Approval",
                     body=f"{visitor_name} ({purpose}) is awaiting approval.",
                     type="info",
@@ -994,7 +995,7 @@ async def notify_checkin_approved(
             try:
                 await send_notification(
                     user_id=user.id or "",
-                    user_type="system_user",
+                    user_type=UserType.SYSTEM_USER,
                     title="Check-In Approved",
                     body=f"Badge issued for {visitor_name}. Badge ID: {badge_id}",
                     type="success",
@@ -1027,7 +1028,7 @@ async def notify_checkin_rejected(
             try:
                 await send_notification(
                     user_id=user.id or "",
-                    user_type="system_user",
+                    user_type=UserType.SYSTEM_USER,
                     title="Check-In Rejected",
                     body=f"Check-in for {visitor_name} was rejected. Reason: {reason}",
                     type="warning",
@@ -1159,7 +1160,7 @@ async def notify_support_case_opened(
             try:
                 await send_notification(
                     user_id=admin.id or "",
-                    user_type="admin",
+                    user_type=UserType.ADMIN,
                     title="New Support Case",
                     body=f"A tenant opened a support case: {subject}",
                     type="info",
@@ -1200,7 +1201,7 @@ async def notify_onboarding_submission_received(
             try:
                 await send_notification(
                     user_id=admin.id or "",
-                    user_type="admin",
+                    user_type=UserType.ADMIN,
                     title="New Onboarding Submission",
                     body=f"{org_label} submitted a self-onboarding request.",
                     type="info",
@@ -1226,7 +1227,7 @@ async def notify_onboarding_submission_received(
 async def notify_support_case_reply(
     case_id: str,
     recipient_user_id: str,
-    recipient_user_type: str,
+    recipient_user_type: UserType,
     tenant_id: Optional[str] = None,
 ) -> None:
     """Fire-and-forget: tell the counterparty that a reply landed on their case."""
@@ -1252,7 +1253,7 @@ async def notify_support_case_status_change(
     case_id: str,
     new_status: str,
     recipient_user_id: str,
-    recipient_user_type: str,
+    recipient_user_type: UserType,
     tenant_id: Optional[str] = None,
 ) -> None:
     """Fire-and-forget: tell the opener that case status has changed."""
@@ -1290,7 +1291,7 @@ async def notify_support_case_assigned(
     try:
         await send_notification(
             user_id=admin_id,
-            user_type="admin",
+            user_type=UserType.ADMIN,
             title="Support case assigned to you",
             body="You've been assigned a new support case.",
             type="info",
@@ -1338,7 +1339,7 @@ async def notify_job_failure(
 
         await send_notification(
             user_id=log_entry.actor_id,
-            user_type=user_type,
+            user_type=UserType(user_type),
             title=title,
             body=body,
             type="error",
@@ -1396,7 +1397,7 @@ def _classify_link_to_bucket(link: Optional[str]) -> Optional[str]:
 async def get_notification_bucket_summary(
     *,
     user_id: str,
-    user_type: str,
+    user_type: UserType,
 ) -> dict[str, int]:
     """Aggregate unread notifications by sidebar bucket (Issue 2).
 
@@ -1439,7 +1440,7 @@ async def get_notification_bucket_summary(
 async def compute_notification_state(
     *,
     user_id: str,
-    user_type: str,
+    user_type: UserType,
 ) -> dict:
     """Return the user's absolute unread state: ``{total, counts}``.
 
@@ -1469,7 +1470,7 @@ async def compute_notification_state(
 async def send_test_notification(
     *,
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     tenant_id: Optional[str] = None,
 ) -> dict:
     """Send the diagnostic test notification (Issue 6).
@@ -1527,7 +1528,7 @@ async def send_test_notification(
     email_master_enabled = True
 
     try:
-        if user_type == "admin":
+        if user_type == UserType.ADMIN:
             from repositories.admin_repo import get_admin
             from bson import ObjectId
 
@@ -1536,7 +1537,7 @@ async def send_test_notification(
                 if admin:
                     recipient_email = admin.email
                     recipient_name = admin.full_name
-        elif user_type == "system_user":
+        elif user_type == UserType.SYSTEM_USER:
             from repositories.system_user_repo import get_system_user
             from bson import ObjectId
 

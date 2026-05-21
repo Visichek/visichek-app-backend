@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from schemas.imports import UserType
 from schemas.notification_schema import NotificationOut, NotificationType
 from services.notification_service import (
     _classify_link_to_bucket,
@@ -52,7 +53,9 @@ async def test_total_is_counted_directly_not_summed() -> None:
             new=AsyncMock(return_value={"visitors": 1}),
         ),
     ):
-        state = await compute_notification_state(user_id="u1", user_type="system_user")
+        state = await compute_notification_state(
+            user_id="u1", user_type=UserType.SYSTEM_USER
+        )
 
     assert state["total"] == 3
     assert state["counts"] == {"visitors": 1}
@@ -71,7 +74,7 @@ async def test_state_with_no_unread() -> None:
             new=AsyncMock(return_value={}),
         ),
     ):
-        state = await compute_notification_state(user_id="u1", user_type="admin")
+        state = await compute_notification_state(user_id="u1", user_type=UserType.ADMIN)
 
     assert state == {"total": 0, "counts": {}}
 
@@ -109,8 +112,8 @@ def test_format_sse_frame_shape() -> None:
 
 
 def test_channel_includes_user_type_and_id() -> None:
-    assert _channel("system_user", "abc") == "notif:events:system_user:abc"
-    assert _channel("admin", "abc") != _channel("system_user", "abc")
+    assert _channel(UserType.SYSTEM_USER, "abc") == "notif:events:system_user:abc"
+    assert _channel(UserType.ADMIN, "abc") != _channel(UserType.SYSTEM_USER, "abc")
 
 
 # --- publish helpers ------------------------------------------------------
@@ -121,7 +124,7 @@ async def test_publish_created_carries_identity_and_absolute_state() -> None:
     notif = NotificationOut(
         _id="n1",
         user_id="u1",
-        user_type="system_user",
+        user_type=UserType.SYSTEM_USER,
         title="Pending Check-In Approval",
         body="x",
         type=NotificationType.INFO,
@@ -168,7 +171,7 @@ async def test_publish_changed_carries_only_absolute_state() -> None:
             new=AsyncMock(),
         ) as pub,
     ):
-        await publish_notification_changed(user_id="u1", user_type="admin")
+        await publish_notification_changed(user_id="u1", user_type=UserType.ADMIN)
 
     pub.assert_awaited_once()
     assert pub.await_args is not None

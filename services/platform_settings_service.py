@@ -6,6 +6,7 @@ from typing import Any, cast
 from fastapi import HTTPException
 
 from core.redis_cache import cache_db
+from schemas.imports import UserType
 from repositories.platform_settings_repo import (
     create_platform_settings,
     get_platform_settings,
@@ -95,7 +96,7 @@ async def request_maintenance_mode_otp(actor_id: str) -> str:
 
     challenge_id, _code = await create_otp_challenge(
         user_id=actor_id,
-        user_type="admin",
+        user_type=UserType.ADMIN,
         role="admin",
     )
     return challenge_id

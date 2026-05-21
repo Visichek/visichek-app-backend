@@ -6,13 +6,14 @@ import time
 from typing import Optional
 
 from core.database import db
+from schemas.imports import UserType
 from schemas.saved_view_schema import SavedViewRecord
 
 COLLECTION = "saved_views"
 
 
 async def get_saved_view(
-    *, user_id: str, user_type: str, resource: str
+    *, user_id: str, user_type: UserType, resource: str
 ) -> Optional[SavedViewRecord]:
     doc = await db[COLLECTION].find_one(
         {"user_id": user_id, "user_type": user_type, "resource": resource}
@@ -45,13 +46,13 @@ async def upsert_saved_view(record: SavedViewRecord) -> SavedViewRecord:
 
 
 async def list_saved_views_for_user(
-    *, user_id: str, user_type: str
+    *, user_id: str, user_type: UserType
 ) -> list[SavedViewRecord]:
     cursor = db[COLLECTION].find({"user_id": user_id, "user_type": user_type})
     return [SavedViewRecord(**doc) async for doc in cursor]
 
 
-async def delete_saved_view(*, user_id: str, user_type: str, resource: str) -> int:
+async def delete_saved_view(*, user_id: str, user_type: UserType, resource: str) -> int:
     result = await db[COLLECTION].delete_one(
         {"user_id": user_id, "user_type": user_type, "resource": resource}
     )

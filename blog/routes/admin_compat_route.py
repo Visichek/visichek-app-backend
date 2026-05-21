@@ -28,6 +28,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from core.errors import auth_invalid_token
 from core.response_envelope import document_response, success_payload
+from schemas.imports import UserType
 from schemas.admin_schema import AdminOut, AdminSignupRequest
 from schemas.otp_schema import OtpVerifyRequest
 from schemas.session_schema import (
@@ -155,7 +156,7 @@ async def request_admin_mfa(
     if not doc:
         raise auth_invalid_token()
     result = await setup_two_factor(
-        user_id=principal.user_id, user_type="admin", email=doc["email"]
+        user_id=principal.user_id, user_type=UserType.ADMIN, email=doc["email"]
     )
     request_id = getattr(request.state, "request_id", None)
     return JSONResponse(
@@ -183,7 +184,7 @@ async def confirm_admin_mfa(
     principal: AuthPrincipal = Depends(verify_admin_token),
 ):
     backup_codes = await verify_two_factor_setup(
-        user_id=principal.user_id, user_type="admin", code=payload.code
+        user_id=principal.user_id, user_type=UserType.ADMIN, code=payload.code
     )
     return {"enabled": True, "backup_codes": backup_codes}
 
@@ -202,6 +203,6 @@ async def disable_admin_mfa(
     principal: AuthPrincipal = Depends(verify_admin_token),
 ):
     await disable_two_factor_with_password(
-        user_id=principal.user_id, user_type="admin", password=payload.password
+        user_id=principal.user_id, user_type=UserType.ADMIN, password=payload.password
     )
     return {"disabled": True}

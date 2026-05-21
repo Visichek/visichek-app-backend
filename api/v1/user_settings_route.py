@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request, status
 
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
+from schemas.imports import UserType
 from schemas.user_settings_schema import UserSettingsUpdate
 from security.auth import verify_any_token
 from security.principal import AuthPrincipal, TENANT_USER_ROLES
@@ -12,8 +13,10 @@ from services.user_settings_service import retrieve_or_create_settings
 router = APIRouter(prefix="/user-settings", tags=["User Settings"])
 
 
-def _user_type(principal: AuthPrincipal) -> str:
-    return "system_user" if principal.role in TENANT_USER_ROLES else "admin"
+def _user_type(principal: AuthPrincipal) -> UserType:
+    return (
+        UserType.SYSTEM_USER if principal.role in TENANT_USER_ROLES else UserType.ADMIN
+    )
 
 
 @router.get("")

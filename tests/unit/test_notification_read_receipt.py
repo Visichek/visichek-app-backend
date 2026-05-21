@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from schemas.imports import UserType
 from schemas.notification_schema import NotificationCreate
 from services.notification_service import (
     extract_resource_ids,
@@ -29,7 +30,7 @@ pytestmark = pytest.mark.unit
 def test_notification_create_carries_resource_fields() -> None:
     notif = NotificationCreate(
         user_id="u1",
-        user_type="system_user",
+        user_type=UserType.SYSTEM_USER,
         title="t",
         body="b",
         resource_type="incident",
@@ -41,7 +42,7 @@ def test_notification_create_carries_resource_fields() -> None:
 
 def test_notification_create_resource_fields_default_none() -> None:
     notif = NotificationCreate(
-        user_id="u1", user_type="system_user", title="t", body="b"
+        user_id="u1", user_type=UserType.SYSTEM_USER, title="t", body="b"
     )
     assert notif.resource_type is None
     assert notif.resource_id is None
@@ -85,7 +86,7 @@ async def test_mark_read_delegates_to_repo() -> None:
     ) as repo:
         count = await mark_notifications_read_for_resources(
             user_id="u1",
-            user_type="system_user",
+            user_type=UserType.SYSTEM_USER,
             resource_type="incident",
             resource_ids=["inc-1", "inc-2"],
         )
@@ -106,7 +107,7 @@ async def test_mark_read_noop_on_empty_ids() -> None:
     ) as repo:
         count = await mark_notifications_read_for_resources(
             user_id="u1",
-            user_type="system_user",
+            user_type=UserType.SYSTEM_USER,
             resource_type="incident",
             resource_ids=[],
         )
@@ -123,7 +124,7 @@ async def test_mark_read_swallows_repo_error() -> None:
         # Must not raise — read receipts are best-effort.
         count = await mark_notifications_read_for_resources(
             user_id="u1",
-            user_type="system_user",
+            user_type=UserType.SYSTEM_USER,
             resource_type="incident",
             resource_ids=["inc-1"],
         )

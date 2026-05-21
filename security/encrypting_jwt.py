@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from core.database import db
 from core.settings import get_settings
+from schemas.imports import UserType
 
 load_dotenv()
 SECRETID = os.getenv("SECRETID")
@@ -19,7 +20,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 class JWTPayload(BaseModel):
     access_token: str
     user_id: str
-    user_type: str
+    user_type: UserType
     is_activated: bool
     exp: datetime
     iat: datetime
@@ -53,7 +54,7 @@ async def get_secret_and_header():
 def create_jwt_token(
     access_token: str,
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     is_activated: bool,
     role: str = "user",
 ) -> str:

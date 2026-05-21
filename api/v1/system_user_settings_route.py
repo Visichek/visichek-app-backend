@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 
 from core.response_envelope import document_response
+from schemas.imports import UserType
 from schemas.user_settings_schema import UserSettingsUpdate, UserPreferenceUpdate
 from schemas.session_schema import (
     ChangePasswordRequest,
@@ -58,7 +59,7 @@ async def get_system_user_settings(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     """Get the authenticated system user's personal settings."""
-    return await retrieve_or_create_settings(principal.user_id, "system_user")
+    return await retrieve_or_create_settings(principal.user_id, UserType.SYSTEM_USER)
 
 
 @router.patch("/settings")
@@ -73,7 +74,7 @@ async def update_system_user_settings(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     """Update the authenticated system user's personal settings."""
-    return await update_settings(principal.user_id, "system_user", data)
+    return await update_settings(principal.user_id, UserType.SYSTEM_USER, data)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -96,7 +97,7 @@ async def get_system_user_preferences(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     """Get all preferences for the authenticated system user."""
-    return await retrieve_preferences(principal.user_id, "system_user")
+    return await retrieve_preferences(principal.user_id, UserType.SYSTEM_USER)
 
 
 @router.patch("/preferences")
@@ -114,7 +115,9 @@ async def save_system_user_preference(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     """Save a single preference key-value pair."""
-    return await save_preference(principal.user_id, "system_user", data.key, data.value)
+    return await save_preference(
+        principal.user_id, UserType.SYSTEM_USER, data.key, data.value
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -171,7 +174,7 @@ async def setup_2fa(
 
     user = await get_system_user({"_id": ObjectId(principal.user_id)})
     email = user.email if user else "user@visichek.com"
-    return await setup_two_factor(principal.user_id, "system_user", email)
+    return await setup_two_factor(principal.user_id, UserType.SYSTEM_USER, email)
 
 
 @router.post("/2fa/verify")
@@ -190,7 +193,7 @@ async def verify_2fa(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     """Verify TOTP code to activate 2FA."""
-    await verify_two_factor_setup(principal.user_id, "system_user", data.code)
+    await verify_two_factor_setup(principal.user_id, UserType.SYSTEM_USER, data.code)
     return {"enabled": True}
 
 
@@ -210,7 +213,7 @@ async def disable_2fa(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     """Disable 2FA for the authenticated system user."""
-    await disable_two_factor(principal.user_id, "system_user", data.code)
+    await disable_two_factor(principal.user_id, UserType.SYSTEM_USER, data.code)
     return {"disabled": True}
 
 
@@ -226,7 +229,7 @@ async def regenerate_backup(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     """Regenerate backup codes."""
-    codes = await regenerate_backup_codes(principal.user_id, "system_user")
+    codes = await regenerate_backup_codes(principal.user_id, UserType.SYSTEM_USER)
     return {"backup_codes": codes}
 
 
@@ -257,7 +260,7 @@ async def list_sessions(
     """List active sessions."""
     return await retrieve_sessions(
         principal.user_id,
-        "system_user",
+        UserType.SYSTEM_USER,
         current_token_id=principal.access_token_id,
     )
 
@@ -275,7 +278,7 @@ async def revoke_single_session(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     """Revoke a specific session."""
-    await revoke_session(session_id, principal.user_id, "system_user")
+    await revoke_session(session_id, principal.user_id, UserType.SYSTEM_USER)
     return {"revoked": True}
 
 
@@ -293,7 +296,7 @@ async def revoke_all_other_sessions(
     """Revoke all sessions except current."""
     count = await revoke_all_sessions_except_current(
         principal.user_id,
-        "system_user",
+        UserType.SYSTEM_USER,
         principal.access_token_id,
     )
     return {"revoked_count": count}

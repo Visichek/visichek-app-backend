@@ -17,6 +17,24 @@ class AccountStatus(str, Enum):
     SUSPENDED = "SUSPENDED"
 
 
+class UserType(str, Enum):
+    """Which account collection a principal belongs to — the discriminator
+    threaded through settings, sessions, notifications, OTP, and 2FA:
+
+    * ``admin``       → ``admins`` collection (application admins)
+    * ``system_user`` → ``system_users`` collection (tenant users, 6 roles)
+    * ``user``        → ``users`` collection (application/boilerplate users)
+
+    NOTE: ``"anonymous"`` (unauthenticated rate-limit bucket) and
+    ``"deleted"`` (deleted-actor tombstone in audit summaries) are NOT
+    account types and intentionally remain string sentinels in their
+    narrow contexts — they are not members of this enum."""
+
+    ADMIN = "admin"
+    SYSTEM_USER = "system_user"
+    USER = "user"
+
+
 class Permission(BaseModel):
     name: str
     methods: List[str]
@@ -364,3 +382,77 @@ class FormFieldType(str, Enum):
     HOST_PICKER = "host_picker"
     VISITOR_PICKER = "visitor_picker"
     CALCULATED = "calculated"
+
+
+class TutorialType(str, Enum):
+    """Identifiers for every guided tutorial the frontend tutorial engine
+    (spotlight.tsx / <TutorialRunner name="..."/>) can mount. Each value maps
+    to a single workflow anchored to [data-tutorial-anchor] elements on a page.
+
+    Grouped by shell and role to mirror the frontend feature surface. Progress
+    is persisted per user (see TutorialStatus / tutorial progress preferences).
+    """
+
+    # --- Platform-Admin shell (role = admin) ---
+    ADMIN_DASHBOARD_OVERVIEW = "admin_dashboard_overview"
+    TENANT_ONBOARDING_REVIEW = "tenant_onboarding_review"
+    TENANT_MANAGEMENT = "tenant_management"
+    PLANS_SETUP = "plans_setup"
+    SUBSCRIPTIONS_MANAGEMENT = "subscriptions_management"
+    DISCOUNTS_SETUP = "discounts_setup"
+    PAYMENTS_REVIEW = "payments_review"
+    MARKETING_TOOLS = "marketing_tools"
+    ADMIN_BILLING_OVERVIEW = "admin_billing_overview"
+
+    # --- Tenant shell: Receptionist ---
+    VISITOR_WORKFLOW = "visitor_workflow"
+    VISITOR_CHECKOUT = "visitor_checkout"
+    BADGE_PRINTING = "badge_printing"
+    APPOINTMENTS_TODAY = "appointments_today"
+
+    # --- Tenant shell: Department Admin ---
+    APPOINTMENTS_MANAGEMENT = "appointments_management"
+    DEPARTMENT_SETTINGS = "department_settings"
+    DEPT_VISITOR_OVERSIGHT = "dept_visitor_oversight"
+
+    # --- Tenant shell: Super Admin ---
+    TENANT_ONBOARDING_COMPLETION = "tenant_onboarding_completion"
+    BRANDING_SETUP = "branding_setup"
+    USER_MANAGEMENT = "user_management"
+    BRANCHES_SETUP = "branches_setup"
+    BILLING_MANAGEMENT = "billing_management"
+    DEPARTMENTS_SETUP = "departments_setup"
+    REGISTRATION_QR = "registration_qr"
+    SUPER_ADMIN_VISITOR_LOG = "super_admin_visitor_log"
+
+    # --- Tenant shell: Auditor ---
+    AUDIT_LOG_WALKTHROUGH = "audit_log_walkthrough"
+
+    # --- Tenant shell: Security Officer ---
+    INCIDENT_REPORTING = "incident_reporting"
+    INCIDENT_TRIAGE = "incident_triage"
+    NDPC_DEADLINE_WORKFLOW = "ndpc_deadline_workflow"
+
+    # --- Tenant shell: DPO ---
+    DSR_HANDLING = "dsr_handling"
+    RETENTION_POLICIES = "retention_policies"
+    COMPLIANCE_REGISTER = "compliance_register"
+    CONSENT_LOG_EXPORT = "consent_log_export"
+    COMPLIANCE_EXPORT = "compliance_export"
+    PRIVACY_NOTICES = "privacy_notices"
+
+    # --- Cross-cutting (either shell, any role) ---
+    GETTING_STARTED = "getting_started"
+    NOTIFICATIONS_INTRO = "notifications_intro"
+    DATA_TABLE_BASICS = "data_table_basics"
+    SETTINGS_WALKTHROUGH = "settings_walkthrough"
+
+
+class TutorialStatus(str, Enum):
+    """Per-user progress state for a single tutorial, mirroring the frontend
+    tutorial engine's lifecycle."""
+
+    IDLE = "idle"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    DISMISSED = "dismissed"

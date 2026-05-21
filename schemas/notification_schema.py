@@ -35,7 +35,7 @@ class NotificationCreate(NotificationBase):
     """Internal creation schema — built by the service layer."""
 
     user_id: str
-    user_type: str  # "admin" or "system_user"
+    user_type: UserType  # "admin" or "system_user"
     tenant_id: Optional[str] = None
     date_created: int = Field(default_factory=lambda: int(time.time()))
 
@@ -52,7 +52,7 @@ class NotificationOut(NotificationBase):
 
     id: Optional[str] = Field(default=None, alias="_id")
     user_id: Optional[str] = None
-    user_type: Optional[str] = None
+    user_type: Optional[UserType] = None
     tenant_id: Optional[str] = None
     date_created: Optional[int] = None
 
@@ -106,7 +106,7 @@ class NotificationPreferencesCreate(NotificationPreferencesBase):
     """Internal creation schema."""
 
     user_id: str
-    user_type: str
+    user_type: UserType
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
@@ -130,7 +130,7 @@ class NotificationPreferencesOut(NotificationPreferencesBase):
 
     id: Optional[str] = Field(default=None, alias="_id")
     user_id: Optional[str] = None
-    user_type: Optional[str] = None
+    user_type: Optional[UserType] = None
     date_created: Optional[int] = None
     last_updated: Optional[int] = None
 

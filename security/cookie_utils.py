@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, Response
 
 from core.response_envelope import success_payload
 from core.settings import get_settings
+from schemas.imports import UserType
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +184,9 @@ async def _record_session_safe(
         # /v1/sessions list endpoint, which filters by user_type.
         from security.principal import TENANT_USER_ROLES
 
-        user_type = "system_user" if role in TENANT_USER_ROLES else "admin"
+        user_type = (
+            UserType.SYSTEM_USER if role in TENANT_USER_ROLES else UserType.ADMIN
+        )
 
         ip_address = request.client.host if request.client else None
         forwarded = request.headers.get("x-forwarded-for")

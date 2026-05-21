@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from schemas.imports import UserType
 from services import session_service
 
 
@@ -54,7 +55,9 @@ async def test_retrieve_sessions_filters_and_prunes_dead_rows() -> None:
         ) as mock_delete_sessions,
     ):
         result = await session_service.retrieve_sessions(
-            user_id="u1", user_type="admin", current_token_id="650000000000000000000a01"
+            user_id="u1",
+            user_type=UserType.ADMIN,
+            current_token_id="650000000000000000000a01",
         )
 
     assert result == [live]
@@ -81,7 +84,9 @@ async def test_retrieve_sessions_keeps_current_even_if_token_missing() -> None:
         ) as mock_delete_sessions,
     ):
         result = await session_service.retrieve_sessions(
-            user_id="u1", user_type="admin", current_token_id="650000000000000000000a01"
+            user_id="u1",
+            user_type=UserType.ADMIN,
+            current_token_id="650000000000000000000a01",
         )
 
     assert result == [current]
@@ -111,7 +116,7 @@ async def test_revoke_session_drops_access_and_refresh_tokens() -> None:
         ) as mock_delete_refresh,
     ):
         await session_service.revoke_session(
-            session_id=_SESSION_ID, user_id="u1", user_type="admin"
+            session_id=_SESSION_ID, user_id="u1", user_type=UserType.ADMIN
         )
 
     mock_delete_refresh.assert_awaited_once_with(_ACCESS_TOKEN_ID)
@@ -126,7 +131,7 @@ async def test_revoke_session_404_when_missing() -> None:
     with patch.object(session_service, "get_session", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await session_service.revoke_session(
-                session_id=_SESSION_ID, user_id="u1", user_type="admin"
+                session_id=_SESSION_ID, user_id="u1", user_type=UserType.ADMIN
             )
     assert exc.value.status_code == 404
 
@@ -157,7 +162,7 @@ async def test_revoke_all_except_current_kills_tokens_in_bulk() -> None:
         ) as mock_delete_sessions,
     ):
         result = await session_service.revoke_all_sessions_except_current(
-            user_id="u1", user_type="admin", current_token_id="at_current"
+            user_id="u1", user_type=UserType.ADMIN, current_token_id="at_current"
         )
 
     assert result == 2
@@ -186,7 +191,7 @@ async def test_revoke_all_except_current_noop_when_no_other_sessions() -> None:
         patch.object(session_service, "delete_sessions", new=AsyncMock(return_value=0)),
     ):
         result = await session_service.revoke_all_sessions_except_current(
-            user_id="u1", user_type="admin", current_token_id="at_current"
+            user_id="u1", user_type=UserType.ADMIN, current_token_id="at_current"
         )
 
     assert result == 0

@@ -38,6 +38,8 @@ import logging
 import time
 from typing import AsyncIterator
 
+from schemas.imports import UserType
+
 logger = logging.getLogger(__name__)
 
 # Heartbeat cadence. The spec requires a comment heartbeat every 20s so
@@ -88,7 +90,7 @@ def _get_async_redis():
     return _async_redis
 
 
-def _channel(user_type: str, user_id: str) -> str:
+def _channel(user_type: UserType, user_id: str) -> str:
     """Per-user pub/sub channel.
 
     A user is uniquely identified by ``(user_type, user_id)`` — admins and
@@ -103,7 +105,9 @@ def _channel(user_type: str, user_id: str) -> str:
 # ── Publish side ─────────────────────────────────────────────────────
 
 
-async def _publish(user_type: str, user_id: str, event_name: str, data: dict) -> None:
+async def _publish(
+    user_type: UserType, user_id: str, event_name: str, data: dict
+) -> None:
     """Publish one event to the user's channel. Never raises."""
     payload = dict(data)
     payload[_EVENT_KEY] = event_name
@@ -128,7 +132,7 @@ async def publish_notification_created(notification) -> None:
     plus the recomputed absolute ``{total, counts}`` for the user.
     """
     user_id = notification.user_id or ""
-    user_type = notification.user_type or ""
+    user_type = notification.user_type
     if not user_id or not user_type:
         return
 
@@ -162,7 +166,7 @@ async def publish_notification_created(notification) -> None:
     await _publish(user_type, user_id, _EVENT_CREATED, data)
 
 
-async def publish_notification_changed(user_id: str, user_type: str) -> None:
+async def publish_notification_changed(user_id: str, user_type: UserType) -> None:
     """Fan out a ``notification.changed`` event with absolute state.
 
     Fired for read / read-all / delete so every open session for the user
@@ -226,7 +230,7 @@ async def stream_notifications(
     request,
     *,
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     jwt_token: str,
 ) -> AsyncIterator[str]:
     """Async generator backing ``GET /v1/notifications/stream``.

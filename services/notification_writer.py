@@ -16,6 +16,7 @@ import logging
 from typing import Any
 
 from core.queue.write_pipeline import write_handler
+from schemas.imports import UserType
 from schemas.notification_schema import NotificationPreferencesUpdate
 from services.notification_service import (
     mark_all_notifications_read,
@@ -33,7 +34,7 @@ async def _notification_mark_read(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
     user_id = data.get("user_id", "") or ""
-    user_type = data.get("user_type", "") or "system_user"
+    user_type = UserType(data.get("user_type", "") or "system_user")
     result = await mark_notification_read(
         notification_id=resource_id, user_id=user_id, user_type=user_type
     )
@@ -46,7 +47,7 @@ async def _notification_mark_all_read(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
     user_id = data.get("user_id", "") or resource_id
-    user_type = data.get("user_type", "") or "system_user"
+    user_type = UserType(data.get("user_type", "") or "system_user")
     count = await mark_all_notifications_read(user_id=user_id, user_type=user_type)
     await publish_notification_changed(user_id=user_id, user_type=user_type)
     return {"user_id": user_id, "marked_count": count}
@@ -57,7 +58,7 @@ async def _notification_delete(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
     user_id = data.get("user_id", "") or ""
-    user_type = data.get("user_type", "") or "system_user"
+    user_type = UserType(data.get("user_type", "") or "system_user")
     await remove_notification(
         notification_id=resource_id, user_id=user_id, user_type=user_type
     )
@@ -70,7 +71,7 @@ async def _notification_update_preferences(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
     user_id = data.pop("user_id", "") or resource_id
-    user_type = data.pop("user_type", "") or "system_user"
+    user_type = UserType(data.pop("user_type", "") or "system_user")
     data.pop("tenant_id", None)
     prefs = NotificationPreferencesUpdate(**data)
     result = await update_user_notification_preferences(

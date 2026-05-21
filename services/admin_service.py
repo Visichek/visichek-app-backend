@@ -35,7 +35,7 @@ from config.role_permissions import (
     get_default_permissions_for_admin_preset,
     get_default_permissions_for_role,
 )
-from schemas.imports import AccountStatus, PermissionList
+from schemas.imports import AccountStatus, PermissionList, UserType
 
 
 logger = logging.getLogger(__name__)
@@ -240,10 +240,10 @@ async def authenticate_admin(admin_data: AdminLogin) -> AdminOut:
             # 2FA check — platform policy decides whether admins need OTP.
             from services.otp_service import is_mfa_required, create_otp_challenge
 
-            if await is_mfa_required("admin", admin.id):  # type: ignore
+            if await is_mfa_required(UserType.ADMIN, admin.id):  # type: ignore
                 challenge_id, _code = await create_otp_challenge(
                     user_id=admin.id or "",
-                    user_type="admin",
+                    user_type=UserType.ADMIN,
                     role="admin",  # type: ignore
                 )
                 return {"otp_required": True, "otp_challenge_id": challenge_id}  # type: ignore[return-value]

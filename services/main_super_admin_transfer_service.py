@@ -38,7 +38,7 @@ from repositories.system_user_repo import (
     get_system_user,
     set_main_super_admin_flag,
 )
-from schemas.imports import AccountStatus
+from schemas.imports import AccountStatus, UserType
 from schemas.system_user_schema import SystemUserOut
 from security.principal import AuthPrincipal, TENANT_USER_ROLES
 
@@ -50,8 +50,10 @@ logger = logging.getLogger(__name__)
 _OTP_INTENT_KEY = "main_super_admin_transfer"
 
 
-def _principal_user_type(principal: AuthPrincipal) -> str:
-    return "system_user" if principal.role in TENANT_USER_ROLES else "admin"
+def _principal_user_type(principal: AuthPrincipal) -> UserType:
+    return (
+        UserType.SYSTEM_USER if principal.role in TENANT_USER_ROLES else UserType.ADMIN
+    )
 
 
 async def _resolve_tenant_id(
@@ -64,7 +66,7 @@ async def _resolve_tenant_id(
       it must match.
     """
     user_type = _principal_user_type(principal)
-    if user_type == "admin":
+    if user_type == UserType.ADMIN:
         if not payload_tenant_id:
             raise HTTPException(
                 status_code=400,
@@ -101,7 +103,7 @@ async def _assert_actor_can_transfer(
 ) -> None:
     """App admins always pass. Tenant super_admins must be the current main."""
     user_type = _principal_user_type(principal)
-    if user_type == "admin":
+    if user_type == UserType.ADMIN:
         return
 
     if principal.role != "super_admin":

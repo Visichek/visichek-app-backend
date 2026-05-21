@@ -10,6 +10,7 @@ from bson import ObjectId
 from fastapi import HTTPException
 
 from core.database import db
+from schemas.imports import UserType
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ def _build_otpauth_uri(secret: str, email: str, issuer: str = "VisiChek") -> str
 
 async def setup_two_factor(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     email: str,
 ) -> dict:
     """Initiate 2FA setup. Returns secret, QR URI, and backup codes.
@@ -93,7 +94,7 @@ async def setup_two_factor(
 
 async def verify_two_factor_setup(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     code: str,
 ) -> List[str]:
     """Verify TOTP code to confirm 2FA setup. Returns backup codes."""
@@ -116,7 +117,7 @@ async def verify_two_factor_setup(
     )
 
     # Update user record to reflect 2FA enabled
-    collection = "admins" if user_type == "admin" else "system_users"
+    collection = "admins" if user_type == UserType.ADMIN else "system_users"
     await db[collection].update_one(
         {"_id": ObjectId(user_id)},
         {"$set": {"mfa_enabled": True, "mfa_method": "totp"}},
@@ -148,7 +149,7 @@ async def verify_two_factor_setup(
 
 async def disable_two_factor(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     code: str,
 ) -> None:
     """Disable 2FA after verifying the current code."""
@@ -171,7 +172,7 @@ async def disable_two_factor(
     )
 
     # Update user record
-    collection = "admins" if user_type == "admin" else "system_users"
+    collection = "admins" if user_type == UserType.ADMIN else "system_users"
     await db[collection].update_one(
         {"_id": ObjectId(user_id)},
         {"$set": {"mfa_enabled": False, "mfa_method": None}},
@@ -180,13 +181,13 @@ async def disable_two_factor(
 
 async def disable_two_factor_with_password(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     password: str,
 ) -> None:
     """Disable 2FA after verifying the user's password."""
     from security.hash import check_password as _check_pw
 
-    collection = "admins" if user_type == "admin" else "system_users"
+    collection = "admins" if user_type == UserType.ADMIN else "system_users"
     user_doc = await db[collection].find_one({"_id": ObjectId(user_id)})
     if not user_doc:
         raise HTTPException(status_code=404, detail="User not found")
@@ -215,13 +216,13 @@ async def disable_two_factor_with_password(
 
 async def regenerate_backup_codes_with_password(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     password: str,
 ) -> List[str]:
     """Generate new backup codes after verifying the user's password."""
     from security.hash import check_password as _check_pw
 
-    collection = "admins" if user_type == "admin" else "system_users"
+    collection = "admins" if user_type == UserType.ADMIN else "system_users"
     user_doc = await db[collection].find_one({"_id": ObjectId(user_id)})
     if not user_doc:
         raise HTTPException(status_code=404, detail="User not found")
@@ -234,7 +235,7 @@ async def regenerate_backup_codes_with_password(
 
 async def regenerate_backup_codes(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
 ) -> List[str]:
     """Generate new backup codes, invalidating old ones."""
     totp_record = await db[TOTP_COLLECTION].find_one(
@@ -293,7 +294,7 @@ def _verify_totp_code(secret: str, code: str) -> bool:
     return False
 
 
-async def _consume_backup_code(user_id: str, user_type: str, code: str) -> bool:
+async def _consume_backup_code(user_id: str, user_type: UserType, code: str) -> bool:
     """Try to use a backup code. Returns True if valid and consumed."""
     code_hash = hashlib.sha256(code.upper().encode()).hexdigest()
     result = await db[BACKUP_CODES_COLLECTION].update_one(

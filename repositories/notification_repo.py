@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from core.database import db
+from schemas.imports import UserType
 from schemas.notification_schema import (
     NotificationCreate,
     NotificationUpdate,
@@ -66,7 +67,7 @@ async def update_notification(
     return await get_notification(filter_dict)
 
 
-async def mark_all_read(user_id: str, user_type: str) -> int:
+async def mark_all_read(user_id: str, user_type: UserType) -> int:
     result = await db[COLLECTION].update_many(
         {"user_id": user_id, "user_type": user_type, "read": False},
         {"$set": {"read": True}},
@@ -76,7 +77,7 @@ async def mark_all_read(user_id: str, user_type: str) -> int:
 
 async def mark_read_by_resource_ids(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     resource_type: str,
     resource_ids: List[str],
 ) -> int:

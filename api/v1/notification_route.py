@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
+from schemas.imports import UserType
 from schemas.notification_schema import (
     NotificationPreferencesUpdate,
 )
@@ -23,12 +24,12 @@ from services.notification_service import (
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
 
-def _user_type(principal: AuthPrincipal) -> str:
+def _user_type(principal: AuthPrincipal) -> UserType:
     if principal.role == "admin":
-        return "admin"
+        return UserType.ADMIN
     if principal.role == "user":
-        return "user"
-    return "system_user"
+        return UserType.USER
+    return UserType.SYSTEM_USER
 
 
 # ─── Notification List ─────────────────────────────────────────────

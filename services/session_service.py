@@ -19,6 +19,7 @@ from repositories.tokens_repo import (
     delete_refresh_tokens_by_previous_access_token,
     filter_existing_access_token_ids,
 )
+from schemas.imports import UserType
 from schemas.session_schema import DeviceType, SessionCreate, SessionOut
 
 
@@ -76,7 +77,7 @@ def parse_device_label(user_agent: str | None) -> str:
 
 async def record_session(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     access_token_id: str,
     ip_address: str | None = None,
     user_agent: str | None = None,
@@ -117,7 +118,7 @@ async def record_session(
 
 async def retrieve_sessions(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     current_token_id: str | None = None,
 ) -> List[SessionOut]:
     """List active sessions for a user, marking the current one.
@@ -164,7 +165,7 @@ async def retrieve_sessions(
 async def revoke_session(
     session_id: str,
     user_id: str,
-    user_type: str,
+    user_type: UserType,
 ) -> None:
     """Revoke a specific session — and the auth tokens that back it.
 
@@ -206,7 +207,7 @@ async def revoke_session(
 
 async def revoke_all_sessions_except_current(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     current_token_id: str,
 ) -> int:
     """Revoke every session for ``user_id`` except the one calling us.

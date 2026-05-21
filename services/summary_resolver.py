@@ -20,6 +20,7 @@ from typing import Iterable, Mapping, Optional
 
 from bson import ObjectId
 
+from schemas.imports import UserType
 from schemas.summary_schema import (
     AppointmentBriefSummary,
     BranchBriefSummary,
@@ -159,7 +160,7 @@ async def resolve_system_user_summary(
             full_name=user.full_name,
             email=user.email,
             role=user.role,
-            user_type="system_user",
+            user_type=UserType.SYSTEM_USER,
         )
     except Exception:
         return None
@@ -181,7 +182,7 @@ async def resolve_admin_summary(admin_id: Optional[str]) -> Optional[UserBriefSu
             full_name=admin.full_name,
             email=admin.email,
             role="admin",
-            user_type="admin",
+            user_type=UserType.ADMIN,
         )
     except Exception:
         return None
@@ -287,7 +288,7 @@ async def resolve_user_summaries_batch(
                     full_name=doc.get("full_name"),
                     email=doc.get("email"),
                     role=doc.get("role"),
-                    user_type="system_user",
+                    user_type=UserType.SYSTEM_USER,
                 )
 
         if admin_ids:
@@ -305,7 +306,7 @@ async def resolve_user_summaries_batch(
                         full_name=doc.get("full_name"),
                         email=doc.get("email"),
                         role="admin",
-                        user_type="admin",
+                        user_type=UserType.ADMIN,
                     )
             for aid in admin_ids:
                 if aid not in found and aid not in out:

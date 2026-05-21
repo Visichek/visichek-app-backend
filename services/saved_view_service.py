@@ -13,6 +13,7 @@ from repositories.saved_view_repo import (
     list_saved_views_for_user,
     upsert_saved_view,
 )
+from schemas.imports import UserType
 from schemas.saved_view_schema import (
     ColumnPrefs,
     ColumnPrefsOut,
@@ -41,10 +42,10 @@ def _validate_resource(resource: str) -> str:
     return resource
 
 
-def _resolve_user_type(role: str) -> str:
+def _resolve_user_type(role: str) -> UserType:
     from security.principal import TENANT_USER_ROLES
 
-    return "system_user" if role in TENANT_USER_ROLES else "admin"
+    return UserType.SYSTEM_USER if role in TENANT_USER_ROLES else UserType.ADMIN
 
 
 # ─── Saved filters ────────────────────────────────────────────────────

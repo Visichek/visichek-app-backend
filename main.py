@@ -830,6 +830,7 @@ from api.v1.system_user_settings_route import (
 )
 from api.v1.tenant_settings_route import router as v1_tenant_settings_route_router
 from api.v1.user_settings_route import router as v1_user_settings_route_router
+from api.v1.tutorial_route import router as v1_tutorial_route_router
 from api.v1.session_management_route import router as v1_session_management_route_router
 from api.v1.auth_management_route import router as v1_auth_management_route_router
 from api.v1.account_route import router as v1_account_route_router
@@ -940,6 +941,7 @@ app.include_router(v1_admin_settings_route_router, prefix="/v1")
 # to avoid PATCH/DELETE "/{user_id}" shadowing its static paths.
 app.include_router(v1_tenant_settings_route_router, prefix="/v1")
 app.include_router(v1_user_settings_route_router, prefix="/v1")
+app.include_router(v1_tutorial_route_router, prefix="/v1")
 app.include_router(v1_session_management_route_router, prefix="/v1")
 app.include_router(v1_auth_management_route_router, prefix="/v1")
 app.include_router(v1_account_route_router, prefix="/v1")

@@ -17,7 +17,11 @@ from config.role_permissions import (
     PLATFORM_ONLY_PATH_SEGMENTS,
     TENANT_PATH_SEGMENTS,
 )
-from core.maintenance_mode import MaintenanceModeMiddleware, _is_platform_path, _top_segment
+from core.maintenance_mode import (
+    MaintenanceModeMiddleware,
+    _is_platform_path,
+    _top_segment,
+)
 
 
 class TestTopSegment:
@@ -182,7 +186,9 @@ class TestDispatchGating:
 
     async def test_tenant_token_blocked_on_write(self):
         req = _make_request("POST", "/v1/appointments", auth="Bearer tok")
-        result, sentinel, call_next = await _run_dispatch(req, token_role="receptionist")
+        result, sentinel, call_next = await _run_dispatch(
+            req, token_role="receptionist"
+        )
         assert result is not sentinel
         assert result.status_code == 503
         call_next.assert_not_awaited()

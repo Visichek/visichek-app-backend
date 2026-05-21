@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from core.errors import auth_invalid_token
 from core.response_envelope import document_response
+from schemas.imports import UserType
 from schemas.admin_schema import AdminRefresh
 from schemas.session_schema import (
     ChangePasswordRequest,
@@ -55,8 +56,10 @@ class UnifiedRefreshRequest(BaseModel):
 router = APIRouter(prefix="/auth", tags=["Auth Management"])
 
 
-def _user_type(principal: AuthPrincipal) -> str:
-    return "system_user" if principal.role in TENANT_USER_ROLES else "admin"
+def _user_type(principal: AuthPrincipal) -> UserType:
+    return (
+        UserType.SYSTEM_USER if principal.role in TENANT_USER_ROLES else UserType.ADMIN
+    )
 
 
 async def _get_email(principal: AuthPrincipal) -> str:
@@ -65,7 +68,7 @@ async def _get_email(principal: AuthPrincipal) -> str:
     from bson import ObjectId
 
     user_type = _user_type(principal)
-    collection = "admins" if user_type == "admin" else "system_users"
+    collection = "admins" if user_type == UserType.ADMIN else "system_users"
     doc = await db[collection].find_one(
         {"_id": ObjectId(principal.user_id)}, {"email": 1}
     )
@@ -110,7 +113,7 @@ async def change_password(
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
     """Change password for the authenticated user."""
-    if _user_type(principal) == "admin":
+    if _user_type(principal) == UserType.ADMIN:
         await change_admin_password(
             principal.user_id, data.current_password, data.new_password
         )

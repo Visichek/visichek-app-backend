@@ -29,7 +29,7 @@ from schemas.system_user_schema import (
     SystemUserSignupRequest,
     SystemUserTenantLogin,
 )
-from schemas.imports import AccountStatus
+from schemas.imports import AccountStatus, UserType
 from security.hash import check_password
 from services.auth_helpers import issue_tokens_for_role
 from core.email_utils import normalize_email
@@ -639,10 +639,10 @@ async def _continue_login_for_user(user: SystemUserOut) -> Any:
     """
     from services.otp_service import is_mfa_required, create_otp_challenge
 
-    if await is_mfa_required("system_user", user.id):  # type: ignore
+    if await is_mfa_required(UserType.SYSTEM_USER, user.id):  # type: ignore
         challenge_id, _code = await create_otp_challenge(
             user_id=user.id or "",
-            user_type="system_user",  # type: ignore
+            user_type=UserType.SYSTEM_USER,
             role=user.role.value,
             tenant_id=user.tenant_id,
         )

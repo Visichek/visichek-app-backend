@@ -49,6 +49,7 @@ from schemas.imports import (
     SupportCaseStatus,
     SupportCasePriority,
     SupportTier,
+    UserType,
 )
 from schemas.support_case_schema import (
     OPEN_STATUSES,
@@ -579,14 +580,14 @@ async def add_support_case_message(
             await notify_support_case_reply(
                 case_id=case_id,
                 recipient_user_id=case.opened_by or "",
-                recipient_user_type="system_user",
+                recipient_user_type=UserType.SYSTEM_USER,
                 tenant_id=tenant_id,
             )
         elif actor_type == "tenant" and case.assigned_admin_id:
             await notify_support_case_reply(
                 case_id=case_id,
                 recipient_user_id=case.assigned_admin_id,
-                recipient_user_type="admin",
+                recipient_user_type=UserType.ADMIN,
                 tenant_id=tenant_id,
             )
     except Exception:
@@ -693,7 +694,7 @@ async def transition_support_case(
             case_id=case_id,
             new_status=target_enum.value,
             recipient_user_id=updated.opened_by or "",
-            recipient_user_type="system_user",
+            recipient_user_type=UserType.SYSTEM_USER,
             tenant_id=tenant_id,
         )
     except Exception:
@@ -811,7 +812,9 @@ async def _enrich_support_case(case: SupportCaseOut) -> SupportCaseWithSummaryOu
         resolve_tenant_summary(case.tenant_id),
         resolve_user_summary(
             case.opened_by,
-            user_type="admin" if case.opened_by_role == "admin" else "system_user",
+            user_type=UserType.ADMIN
+            if case.opened_by_role == "admin"
+            else UserType.SYSTEM_USER,
         ),
         _resolve_assignee(case.assigned_admin_id),
     )

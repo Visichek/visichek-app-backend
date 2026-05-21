@@ -1,0 +1,207 @@
+================================================================================
+TUTORIAL PROGRESS — BACKEND FEATURE & FRONTEND CONTRACT
+================================================================================
+Date: 2026-05-21
+Audience: Frontend team (tutorial engine / spotlight.tsx) + backend devs
+Scope: GET /v1/tutorials, PUT /v1/tutorials
+Collection: tutorials
+
+--------------------------------------------------------------------------------
+TL;DR
+--------------------------------------------------------------------------------
+Per-user tutorial progress is now persisted server-side. Each authenticated
+user has one progress record per (tutorial_type, version). Two endpoints:
+
+  GET /v1/tutorials   → list the current user's progress records
+  PUT /v1/tutorials   → upsert progress for one tutorial (start/complete/dismiss)
+
+Identity (who the record belongs to) is taken from the auth token — the client
+NEVER sends user_id / role / tenant_id. Writes are synchronous (HTTP 200, the
+saved record is returned immediately — NOT a 202/queued write).
+
+Progress is SHELL-GATED: a tenant user cannot record platform-admin tutorials
+and a platform admin cannot record tenant tutorials. Cross-shell writes are
+refused with HTTP 403 AUTH_ROLE_MISMATCH.
+
+================================================================================
+1. ENUMS  (schemas/imports.py)
+================================================================================
+
+TutorialType — the canonical id of every tutorial the engine can mount. The
+frontend MUST send one of these exact string values; anything else is a 422.
+
+  Platform-Admin shell (role = admin):
+    admin_dashboard_overview, tenant_onboarding_review, tenant_management,
+    plans_setup, subscriptions_management, discounts_setup, payments_review,
+    marketing_tools, admin_billing_overview
+
+  Tenant shell — Receptionist:
+    visitor_workflow, visitor_checkout, badge_printing, appointments_today
+  Tenant shell — Department Admin:
+    appointments_management, department_settings, dept_visitor_oversight
+  Tenant shell — Super Admin:
+    tenant_onboarding_completion, branding_setup, user_management,
+    branches_setup, billing_management, departments_setup, registration_qr,
+    super_admin_visitor_log
+  Tenant shell — Auditor:
+    audit_log_walkthrough
+  Tenant shell — Security Officer:
+    incident_reporting, incident_triage, ndpc_deadline_workflow
+  Tenant shell — DPO:
+    dsr_handling, retention_policies, compliance_register, consent_log_export,
+    compliance_export, privacy_notices
+
+  Cross-cutting (either shell, any role):
+    getting_started, notifications_intro, data_table_basics, settings_walkthrough
+
+TutorialStatus — per-user lifecycle of a single tutorial:
+    idle, in_progress, completed, dismissed
+
+(UserType — account discriminator stored on the record: admin | system_user |
+user. Set server-side; not sent by the client.)
+
+================================================================================
+2. SCHEMA  (schemas/tutorial_schema.py)
+================================================================================
+
+TutorialProgressRequest — the PUT request body (CLIENT-SUPPLIED):
+    tutorial_type   : TutorialType   (required)
+    tutorial_status : TutorialStatus (required)
+    version         : int            (default 1)
+  NOTE: no user_id / user_role / user_type / tenant_id — sending them is
+  ignored at best; the server derives identity from the token.
+
+TutorialOut — the response object (camelCase on the wire after middleware):
+    id            : string            ("_id" as string)
+    userId        : string
+    userRole      : string            (the role at time of record, e.g. "receptionist")
+    userType      : "admin"|"system_user"|"user"
+    tutorialType  : TutorialType
+    tutorialStatus: TutorialStatus
+    version       : int
+    tenantId      : string | null     (null for application admins)
+    dateCreated   : int  (unix seconds)
+    lastUpdated   : int  (unix seconds)
+
+Internal schemas (not frontend-facing): TutorialBase, TutorialCreate (built by
+the service), TutorialUpdate (status/version partial update).
+
+PERSISTENCE / UPSERT KEY:
+  A record is unique on (user_id, tutorial_type, version). Re-sending a PUT for
+  the same triple UPDATES the status. Bumping `version` creates a NEW record —
+  use this to force a re-run of a redesigned tutorial without losing the old
+  completion. Enforced by a unique Mongo index (core/indexes.py).
+
+================================================================================
+3. ROUTES  (api/v1/tutorial_route.py)
+================================================================================
+
+Auth: both endpoints use verify_any_token — ANY authenticated user (admin or
+any tenant role). No special permission key is required (they do not go through
+the admin/user permission-allowlist gate).
+
+--------------------------------------------------------------------------------
+GET /v1/tutorials
+--------------------------------------------------------------------------------
+Returns every tutorial-progress record for the authenticated user. Use it on
+shell mount to decide which "Start/Resume tutorial" entry-points to show and
+their current status.
+
+  200 Response:
+  {
+    "success": true,
+    "message": "Tutorial progress fetched successfully",
+    "data": [
+      {
+        "id": "650000000000000000000a01",
+        "userId": "664f...",
+        "userRole": "receptionist",
+        "userType": "system_user",
+        "tutorialType": "visitor_workflow",
+        "tutorialStatus": "completed",
+        "version": 1,
+        "tenantId": "663a...",
+        "dateCreated": 1776519873,
+        "lastUpdated": 1776520000
+      }
+    ]
+  }
+
+  401 — invalid or missing token.
+
+--------------------------------------------------------------------------------
+PUT /v1/tutorials
+--------------------------------------------------------------------------------
+Upsert the caller's progress for one tutorial (start it, mark it completed,
+mark it dismissed). Returns the saved record.
+
+  Request body:
+  {
+    "tutorialType": "visitor_workflow",
+    "tutorialStatus": "in_progress",   // or "completed" | "dismissed" | "idle"
+    "version": 1                        // optional, defaults to 1
+  }
+
+  200 Response: a single TutorialOut (same shape as the GET list items).
+
+  Error responses:
+    401 — invalid or missing token.
+    403 AUTH_ROLE_MISMATCH — the tutorial is outside the caller's shell
+         (see §4). Body: { success:false, code:"AUTH_ROLE_MISMATCH",
+         details:{ requiredRole, actualRole } }.
+    422 — unknown tutorialType or invalid tutorialStatus.
+
+================================================================================
+4. SHELL GATING  (services/tutorial_service.py)
+================================================================================
+The service refuses to record progress on a tutorial outside the caller's
+shell, BEFORE any DB write. Mapping:
+
+  PLATFORM tutorials      → role == "admin" ONLY
+  TENANT tutorials        → one of the 6 tenant roles ONLY
+                            (receptionist, dept_admin, super_admin, auditor,
+                             security_officer, dpo)
+  CROSS-CUTTING tutorials → any authenticated role
+
+Examples of a 403:
+  - a receptionist PUTs tutorialType="admin_dashboard_overview"  → 403
+  - an admin PUTs tutorialType="visitor_workflow"                → 403
+  - any role PUTs tutorialType="getting_started"                 → allowed
+
+Fail-closed: a TutorialType that is not classified into a shell is REJECTED
+(default-deny), not silently allowed. A unit test asserts the platform /
+cross-cutting / tenant sets exactly partition the TutorialType enum, so an
+unclassified new tutorial fails CI rather than leaking across shells.
+
+Note: the GET list can never return cross-shell records, because such records
+can never be written in the first place. The frontend's per-role *display*
+filtering (which of a role's allowed tutorials to surface) remains a frontend
+concern; the backend guarantees the harder invariant that progress cannot be
+RECORDED across shells.
+
+================================================================================
+5. FRONTEND USAGE NOTES
+================================================================================
+- Engine progress key (frontend store): tutorial.<name>.v<version> maps cleanly
+  onto (tutorialType, version) here.
+- Never auto-launch: every tutorial is triggered by an explicit user click; on
+  click, PUT status="in_progress"; on finish PUT "completed"; on skip/close PUT
+  "dismissed".
+- Versioning: after redesigning a tutorial, bump the version sent on PUT. The
+  old completed record stays; the new version starts fresh (so the user re-runs
+  it). Read both back via GET and pick the highest version per tutorialType.
+- Send only the fields in TutorialProgressRequest. Any identity fields are
+  ignored — the server trusts the token, not the body.
+
+================================================================================
+6. BACKEND FILE MAP
+================================================================================
+  schemas/imports.py            TutorialType, TutorialStatus, UserType enums
+  schemas/tutorial_schema.py    TutorialBase/Create/Update/Out + TutorialProgressRequest
+  repositories/tutorial_repo.py CRUD (db["tutorials"], preassigned_id, skip/limit)
+  services/tutorial_service.py  record_tutorial_progress (upsert + shell gate),
+                                retrieve_tutorial_progress
+  api/v1/tutorial_route.py      GET / PUT /v1/tutorials (verify_any_token)
+  core/indexes.py               unique (user_id, tutorial_type, version) + list index
+  main.py                       router mounted at prefix /v1
+  tests/unit/test_tutorial.py   schema/service/route + gating + partition tests

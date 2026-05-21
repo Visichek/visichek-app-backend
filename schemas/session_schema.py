@@ -20,7 +20,7 @@ class SessionBase(BaseModel):
     """An active user session."""
 
     user_id: str
-    user_type: str  # "admin" or "system_user"
+    user_type: UserType  # "admin" or "system_user"
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
     device_type: DeviceType = DeviceType.UNKNOWN

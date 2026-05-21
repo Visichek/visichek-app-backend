@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from core.queue.write_pipeline import write_handler
+from schemas.imports import UserType
 from schemas.user_settings_schema import UserSettingsUpdate
 from services.user_settings_service import update_settings
 
@@ -24,7 +25,7 @@ async def _user_settings_update(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
     user_id = data.pop("user_id", resource_id) or resource_id
-    user_type = data.pop("user_type", "") or "system_user"
+    user_type = UserType(data.pop("user_type", "") or "system_user")
     upd = UserSettingsUpdate(**data)
     result = await update_settings(user_id=user_id, user_type=user_type, data=upd)
     return {"id": result.id, "user_id": user_id}

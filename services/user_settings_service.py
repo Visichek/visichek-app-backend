@@ -12,6 +12,7 @@ from repositories.user_settings_repo import (
     set_user_preference,
     count_user_preference_keys,
 )
+from schemas.imports import UserType
 from schemas.user_settings_schema import (
     UserSettingsCreate,
     UserSettingsUpdate,
@@ -21,7 +22,9 @@ from schemas.user_settings_schema import (
 MAX_PREFERENCE_KEYS = 50
 
 
-async def retrieve_or_create_settings(user_id: str, user_type: str) -> UserSettingsOut:
+async def retrieve_or_create_settings(
+    user_id: str, user_type: UserType
+) -> UserSettingsOut:
     """Get user settings, auto-creating defaults on first access (upsert pattern)."""
     existing = await get_user_settings({"user_id": user_id, "user_type": user_type})
     if existing:
@@ -34,7 +37,7 @@ async def retrieve_or_create_settings(user_id: str, user_type: str) -> UserSetti
 
 async def update_settings(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     data: UserSettingsUpdate,
 ) -> UserSettingsOut:
     """Update user settings, creating defaults first if needed."""
@@ -50,14 +53,14 @@ async def update_settings(
     return result
 
 
-async def retrieve_preferences(user_id: str, user_type: str) -> dict[str, Any]:
+async def retrieve_preferences(user_id: str, user_type: UserType) -> dict[str, Any]:
     """Get all preferences for a user."""
     return await get_user_preferences(user_id, user_type)
 
 
 async def save_preference(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     key: str,
     value: Any,
 ) -> dict[str, Any]:

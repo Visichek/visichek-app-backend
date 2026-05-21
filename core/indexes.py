@@ -277,6 +277,24 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
         [("user_id", ASCENDING), ("user_type", ASCENDING), ("key", ASCENDING)],
         {"unique": True},
     ),
+    # Tutorial progress — one row per (user_id, tutorial_type, version) so a
+    # version bump re-runs a redesigned tutorial without losing history. The
+    # unique key also backs the upsert in services/tutorial_service.py.
+    (
+        "tutorials",
+        [
+            ("user_id", ASCENDING),
+            ("tutorial_type", ASCENDING),
+            ("version", ASCENDING),
+        ],
+        {"unique": True},
+    ),
+    # List a user's progress (the GET /v1/tutorials default read).
+    (
+        "tutorials",
+        [("user_id", ASCENDING), ("user_type", ASCENDING)],
+        {},
+    ),
     ("tenant_settings", [("tenant_id", ASCENDING)], {"unique": True}),
     (
         "sessions",

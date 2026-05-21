@@ -185,7 +185,9 @@ async def admin_list_support_cases(
     # assignee summaries the cached default page carries so the response
     # shape is identical whether or not filters are applied.
     raw_items = result.get("items", [])
-    items_list: list[dict[str, Any]] = list(raw_items) if isinstance(raw_items, list) else []
+    items_list: list[dict[str, Any]] = (
+        list(raw_items) if isinstance(raw_items, list) else []
+    )
     result["items"] = await enrich_support_case_dicts(items_list)
     _auto_read_admin_support_cases(admin, result)
     return result

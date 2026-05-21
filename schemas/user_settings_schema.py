@@ -63,7 +63,7 @@ class UserSettingsCreate(UserSettingsBase):
     """Internal creation schema — built by the service layer."""
 
     user_id: str
-    user_type: str  # "admin" or "system_user"
+    user_type: UserType  # "admin" or "system_user"
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
@@ -100,7 +100,7 @@ class UserSettingsOut(UserSettingsBase):
 
     id: Optional[str] = Field(default=None, alias="_id")
     user_id: Optional[str] = None
-    user_type: Optional[str] = None
+    user_type: Optional[UserType] = None
     date_created: Optional[int] = None
     last_updated: Optional[int] = None
 

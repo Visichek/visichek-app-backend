@@ -29,6 +29,7 @@ from schemas.imports import (
     BaseModel,
     Field,
     ObjectId,
+    UserType,
     model_validator,
     time,
 )
@@ -118,7 +119,7 @@ class SavedViewRecord(BaseModel):
 
     id: Optional[str] = Field(default=None, alias="_id")
     user_id: str
-    user_type: str
+    user_type: UserType
     resource: str
     saved_filters: List[SavedFilterEntry] = Field(default_factory=list)
     column_prefs: Optional[ColumnPrefs] = None

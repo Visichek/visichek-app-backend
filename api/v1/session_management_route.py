@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from core.response_envelope import document_response
+from schemas.imports import UserType
 from security.auth import verify_any_token
 from security.principal import AuthPrincipal, TENANT_USER_ROLES
 from services.session_service import (
@@ -14,8 +15,10 @@ from services.session_service import (
 router = APIRouter(prefix="/sessions", tags=["Session Management"])
 
 
-def _user_type(principal: AuthPrincipal) -> str:
-    return "system_user" if principal.role in TENANT_USER_ROLES else "admin"
+def _user_type(principal: AuthPrincipal) -> UserType:
+    return (
+        UserType.SYSTEM_USER if principal.role in TENANT_USER_ROLES else UserType.ADMIN
+    )
 
 
 @router.get("")

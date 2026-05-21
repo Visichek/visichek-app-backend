@@ -6,6 +6,7 @@ import time
 from fastapi import HTTPException
 
 from core.settings import get_settings
+from schemas.imports import UserType
 from repositories.otp_repo import (
     create_otp_challenge as _create_challenge,
     get_otp_challenge as _get_challenge,
@@ -96,7 +97,7 @@ async def _send_admin_otp_email(user_id: str, code: str) -> None:
 
 async def create_otp_challenge(
     user_id: str,
-    user_type: str,
+    user_type: UserType,
     role: str,
     tenant_id: str | None = None,
 ) -> tuple[str, str]:
@@ -105,7 +106,7 @@ async def create_otp_challenge(
 
     # Force the env primary admin to keep using the static dev code even
     # in production so on-call recovery never depends on email delivery.
-    if user_type == "admin" and await _is_primary_env_admin(user_id):
+    if user_type == UserType.ADMIN and await _is_primary_env_admin(user_id):
         code = settings.otp_dev_code
     elif settings.env != "production":
         code = settings.otp_dev_code
@@ -133,7 +134,7 @@ async def create_otp_challenge(
 
     # Mail invited admins their code (no-op for env primary admin and for
     # non-admin roles — system users get OTP via their own channel today).
-    if user_type == "admin":
+    if user_type == UserType.ADMIN:
         await _send_admin_otp_email(user_id, code)
 
     return challenge_id, code
@@ -180,7 +181,7 @@ async def verify_otp_challenge(challenge_id: str, otp_code: str) -> dict:
     }
 
 
-async def is_mfa_required(user_type: str, user_id: str) -> bool:
+async def is_mfa_required(user_type: UserType, user_id: str) -> bool:
     """Check whether a user must complete 2FA.
 
     The platform admin owns the rule (``enforce_totp_for_admins`` /
@@ -193,7 +194,7 @@ async def is_mfa_required(user_type: str, user_id: str) -> bool:
 
     policy = await get_security_policy()
 
-    if user_type == "admin":
+    if user_type == UserType.ADMIN:
         return policy.enforce_totp_for_admins
 
     from core.database import db

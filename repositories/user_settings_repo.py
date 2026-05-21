@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from core.database import db
+from schemas.imports import UserType
 from schemas.user_settings_schema import (
     UserSettingsCreate,
     UserSettingsUpdate,
@@ -46,7 +47,7 @@ async def update_user_settings(
 # --- User Preferences (key-value store) ---
 
 
-async def get_user_preferences(user_id: str, user_type: str) -> dict[str, Any]:
+async def get_user_preferences(user_id: str, user_type: UserType) -> dict[str, Any]:
     doc = await db[PREFERENCES_COLLECTION].find_one(
         {"user_id": user_id, "user_type": user_type}
     )
@@ -56,7 +57,7 @@ async def get_user_preferences(user_id: str, user_type: str) -> dict[str, Any]:
 
 
 async def set_user_preference(
-    user_id: str, user_type: str, key: str, value: Any
+    user_id: str, user_type: UserType, key: str, value: Any
 ) -> dict[str, Any]:
     """Upsert a single preference key-value pair."""
     await db[PREFERENCES_COLLECTION].update_one(
@@ -70,6 +71,6 @@ async def set_user_preference(
     return await get_user_preferences(user_id, user_type)
 
 
-async def count_user_preference_keys(user_id: str, user_type: str) -> int:
+async def count_user_preference_keys(user_id: str, user_type: UserType) -> int:
     prefs = await get_user_preferences(user_id, user_type)
     return len(prefs)

@@ -22,7 +22,7 @@ async def create_usage_record(record_data: UsageRecordCreate) -> UsageRecordOut:
     record_dict = record_data.model_dump(mode="json")
     result = await db[RECORDS_COLLECTION].insert_one(record_dict)
     result = await db[RECORDS_COLLECTION].find_one({"_id": result.inserted_id})
-    return UsageRecordOut(**result)
+    return UsageRecordOut(**result)  # type: ignore
 
 
 async def get_usage_records(

@@ -6,6 +6,7 @@ from bson import ObjectId
 from typing import Any, Optional
 
 from core.database import db
+from schemas.imports import UserType
 from security.principal import AuthPrincipal, TENANT_USER_ROLES
 
 PRIMARY_ADMIN_ID = "656f7ac12b9d4f6c9e2b9f7d"
@@ -35,8 +36,10 @@ async def _is_primary_admin_by_email(principal: AuthPrincipal) -> bool:
     return doc.get("email", "").lower() == primary_email.lower()
 
 
-def _user_type(principal: AuthPrincipal) -> str:
-    return "system_user" if principal.role in TENANT_USER_ROLES else "admin"
+def _user_type(principal: AuthPrincipal) -> UserType:
+    return (
+        UserType.SYSTEM_USER if principal.role in TENANT_USER_ROLES else UserType.ADMIN
+    )
 
 
 async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
@@ -50,7 +53,7 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
     is_primary = await _is_primary_admin_by_email(principal)
 
     # ── Load the user's profile ─────────────────────────────────────
-    if user_type == "admin":
+    if user_type == UserType.ADMIN:
         doc = await db.admins.find_one({"_id": ObjectId(principal.user_id)})
         if not doc:
             # Hardcoded primary admin
@@ -122,7 +125,7 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
         mfa_required = True
         mfa_can_disable = False
         enforcement_reason = "Required for the primary platform admin."
-    elif user_type == "admin":
+    elif user_type == UserType.ADMIN:
         mfa_required = policy.enforce_totp_for_admins
         mfa_can_disable = not policy.enforce_totp_for_admins
         if mfa_required:
@@ -187,8 +190,8 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
             "description": "Your personal information.",
             "fields": _profile_fields(user_type, role),
             "endpoints": {
-                "get": f"/v1/{'admins' if user_type == 'admin' else 'system-users'}/profile"
-                if user_type == "admin"
+                "get": f"/v1/{'admins' if user_type == UserType.ADMIN else 'system-users'}/profile"
+                if user_type == UserType.ADMIN
                 else "/v1/system-users/me",
             },
         }
@@ -274,8 +277,8 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
             "label": "Dashboard Layout",
             "description": "Persist dashboard quick action order and collapsed sections.",
             "endpoints": {
-                "get": f"/v1/{'admins' if user_type == 'admin' else 'system-users'}/preferences",
-                "update": f"/v1/{'admins' if user_type == 'admin' else 'system-users'}/preferences",
+                "get": f"/v1/{'admins' if user_type == UserType.ADMIN else 'system-users'}/preferences",
+                "update": f"/v1/{'admins' if user_type == UserType.ADMIN else 'system-users'}/preferences",
             },
         }
     )
@@ -309,7 +312,7 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
         )
 
     # 10. Platform Settings (admin only — primary admin gets full access)
-    if user_type == "admin":
+    if user_type == UserType.ADMIN:
         sections.append(
             {
                 "key": "platform_settings",
@@ -363,14 +366,14 @@ async def build_settings_manifest(principal: AuthPrincipal) -> dict[str, Any]:
     }
 
 
-def _profile_fields(user_type: str, role: str) -> list[dict[str, Any]]:
+def _profile_fields(user_type: UserType, role: str) -> list[dict[str, Any]]:
     """Return the editable profile fields for this user type."""
     fields = [
         {"key": "full_name", "label": "Full Name", "type": "text", "editable": True},
         {"key": "email", "label": "Email", "type": "email", "editable": False},
     ]
 
-    if user_type == "system_user":
+    if user_type == UserType.SYSTEM_USER:
         fields.append(
             {"key": "role", "label": "Role", "type": "text", "editable": False}
         )
