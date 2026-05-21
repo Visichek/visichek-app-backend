@@ -99,12 +99,26 @@ def _client_ip(request: Request | None) -> str | None:
 def _build_reset_url(token: str) -> str:
     """Compose the link the recipient clicks to land on the FE reset form.
 
-    Empty when ``APP_BASE_URL`` is not configured — the email falls back
-    to displaying the raw token so the recipient can paste it into the
-    reset form manually.
+    Prefers ``APP_BASE_URL``. If that is unset we fall back to the first
+    configured ``CORS_ORIGINS`` entry — the frontend origin the API
+    already trusts — so the email is never silently linkless. Only when
+    BOTH are empty do we return ``""`` (and log a warning), which the
+    template treats as "no link to render".
     """
-    base = (get_settings().app_base_url or "").rstrip("/")
+    settings = get_settings()
+    base = (settings.app_base_url or "").rstrip("/")
     if not base:
+        for origin in settings.cors_origins:
+            candidate = (origin or "").strip().rstrip("/")
+            if candidate:
+                base = candidate
+                break
+    if not base:
+        logger.warning(
+            "password reset link omitted: neither APP_BASE_URL nor "
+            "CORS_ORIGINS is configured — set APP_BASE_URL to the frontend "
+            "base URL so reset emails contain a working link"
+        )
         return ""
     return f"{base}/reset-password?token={token}"
 
