@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends, Header, Request, status
 from core.bulk import enqueue_bulk_write
 from core.database import db
 from core.idempotency import actor_scope, check_idempotency, store_idempotency
-from core.list_params import FilterDef, ListSpec, parse_list_query
+from core.list_params import FilterDef, ListSpec, coerce_bool, parse_list_query
 from core.list_runner import run_list
 from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
@@ -29,7 +29,9 @@ HOSTS_LIST_SPEC = ListSpec(
     search_fields=("name", "email", "phone"),
     filters={
         "departmentId": FilterDef(name="departmentId", mongo_field="department_id"),
-        "isActive": FilterDef(name="isActive", mongo_field="is_active"),
+        "isActive": FilterDef(
+            name="isActive", mongo_field="is_active", coerce=coerce_bool
+        ),
     },
     facet_fields=frozenset(),
 )
