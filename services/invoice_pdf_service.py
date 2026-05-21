@@ -6,7 +6,6 @@ from datetime import datetime
 from decimal import Decimal
 
 from core.storage.manager import DocumentStorageManager
-from core.storage.types import DocumentMetadata
 from schemas.invoice_schema import InvoiceOut
 
 logger = logging.getLogger(__name__)
@@ -315,73 +314,26 @@ async def generate_invoice_pdf(invoice: InvoiceOut) -> str | None:
         # Generate PDF bytes
         pdf_bytes = _generate_pdf_bytes(invoice)
 
-        # Prepare storage metadata
-        file_name = f"invoice_{invoice.invoice_number}.pdf"
-        metadata = DocumentMetadata(
-            owner_id=invoice.tenant_id,
-            file_name=file_name,
-            mime_type="application/pdf",
-            size=len(pdf_bytes),
-            extra={"invoice_id": invoice.id, "invoice_number": invoice.invoice_number},
+        # Invoice PDFs are SERVER-GENERATED artifacts — push the bytes
+        # directly via the provider (no presigned client flow, there's no
+        # client). Same call works for both S3 and local backends.
+        from uuid import uuid4
+
+        tenant_segment = invoice.tenant_id or "shared"
+        object_key = f"invoices/{tenant_segment}/{uuid4().hex}.pdf"
+
+        provider = DocumentStorageManager.get_instance().provider
+        provider.upload_bytes(
+            object_key=object_key, payload=pdf_bytes, mime_type="application/pdf"
         )
-
-        # Upload to storage
-        manager = DocumentStorageManager.get_instance()
-
-        # For local storage, we need to handle the upload directly
-        # For S3, we get a presigned URL and then upload
-        provider = manager.provider
-
-        if provider.backend_name == "s3":
-            # S3: use presigned URL flow
-            intent = provider.create_upload_intent(metadata)
-            # Upload the PDF bytes directly
-            import boto3  # type: ignore[import-untyped]
-
-            s3_client = boto3.client("s3")
-            s3_client.put_object(
-                Bucket=getattr(provider, "_bucket", None),
-                Key=intent.object_key,
-                Body=pdf_bytes,
-                ContentType=metadata.mime_type,
-            )
-            stored = provider.complete_upload(
-                object_key=intent.object_key,
-                metadata=metadata,
-                checksum=None,
-            )
-            logger.info(
-                "Invoice PDF generated and stored in S3: invoice_id=%s object_key=%s size=%d",
-                invoice.id,
-                stored.object_key,
-                stored.size,
-            )
-            return stored.object_key
-        else:
-            # Local storage: use provider's save_bytes method
-            from uuid import uuid4
-
-            extension = ".pdf"
-            object_key = f"{uuid4().hex}{extension}"
-
-            # Save PDF bytes using provider's save_bytes method
-            provider.upload_bytes(
-                object_key=object_key, payload=pdf_bytes, mime_type=metadata.mime_type
-            )
-            saved_size = len(pdf_bytes)
-
-            stored = provider.complete_upload(
-                object_key=object_key,
-                metadata=metadata,
-                checksum=None,
-            )
-            logger.info(
-                "Invoice PDF generated and stored locally: invoice_id=%s object_key=%s size=%d",
-                invoice.id,
-                stored.object_key,
-                saved_size,
-            )
-            return stored.object_key
+        logger.info(
+            "Invoice PDF generated and stored (%s): invoice_id=%s object_key=%s size=%d",
+            provider.backend_name,
+            invoice.id,
+            object_key,
+            len(pdf_bytes),
+        )
+        return object_key
 
     except ImportError as e:
         logger.warning(
@@ -408,21 +360,13 @@ async def get_invoice_pdf_url(object_key: str) -> str | None:
     Returns:
         Presigned download URL or None if storage not available
     """
-    try:
-        if not object_key:
-            logger.warning("Cannot generate PDF URL: empty object_key")
-            return None
-
-        manager = DocumentStorageManager.get_instance()
-        url = manager.provider.download_url(object_key=object_key, expires_in=900)
-        logger.debug("Generated presigned PDF URL for object_key=%s", object_key)
-        return url
-
-    except Exception as e:
-        logger.error(
-            "Failed to generate invoice PDF URL: object_key=%s error=%s",
-            object_key,
-            str(e),
-            exc_info=True,
-        )
+    if not object_key:
+        logger.warning("Cannot generate PDF URL: empty object_key")
         return None
+
+    from services.storage_url_service import try_resolve_download_url
+
+    url = try_resolve_download_url(object_key, expires_in=900)
+    if url is None:
+        logger.error("Failed to generate invoice PDF URL: object_key=%s", object_key)
+    return url

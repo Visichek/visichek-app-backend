@@ -26,7 +26,7 @@ from schemas.id_extraction_schema import (
 from schemas.id_verification_hash_schema import IDVerificationHashCreate
 from schemas.imports import IDType
 from schemas.visitor_schema import VisitorCreate, VisitorOut, VisitorUpdate
-from services.document_service import direct_upload
+from services.document_service import persist_server_document
 from services.face_crop_service import crop_face
 from services.id_extraction_service import extract_id
 
@@ -47,7 +47,7 @@ async def verify_visitor_from_id(
     1. Validates input (tenant_id, email/phone, file size).
     2. Hashes file bytes; if (tenant_id, sha256) seen before, returns the mapped
        visitor without re-running OCR or face extraction.
-    3. Uploads the original file via document_service.direct_upload.
+    3. Uploads the original file via document_service.persist_server_document.
     4. Runs Document AI OCR on the stored document (id_extraction_service).
     5. Crops the face via face_crop_service.
     6. Uploads the cropped face as a separate object; stores its presigned URL.
@@ -100,7 +100,7 @@ async def verify_visitor_from_id(
     # 1. Upload original document to storage
     extension = _extension_for_mime(mime_type)
     file_name = f"id-{uuid4().hex}{extension}"
-    document = await direct_upload(
+    document = await persist_server_document(
         owner_id=f"public:{tenant_id}",
         file_name=file_name,
         mime_type=mime_type,
@@ -216,10 +216,13 @@ async def _upload_portrait(*, tenant_id: str, image_bytes: bytes) -> str:
 
     provider: Any = DocumentStorageManager.get_instance().provider
     object_key = f"portraits/{tenant_id}/{uuid4().hex}.jpg"
+    # Server-generated (cropped face) bytes — push directly, no client presign.
     provider.upload_bytes(
         object_key=object_key, payload=image_bytes, mime_type="image/jpeg"
     )
-    return provider.download_url(object_key=object_key)
+    from services.storage_url_service import resolve_download_url
+
+    return resolve_download_url(object_key)
 
 
 def _extension_for_mime(mime_type: str) -> str:

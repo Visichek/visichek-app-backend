@@ -1,244 +1,221 @@
 ================================================================================
-2026-05-20 — Hosts feature + Appointment host rewire
+FRONTEND CHANGES — Presigned-only uploads (BREAKING)
+Date: 2026-05-21
 ================================================================================
 
-Two related changes shipped together:
+WHAT CHANGED (one sentence)
+---------------------------
+All file uploads (private AND public/kiosk) are now PRESIGNED and two-step: the
+server no longer receives file bytes. You ask for an upload URL, PUT the file
+straight to that URL, then confirm. Downloads/previews are unchanged (still a
+presigned/served `download_url`), with a new endpoint to refresh an expired one.
 
-  A. NEW RESOURCE — Hosts (`hosts` collection): a tenant-managed roster of
-     people a visitor can be scheduled to see. See host.txt for the full
-     feature doc.
-  B. APPOINTMENT REWIRE — appointments + visit sessions now resolve their
-     host through the hosts roster (with a system_user fallback), so the new
-     host picker works end-to-end for both system-user-backed and dedicated
-     hosts. This was the deferred "(a)" change flagged in host.txt §11.
-
-
---------------------------------------------------------------------------------
-A. HOSTS RESOURCE (recap — full detail in host.txt)
---------------------------------------------------------------------------------
-
-A host is either backed by a tenant system user (`source_system_user_id` set)
-or a dedicated host (no login). Contact details (name, phone, email, picture,
-signature) are snapshotted on the host record.
-
-Endpoints (prefix /v1/hosts, tag "Hosts"):
-  POST   /v1/hosts                 super_admin, dept_admin                202 -> host.create
-  GET    /v1/hosts                 super_admin, dept_admin, receptionist  list (precompute/run_list)
-  GET    /v1/hosts/{host_id}       super_admin, dept_admin, receptionist  single (+summaries)
-  PATCH  /v1/hosts/{host_id}       super_admin, dept_admin                202 -> host.update
-  DELETE /v1/hosts/{host_id}       super_admin                            202 -> host.delete
-  POST   /v1/hosts/bulk/delete     super_admin                            202 -> host.bulk_delete
-
-  Read access (the two GETs) is intentionally WIDER than management:
-  receptionists can't manage the roster but DO create appointments, so the
-  appointment host-picker must be able to list/read hosts for them. Wired via
-  a separate `_read_roles` dep in host_route.py + the two GET keys added to
-  RECEPTIONIST_PERMISSIONS. Create/update/delete stay super_admin/dept_admin.
-
-Schema:
-  name (req), phone (req), department_id (req, FK->departments, tenant-checked),
-  email (opt), picture_image_url (opt), signature_image_url (opt),
-  source_system_user_id (opt, set-on-create-only, FK->system_users),
-  is_active (default true).
-  Updatable: name, phone, email, department_id, picture_image_url,
-  signature_image_url, is_active.
-
-New files:
-  schemas/host_schema.py            HostBase/Create/Update/Out/WithSummaryOut
-  repositories/host_repo.py         CRUD on "hosts" (preassigned_id aware)
-  services/host_service.py          validation + CRUD + enrichment + diff +
-                                    resolve_host_identity() helper
-  services/host_writer.py           host.{create,update,delete,bulk_delete}
-                                    write handlers + audit + hosts.list precompute
-  api/v1/host_route.py              HTTP layer (queued writes, list, entity GET)
-  tests/unit/test_host_routes.py    create/list/get/update/delete route tests
-
-Wiring:
-  core/queue/registrations.py       import host_writer (registers handlers +
-                                    precompute on web + worker)
-  main.py                           mount v1_host_route_router under /v1
-  config/role_permissions.py        host keys on SUPER_ADMIN (full),
-                                    DEPT_ADMIN (no delete), RECEPTIONIST (2 GETs)
-  core/indexes.py                   hosts: (tenant_id,name),
-                                    (tenant_id,department_id),
-                                    (tenant_id,source_system_user_id) sparse
-  core/plan_enforcement.py          PATH_TO_COLLECTION "hosts" -> "hosts"
-
-Behaviour:
-  * 409 (duplicate name) and 404 (department / linked system user not found)
-    are raised SYNCHRONOUSLY on POST/PATCH (before enqueue), so clients get
-    them inline — not via the job.
-  * The create-202 `id` is the pre-assigned ObjectId persisted by the writer,
-    so it is the authoritative final id (unlike subscription.create).
-  * No plan cap (plans define no max_hosts). Collection IS in
-    PATH_TO_COLLECTION for usage tracking.
-  * Every mutation emits record_audit_event (host.created / host.updated with a
-    field diff / host.deleted) from the writer.
+WHY
+---
+Bytes go directly browser -> storage (S3) instead of through the API. It's the
+standard, scalable pattern: the API server is out of the file-transfer path,
+uploads scale with storage not with our app servers, and quota is enforced on
+the real stored size.
 
 
---------------------------------------------------------------------------------
-B. APPOINTMENT / VISIT-SESSION HOST REWIRE  (option "a")
---------------------------------------------------------------------------------
+================================================================================
+1. ENDPOINTS REMOVED  (delete all calls to these — they now 404)
+================================================================================
+  POST /v1/documents                       (direct multipart upload)
+  POST /v1/documents/upload-intents         (old intent shape)
+  POST /v1/documents/complete               (old complete shape)
+  POST /v1/uploads/private                  (multipart byte upload)
+  POST /v1/public/tenants/{tenant_id}/uploads   (multipart byte upload)
 
-Goal: let the appointment host picker select from the hosts roster (including
-dedicated hosts that are NOT system users) without breaking existing
-appointments, and without a data migration.
+================================================================================
+2. ENDPOINTS ADDED / KEPT
+================================================================================
+  ADDED:
+   POST /v1/uploads/intent                              (private, step 1)
+   POST /v1/uploads/confirm                             (private, step 2)
+   POST /v1/public/tenants/{tenant_id}/uploads/intent   (public kiosk, step 1)
+   POST /v1/public/tenants/{tenant_id}/uploads/confirm  (public kiosk, step 2)
+   GET  /v1/uploads/url?object_key=...                  (mint a fresh download URL)
 
-What changed
-------------
+  UNCHANGED:
+   GET    /v1/documents/{document_id}    (metadata + fresh download_url)
+   DELETE /v1/documents/{document_id}
+   GET    /v1/storage/quota
+   GET    /v1/public/tenants/{tenant_id}/branding etc. (still return download URLs)
 
-1. Unified host summary shape. `host_summary` on AppointmentWithSummaryOut and
-   on the two visit-session WithSummary models is now a HostBriefSummary
-   (id, name, phone, email, department_id, picture_image_url, is_active),
-   replacing the previous UserBriefSummary.
-     -> schemas/summary_schema.py     (added picture_image_url to HostBriefSummary)
-     -> schemas/appointment_schema.py (host_summary: HostBriefSummary)
-     -> schemas/visit_session_schema.py (both host_summary fields)
-
-2. Dual resolver — migration-free. New
-   services/summary_resolver.resolve_appointment_host_summary(host_id):
-     a) resolve as a hosts-collection record first (modern path);
-     b) fall back to a system_user mapped INTO the same HostBriefSummary shape
-        (legacy appointments whose host_id is a system_user id).
-   So old appointments keep rendering and new ones resolve against hosts —
-   no backfill required. Wired into appointment enrichment
-   (services/appointment_service._enrich_appointment) and both visit-session
-   enrichers (services/visit_session_service).
-
-3. Host-name snapshot at create. services/appointment_service.add_appointment
-   now snapshots host_name_snapshot from the host (via resolve_host_identity:
-   hosts first, then system_user) when the client didn't supply one. Lists and
-   the appointment-driven check-in are therefore self-describing and survive a
-   host being renamed or removed. Wrapped best-effort so a host-lookup blip
-   never blocks appointment creation.
-
-4. Tolerant check-in. services/visit_session_service.register_visitor_checkin
-   previously resolved the appointment's host_id strictly as a system_user and
-   404'd if absent — which would have broken check-in for a dedicated host.
-   Now it resolves via resolve_host_identity and:
-     * still 404s when the caller EXPLICITLY passed request.host_id that
-       doesn't resolve (preserves the old strictness for direct check-ins);
-     * for an appointment-derived host, falls back to the appointment's
-       host_name_snapshot instead of failing (dedicated / since-removed host).
-
-5. New helper services/host_service.resolve_host_identity(tenant_id, host_id)
-   -> (display_name, source_system_user_id). Tenant-scoped. Tries hosts then
-   system_users. `source_system_user_id` is the system user (if any) that
-   in-app notifications should target.
-
-BREAKING (read contract)
-------------------------
-The `host_summary` object on appointment and visit-session reads changed shape:
-  was   UserBriefSummary { id, full_name, email, role, user_type }
-  now   HostBriefSummary { id, name, phone, email, department_id,
-                           picture_image_url, is_active }
-Frontends reading host_summary.fullName / .role must switch to .name (and may
-now use .phone / .pictureImageUrl / .departmentId). host_name_snapshot on the
-appointment/session is unchanged and remains the plain-string label.
-
-NOT changed
------------
-  * Appointment.host_id remains a single string field; its MEANING is now
-    "a host reference" (host record id going forward, system_user id for
-    legacy rows). No DB migration. No schema field rename.
-  * notify_visitor_check_in / notify_appointment_reminder are DEFINED but not
-    yet called anywhere, so no live host-notification path needed changing.
-    CONSTRAINT FOR WHOEVER WIRES THEM: in-app notifications must target
-    source_system_user_id (a dedicated host has none -> send to host.email or
-    skip in-app). Do NOT notify host_id directly — for a dedicated host that
-    id is a hosts-record id, not a user.
+  INTERNAL (do not call from FE — listed so you don't accidentally use them):
+   PUT /v1/documents/upload-local/{object_key}   only the LOCAL/dev backend's
+                                                  presigned target; in prod the
+                                                  upload_url is a real S3 URL.
 
 
---------------------------------------------------------------------------------
-C. ANSWERS TO THE FRONTEND QUESTIONS
---------------------------------------------------------------------------------
+================================================================================
+3. THE NEW UPLOAD FLOW (this is the whole change for the FE)
+================================================================================
+Replace every "POST a multipart file" with THREE steps:
 
-Q1 — Appointment host picker (§1.6): which of (a)/(b)/(c)?
-  ANSWER: (a), and it is DONE (section B above). The backend now resolves the
-  host through the hosts roster with a system_user fallback.
+STEP 1 — get an upload URL
+  POST /v1/uploads/intent
+  Authorization: Bearer <token>
+  Content-Type: application/json        <-- JSON now, NOT multipart
+  {
+    "file_name": "passport.jpg",
+    "mime_type": "image/jpeg",          <-- the file's real content type
+    "size": 482133,                     <-- file.size in bytes (advisory)
+    "purpose": "id_document",           <-- see PURPOSES below (default "system")
+    "field_id": "fld_abc"               <-- optional; the tenant-form field id
+  }
 
-  Frontend contract for the picker:
-    * Repoint the step-1 Host select to useHosts({ isActive: true }).
-    * Submit `host.id` (the hosts-record id) as `hostId` for EVERY host —
-      mirrored or dedicated. No source_system_user_id bridging, no hiding
-      dedicated hosts.
-    * useHosts({ isActive: true }) sends a filter, so it serves from the live
-      run_list path (not the 60s precompute page) — functionally identical.
-    * On read, appointment.hostSummary is now a HostBriefSummary
-      (name / phone / email / departmentId / pictureImageUrl / isActive).
-      Update any code reading hostSummary.fullName -> hostSummary.name.
-    * Legacy appointments (hostId = old system_user id) still resolve and
-      render via the fallback — safe to ship without a migration.
+  201 ->
+  {
+    "object_key": "id-docs/<tenant>/<uuid>.jpg",
+    "upload_url": "https://<bucket>.s3...&X-Amz-Signature=...",
+    "method": "PUT",
+    "headers": { "Content-Type": "image/jpeg" },
+    "expires_in": 3600,
+    "backend": "s3",
+    "purpose": "id_document",
+    "field_id": "fld_abc"
+  }
 
-  Correction to the original premise: sending a raw host id never "broke
-  creation" — host_id was an unvalidated string, so creation always succeeded;
-  the only breakage was a blank host on read + a 404 in appointment-driven
-  check-in. Both are now fixed.
+STEP 2 — upload the bytes DIRECTLY to upload_url (NOT to our API)
+  Use the returned method + headers verbatim. Send the raw file as the body.
 
-Q2 — Hosts management resource (Phase 4): plan confirmed correct, with four
-     contract refinements:
-    1. 409 (duplicate name) / 404 (department or linked system user not found)
-       come back SYNCHRONOUSLY on the POST/PATCH response — you do NOT need to
-       poll /v1/jobs/{jobId} to surface them. Job polling is only for
-       unexpected worker-side failures.
-    2. The create-202 `id` IS authoritative (pre-assigned + persisted via
-       preassigned_id), unlike subscription.create. You can route to
-       /app/hosts/{id} immediately; poll the job only to confirm success.
-    3. useHosts({ isActive: true }) hits the live run_list path, not the
-       precompute page (it's a filtered query). Fine for a picker.
-    4. Wire fields are camelCase: departmentId, pictureImageUrl,
-       signatureImageUrl, sourceSystemUserId, isActive. Summaries:
-       departmentSummary / tenantSummary / sourceSystemUserSummary.
-    Table: sort allowlist = name, date_created, last_updated (default name asc);
-    search q matches name, email, phone. Role-gating: super_admin full incl.
-    delete + bulk delete; dept_admin create/list/get/update (no delete);
-    receptionist read-only (list + get) for the appointment picker.
-    sourceSystemUserId is set-on-create-only (not in HostUpdate). No plan cap.
+    await fetch(resp.upload_url, {
+      method: resp.method,              // "PUT"
+      headers: resp.headers,            // { "Content-Type": "image/jpeg" }
+      body: file,                       // the raw File/Blob — NOT FormData
+    });
 
-  Recommended FE sequence is unchanged and correct: build hosts management
-  first; the picker swap (§1.6) is now unblocked and is a one-hook change
-  (useSystemUsers -> useHosts) plus the hostSummary.name rename.
+  IMPORTANT:
+   * Do NOT add the Authorization header to this request (it goes to S3, the
+     presigned URL carries its own auth). Sending Bearer here can break the
+     S3 signature.
+   * Do NOT wrap the body in FormData. Send the raw file/blob.
+   * The Content-Type you PUT MUST equal headers["Content-Type"] from step 1,
+     or S3 rejects the PUT (it's part of the signature).
+   * A successful PUT returns 200 (S3) or 204 (local). No JSON body.
 
-Follow-up confirmations (3 FE notes):
-  * Receptionist host-picker access — CONFIRMED + FIXED. Receptionists are in
-    the appointment-create roles, so they now have read-only access to
-    GET /v1/hosts and GET /v1/hosts/{id} (see section A). Management stays
-    restricted. Without this they'd 403 on the picker and appointment creation
-    would break for them.
-  * Submit-during-refresh (kiosk) — the simple "re-submit on refresh" option is
-    fine. The (tenant_id, phone) unique index on visitor_profiles prevents
-    duplicate profiles; worst case is a second visit session a receptionist can
-    void. No backend change needed.
-  * Idle-reset scope — limiting the 3-min auto-wipe to terminal/wait screens
-    (not mid-form) is correct. No backend concern.
+STEP 3 — confirm
+  POST /v1/uploads/confirm
+  Authorization: Bearer <token>
+  { "object_key": "id-docs/<tenant>/<uuid>.jpg" }
+
+  201 ->
+  {
+    "object_key": "id-docs/<tenant>/<uuid>.jpg",
+    "download_url": "https://...signed-GET...",
+    "file_name": "passport.jpg",
+    "mime_type": "image/jpeg",
+    "size": 482133,                     <-- AUTHORITATIVE size read from storage
+    "backend": "s3",
+    "purpose": "id_document",
+    "tenant_id": "...",
+    "field_id": "fld_abc",
+    "expires_in_seconds": 86400
+  }
+
+  Use `object_key` as the value you store on the parent record / drop into
+  tenant_form_data / bio_data. Use `download_url` to preview immediately.
+
+Public/kiosk uploads are IDENTICAL, just different paths:
+  POST /v1/public/tenants/{tenant_id}/uploads/intent
+  POST /v1/public/tenants/{tenant_id}/uploads/confirm
+(Anonymous when the tenant's plan allows public uploads; otherwise send a
+super_admin / dept_admin / receptionist Bearer token — same gate as before.)
 
 
---------------------------------------------------------------------------------
-D. VERIFICATION
---------------------------------------------------------------------------------
+================================================================================
+4. PURPOSES (the `purpose` field on intent)
+================================================================================
+  "system"            default; generic authenticated upload
+  "kiosk_form"        public kiosk form file fields
+  "visitor_photo"
+  "id_document"
+  "appointment_photo"
+  "branding"
+  "host_photo"        IMAGE ONLY (jpeg/png/webp/gif/bmp/heic/heif) -> 415 otherwise
+  "host_signature"    IMAGE ONLY (same set)
 
-  ruff check .                                              -> All checks passed
-  mypy --ignore-missing-imports --no-error-summary .        -> no errors on
-                                                              touched files
-  pytest tests/unit (host/appointment/visit-session/checkin/dashboard/schema/
-         service/route/verification/staged-checkin)         -> all green in
-                                                              isolation
-         (one "Event loop is closed" teardown flake appears only in the full
-          20-min run; the affected test passes deterministically in isolation
-          and is unrelated to this change — it's a pytest-asyncio + motor
-          loop-teardown ordering artifact.)
+host_photo / host_signature reject non-image types with HTTP 415 at BOTH intent
+(declared type) and confirm (stored type). SVG is rejected (XSS).
 
-Files touched by the rewire (B):
-  schemas/summary_schema.py
-  schemas/appointment_schema.py
-  schemas/visit_session_schema.py
-  services/summary_resolver.py        (resolve_appointment_host_summary,
-                                       resolve_host_summary)
-  services/appointment_service.py     (enrichment + create snapshot)
-  services/visit_session_service.py   (tolerant register_visitor_checkin +
-                                       both enrichers)
-  services/host_service.py            (resolve_host_identity)
 
-Files touched by the receptionist read-access fix:
-  api/v1/host_route.py                (_read_roles dep on the two GETs)
-  config/role_permissions.py          (list_hosts + get_host in RECEPTIONIST)
+================================================================================
+5. DOWNLOADS / PREVIEW
+================================================================================
+No change to how you read files: list/detail responses still embed a
+`download_url` (and logos/favicons/photos still come back as URLs). These are
+presigned and expire (default 24h).
+
+NEW — refresh an expired URL without re-fetching the whole parent object:
+  GET /v1/uploads/url?object_key=<key>&expires_in=86400
+  Authorization: Bearer <token>
+  200 -> { "object_key": "...", "download_url": "...", "expires_in_seconds": 86400 }
+
+  Access rule: you must own the object, be in its tenant, or be an app admin
+  (else 403); 404 if the object_key is unknown.
+  expires_in is optional (60s .. 7 days, default 24h).
+
+Best practice: store the `object_key`, NOT the `download_url`. Mint a fresh URL
+via the list/detail payload or GET /v1/uploads/url when you actually render.
+
+
+================================================================================
+6. ERROR CASES TO HANDLE
+================================================================================
+  intent:
+    413  file too large (> plan max_file_size_mb, or > 50 MB hard cap)
+    415  non-image for host_photo / host_signature
+    429  storage quota / document-count cap reached
+    403  (public) plan disallows anonymous upload and no valid staff token
+  PUT to upload_url:
+    403/400 from S3  usually a Content-Type mismatch or the URL expired
+                     (expires_in seconds) — re-run intent to get a new URL
+  confirm:
+    409  no object found for object_key  -> the PUT didn't happen/failed; retry
+                                            the PUT then confirm again
+    413  stored object > 50 MB
+    415  stored object is not an image (image-only purpose)
+    429  quota exceeded on the REAL size (object is deleted server-side; re-do)
+    403  confirming an intent you didn't create / wrong tenant
+
+Note: quota is enforced for real at CONFIRM (on the true stored size), so a
+confirm can 429 even if the intent passed. If confirm rejects, the stored
+object is discarded automatically — just surface the error.
+
+
+================================================================================
+7. SUPPORT-CASE ATTACHMENTS
+================================================================================
+Already two-step (intent -> PUT -> register). The intent now returns a real
+presigned PUT target (method "PUT", Content-Type header) — same client handling
+as section 3 step 2. The register call (POST .../attachments) is unchanged.
+Paths unchanged:
+  POST /v1/support-cases/{case_id}/attachments/intent
+  POST /v1/admin/support-cases/{case_id}/attachments/intent
+
+
+================================================================================
+8. OUT OF SCOPE (no change)
+================================================================================
+Blog/CMS media uploads (POST /v1/media/upload-image, /upload-video,
+/upload-media and /blog-uploads/*) are a SEPARATE subsystem on Cloudflare R2
+that serves public CDN URLs and streams large videos. They intentionally keep
+their current multipart endpoints — presigned downloads don't apply to public
+CDN content. No frontend change there.
+
+
+================================================================================
+9. QUICK MIGRATION CHECKLIST
+================================================================================
+[ ] Remove all multipart POSTs to the section-1 endpoints.
+[ ] Add a shared uploadFile(file, {purpose, fieldId}) helper doing intent ->
+    PUT(upload_url) -> confirm, returning { objectKey, downloadUrl }.
+[ ] Send raw File as the PUT body (no FormData), with the exact Content-Type
+    from intent.headers, and NO Authorization header on the PUT.
+[ ] Store object_key on the parent; render via download_url / GET /v1/uploads/url.
+[ ] Handle 409-on-confirm (PUT didn't land) with a retry.
+[ ] Kiosk: switch to the /intent + /confirm public paths; keep the same
+    plan-gate token behaviour.
+================================================================================

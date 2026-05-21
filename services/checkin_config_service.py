@@ -79,10 +79,9 @@ async def _resolve_tenant_logo_url(tenant_id: str) -> Optional[str]:
 
         branding = await get_branding({"tenant_id": tenant_id})
         if branding and branding.logo_object_key:
-            from core.storage import DocumentStorageManager
+            from services.storage_url_service import try_resolve_download_url
 
-            manager = DocumentStorageManager.get_instance()
-            return manager.provider.download_url(object_key=branding.logo_object_key)
+            return try_resolve_download_url(branding.logo_object_key)
     except Exception:
         pass
     return None

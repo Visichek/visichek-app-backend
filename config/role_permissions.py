@@ -823,13 +823,9 @@ SUPER_ADMIN_PERMISSIONS: list[Permission] = [
         "List deletion logs",
     ),
     # Documents
-    _p(
-        "upload_intent",
-        ["POST"],
-        "/v1/documents/upload-intents",
-        "Create upload intent",
-    ),
-    _p("complete_upload", ["POST"], "/v1/documents/complete", "Complete upload"),
+    _p("upload_intent", ["POST"], "/v1/uploads/intent", "Create upload intent"),
+    _p("upload_confirm", ["POST"], "/v1/uploads/confirm", "Confirm upload"),
+    _p("upload_url", ["GET"], "/v1/uploads/url", "Get fresh download URL"),
     _p("get_document", ["GET"], "/v1/documents/{document_id}", "View document"),
     _p("delete_document", ["DELETE"], "/v1/documents/{document_id}", "Delete document"),
     # Branding
@@ -984,13 +980,9 @@ DEPT_ADMIN_PERMISSIONS: list[Permission] = [
         "get_active_notice", ["GET"], "/v1/privacy-notices/active", "View active notice"
     ),
     # Documents
-    _p(
-        "upload_intent",
-        ["POST"],
-        "/v1/documents/upload-intents",
-        "Create upload intent",
-    ),
-    _p("complete_upload", ["POST"], "/v1/documents/complete", "Complete upload"),
+    _p("upload_intent", ["POST"], "/v1/uploads/intent", "Create upload intent"),
+    _p("upload_confirm", ["POST"], "/v1/uploads/confirm", "Confirm upload"),
+    _p("upload_url", ["GET"], "/v1/uploads/url", "Get fresh download URL"),
     _p("get_document", ["GET"], "/v1/documents/{document_id}", "View document"),
     _p("delete_document", ["DELETE"], "/v1/documents/{document_id}", "Delete document"),
     # Usage
@@ -1063,13 +1055,9 @@ RECEPTIONIST_PERMISSIONS: list[Permission] = [
         "get_active_notice", ["GET"], "/v1/privacy-notices/active", "View active notice"
     ),
     # Documents (upload visitor photos/IDs)
-    _p(
-        "upload_intent",
-        ["POST"],
-        "/v1/documents/upload-intents",
-        "Create upload intent",
-    ),
-    _p("complete_upload", ["POST"], "/v1/documents/complete", "Complete upload"),
+    _p("upload_intent", ["POST"], "/v1/uploads/intent", "Create upload intent"),
+    _p("upload_confirm", ["POST"], "/v1/uploads/confirm", "Confirm upload"),
+    _p("upload_url", ["GET"], "/v1/uploads/url", "Get fresh download URL"),
     _p("get_document", ["GET"], "/v1/documents/{document_id}", "View document"),
 ]
 

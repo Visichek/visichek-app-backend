@@ -44,6 +44,46 @@ class UploadPurpose(str, Enum):
     HOST_SIGNATURE = "host_signature"
 
 
+class UploadIntentRequest(BaseModel):
+    """Step 1 of every client upload: declare what you're about to PUT.
+
+    The server validates this (image-MIME guard, advisory quota pre-check),
+    reserves an ``object_key``, and returns a presigned ``upload_url``. The
+    declared ``size`` / ``mime_type`` are advisory — the authoritative values
+    are read back from storage at confirm time.
+    """
+
+    file_name: str = Field(min_length=1)
+    mime_type: str = Field(min_length=1)
+    size: int = Field(gt=0, description="Declared byte size (advisory pre-check)")
+    purpose: UploadPurpose = UploadPurpose.SYSTEM
+    field_id: Optional[str] = Field(
+        default=None, description="Tenant form field_id this upload satisfies"
+    )
+
+
+class UploadIntentResponse(BaseModel):
+    """Step 1 result. PUT the raw file bytes to ``upload_url`` using
+    ``method`` and ``headers`` (S3 requires the signed Content-Type), then
+    call confirm with ``object_key``."""
+
+    object_key: str
+    upload_url: str
+    method: str = "PUT"
+    headers: Optional[dict[str, str]] = None
+    expires_in: int
+    backend: str  # "s3" | "local"
+    purpose: UploadPurpose
+    field_id: Optional[str] = None
+
+
+class UploadConfirmRequest(BaseModel):
+    """Step 2: confirm the bytes landed. The server HEADs the object for the
+    real size/type, enforces quota authoritatively, and finalises the record."""
+
+    object_key: str = Field(min_length=1)
+
+
 class UploadResponse(BaseModel):
     object_key: str
     download_url: str

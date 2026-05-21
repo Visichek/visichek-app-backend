@@ -20,24 +20,10 @@ from services.audit_service import record_audit_event
 
 async def _resolve_logo_urls(branding: BrandingOut) -> BrandingOut:
     """Populate presigned URLs for logo and favicon if object keys exist."""
-    try:
-        from core.storage.manager import DocumentStorageManager
+    from services.storage_url_service import try_resolve_download_url
 
-        manager = DocumentStorageManager.get_instance()
-        provider = manager.provider
-
-        if branding.logo_object_key:
-            branding.logo_url = provider.download_url(
-                object_key=branding.logo_object_key
-            )
-        if branding.favicon_object_key:
-            branding.favicon_url = provider.download_url(
-                object_key=branding.favicon_object_key
-            )
-    except Exception:
-        # If storage is not configured, return branding without URLs
-        pass
-
+    branding.logo_url = try_resolve_download_url(branding.logo_object_key)
+    branding.favicon_url = try_resolve_download_url(branding.favicon_object_key)
     return branding
 
 

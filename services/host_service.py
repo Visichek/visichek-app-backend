@@ -219,13 +219,9 @@ def _resolve_stored_image_ref(ref: Optional[str]) -> Optional[str]:
     # Legacy values are already presentable — pass through unchanged.
     if ref.startswith(("http://", "https://", "/")):
         return ref
-    try:
-        from core.storage.manager import DocumentStorageManager
+    from services.storage_url_service import try_resolve_download_url
 
-        provider = DocumentStorageManager.get_instance().provider
-        return provider.download_url(object_key=ref)
-    except Exception:
-        return None
+    return try_resolve_download_url(ref)
 
 
 async def _enrich_host(host: HostOut) -> HostWithSummaryOut:

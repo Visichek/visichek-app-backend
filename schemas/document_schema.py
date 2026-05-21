@@ -7,26 +7,8 @@ from pydantic import BaseModel, Field, model_validator
 from schemas.imports import ObjectId
 
 
-class UploadIntentRequest(BaseModel):
-    file_name: str = Field(min_length=1)
-    mime_type: str = Field(min_length=1)
-    size: int = Field(gt=0)
-
-
-class UploadIntentResponse(BaseModel):
-    object_key: str
-    upload_url: str
-    expires_in: int
-    method: str
-    headers: dict[str, str] | None = None
-
-
-class CompleteUploadRequest(BaseModel):
-    object_key: str
-    file_name: str
-    mime_type: str
-    size: int = Field(gt=0)
-    checksum: str | None = None
+# Upload intent / confirm DTOs now live in schemas/upload_schema.py — the
+# document upload surface is presigned-only via /v1/uploads/*.
 
 
 class DocumentCreate(BaseModel):

@@ -794,7 +794,7 @@ class AdminLoadUser(HttpUser):
         self.tenant_id: Optional[str] = None
         self.user_id: Optional[str] = None
         self._dept_ids: list[str] = []
-        self._doc_ids: list[str] = []
+        self._object_keys: list[str] = []
 
     def on_start(self) -> None:
         email = os.getenv("LOAD_TEST_EMAIL", "loadtest_super_admin@visichek.com")
@@ -900,45 +900,52 @@ class AdminLoadUser(HttpUser):
             "file_name": f"scan_{random.randint(1000, 9999)}.pdf",
             "mime_type": "application/pdf",
             "size": random.randint(10000, 500000),
+            "purpose": "system",
         }
         resp = self.client.post(
-            "/v1/documents/upload-intents",
+            "/v1/uploads/intent",
             json=payload,
             headers=self.headers,
-            name="/v1/documents/upload-intents",
+            name="/v1/uploads/intent",
         )
-        if resp.status_code in (200, 201):
-            data = resp.json().get("data", {})
-            object_key = data.get("object_key")
-            if object_key:
-                # Complete the upload
-                complete_payload = {
-                    "object_key": object_key,
-                    "file_name": payload["file_name"],
-                    "mime_type": payload["mime_type"],
-                    "size": payload["size"],
-                }
-                c_resp = self.client.post(
-                    "/v1/documents/complete",
-                    json=complete_payload,
-                    headers=self.headers,
-                    name="/v1/documents/complete",
-                )
-                if c_resp.status_code in (200, 201):
-                    doc_id = c_resp.json().get("data", {}).get("id")
-                    if doc_id:
-                        self._doc_ids.append(doc_id)
+        if resp.status_code not in (200, 201):
+            return
+        intent = resp.json().get("data", {})
+        object_key = intent.get("object_key")
+        upload_url = intent.get("upload_url")
+        if not object_key or not upload_url:
+            return
+
+        # Step 2a: PUT the bytes straight to the presigned URL (local shim or S3).
+        body = b"%PDF-1.4 load-test bytes" * 64
+        self.client.put(
+            upload_url,
+            data=body,
+            headers={"Content-Type": payload["mime_type"]},
+            name="PUT upload_url",
+        )
+
+        # Step 2b: confirm.
+        c_resp = self.client.post(
+            "/v1/uploads/confirm",
+            json={"object_key": object_key},
+            headers=self.headers,
+            name="/v1/uploads/confirm",
+        )
+        if c_resp.status_code in (200, 201):
+            self._object_keys.append(object_key)
 
     @task(2)
     @tag("admin", "documents")
     def get_document(self) -> None:
-        if not self._doc_ids:
+        if not self._object_keys:
             return
-        doc_id = random.choice(self._doc_ids)
+        object_key = random.choice(self._object_keys)
         self.client.get(
-            f"/v1/documents/{doc_id}",
+            "/v1/uploads/url",
+            params={"object_key": object_key},
             headers=self.headers,
-            name="/v1/documents/{id} (get)",
+            name="/v1/uploads/url (get)",
         )
 
     # --- Dashboard Export ---

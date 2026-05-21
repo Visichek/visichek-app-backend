@@ -214,16 +214,9 @@ def _resolve_appointment_photo_url(object_key: Optional[str]) -> Optional[str]:
 
     Returns ``None`` silently if storage is misconfigured — appointments
     must remain readable even when the storage backend is offline."""
-    if not object_key:
-        return None
-    try:
-        from core.storage.manager import DocumentStorageManager
+    from services.storage_url_service import try_resolve_download_url
 
-        return DocumentStorageManager.get_instance().provider.download_url(
-            object_key=object_key
-        )
-    except Exception:
-        return None
+    return try_resolve_download_url(object_key)
 
 
 async def _enrich_appointment(appt: AppointmentOut) -> AppointmentWithSummaryOut:

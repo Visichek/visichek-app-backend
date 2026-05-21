@@ -1,161 +1,35 @@
-from typing import Optional
+"""Document read / delete + the local-backend upload transport.
 
-from fastapi import APIRouter, Depends, Form, UploadFile, File
+All client uploads now go through the presigned two-step flow at
+``/v1/uploads/*`` (see ``api/v1/upload_route.py``). This module keeps only:
+
+  * ``GET /v1/documents/{id}``    — metadata + a fresh presigned download URL.
+  * ``DELETE /v1/documents/{id}`` — remove the record + storage object.
+  * ``PUT /v1/documents/upload-local/{object_key}`` — the LOCAL-backend
+    presign shim. The local provider can't sign a real URL, so its
+    ``presign_put`` points the client here; this endpoint receives the raw
+    PUT body and writes it to disk. Hidden from the schema and never used by
+    the S3 backend.
+  * ``GET /v1/documents/local/{object_key}`` — local-backend read transport
+    (the ``download_url`` for the local provider).
+"""
+
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 
 from core.errors import auth_permission_denied
 from core.response_envelope import document_response
 from core.storage.local_provider import LocalStorageProvider
 from core.storage.manager import DocumentStorageManager
-from schemas.document_schema import (
-    CompleteUploadRequest,
-    UploadIntentRequest,
-)
 from security.auth import verify_any_token
 from security.principal import AuthPrincipal
 from services.document_service import (
-    complete_upload,
-    create_upload_intent,
-    direct_upload,
     fetch_document,
     fetch_document_with_summary,
     remove_document,
 )
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
-
-
-@router.post("", response_model=None)
-@document_response(
-    message="Document uploaded successfully",
-    status_code=201,
-    description="Upload a document directly as multipart/form-data. The file is stored immediately and the document record is returned.",
-    summary="Upload document",
-    response_codes={
-        400: "Invalid file",
-        401: "Unauthorized - invalid or missing authentication token",
-        413: "File exceeds 50 MB limit",
-    },
-)
-async def upload_document(
-    file: UploadFile = File(...),
-    mime_type: Optional[str] = Form(default=None),
-    principal: AuthPrincipal = Depends(verify_any_token),
-):
-    payload = await file.read()
-    resolved_mime = mime_type or file.content_type or "application/octet-stream"
-    doc = await direct_upload(
-        owner_id=principal.user_id,
-        tenant_id=principal.tenant_id,
-        file_name=file.filename or "upload",
-        mime_type=resolved_mime,
-        payload=payload,
-    )
-    return doc
-
-
-@router.post("/upload-intents")
-@document_response(
-    message="Upload intent created",
-    status_code=201,
-    description="Create an upload intent to prepare for document upload. Returns presigned URL and upload credentials.",
-    summary="Create document upload intent",
-    response_codes={
-        400: "Invalid payload - missing required fields or invalid file size",
-        401: "Unauthorized - invalid or missing authentication token",
-        413: "Payload too large - file exceeds maximum allowed size",
-    },
-    error_examples={
-        400: {
-            "success": False,
-            "message": "Invalid file size",
-            "code": "VALIDATION_FAILED",
-        },
-        401: {
-            "success": False,
-            "message": "Invalid or expired token",
-            "code": "AUTH_INVALID_TOKEN",
-        },
-        413: {
-            "success": False,
-            "message": "File too large",
-            "code": "VALIDATION_FAILED",
-        },
-    },
-    success_example={
-        "object_key": "documents/user-123/invoice-2026-04-07.pdf",
-        "upload_url": "https://s3.amazonaws.com/visichek-bucket/documents/user-123/invoice-2026-04-07.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...",
-        "expires_in": 3600,
-        "method": "PUT",
-        "headers": {"Content-Type": "application/pdf"},
-    },
-)
-async def create_document_upload_intent(
-    payload: UploadIntentRequest,
-    principal: AuthPrincipal = Depends(verify_any_token),
-):
-    intent = await create_upload_intent(
-        owner_id=principal.user_id,
-        tenant_id=principal.tenant_id,
-        payload=payload,
-    )
-    return {
-        "object_key": intent.object_key,
-        "upload_url": intent.upload_url,
-        "expires_in": intent.expires_in,
-        "method": intent.method,
-        "headers": intent.headers,
-    }
-
-
-@router.post("/complete")
-@document_response(
-    message="Upload completed",
-    status_code=201,
-    description="Complete a document upload by confirming the object has been uploaded. Finalizes the document record.",
-    summary="Complete document upload",
-    response_codes={
-        201: "Document upload completed successfully",
-        401: "Unauthorized - invalid or missing authentication token",
-        404: "Upload intent not found or expired",
-    },
-    error_examples={
-        401: {
-            "success": False,
-            "message": "Invalid or expired token",
-            "code": "AUTH_INVALID_TOKEN",
-        },
-        404: {
-            "success": False,
-            "message": "Upload intent not found",
-            "code": "RESOURCE_NOT_FOUND",
-        },
-    },
-    success_example={
-        "id": "66f1234567890abcdef12345",
-        "owner_id": "user-123",
-        "file_name": "invoice-2026-04-07.pdf",
-        "object_key": "documents/user-123/invoice-2026-04-07.pdf",
-        "backend": "s3",
-        "mime_type": "application/pdf",
-        "size": 245678,
-        "checksum": "d41d8cd98f00b204e9800998ecf8427e",
-        "status": "ready",
-        "metadata": {"document_type": "invoice", "invoice_number": "INV-2026-001"},
-        "created_at": 1712520000,
-        "updated_at": 1712520000,
-    },
-)
-async def complete_document_upload(
-    payload: CompleteUploadRequest,
-    principal: AuthPrincipal = Depends(verify_any_token),
-):
-    doc = await complete_upload(
-        owner_id=principal.user_id,
-        tenant_id=principal.tenant_id,
-        payload=payload,
-    )
-    return doc
 
 
 @router.get("/{document_id}")
@@ -271,15 +145,18 @@ async def delete_document(
     return {"deleted": True}
 
 
-@router.post("/upload-local/{object_key}", include_in_schema=False)
-async def upload_local_document(object_key: str, file: UploadFile = File(...)):
+@router.put("/upload-local/{object_key}", include_in_schema=False)
+async def upload_local_document(object_key: str, request: Request):
+    """LOCAL-backend presign shim — receives the raw PUT body the client sent
+    to the ``upload_url`` returned by ``LocalStorageProvider.presign_put``.
+    S3 never routes here (the client PUTs straight to S3)."""
     if ".." in object_key:
         return Response(status_code=400)
     provider = DocumentStorageManager.get_instance().provider
     if not isinstance(provider, LocalStorageProvider):
         return Response(status_code=404)
 
-    payload = await file.read()
+    payload = await request.body()
     provider.save_bytes(object_key=object_key, payload=payload)
     return Response(status_code=204)
 

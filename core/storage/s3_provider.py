@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-from uuid import uuid4
-from pathlib import Path
-
 from core.storage.provider import DocumentStorageProvider
 from core.storage.types import (
-    DocumentMetadata,
     StorageBackend,
-    StoredDocument,
+    StoredObjectInfo,
     UploadIntent,
 )
 
@@ -30,35 +26,37 @@ class S3StorageProvider(DocumentStorageProvider):
         self._bucket = bucket_name
         self._client = boto3.client("s3", region_name=region, endpoint_url=endpoint_url)
 
-    def create_upload_intent(self, metadata: DocumentMetadata) -> UploadIntent:
-        extension = Path(metadata.file_name).suffix
-        object_key = f"{uuid4().hex}{extension}"
+    def presign_put(
+        self, *, object_key: str, mime_type: str, expires_in: int = 3600
+    ) -> UploadIntent:
         url = self._client.generate_presigned_url(
             ClientMethod="put_object",
             Params={
                 "Bucket": self._bucket,
                 "Key": object_key,
-                "ContentType": metadata.mime_type,
+                "ContentType": mime_type,
             },
-            ExpiresIn=3600,
+            ExpiresIn=expires_in,
         )
+        # The client MUST send this exact Content-Type or S3 rejects the PUT
+        # (it is part of the signed canonical request).
         return UploadIntent(
-            object_key=object_key, upload_url=url, expires_in=3600, method="PUT"
+            object_key=object_key,
+            upload_url=url,
+            expires_in=expires_in,
+            method="PUT",
+            headers={"Content-Type": mime_type},
         )
 
-    def complete_upload(
-        self,
-        *,
-        object_key: str,
-        metadata: DocumentMetadata,
-        checksum: str | None = None,
-    ) -> StoredDocument:
-        return StoredDocument(
-            object_key=object_key,
-            backend=StorageBackend.S3,
-            mime_type=metadata.mime_type,
-            size=metadata.size,
-            checksum=checksum,
+    def head_object(self, *, object_key: str) -> StoredObjectInfo | None:
+        try:
+            resp = self._client.head_object(Bucket=self._bucket, Key=object_key)
+        except Exception:
+            # Missing key (404), access error, etc. — treat as "not present".
+            return None
+        return StoredObjectInfo(
+            size=int(resp.get("ContentLength", 0)),
+            content_type=resp.get("ContentType"),
         )
 
     def download_url(self, *, object_key: str, expires_in: int = 900) -> str:

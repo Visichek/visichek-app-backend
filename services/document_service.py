@@ -6,49 +6,27 @@ from pathlib import Path
 from uuid import uuid4
 
 from core.errors import AppException, ErrorCode, resource_not_found
-from core.storage import DocumentMetadata, DocumentStorageManager
+from core.storage import DocumentStorageManager
 from core.storage.types import StorageBackend
 from repositories.document_repo import (
-    count_documents_for_tenant,
     create_document,
     delete_document,
     get_document_by_id,
-    sum_document_bytes_for_tenant,
 )
-from schemas.document_schema import (
-    CompleteUploadRequest,
-    DocumentCreate,
-    DocumentOut,
-    DocumentWithSummaryOut,
-    UploadIntentRequest,
-)
-from services.plan_limits import enforce_storage_limits
+from schemas.document_schema import DocumentCreate, DocumentOut, DocumentWithSummaryOut
+from services.storage_quota_service import enforce_storage_quota
+from services.storage_url_service import resolve_download_url
+
+# CLIENT uploads are presigned-only — see services/upload_service.py and
+# api/v1/upload_route.py. This module is read/delete/enrich, plus the
+# server-side persistence helper below for flows where the SERVER already
+# holds the bytes (e.g. OCR / face-crop verification) and there is no client
+# to presign for.
+
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
-def _epoch() -> int:
-    return int(time.time())
-
-
-async def _enforce_tenant_storage_limits(
-    tenant_id: str | None, new_file_bytes: int
-) -> None:
-    """Check the tenant's plan storage limits before creating a document.
-
-    App admins / users without a tenant bypass plan storage checks.
-    """
-    if not tenant_id:
-        return
-    current_count = await count_documents_for_tenant(tenant_id)
-    current_bytes = await sum_document_bytes_for_tenant(tenant_id)
-    await enforce_storage_limits(
-        tenant_id=tenant_id,
-        current_document_count=current_count,
-        current_total_bytes=current_bytes,
-        new_file_bytes=new_file_bytes,
-    )
-
-
-async def direct_upload(
+async def persist_server_document(
     *,
     owner_id: str,
     file_name: str,
@@ -56,26 +34,39 @@ async def direct_upload(
     payload: bytes,
     tenant_id: str | None = None,
 ) -> DocumentOut:
+    """Persist SERVER-HELD bytes as a ready Document row.
+
+    NOT a client upload path — reserved for pipelines that must read the bytes
+    on the server (ID-document OCR, cropped-portrait storage). Client uploads
+    must use the presigned ``/v1/uploads/*`` flow instead. Enforces the same
+    50 MB cap and tenant storage quota as the presigned confirm step.
+    """
     size = len(payload)
-    if size > 50 * 1024 * 1024:
+    if size <= 0:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.DOCUMENT_UPLOAD_INVALID,
+            message="Empty file",
+        )
+    if size > _MAX_UPLOAD_BYTES:
         raise AppException(
             status_code=413,
             code=ErrorCode.DOCUMENT_UPLOAD_INVALID,
             message="File too large",
-            details={"max_size_bytes": 50 * 1024 * 1024},
+            details={"max_size_bytes": _MAX_UPLOAD_BYTES},
         )
 
-    await _enforce_tenant_storage_limits(tenant_id, size)
+    await enforce_storage_quota(tenant_id, size)
 
     extension = Path(file_name).suffix
-    object_key = f"{uuid4().hex}{extension}"
+    object_key = f"server/{tenant_id or 'shared'}/{uuid4().hex}{extension}"
     checksum = hashlib.md5(payload).hexdigest()
 
     provider = DocumentStorageManager.get_instance().provider
     provider.upload_bytes(object_key=object_key, payload=payload, mime_type=mime_type)
-
     backend = StorageBackend(provider.backend_name).value
 
+    now = int(time.time())
     return await create_document(
         DocumentCreate(
             owner_id=owner_id,
@@ -86,74 +77,9 @@ async def direct_upload(
             mime_type=mime_type,
             size=size,
             checksum=checksum,
-            created_at=_epoch(),
-            updated_at=_epoch(),
-        )
-    )
-
-
-async def create_upload_intent(
-    *,
-    owner_id: str,
-    payload: UploadIntentRequest,
-    tenant_id: str | None = None,
-):
-    # Enforce storage limits up-front so clients don't upload bytes
-    # that will be rejected on the complete step.
-    await _enforce_tenant_storage_limits(tenant_id, payload.size)
-
-    metadata = DocumentMetadata(
-        owner_id=owner_id,
-        file_name=payload.file_name,
-        mime_type=payload.mime_type,
-        size=payload.size,
-    )
-    provider = DocumentStorageManager.get_instance().provider
-    return provider.create_upload_intent(metadata=metadata)
-
-
-async def complete_upload(
-    *,
-    owner_id: str,
-    payload: CompleteUploadRequest,
-    tenant_id: str | None = None,
-) -> DocumentOut:
-    if payload.size > 50 * 1024 * 1024:
-        raise AppException(
-            status_code=413,
-            code=ErrorCode.DOCUMENT_UPLOAD_INVALID,
-            message="File too large",
-            details={"max_size_bytes": 50 * 1024 * 1024},
-        )
-
-    await _enforce_tenant_storage_limits(tenant_id, payload.size)
-
-    metadata = DocumentMetadata(
-        owner_id=owner_id,
-        file_name=payload.file_name,
-        mime_type=payload.mime_type,
-        size=payload.size,
-    )
-    provider = DocumentStorageManager.get_instance().provider
-    stored = provider.complete_upload(
-        object_key=payload.object_key,
-        metadata=metadata,
-        checksum=payload.checksum,
-    )
-
-    return await create_document(
-        DocumentCreate(
-            owner_id=owner_id,
-            tenant_id=tenant_id,
-            file_name=payload.file_name,
-            object_key=stored.object_key,
-            backend=stored.backend.value,
-            mime_type=stored.mime_type,
-            size=stored.size,
-            checksum=stored.checksum,
-            metadata=payload.model_dump(),
-            created_at=_epoch(),
-            updated_at=_epoch(),
+            status="ready",
+            created_at=now,
+            updated_at=now,
         )
     )
 
@@ -162,9 +88,7 @@ async def fetch_document(document_id: str) -> tuple[DocumentOut, str]:
     doc = await get_document_by_id(document_id=document_id)
     if doc is None:
         raise resource_not_found("Document", document_id)
-
-    provider = DocumentStorageManager.get_instance().provider
-    return doc, provider.download_url(object_key=doc.object_key)
+    return doc, resolve_download_url(doc.object_key)
 
 
 async def _enrich_document(doc: DocumentOut) -> DocumentWithSummaryOut:

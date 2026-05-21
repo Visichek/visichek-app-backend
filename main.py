@@ -535,6 +535,16 @@ async def lifespan(app: FastAPI):
         name="Trial Integrity Watchdog",
         replace_existing=True,
     )
+    # Sweep pending upload reservations whose presigned intent was never
+    # confirmed (client got a URL but never PUT/confirmed). Deletes the orphan
+    # object + the pending Document row. Textual ref keeps it picklable.
+    scheduler.add_job(
+        "services.upload_service:cleanup_pending_uploads",
+        trigger=IntervalTrigger(hours=1),
+        id="pending_upload_cleanup",
+        name="Pending Upload Cleanup",
+        replace_existing=True,
+    )
 
     try:
         yield

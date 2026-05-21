@@ -1136,15 +1136,9 @@ async def list_checkins_for_tenant(
 def _resolve_storage_url(object_key: Optional[str]) -> Optional[str]:
     """Best-effort presigned URL for ``object_key``. None if storage is
     not configured or generation fails — never raises."""
-    if not object_key:
-        return None
-    try:
-        from core.storage.manager import DocumentStorageManager
+    from services.storage_url_service import try_resolve_download_url
 
-        manager = DocumentStorageManager.get_instance()
-        return manager.provider.download_url(object_key=object_key)
-    except Exception:
-        return None
+    return try_resolve_download_url(object_key)
 
 
 async def list_pending_approvals_for_tenant(
@@ -1400,22 +1394,10 @@ async def _send_visitor_badge_email_if_enabled(
     # configured (or this badge's PDF wasn't uploaded), fall back to
     # an empty string — the template gracefully hides the button and
     # leans on the QR code instead.
-    badge_url = ""
-    badge_pdf_object_key = getattr(badge, "badge_pdf_object_key", None)
-    if badge_pdf_object_key:
-        try:
-            from core.storage.manager import DocumentStorageManager
+    from services.storage_url_service import try_resolve_download_url
 
-            storage = DocumentStorageManager.get_instance()
-            badge_url = (
-                storage.provider.download_url(
-                    object_key=badge_pdf_object_key,
-                    expires_in=24 * 3600,
-                )
-                or ""
-            )
-        except Exception:
-            badge_url = ""
+    badge_pdf_object_key = getattr(badge, "badge_pdf_object_key", None)
+    badge_url = try_resolve_download_url(badge_pdf_object_key) or ""
 
     expires_at_iso = ""
     if getattr(badge, "expires_at", None):

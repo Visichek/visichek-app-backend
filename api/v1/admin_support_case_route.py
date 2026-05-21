@@ -23,7 +23,6 @@ from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from core.storage.manager import DocumentStorageManager
-from core.storage.types import DocumentMetadata
 from repositories.support_case_repo import get_support_case_by_id
 from schemas.admin_schema import AdminOut
 from schemas.support_case_schema import (
@@ -526,17 +525,15 @@ async def admin_create_attachment_intent(
             code=ErrorCode.INTERNAL_ERROR,
             message="Document storage is not configured",
         )
-    metadata = DocumentMetadata(
-        owner_id=admin.id or "",
-        file_name=payload.file_name,
-        mime_type=payload.mime_type or "application/octet-stream",
-        size=payload.size or 0,
-        extra={
-            "tenant_id": case.tenant_id or "",
-            "support_case_id": case_id,
-        },
+    from pathlib import Path
+    from uuid import uuid4
+
+    mime_type = payload.mime_type or "application/octet-stream"
+    extension = Path(payload.file_name).suffix
+    object_key = (
+        f"support-cases/{case.tenant_id or 'shared'}/{case_id}/{uuid4().hex}{extension}"
     )
-    intent = storage.provider.create_upload_intent(metadata)
+    intent = storage.provider.presign_put(object_key=object_key, mime_type=mime_type)
     return SupportCaseAttachmentIntentResponse(
         upload_url=intent.upload_url,
         object_key=intent.object_key,
