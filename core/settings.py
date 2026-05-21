@@ -37,6 +37,8 @@ class Settings:
     s3_bucket_name: str | None
     s3_region: str | None
     s3_endpoint_url: str | None
+    s3_access_key_id: str | None
+    s3_secret_access_key: str | None
     storage_backend: str
     storage_local_root: str
     payment_default_provider: str
@@ -174,6 +176,12 @@ def get_settings() -> Settings:
         s3_bucket_name=os.getenv("S3_BUCKET_NAME"),
         s3_region=os.getenv("S3_REGION"),
         s3_endpoint_url=os.getenv("S3_ENDPOINT_URL"),
+        # Explicit S3/R2 creds; fall back to the standard AWS_* chain so
+        # existing AWS-credential setups keep working unchanged.
+        s3_access_key_id=os.getenv("S3_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID"),
+        s3_secret_access_key=(
+            os.getenv("S3_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY")
+        ),
         storage_backend=os.getenv("STORAGE_BACKEND", "local").lower(),
         storage_local_root=os.getenv("STORAGE_LOCAL_ROOT", "uploads"),
         payment_default_provider=os.getenv(

@@ -31,6 +31,8 @@ class DocumentStorageManager:
                 bucket_name=settings.s3_bucket_name,
                 region=settings.s3_region,
                 endpoint_url=settings.s3_endpoint_url,
+                access_key_id=settings.s3_access_key_id,
+                secret_access_key=settings.s3_secret_access_key,
             )
         else:
             provider = LocalStorageProvider(root_dir=settings.storage_local_root)
