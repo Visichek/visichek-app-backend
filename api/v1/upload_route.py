@@ -170,9 +170,7 @@ async def public_tenant_upload_intent_endpoint(
     )
 
 
-@public_router.post(
-    "/{tenant_id}/uploads/confirm", status_code=status.HTTP_201_CREATED
-)
+@public_router.post("/{tenant_id}/uploads/confirm", status_code=status.HTTP_201_CREATED)
 @document_response(
     message="Upload confirmed",
     status_code=status.HTTP_201_CREATED,

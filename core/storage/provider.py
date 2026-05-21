@@ -40,9 +40,7 @@ class DocumentStorageProvider(Protocol):
 
     def download_url(self, *, object_key: str, expires_in: int = 900) -> str: ...
 
-    def upload_bytes(
-        self, *, object_key: str, payload: bytes, mime_type: str
-    ) -> None:
+    def upload_bytes(self, *, object_key: str, payload: bytes, mime_type: str) -> None:
         """SERVER-GENERATED artifacts only — never client uploads."""
         ...
 

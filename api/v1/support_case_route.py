@@ -540,10 +540,10 @@ async def create_attachment_intent(
 
     mime_type = payload.mime_type or "application/octet-stream"
     extension = Path(payload.file_name).suffix
-    object_key = f"support-cases/{tenant_id or 'shared'}/{case_id}/{uuid4().hex}{extension}"
-    intent = storage.provider.presign_put(
-        object_key=object_key, mime_type=mime_type
+    object_key = (
+        f"support-cases/{tenant_id or 'shared'}/{case_id}/{uuid4().hex}{extension}"
     )
+    intent = storage.provider.presign_put(object_key=object_key, mime_type=mime_type)
     return SupportCaseAttachmentIntentResponse(
         upload_url=intent.upload_url,
         object_key=intent.object_key,
