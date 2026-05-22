@@ -145,7 +145,7 @@ async def delete_document(
     return {"deleted": True}
 
 
-@router.put("/upload-local/{object_key}", include_in_schema=False)
+@router.put("/upload-local/{object_key:path}", include_in_schema=False)
 async def upload_local_document(object_key: str, request: Request):
     """LOCAL-backend presign shim — receives the raw PUT body the client sent
     to the ``upload_url`` returned by ``LocalStorageProvider.presign_put``.
@@ -161,7 +161,7 @@ async def upload_local_document(object_key: str, request: Request):
     return Response(status_code=204)
 
 
-@router.get("/local/{object_key}", include_in_schema=False)
+@router.get("/local/{object_key:path}", include_in_schema=False)
 async def read_local_document(object_key: str):
     if ".." in object_key:
         return Response(status_code=400)

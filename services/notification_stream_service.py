@@ -99,7 +99,7 @@ def _channel(user_type: UserType, user_id: str) -> str:
     implied by the user, so it does not need to be in the channel name; the
     SSE connection is already scoped to the authenticated principal.
     """
-    return f"notif:events:{user_type}:{user_id}"
+    return f"notif:events:{user_type.value}:{user_id}"
 
 
 # ── Publish side ─────────────────────────────────────────────────────
