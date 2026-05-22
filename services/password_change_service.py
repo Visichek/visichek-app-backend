@@ -18,9 +18,7 @@ from security.password_policy import (
 logger = logging.getLogger(__name__)
 
 
-async def _revoke_all_sessions_and_tokens(
-    user_id: str, *, user_type: UserType
-) -> None:
+async def _revoke_all_sessions_and_tokens(user_id: str, *, user_type: UserType) -> None:
     """Terminate every active token + session for a user after a change.
 
     A self-service password change MUST invalidate all existing auth

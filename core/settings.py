@@ -178,7 +178,8 @@ def get_settings() -> Settings:
         s3_endpoint_url=os.getenv("S3_ENDPOINT_URL"),
         # Explicit S3/R2 creds; fall back to the standard AWS_* chain so
         # existing AWS-credential setups keep working unchanged.
-        s3_access_key_id=os.getenv("S3_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID"),
+        s3_access_key_id=os.getenv("S3_ACCESS_KEY_ID")
+        or os.getenv("AWS_ACCESS_KEY_ID"),
         s3_secret_access_key=(
             os.getenv("S3_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY")
         ),
