@@ -1,16 +1,67 @@
 from __future__ import annotations
 
+import logging
+
 from bson import ObjectId
 from fastapi import HTTPException
 
 from core.database import db
 from core.security_policy import get_security_policy
+from schemas.imports import UserType
 from security.hash import hash_password, check_password
 from security.password_policy import (
     check_password_history,
     record_password_in_history,
     validate_password_strength,
 )
+
+logger = logging.getLogger(__name__)
+
+
+async def _revoke_all_sessions_and_tokens(
+    user_id: str, *, user_type: UserType
+) -> None:
+    """Terminate every active token + session for a user after a change.
+
+    A self-service password change MUST invalidate all existing auth
+    state — this device and every other — so the old password can never
+    keep a session alive and a stolen session is cut off immediately.
+    Without this, changing your password leaves previously-issued
+    access/refresh tokens (and the rows behind the active-sessions list)
+    fully usable until natural expiry.
+
+    Mirrors the revocation already done by the authority-reset
+    (``reset_system_user_password_by_authority``) and forgot-password
+    (``reset_password_with_token``) flows. Best-effort: failures are
+    logged but never block the change itself — token expiry and the
+    gate-cache TTL are the backstop.
+    """
+    try:
+        if user_type == UserType.ADMIN:
+            from repositories.tokens_repo import delete_all_tokens_with_admin_id
+
+            await delete_all_tokens_with_admin_id(adminId=user_id)
+        else:
+            from repositories.tokens_repo import delete_all_tokens_with_user_id
+
+            await delete_all_tokens_with_user_id(userId=user_id)
+    except Exception:
+        logger.warning(
+            "password change: token revocation failed for user_id=%s",
+            user_id,
+            exc_info=True,
+        )
+
+    try:
+        from repositories.session_repo import delete_sessions
+
+        await delete_sessions({"user_id": user_id, "user_type": user_type})
+    except Exception:
+        logger.warning(
+            "password change: session revocation failed for user_id=%s",
+            user_id,
+            exc_info=True,
+        )
 
 
 async def _enforce_new_password_policy(
@@ -74,6 +125,10 @@ async def change_admin_password(
         admin_id, hashed, role="admin", history_count=policy.password_history_count
     )
 
+    # Kill every active token + session so the old password can no longer
+    # ride a still-valid session and other devices are forced to re-login.
+    await _revoke_all_sessions_and_tokens(admin_id, user_type=UserType.ADMIN)
+
     # Drop the cached gate snapshot so the next admin request re-reads
     # the row and sees ``must_change_password=false``.
     try:
@@ -121,6 +176,12 @@ async def change_system_user_password(
         role="system_user",
         history_count=policy.password_history_count,
     )
+
+    # Kill every active token + session so the old password can no longer
+    # ride a still-valid session and other devices are forced to re-login.
+    # This is what stops "I changed my password but the old one still
+    # signs me in" for the account whose password just changed.
+    await _revoke_all_sessions_and_tokens(user_id, user_type=UserType.SYSTEM_USER)
 
     # Drop the cached gate snapshot so the next request re-reads the row
     # and sees ``must_change_password=False``. Otherwise the user stays
