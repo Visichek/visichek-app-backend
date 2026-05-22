@@ -138,6 +138,35 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
             exc_info=True,
         )
 
+    # 5c. Register the tenant as a Paystack customer up-front (everyone starts
+    # on Free, so this is just a contact record — it does NOT enable charging;
+    # that needs a card authorization captured on the first real payment).
+    # Best-effort and only when Paystack is configured.
+    try:
+        from core.payments import PaymentManager
+        from core.payments.types import PaymentProviderName
+
+        if PaymentManager.get_instance().has_provider(
+            PaymentProviderName.PAYSTACK.value
+        ):
+            from services.paystack_customer_service import (
+                create_or_get_paystack_customer,
+            )
+
+            await create_or_get_paystack_customer(
+                tenant_id=tenant.id or "",
+                email=payload.admin_email,
+                name=tenant.company_name or payload.company_name,
+            )
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "Paystack customer provisioning failed for tenant_id=%s",
+            tenant.id,
+            exc_info=True,
+        )
+
     # 5. Seed tenant-configurable enums (purpose-of-visit, id_type, ...)
     # so the kiosk has a sensible default picker before the super_admin
     # ever touches the configuration UI. Best-effort — a seed failure

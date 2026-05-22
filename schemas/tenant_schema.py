@@ -20,7 +20,24 @@ class TenantBase(BaseModel):
     # Payment provider references
     stripe_customer_id: Optional[str] = None
     flutterwave_customer_id: Optional[str] = None
-    default_payment_provider: Optional[str] = None  # "stripe" or "flutterwave"
+    paystack_customer_id: Optional[str] = None
+    default_payment_provider: Optional[str] = (
+        None  # "stripe", "flutterwave", "paystack"
+    )
+
+    # Paystack recurring-billing authorization, captured from the first
+    # successful card payment. Used by the renewal scheduler to charge the
+    # tenant server-side (no frontend) via /transaction/charge_authorization.
+    # Only the email used to create the authorization can charge it.
+    paystack_authorization_code: Optional[str] = None
+    paystack_auth_email: Optional[str] = None
+    paystack_card_brand: Optional[str] = None  # e.g. "visa" (display only)
+    paystack_card_last4: Optional[str] = None  # last 4 digits (display only)
+
+    # Stripe off-session recurring: the saved PaymentMethod captured from the
+    # first payment (which used setup_future_usage="off_session"). Charged
+    # server-side by the renewal scheduler with the stripe_customer_id above.
+    stripe_payment_method_id: Optional[str] = None
 
     # 2FA / MFA policy
     mfa_default_for_users: bool = False
@@ -56,7 +73,13 @@ class TenantUpdate(BaseModel):
     enable_repeat_visitor_recognition: Optional[bool] = None
     stripe_customer_id: Optional[str] = None
     flutterwave_customer_id: Optional[str] = None
+    paystack_customer_id: Optional[str] = None
     default_payment_provider: Optional[str] = None
+    paystack_authorization_code: Optional[str] = None
+    paystack_auth_email: Optional[str] = None
+    paystack_card_brand: Optional[str] = None
+    paystack_card_last4: Optional[str] = None
+    stripe_payment_method_id: Optional[str] = None
     mfa_default_for_users: Optional[bool] = None
     mfa_user_override_allowed: Optional[bool] = None
     onboarding_info_confirmed: Optional[bool] = None

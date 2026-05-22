@@ -2,7 +2,7 @@
 
 Owns:
 - Creating a checkout session for a (tenant, plan, discounts) tuple with
-  lazy provider fallback (stripe → flutterwave → app).
+  lazy provider fallback (stripe → flutterwave → paystack → app).
 - Completing a checkout when payment is confirmed (via webhook for external
   providers or via the in-app simulator for ``app`` mode). On success the
   tenant's subscription is provisioned through ``subscribe_tenant``.
@@ -60,7 +60,7 @@ from services.trial_code_service import (
 logger = logging.getLogger(__name__)
 
 # Provider selection order when no preferred provider is supplied.
-_PROVIDER_PREFERENCE: Tuple[str, ...] = ("stripe", "flutterwave", "app")
+_PROVIDER_PREFERENCE: Tuple[str, ...] = ("stripe", "flutterwave", "paystack", "app")
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +246,36 @@ async def create_checkout_session(
     reference = f"chk_{uuid.uuid4().hex}"
 
     chosen = _select_provider(preferred_provider)
+
+    intent_metadata: dict = {
+        "tenant_id": tenant_id,
+        "plan_id": plan_id,
+        "billing_cycle": billing_cycle.value,
+        **({"trial_code": resolved_trial_code} if resolved_trial_code else {}),
+        **(metadata or {}),
+    }
+    # For Stripe, ensure a customer and save the card off-session on this first
+    # payment so the renewal scheduler can charge it later. The provider's
+    # create_intent reads ``stripe_customer_id`` from metadata. Best-effort:
+    # if customer creation fails we still issue a (non-recurring) checkout.
+    if chosen == PaymentProviderName.STRIPE.value and customer_email:
+        try:
+            from services.stripe_customer_service import create_or_get_stripe_customer
+
+            stripe_customer_id = await create_or_get_stripe_customer(
+                tenant_id=tenant_id,
+                email=customer_email,
+                name="",
+            )
+            intent_metadata["stripe_customer_id"] = stripe_customer_id
+        except Exception:
+            logger.warning(
+                "Could not provision Stripe customer for checkout; proceeding "
+                "without off-session card capture (tenant=%s)",
+                tenant_id,
+                exc_info=True,
+            )
+
     provider_name, intent = _create_intent_with_fallback(
         chosen,
         PaymentIntentRequest(
@@ -253,13 +283,7 @@ async def create_checkout_session(
             currency=breakdown.currency,
             reference=reference,
             customer_email=customer_email,
-            metadata={
-                "tenant_id": tenant_id,
-                "plan_id": plan_id,
-                "billing_cycle": billing_cycle.value,
-                **({"trial_code": resolved_trial_code} if resolved_trial_code else {}),
-                **(metadata or {}),
-            },
+            metadata=intent_metadata,
         ),
     )
 
@@ -279,6 +303,7 @@ async def create_checkout_session(
         breakdown=breakdown,
         applied_discount_ids=breakdown.applied_discount_ids,
         created_by_user_id=created_by_user_id,
+        customer_email=customer_email,
         expires_at=now + ttl,
         trial_days=trial_days,
         trial_code=resolved_trial_code,
@@ -415,6 +440,71 @@ async def _mark_succeeded(
     )
 
 
+async def _persist_tenant_billing_provider(session: CheckoutSessionOut) -> None:
+    """Persist the provider that handled this checkout as the tenant's default
+    for recurring billing, and ensure the provider-specific customer record
+    exists so renewals/dunning can charge the saved customer.
+
+    Fire-and-forget: any failure here is logged and swallowed — it must never
+    turn a genuinely successful checkout into a failure. The renewal service
+    (`_get_provider_for_tenant`) re-validates the customer id and falls back to
+    the global default provider if it is missing, so a partial result is safe.
+    """
+    provider = session.provider.value
+    # App-mode is the in-app simulator, not a real recurring-billing provider.
+    if provider == PaymentProviderName.APP.value:
+        return
+
+    try:
+        from bson import ObjectId as _ObjectId
+
+        from repositories.tenant_repo import get_tenant, update_tenant
+        from schemas.tenant_schema import TenantUpdate
+
+        if not _ObjectId.is_valid(session.tenant_id):
+            return
+        tenant = await get_tenant({"_id": _ObjectId(session.tenant_id)})
+        if not tenant:
+            return
+
+        # Create/look up the provider customer (sets the *_customer_id on the
+        # tenant) for providers that support tokenized recurring billing.
+        email = session.customer_email
+        name = getattr(tenant, "company_name", "") or ""
+        if email:
+            if provider == PaymentProviderName.PAYSTACK.value:
+                from services.paystack_customer_service import (
+                    create_or_get_paystack_customer,
+                )
+
+                await create_or_get_paystack_customer(
+                    tenant_id=session.tenant_id, email=email, name=name
+                )
+            elif provider == PaymentProviderName.FLUTTERWAVE.value:
+                from services.flutterwave_customer_service import (
+                    create_or_get_flutterwave_customer,
+                )
+
+                await create_or_get_flutterwave_customer(
+                    tenant_id=session.tenant_id, email=email, name=name
+                )
+
+        # Record the chosen provider as the tenant's default so the renewal
+        # scheduler charges it rather than the platform default.
+        if tenant.default_payment_provider != provider:
+            await update_tenant(
+                filter_dict={"_id": _ObjectId(session.tenant_id)},
+                tenant_data=TenantUpdate(default_payment_provider=provider),
+            )
+    except Exception:
+        logger.warning(
+            "Failed to persist billing provider '%s' for tenant %s after checkout",
+            provider,
+            session.tenant_id,
+            exc_info=True,
+        )
+
+
 async def complete_checkout(
     *,
     checkout_id: str,
@@ -528,6 +618,10 @@ async def complete_checkout(
                 checkout_id,
                 e,
             )
+
+    # Persist the chosen provider + provider customer so recurring renewals
+    # charge it. Best-effort: never let this fail a successful checkout.
+    await _persist_tenant_billing_provider(session)
 
     updated = await _mark_succeeded(session, subscription.id or "")
     try:

@@ -153,3 +153,22 @@ class FlutterwavePaymentProvider(PaymentProvider):
             status=PaymentStatus.REFUNDED,
             raw=data,
         )
+
+    def charge_recurring(
+        self,
+        *,
+        instrument_ref: str,
+        email: str,
+        amount_minor: int,
+        currency: str,
+        reference: str,
+        customer_ref: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> PaymentTransaction:
+        # Flutterwave tokenized recurring charging is not implemented yet; the
+        # renewal scheduler falls back when this raises.
+        raise AppException(
+            status_code=501,
+            code=ErrorCode.PAYMENT_PROVIDER_ERROR,
+            message="Flutterwave recurring charge is not implemented",
+        )

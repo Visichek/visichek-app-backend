@@ -20,6 +20,22 @@ from core.payments import PaymentIntentResponse, PaymentProviderName, PaymentSta
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def _mock_renewal_get_tenant():
+    """Renewal/trial paths now look up the tenant to decide whether a saved
+    card (Paystack auth / Stripe PaymentMethod) is on file for server-side
+    charging. Default to "no tenant / no saved card" so these tests exercise
+    the legacy create_intent path; a test that wants the recurring path can
+    override this patch locally.
+    """
+    with patch(
+        "services.renewal_service.get_tenant",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        yield
+
+
 def _make_plan_out(**overrides) -> PlanOut:
     """Factory for PlanOut test objects."""
     defaults = {

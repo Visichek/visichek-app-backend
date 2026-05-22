@@ -30,14 +30,23 @@ class StripePaymentProvider(PaymentProvider):
         self._webhook_secret = webhook_secret
 
     def create_intent(self, payload: PaymentIntentRequest) -> PaymentIntentResponse:
+        meta = payload.metadata or {}
+        create_kwargs: dict = {
+            "amount": payload.amount_minor,
+            "currency": payload.currency.lower(),
+            "metadata": {"reference": payload.reference, **meta},
+            "receipt_email": payload.customer_email or "",
+            "automatic_payment_methods": {"enabled": True},
+        }
+        # When a Stripe customer id is supplied (recurring-capable checkout),
+        # attach the customer and save the card off-session so the renewal
+        # scheduler can charge it later without the cardholder present.
+        stripe_customer_id = meta.get("stripe_customer_id")
+        if stripe_customer_id:
+            create_kwargs["customer"] = stripe_customer_id
+            create_kwargs["setup_future_usage"] = "off_session"
         try:
-            intent = self._stripe.PaymentIntent.create(
-                amount=payload.amount_minor,
-                currency=payload.currency.lower(),
-                metadata={"reference": payload.reference, **(payload.metadata or {})},
-                receipt_email=payload.customer_email or "",
-                automatic_payment_methods={"enabled": True},
-            )
+            intent = self._stripe.PaymentIntent.create(**create_kwargs)
         except Exception as err:
             raise AppException(
                 status_code=502,
@@ -132,4 +141,62 @@ class StripePaymentProvider(PaymentProvider):
             reference=reference,
             status=PaymentStatus.REFUNDED,
             raw=json.loads(json.dumps(refund, default=str)),
+        )
+
+    def charge_recurring(
+        self,
+        *,
+        instrument_ref: str,
+        email: str,
+        amount_minor: int,
+        currency: str,
+        reference: str,
+        customer_ref: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> PaymentTransaction:
+        # Off-session charge of a saved card. instrument_ref is the
+        # PaymentMethod id; customer_ref is the Stripe customer it's attached to.
+        if not customer_ref:
+            raise AppException(
+                status_code=400,
+                code=ErrorCode.PAYMENT_PROVIDER_ERROR,
+                message="Stripe recurring charge requires a customer id",
+            )
+        intent_metadata: dict = {"reference": reference, **(metadata or {})}
+        try:
+            intent = self._stripe.PaymentIntent.create(
+                amount=amount_minor,
+                currency=currency.lower(),
+                customer=customer_ref,
+                payment_method=instrument_ref,
+                off_session=True,
+                confirm=True,
+                metadata=intent_metadata,
+            )
+        except Exception as err:
+            # CardError (declines) and other charge failures are reported as a
+            # FAILED transaction so the renewal scheduler can route to dunning,
+            # not as a 5xx. The raw error is preserved for the audit trail.
+            return PaymentTransaction(
+                provider=PaymentProviderName.STRIPE,
+                reference=reference,
+                status=PaymentStatus.FAILED,
+                raw={"error": str(err)},
+            )
+
+        # "succeeded" is a real charge. "requires_action"/"requires_payment_
+        # method" mean the off-session charge needs the cardholder (3DS) or the
+        # card was declined → FAILED. Anything else is still in flight → PENDING.
+        status = getattr(intent, "status", None)
+        if status == "succeeded":
+            mapped = PaymentStatus.SUCCEEDED
+        elif status in ("requires_action", "requires_payment_method"):
+            mapped = PaymentStatus.FAILED
+        else:
+            mapped = PaymentStatus.PENDING
+        return PaymentTransaction(
+            provider=PaymentProviderName.STRIPE,
+            reference=reference,
+            status=mapped,
+            raw=json.loads(json.dumps(intent, default=str)),
         )

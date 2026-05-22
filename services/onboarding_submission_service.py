@@ -574,6 +574,33 @@ async def _accept_internal(
         await delete_tenant({"_id": ObjectId(tenant.id)})
         raise
 
+    # Register the tenant as a Paystack customer up-front (everyone starts on
+    # Free, so this is only a contact record — charging needs a card
+    # authorization captured on the first real payment). Best-effort and only
+    # when Paystack is configured; mirrors services.tenant_service.bootstrap_tenant.
+    try:
+        from core.payments import PaymentManager
+        from core.payments.types import PaymentProviderName
+
+        if PaymentManager.get_instance().has_provider(
+            PaymentProviderName.PAYSTACK.value
+        ):
+            from services.paystack_customer_service import (
+                create_or_get_paystack_customer,
+            )
+
+            await create_or_get_paystack_customer(
+                tenant_id=tenant.id or "",
+                email=admin_email,
+                name=company_name,
+            )
+    except Exception:
+        logger.warning(
+            "Paystack customer provisioning failed for tenant_id=%s",
+            tenant.id,
+            exc_info=True,
+        )
+
     update = OnboardingSubmissionUpdate(
         status=target_status,
         tenant_id=tenant.id,

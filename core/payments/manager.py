@@ -5,6 +5,7 @@ from threading import Lock
 
 from core.payments.app_provider import AppCheckoutPaymentProvider
 from core.payments.flutterwave_provider import FlutterwavePaymentProvider
+from core.payments.paystack_provider import PaystackPaymentProvider
 from core.payments.provider import PaymentProvider
 from core.payments.stripe_provider import StripePaymentProvider
 from core.settings import get_settings
@@ -45,6 +46,14 @@ class PaymentManager:
             except Exception as err:
                 logger.warning("Stripe provider unavailable: %s", err)
 
+        if settings.paystack_secret_key:
+            try:
+                providers["paystack"] = PaystackPaymentProvider(
+                    secret_key=settings.paystack_secret_key,
+                )
+            except Exception as err:
+                logger.warning("Paystack provider unavailable: %s", err)
+
         # The app provider is always registered as a fallback so a checkout
         # can still be issued when no external provider is configured.
         providers["app"] = AppCheckoutPaymentProvider(
@@ -55,7 +64,7 @@ class PaymentManager:
         if default_provider not in providers:
             # Prefer any real provider; fall back to app mode only if neither
             # Stripe nor Flutterwave is configured.
-            for preferred in ("stripe", "flutterwave", "app"):
+            for preferred in ("stripe", "flutterwave", "paystack", "app"):
                 if preferred in providers:
                     default_provider = preferred
                     break

@@ -79,7 +79,7 @@ async def create_intent(
 @router.post("/webhooks/{provider}")
 @document_response(
     message="Webhook processed",
-    description="Receive and process payment webhooks from external payment providers (Stripe, Flutterwave). Updates payment status based on webhook events.",
+    description="Receive and process payment webhooks from external payment providers (Stripe, Flutterwave, Paystack). Updates payment status based on webhook events.",
     summary="Process payment webhook",
     response_codes={
         200: "Webhook processed successfully",
@@ -101,6 +101,7 @@ async def payment_webhook(provider: str, request: Request):
     Accepted `provider` path values:
     - `stripe`
     - `flutterwave`
+    - `paystack`
     """
     body = await request.body()
     headers = {k: v for k, v in request.headers.items()}

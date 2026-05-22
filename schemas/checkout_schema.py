@@ -26,6 +26,7 @@ class CheckoutStatus(str, Enum):
 class CheckoutProvider(str, Enum):
     STRIPE = "stripe"
     FLUTTERWAVE = "flutterwave"
+    PAYSTACK = "paystack"
     APP = "app"
 
 
@@ -67,6 +68,32 @@ class CheckoutCreateRequest(BaseModel):
         return self
 
 
+class TrialCardCaptureRequest(BaseModel):
+    """Body for starting a free trial that auto-charges at the end.
+
+    Charges (and refunds) the Paystack minimum to tokenize the card. The
+    trial subscription is provisioned only once that charge clears.
+    """
+
+    plan_id: str
+    billing_cycle: BillingCycle = BillingCycle.MONTHLY
+    # Trial length in days. When 0/omitted the server uses the plan's
+    # configured ``trial_days``.
+    trial_days: int = 0
+    # Where Paystack redirects the customer after the card form.
+    redirect_url: Optional[str] = None
+
+
+class TrialCardCaptureOut(BaseModel):
+    """Hosted card-capture link returned to the frontend (same redirect
+    pattern as a normal checkout)."""
+
+    authorization_url: Optional[str] = None
+    reference: str
+    tokenization_amount_minor: int
+    currency: str
+
+
 class CheckoutCompleteRequest(BaseModel):
     """Body for the app-mode completion endpoint."""
 
@@ -99,6 +126,10 @@ class CheckoutSessionBase(BaseModel):
     applied_discount_ids: List[str] = Field(default_factory=list)
     # Identity of the super_admin that initiated the checkout.
     created_by_user_id: str
+    # Billing contact email (the initiating super_admin's email). Persisted so
+    # the completion path can create/look up the provider customer for
+    # recurring billing without re-resolving the user.
+    customer_email: Optional[str] = None
     expires_at: int
     completed_at: Optional[int] = None
     # Set only once payment succeeds and the subscription is provisioned.

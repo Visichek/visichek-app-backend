@@ -104,7 +104,28 @@ async def process_webhook(*, provider_name: str, body: bytes, headers: dict[str,
             )
             raise
 
-    # Generic webhook processing for other providers (Stripe, etc.)
+    # Dispatch to Paystack-specific webhook handler for advanced processing
+    if provider_name_lower == "paystack":
+        try:
+            from services.paystack_webhook_service import process_paystack_webhook
+
+            return await process_paystack_webhook(body=body, headers=headers)
+        except Exception as e:
+            logger.error(f"Paystack webhook processing failed: {str(e)}", exc_info=True)
+            raise
+
+    # Dispatch to Stripe-specific webhook handler: captures the saved payment
+    # method for off-session recurring billing and bridges checkout completion.
+    if provider_name_lower == "stripe":
+        try:
+            from services.stripe_webhook_service import process_stripe_webhook
+
+            return await process_stripe_webhook(body=body, headers=headers)
+        except Exception as e:
+            logger.error(f"Stripe webhook processing failed: {str(e)}", exc_info=True)
+            raise
+
+    # Generic webhook processing for any other providers.
     provider = _get_payment_manager().get_provider(provider_name_lower)
     event = provider.verify_webhook(body=body, headers=headers)
 

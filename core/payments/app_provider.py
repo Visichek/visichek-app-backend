@@ -73,3 +73,21 @@ class AppCheckoutPaymentProvider(PaymentProvider):
             status=PaymentStatus.REFUNDED,
             raw={"mode": "app_test", "refunded_amount_minor": amount_minor},
         )
+
+    def charge_recurring(
+        self,
+        *,
+        instrument_ref: str,
+        email: str,
+        amount_minor: int,
+        currency: str,
+        reference: str,
+        customer_ref: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> PaymentTransaction:
+        # App mode has no saved instrument; the simulator drives completion.
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.PAYMENT_PROVIDER_ERROR,
+            message="App provider does not support recurring charges",
+        )

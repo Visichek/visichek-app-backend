@@ -159,6 +159,10 @@ class TestDunningService:
         assert result["suspended_count"] == 0
         mock_generate_invoice.assert_called_once()
 
+    @patch(
+        "services.subscription_service.transition_tenant_to_free_plan",
+        new_callable=AsyncMock,
+    )
     @patch("services.dunning_service.get_settings")
     @patch("services.dunning_service._queue_suspension_email", new_callable=AsyncMock)
     @patch("services.dunning_service.update_subscription", new_callable=AsyncMock)
@@ -169,6 +173,7 @@ class TestDunningService:
         mock_update_sub,
         mock_queue_email,
         mock_settings,
+        mock_transition,
     ):
         """Test suspension of subscription after max dunning attempts reached."""
         now = int(time.time())

@@ -9,7 +9,7 @@ turned into:
      time-bound validity runs out.
 
 Provider selection mirrors checkout_service: prefer Stripe → fall back
-to Flutterwave → fall back to the in-app ``app`` provider.
+to Flutterwave → Paystack → fall back to the in-app ``app`` provider.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ from services.audit_service import record_audit_event
 
 logger = logging.getLogger(__name__)
 
-_PROVIDER_PREFERENCE: Tuple[str, ...] = ("stripe", "flutterwave", "app")
+_PROVIDER_PREFERENCE: Tuple[str, ...] = ("stripe", "flutterwave", "paystack", "app")
 
 
 # ─── Catalog admin ──────────────────────────────────────────────────

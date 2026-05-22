@@ -22,6 +22,8 @@ from schemas.checkout_schema import (
     CheckoutCreateRequest,
     CheckoutSessionOut,
     CheckoutStatus,
+    TrialCardCaptureOut,
+    TrialCardCaptureRequest,
 )
 from security.auth import verify_super_admin_token
 from security.principal import AuthPrincipal
@@ -31,6 +33,7 @@ from services.checkout_service import (
     get_tenant_checkout,
     list_tenant_checkouts,
 )
+from services.paystack_billing_service import initiate_trial_card_capture
 
 router = APIRouter(prefix="/checkout", tags=["Checkout"])
 
@@ -48,8 +51,8 @@ def _require_tenant_scope(principal: AuthPrincipal) -> str:
     status_code=status.HTTP_201_CREATED,
     description=(
         "Create a provider-agnostic checkout link for the tenant. The server "
-        "picks the best available provider (stripe → flutterwave → app-mode "
-        "fallback). Tenant super_admin only."
+        "picks the best available provider (stripe → flutterwave → paystack → "
+        "app-mode fallback). Tenant super_admin only."
     ),
     summary="Create a checkout session",
 )
@@ -78,6 +81,43 @@ async def create_checkout_endpoint(
         metadata=payload.metadata,
         customer_email=email,
     )
+
+
+@router.post("/trial-card-capture")
+@document_response(
+    message="Trial card-capture link created",
+    status_code=status.HTTP_201_CREATED,
+    description=(
+        "Start a free trial that auto-charges at the end. Tokenizes the card "
+        "via a small Paystack charge (refunded once captured) and returns a "
+        "hosted authorization_url to open — the same redirect as checkout, so "
+        "no new UI. The trial subscription is provisioned only once the "
+        "tokenization charge clears. Tenant super_admin only."
+    ),
+    summary="Start a free trial with card capture",
+)
+async def trial_card_capture_endpoint(
+    payload: TrialCardCaptureRequest,
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+) -> TrialCardCaptureOut:
+    tenant_id = _require_tenant_scope(principal)
+    su = (
+        await get_system_user({"_id": ObjectId(principal.user_id)})
+        if ObjectId.is_valid(principal.user_id)
+        else None
+    )
+    email = getattr(su, "email", None) if su else None
+    if not email:
+        raise auth_permission_denied(permission_key="checkout.manage")
+    result = await initiate_trial_card_capture(
+        tenant_id=tenant_id,
+        plan_id=payload.plan_id,
+        billing_cycle=payload.billing_cycle,
+        trial_days=payload.trial_days,
+        email=email,
+        redirect_url=payload.redirect_url,
+    )
+    return TrialCardCaptureOut(**result)
 
 
 @router.get("/sessions")

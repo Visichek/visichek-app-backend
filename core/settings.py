@@ -47,6 +47,8 @@ class Settings:
     flutterwave_secret_key: str | None
     flutterwave_public_key: str | None
     flutterwave_webhook_secret_hash: str | None
+    paystack_secret_key: str | None
+    paystack_public_key: str | None
     # VisiChek-specific settings
     ocr_provider: str
     ocr_api_key: str | None
@@ -193,6 +195,8 @@ def get_settings() -> Settings:
         flutterwave_secret_key=os.getenv("FLUTTERWAVE_SECRET_KEY"),
         flutterwave_public_key=os.getenv("FLUTTERWAVE_PUBLIC_KEY"),
         flutterwave_webhook_secret_hash=os.getenv("FLW_WEBHOOK_SECRET_HASH"),
+        paystack_secret_key=os.getenv("PAYSTACK_SECRET_KEY"),
+        paystack_public_key=os.getenv("PAYSTACK_PUBLIC_KEY"),
         ocr_provider=os.getenv("OCR_PROVIDER", "none").lower(),
         ocr_api_key=os.getenv("OCR_API_KEY"),
         ocr_api_url=os.getenv("OCR_API_URL"),

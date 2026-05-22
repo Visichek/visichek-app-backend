@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Optional
 
 from bson import ObjectId
 
 from core.payments import PaymentIntentRequest, PaymentManager
+from core.payments.types import PaymentProviderName, PaymentStatus
 from core.errors import AppException, ErrorCode
 from repositories.subscription_repo import (
     get_subscriptions,
@@ -77,6 +79,14 @@ async def _get_provider_for_tenant(tenant_id: str) -> str:
             )
             # Fall back to default provider
             provider_name = ""
+    elif provider_name == "paystack":
+        if not tenant.paystack_customer_id:
+            logger.warning(
+                f"Tenant has no Paystack customer ID, falling back to default provider. "
+                f"tenant_id={tenant_id}"
+            )
+            # Fall back to default provider
+            provider_name = ""
 
     # Use the payment manager's default provider if none specified
     # or if the preferred provider is not available
@@ -86,6 +96,76 @@ async def _get_provider_for_tenant(tenant_id: str) -> str:
         return provider.provider_name
 
     return provider_name
+
+
+async def _charge_recurring_if_possible(
+    *,
+    provider,
+    provider_name: str,
+    subscription: SubscriptionOut,
+    amount_minor: int,
+    reference: str,
+    metadata: dict,
+) -> bool | None:
+    """Charge the tenant's saved card server-side when one is on file.
+
+    Returns:
+        True  — the recurring charge succeeded.
+        False — a charge was attempted but declined / errored.
+        None  — recurring charging is not applicable (provider has no saved
+                authorization for this tenant); the caller should fall back to
+                its existing intent path.
+    """
+    # Resolve the saved-instrument credentials for the tenant's provider.
+    # Paystack charges by reusable authorization_code + email; Stripe charges a
+    # saved PaymentMethod against its customer. Either set being absent means
+    # no card is on file → not applicable.
+    if not ObjectId.is_valid(subscription.tenant_id):
+        return None
+    tenant = await get_tenant({"_id": ObjectId(subscription.tenant_id)})
+    if not tenant:
+        return None
+
+    instrument_ref: Optional[str] = None
+    customer_ref: Optional[str] = None
+    email: str = ""
+    if provider_name == PaymentProviderName.PAYSTACK.value:
+        instrument_ref = getattr(tenant, "paystack_authorization_code", None)
+        email = getattr(tenant, "paystack_auth_email", None) or ""
+        if not (isinstance(instrument_ref, str) and instrument_ref and email):
+            return None
+    elif provider_name == PaymentProviderName.STRIPE.value:
+        instrument_ref = getattr(tenant, "stripe_payment_method_id", None)
+        customer_ref = getattr(tenant, "stripe_customer_id", None)
+        if not (
+            isinstance(instrument_ref, str)
+            and instrument_ref
+            and isinstance(customer_ref, str)
+            and customer_ref
+        ):
+            return None
+    else:
+        # Provider has no tokenized server-side charging support.
+        return None
+
+    try:
+        tx = provider.charge_recurring(
+            instrument_ref=instrument_ref,
+            email=email,
+            amount_minor=amount_minor,
+            currency=subscription.currency,
+            reference=reference,
+            customer_ref=customer_ref,
+            metadata=metadata,
+        )
+    except Exception as e:
+        logger.warning(
+            "Paystack recurring charge errored for subscription %s: %s",
+            subscription.id,
+            e,
+        )
+        return False
+    return tx.status == PaymentStatus.SUCCEEDED
 
 
 async def renew_due_subscriptions() -> dict:
@@ -202,26 +282,45 @@ async def _attempt_renewal(subscription: SubscriptionOut) -> bool:
         # Create payment intent
         amount_minor = int(subscription.effective_price * 100)  # Convert to minor units
         reference = f"renewal-{subscription.id}-{now}"
+        metadata = {
+            "subscription_id": subscription.id,
+            "tenant_id": subscription.tenant_id,
+            "renewal": True,
+        }
 
-        try:
-            intent = provider.create_intent(
-                PaymentIntentRequest(
-                    amount_minor=amount_minor,
-                    currency=subscription.currency,
-                    reference=reference,
-                    customer_email="",  # Can be enhanced with customer email if tracked
-                    metadata={
-                        "subscription_id": subscription.id,
-                        "tenant_id": subscription.tenant_id,
-                        "renewal": True,
-                    },
-                )
-            )
-        except Exception as e:
+        # Preferred path: charge the saved card server-side (no frontend). On a
+        # declined charge, fail the renewal so dunning schedules a retry. Only
+        # fall back to creating a fresh payment intent when no card is on file.
+        intent = None
+        recurring = await _charge_recurring_if_possible(
+            provider=provider,
+            provider_name=provider_name,
+            subscription=subscription,
+            amount_minor=amount_minor,
+            reference=reference,
+            metadata=metadata,
+        )
+        if recurring is False:
             logger.warning(
-                f"Payment intent creation failed for {subscription.id}: {str(e)}"
+                f"Recurring charge declined for subscription {subscription.id}"
             )
             return False
+        if recurring is None:
+            try:
+                intent = provider.create_intent(
+                    PaymentIntentRequest(
+                        amount_minor=amount_minor,
+                        currency=subscription.currency,
+                        reference=reference,
+                        customer_email="",
+                        metadata=metadata,
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Payment intent creation failed for {subscription.id}: {str(e)}"
+                )
+                return False
 
         # Update subscription with new period and reset renewal state
         update = SubscriptionUpdate(
@@ -256,7 +355,7 @@ async def _attempt_renewal(subscription: SubscriptionOut) -> bool:
                 period_start=new_period_start,
                 period_end=new_period_end,
                 payment_transaction_id=intent.provider_payload.get("id")
-                if intent.provider_payload
+                if intent and intent.provider_payload
                 else None,
             )
         except Exception as e:
@@ -413,30 +512,49 @@ async def _convert_trial_to_paid(subscription: SubscriptionOut) -> bool:
         new_period_end = _calculate_period_end(now, subscription.billing_cycle)
         amount_minor = int(subscription.effective_price * 100)
         reference = f"trial-convert-{subscription.id}-{now}"
+        metadata = {
+            "subscription_id": subscription.id,
+            "tenant_id": subscription.tenant_id,
+            "trial_conversion": True,
+        }
 
-        try:
-            provider.create_intent(
-                PaymentIntentRequest(
-                    amount_minor=amount_minor,
-                    currency=subscription.currency,
-                    reference=reference,
-                    customer_email="",
-                    metadata={
-                        "subscription_id": subscription.id,
-                        "tenant_id": subscription.tenant_id,
-                        "trial_conversion": True,
-                    },
-                )
-            )
-        except Exception as e:
-            logger.warning(
-                f"Payment intent creation failed for trial {subscription.id}: {str(e)}"
-            )
+        # Preferred path: charge the card captured at trial start. A declined
+        # charge means "renew failed" → drop to Free (trials have nothing to
+        # retry). Only fall back to a fresh intent when no card is on file.
+        recurring = await _charge_recurring_if_possible(
+            provider=provider,
+            provider_name=provider_name,
+            subscription=subscription,
+            amount_minor=amount_minor,
+            reference=reference,
+            metadata=metadata,
+        )
+        if recurring is False:
             await _downgrade_trial_to_free(
                 subscription,
-                reason=f"Trial payment failed: {e}",
+                reason="Trial recurring charge declined",
             )
             return False
+        if recurring is None:
+            try:
+                provider.create_intent(
+                    PaymentIntentRequest(
+                        amount_minor=amount_minor,
+                        currency=subscription.currency,
+                        reference=reference,
+                        customer_email="",
+                        metadata=metadata,
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Payment intent creation failed for trial {subscription.id}: {str(e)}"
+                )
+                await _downgrade_trial_to_free(
+                    subscription,
+                    reason=f"Trial payment failed: {e}",
+                )
+                return False
 
         # Payment succeeded, update to ACTIVE
         update = SubscriptionUpdate(
