@@ -117,6 +117,12 @@ async def _load_admin_stats() -> Any:
     )
 
 
+# NOTE: the live SSE stream for this dashboard is the single role-agnostic
+# endpoint GET /v1/dashboard/live/stream (see api/v1/dashboard_route.py). It
+# returns the platform-wide live slice for application admins and the tenant
+# live slice for tenant roles, so there is no admin-specific stream endpoint.
+
+
 # ─── Attention queue (Issue 1 backend) ────────────────────────────────
 
 

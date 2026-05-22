@@ -71,6 +71,20 @@ from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
 from services.plan_limits import enforce_entity_cap, get_month_bounds
 
 
+async def _nudge_live_dashboard(tenant_id: str) -> None:
+    """Best-effort live-dashboard SSE nudge (tenant Insights + platform admin).
+
+    Fired when a visitor's live state changes (check-in confirmed / checkout)
+    so open dashboard streams recompute their volatile counters immediately.
+    Never raises — a Redis blip just falls back to the periodic refresh."""
+    try:
+        from services.dashboard_stream_service import publish_dashboard_refresh
+
+        await publish_dashboard_refresh(tenant_id)
+    except Exception:
+        pass
+
+
 async def check_in_visitor(
     request: CheckInRequest,
     tenant_id: str,
@@ -609,6 +623,7 @@ async def confirm_check_in(
     if badge_pdf_bytes is not None:
         badge_pdf_base64 = base64.b64encode(badge_pdf_bytes).decode("utf-8")
 
+    await _nudge_live_dashboard(tenant_id)
     return {
         "session": updated_session,
         "badge_pdf_base64": badge_pdf_base64,
@@ -944,6 +959,7 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Checkou
         checked_out_at=now,
         expected_duration_minutes=None,
     )
+    await _nudge_live_dashboard(tenant_id)
     return CheckoutResult(
         id=updated.id or "",
         source_type="visit_session",

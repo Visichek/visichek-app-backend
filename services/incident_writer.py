@@ -39,6 +39,16 @@ def _enqueue_refresh(tenant_id: str) -> None:
             )
 
 
+async def _nudge_dashboard(tenant_id: str) -> None:
+    """Best-effort live-dashboard nudge (tenant Insights + platform admin)."""
+    try:
+        from services.dashboard_stream_service import publish_dashboard_refresh
+
+        await publish_dashboard_refresh(tenant_id)
+    except Exception:
+        logger.debug("incident_writer: dashboard nudge failed", exc_info=True)
+
+
 @write_handler(
     "incident.create",
     invalidates=[
@@ -52,6 +62,7 @@ async def _incident_create(resource_id: str, data: dict[str, Any]) -> dict[str, 
     log = IncidentLogCreate(**data)
     result = await add_incident(log_data=log, preassigned_id=resource_id)
     _enqueue_refresh(result.tenant_id)
+    await _nudge_dashboard(result.tenant_id)
     return {
         "id": result.id,
         "tenant_id": result.tenant_id,
@@ -75,6 +86,7 @@ async def _incident_update(resource_id: str, data: dict[str, Any]) -> dict[str, 
         incident_id=resource_id, tenant_id=tenant_id, log_data=upd
     )
     _enqueue_refresh(tenant_id)
+    await _nudge_dashboard(tenant_id)
     return {"id": result.id, "status": result.status}
 
 

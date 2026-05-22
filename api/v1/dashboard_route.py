@@ -1,15 +1,18 @@
 from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 import io
 
+from core.csv_export import csv_response
+from core.errors import AppException, ErrorCode
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.response_envelope import document_response
-from security.auth import verify_system_user_token
+from security.auth import verify_any_token, verify_system_user_token
 from security.principal import AuthPrincipal
 from services.dashboard_service import get_dashboard_stats, get_visitor_log
 from services.export_service import export_visitor_log_csv, export_visitor_log_xlsx
+from services.insights_service import get_insights, is_export_allowed
 
 router = APIRouter(prefix="/dashboard", tags=["Tenant Dashboard"])
 
@@ -119,6 +122,254 @@ async def dashboard_stats(
         department_id=department_id,
         role=principal.role,
     )
+
+
+@router.get("/insights")
+@document_response(
+    message="Insights fetched successfully",
+    description=(
+        "Range-aware, role-scoped, plan-gated analytics that replace the "
+        "fixed-window tenant dashboard. Accepts a caller-chosen start/stop "
+        "window (clamped to the tenant's creation date), auto-picks a bucket "
+        "granularity, and returns only the sections/KPIs the requested role's "
+        "tabs need. Free tenants get a minimal Overview-only experience."
+    ),
+    summary="Get role-scoped insights",
+    response_codes={
+        200: "Insights fetched successfully",
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        422: "Invalid range (stop before start)",
+    },
+)
+async def dashboard_insights(
+    role_view: Optional[str] = None,
+    start: Optional[int] = None,
+    stop: Optional[int] = None,
+    granularity: Optional[str] = None,
+    department_id: Optional[str] = None,
+    branch_id: Optional[str] = None,
+    host_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    operation_type: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    incident_type: Optional[str] = None,
+    incident_status: Optional[str] = None,
+    severity: Optional[str] = None,
+    dsr_type: Optional[str] = None,
+    dsr_status: Optional[str] = None,
+    lawful_basis: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    principal: AuthPrincipal = Depends(_all_tenant_roles),
+) -> Any:
+    tenant_id = principal.tenant_id or ""
+
+    async def _compute() -> Any:
+        result = await get_insights(
+            tenant_id=tenant_id,
+            caller_user_id=principal.user_id,
+            caller_role=principal.role,
+            role_view=role_view,
+            start=start,
+            stop=stop,
+            granularity=granularity,
+            department_id=department_id,
+            branch_id=branch_id,
+            host_id=host_id,
+            actor_id=actor_id,
+            operation_type=operation_type,
+            resource_type=resource_type,
+            incident_type=incident_type,
+            incident_status=incident_status,
+            severity=severity,
+            dsr_type=dsr_type,
+            dsr_status=dsr_status,
+            lawful_basis=lawful_basis,
+            status_filter=status_filter,
+        )
+        return result.model_dump(mode="json", by_alias=True)
+
+    # The default, now-anchored, unfiltered view for the caller's own role is
+    # cacheable (60s). Custom ranges / filters / role_view bypass the cache and
+    # compute on demand — that's acceptable per the Insights spec.
+    is_default = not any(
+        (
+            role_view,
+            start,
+            stop,
+            granularity,
+            department_id,
+            branch_id,
+            host_id,
+            actor_id,
+            operation_type,
+            resource_type,
+            incident_type,
+            incident_status,
+            severity,
+            dsr_type,
+            dsr_status,
+            lawful_basis,
+            status_filter,
+        )
+    )
+    if is_default and tenant_id:
+        return await get_or_compute(
+            scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}:{principal.role}",
+            resource="dashboard.insights",
+            ttl=60,
+            loader=_compute,
+        )
+    return await _compute()
+
+
+@router.get("/live/stream", include_in_schema=False)
+async def dashboard_live_stream(
+    request: Request,
+    principal: AuthPrincipal = Depends(verify_any_token),
+) -> StreamingResponse:
+    """Single role-agnostic SSE stream of LIVE dashboard counters.
+
+    ONE endpoint for everyone (like ``GET /v1/notifications/stream``); WHAT it
+    returns depends on the caller's access rights:
+
+      * application admin -> platform-wide live counters (openIncidents,
+        visitorCheckInsToday, newTenantsToday, …).
+      * any tenant role -> that tenant's live counters (currentlyActive,
+        checkInsToday, openIncidents, …) plus a ``meta`` block with the
+        tenant's plan context (planTier / isFreeFallback).
+
+    Pushes the FULL ABSOLUTE slice on connect, on a relevant write, and every
+    ~15s as a safety net. Heavy charts stay on the one-shot GETs
+    (/v1/dashboard/insights, /v1/admins/dashboard/stats). Layered on top of
+    polling: if unavailable the FE keeps polling and still works."""
+    from security.principal import TENANT_USER_ROLES
+    from services.dashboard_stream_service import unified_stream
+
+    if principal.role != "admin" and principal.role not in TENANT_USER_ROLES:
+        # Application users have no dashboard surface.
+        raise AppException(
+            status_code=403,
+            code=ErrorCode.AUTH_PERMISSION_DENIED,
+            message="No dashboard available for this account type.",
+        )
+
+    generator = unified_stream(request, principal=principal)
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/insights/export")
+async def dashboard_insights_export(
+    format: str = "csv",
+    role_view: Optional[str] = None,
+    start: Optional[int] = None,
+    stop: Optional[int] = None,
+    granularity: Optional[str] = None,
+    department_id: Optional[str] = None,
+    branch_id: Optional[str] = None,
+    principal: AuthPrincipal = Depends(_all_tenant_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    if not await is_export_allowed(tenant_id):
+        raise AppException(
+            status_code=403,
+            code=ErrorCode.SUBSCRIPTION_REQUIRED,
+            message="Insights export is available on paid plans. Upgrade to enable CSV/PDF export.",
+        )
+    if format.lower() != "csv":
+        # PDF rendering of the current tab is a planned enhancement; only CSV
+        # of the underlying rows is implemented today.
+        raise AppException(
+            status_code=422,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Only format=csv is currently supported for insights export.",
+        )
+    result = await get_insights(
+        tenant_id=tenant_id,
+        caller_user_id=principal.user_id,
+        caller_role=principal.role,
+        role_view=role_view,
+        start=start,
+        stop=stop,
+        granularity=granularity,
+        department_id=department_id,
+        branch_id=branch_id,
+    )
+    rows = _insights_to_rows(result)
+    return csv_response(
+        rows=rows,
+        columns=["section", "key", "label", "value", "extra"],
+        filename=f"insights-{result.meta.role_view}-{tenant_id}",
+    )
+
+
+def _insights_to_rows(result: Any) -> list:
+    """Flatten an InsightsResponse into CSV rows (one per KPI / data point)."""
+    rows: list = []
+    for kpi in result.kpis:
+        rows.append(
+            {
+                "section": "kpi",
+                "key": kpi.key,
+                "label": kpi.label,
+                "value": kpi.value,
+                "extra": kpi.unit or "",
+            }
+        )
+    for sid, section in result.sections.items():
+        if section.points:
+            for p in section.points:
+                rows.append(
+                    {
+                        "section": sid,
+                        "key": str(p.timestamp),
+                        "label": p.label,
+                        "value": p.value,
+                        "extra": "",
+                    }
+                )
+        if section.slices:
+            for s in section.slices:
+                rows.append(
+                    {
+                        "section": sid,
+                        "key": s.key,
+                        "label": s.label,
+                        "value": s.value,
+                        "extra": s.percentage,
+                    }
+                )
+        if section.buckets:
+            for b in section.buckets:
+                rows.append(
+                    {
+                        "section": sid,
+                        "key": str(b.hour),
+                        "label": b.label,
+                        "value": b.value,
+                        "extra": "",
+                    }
+                )
+        if section.items:
+            for it in section.items:
+                rows.append(
+                    {
+                        "section": sid,
+                        "key": it.id or "",
+                        "label": it.label,
+                        "value": it.value,
+                        "extra": it.percentage,
+                    }
+                )
+    return rows
 
 
 @router.get("/visitors")

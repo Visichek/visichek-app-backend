@@ -110,7 +110,25 @@ _EXTRA_FEATURE_KEYS_BY_TIER: Dict[str, tuple[str, ...]] = {
         "email_preferences",
         "visitor_policies",
         "geofencing",
+        # Insights / analytics capability keys. The Insights UI greys the
+        # matching controls + cards and shows an upgrade tooltip. Server-side
+        # enforcement is authoritative in services/insights_service.py — these
+        # keys only let the FE pre-lock nav without a round-trip.
+        "analytics.customRange",
+        "analytics.roleTabs",
+        "analytics.hourly",
+        "analytics.compliance",
+        "analytics.audit",
+        "analytics.export",
+        "analytics.trends",
     ),
+}
+
+# Free-tier analytics ceilings advertised in ``caps`` so the FE can pre-bound
+# the range picker / top-list without a round-trip. Authoritative enforcement
+# is in services/insights_service.py. Absent on paid tiers = unlimited.
+_ANALYTICS_CAPS_BY_TIER: Dict[str, Dict[str, int]] = {
+    "free": {"analyticsMaxRangeDays": 7, "topListMax": 3},
 }
 
 
@@ -301,13 +319,17 @@ async def build_me_limitations(
 
     caps_raw = plan_data.get("tenant_caps") or {}
     # camelCase the cap keys so the FE doesn't have to convert
-    caps_out = {
+    caps_out: Dict[str, Any] = {
         "maxBranches": caps_raw.get("max_branches"),
         "maxDepartments": caps_raw.get("max_departments"),
         "maxSystemUsers": caps_raw.get("max_system_users"),
         "maxVisitorsPerMonth": caps_raw.get("max_visitors_per_month"),
         "maxAppointmentsPerMonth": caps_raw.get("max_appointments_per_month"),
     }
+    # Analytics ceilings (Insights page). Absent on paid tiers => unlimited.
+    caps_out.update(
+        _ANALYTICS_CAPS_BY_TIER.get(str(plan_data.get("tier") or "").lower(), {})
+    )
 
     locked_branches = await _list_locked_branch_ids(tenant_id)
     locked_departments = await _list_locked_department_ids(tenant_id)
