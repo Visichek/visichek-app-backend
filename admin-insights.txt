@@ -1,0 +1,156 @@
+================================================================================
+ADMIN INSIGHTS — range-aware, tabbed platform-admin dashboard (backend contract)
+Date: 2026-05-23
+================================================================================
+
+Status: DONE. The admin-shell counterpart to the tenant Insights page
+(GET /v1/dashboard/insights). Same engine; platform-wide lower bound; NO plan
+gating (an application admin sees everything); keeps the existing 5 admin tabs.
+
+--------------------------------------------------------------------------------
+ENDPOINTS  (application admin only — tenant roles 403 via the admin gate dep)
+--------------------------------------------------------------------------------
+
+  GET /v1/admins/dashboard/insights
+      ?start=<unix>&stop=<unix>&granularity=<hour|day|week|month>
+      &tab=<overview|tenants|billing|activity|risk>
+      &plan_tier=&subscription_status=&billing_cycle=&payment_provider=
+      &country=&tenant_id=&incident_type=&incident_status=
+      &support_status=&support_priority=&onboarding_status=
+
+  GET /v1/admins/dashboard/insights/export?format=csv&<same params>
+      CSV of the active tab's rows. format=pdf -> 422 (planned).
+
+We ADDED a sibling /insights route; the legacy /v1/admins/dashboard/stats is
+left untouched so the FE migrates without breaking the current dashboard.
+
+--------------------------------------------------------------------------------
+RESPONSE  (AdminInsightsResponse — unwrapped `data`; camelCase)
+--------------------------------------------------------------------------------
+
+  meta: {
+    platformLaunchAt,   // first tenant's date_created — range-picker lower bound
+    earliestData,       // first day with platform data (>= launch)
+    appliedRange: { start, stop },   // post-clamp echo
+    granularity,        // "hour" | "day" | "week" | "month"
+    tab,
+    lastUpdated
+  }
+  kpis: Kpi[]                 // the active tab's cards
+  sections: { <id>: Section }
+
+Kpi / TimeSeriesPoint / DistributionSlice / HourlyBucket / TopItem reuse the
+tenant insights shapes. NEW admin-only section type `table`:
+
+  { type:"table", title, rows: [flat camelCase obj...], columns: [ordered keys] }
+
+Row/column keys are camelCase (companyName, planName, monthlyRevenue, …) to
+match AdminDashboardStats — the FE relabels nothing.
+
+--------------------------------------------------------------------------------
+TIME RANGE  (identical engine to tenant insights)
+--------------------------------------------------------------------------------
+
+* Auto-granularity: <=48h hour, <=31d day, <=180d week, else month.
+* Series are CONTIGUOUS + ZERO-FILLED; granularity used is echoed in meta.
+* `start` is clamped UP to platformLaunchAt (first tenant's creation date);
+  appliedRange echoes the effective window. stop<start after clamp -> 422.
+* meta.earliestData lets the picker grey out empty leading days.
+
+--------------------------------------------------------------------------------
+KPI TRENDS
+--------------------------------------------------------------------------------
+
+Windowed KPIs (revenueInRangeMinor, newTenantsInRange, visitorCheckInsInRange,
+newSignupsInRange) carry a trend vs the immediately preceding equal-length
+window, with metric-aware isGood (revenue/new-tenants up = good). Point-in-time
+scalars (totalTenants, activeSubscriptions, openIncidents, mrr, arr,
+dunningQueueSize, "today" counters) carry trend=null.
+
+--------------------------------------------------------------------------------
+TABS -> SECTIONS  (only the requested tab is computed)
+--------------------------------------------------------------------------------
+
+  overview  KPIs: totalTenants, mrr(₦), activeSubscriptions, openIncidents,
+                  openDsr, visitorsToday, revenueInRangeMinor(trend),
+                  newTenantsInRange(trend), paymentSuccessRate(%), dunningQueueSize
+            Sections: tenantSignups(timeSeries), revenue(timeSeries, MINOR),
+                  planTier(distribution), topRevenue(table)
+  tenants   KPIs: totalTenants, activeTenants, inactiveTenants,
+                  newTenantsInRange(trend)
+            Sections: tenantSignups, planTier, geography, roleBreakdown,
+                  recentSignups(table)
+  billing   KPIs: mrr(₦), arr(₦), revenueInRangeMinor(trend),
+                  paymentSuccessRate(%), avgInvoiceMinor, pastDueSubscriptions
+            Sections: revenue(MINOR), newSubscriptions, invoiceStatus,
+                  billingCycle, paymentProvider, topRevenue(table)
+  activity  KPIs: visitorsToday, visitorCheckInsInRange(trend),
+                  newSignupsInRange(trend), onboardingAcceptanceRate(%)
+            Sections: visitorCheckIns, visitorSignups, hourly, topVisitors,
+                  topActivity, onboarding
+  risk      KPIs: openIncidents, criticalIncidents, incidentsApproachingDeadline,
+                  openDsr, supportCasesOpen
+            Sections: incidents (section.meta { pastDeadline, approachingDeadline }
+                  for the red banner), incidentType, incidentStatus, dsrStatus,
+                  supportStatus, supportPriority, topIncidents, topSupport
+
+--------------------------------------------------------------------------------
+CURRENCY  (unchanged from AdminDashboardStats)
+--------------------------------------------------------------------------------
+
+`*Minor` KPIs / time-series points are integers in MINOR units (kobo/cents);
+mrr / arr are FLOATS in MAJOR units; no currency code in the body (render NGN/₦).
+
+--------------------------------------------------------------------------------
+FILTERS
+--------------------------------------------------------------------------------
+
+Applied where natural: country / payment_provider on tenant_companies;
+subscription_status / billing_cycle / plan_tier on subscriptions (plan_tier is
+first resolved to the plan ids of that tier); tenant_id narrows
+incidents / support / visit series; incident_* / support_* / onboarding_status
+on their own collections.
+
+--------------------------------------------------------------------------------
+CACHING
+--------------------------------------------------------------------------------
+
+Default now-anchored, unfiltered OVERVIEW is served from the GLOBAL precompute
+/Redis cache (60s TTL). Any custom range / filter / non-default tab bypasses the
+cache and computes on demand.
+
+--------------------------------------------------------------------------------
+LIVE SSE  (no new work — already shipped)
+--------------------------------------------------------------------------------
+
+GET /v1/dashboard/live/stream already emits the ADMIN live slice on the SAME
+event name `dashboard.live` with `meta.scope=="admin"` and the SAME hybrid
+trigger (event nudge + ~15s safety net) as the tenant slice. The FE widens its
+existing EventSource hook from scope=="tenant" to also handle scope=="admin".
+Admin counters: openIncidents, criticalIncidents, incidentsToday,
+visitorCheckInsToday, newTenantsToday, supportCasesOpen, dsrOpen.
+
+--------------------------------------------------------------------------------
+AUTH / PERMISSIONS
+--------------------------------------------------------------------------------
+
+Guarded by check_admin_account_status_and_permissions (same as /stats).
+Permission keys `admin_insights` + `admin_insights_export` were added to
+config/role_permissions.ADMIN_PERMISSIONS and to the `_ADMIN_BASE_KEEP` prefix
+tuple, so EVERY access preset (content_only / support_only / billing_only /
+all_controls) keeps them — exactly like the legacy /stats dashboard.
+
+--------------------------------------------------------------------------------
+FILES
+--------------------------------------------------------------------------------
+
+  services/admin_insights_service.py        (new — engine + per-tab sections/KPIs)
+  schemas/insights_schema.py                (+table fields on InsightsSection,
+                                             +AdminInsightsMeta/AdminInsightsResponse)
+  api/v1/admin_dashboard_route.py           (+GET /insights, +/insights/export)
+  config/role_permissions.py                (+2 permission keys + base-keep prefix)
+  tests/unit/test_admin_insights.py         (new)
+
+================================================================================
+END
+================================================================================

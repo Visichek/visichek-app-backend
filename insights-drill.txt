@@ -1,0 +1,131 @@
+================================================================================
+INSIGHTS DRILL-DOWN — records behind a clicked chart element (backend contract)
+Date: 2026-05-23
+================================================================================
+
+Status: DONE. The only NEW backend work in this round — everything else in the
+PLATFORM+TENANT insights contract (range-aware endpoints, KPI trends, filters
+that change the numbers, the role-agnostic live SSE) is already shipped.
+
+Clicking a chart element (a time-series point, a pie slice, a top-list bar, an
+hourly bar) opens a "Selection" panel listing the UNDERLYING RECORDS. These
+endpoints return those rows, paginated, honouring the SAME range, filters, and
+(tenant) scoping as the parent insights call so the records always match the
+chart.
+
+--------------------------------------------------------------------------------
+ENDPOINTS
+--------------------------------------------------------------------------------
+
+  Tenant:   GET /v1/dashboard/insights/drill          (any tenant role)
+  Platform: GET /v1/admins/dashboard/insights/drill   (application admin only)
+
+      ?section=<sectionId>     // e.g. traffic, visitStatus, incident, dsr,
+                               //      tenantSignups, planTier, incidentStatus…
+      &key=<elementKey>        // slice key, a point's date "YYYY-MM-DD",
+                               //   an hour "HH:00"/"0".."23", or an entity id
+      &<same range + filters as the parent insights call>
+      &skip=&limit=            // paginated; default limit 25, max 200
+
+  -> data: {
+       columns: string[],                 // ordered camelCase keys to render
+       rows: Array<Record<string, any>>,  // flat camelCase rows
+       total: number                      // for "showing 25 of 142"
+     }
+
+Auth + scoping: identical to the parent insights endpoint. Tenant drill is
+HARD-SCOPED exactly like its insights call (dept_admin -> own department,
+receptionist -> own branch); the admin drill is admin-only. Both respect the
+active filters and clamp `start` to the lower bound, so the records match the
+chart 1:1.
+
+`key` semantics by section type:
+  * time-series point  -> a bucket-start date "YYYY-MM-DD"; the bucket span
+    follows the range's auto-granularity (day/week/month) and is clamped to the
+    applied range. (Hour-granularity "HH:00" labels are handled for the hourly
+    section as an hour-of-day filter.)
+  * distribution slice -> the slice key (status / tier / type / …)
+  * hourly bar         -> hour-of-day ("HH:00" or "0".."23")
+  * top-list bar       -> the entity id (tenant / department / host)
+
+Unsupported (section, key) combos return { columns:[], rows:[], total:0 }
+(never a 500), so the panel renders cleanly.
+
+--------------------------------------------------------------------------------
+ROW SHAPES  (reuse existing field names — the FE relabels nothing)
+--------------------------------------------------------------------------------
+
+TENANT
+  traffic (point=date)         -> visit sessions that bucket
+        columns: visitorName, company, department, hostName, status, checkInTime
+  visitStatus / feed (slice)   -> sessions in that status (feed also honours
+        status_filter)         columns: visitorName, company, department,
+                               hostName, status, checkInTime
+  hourly (bar=hour)            -> sessions in that hour-of-day (same columns)
+  topDepartments (bar=id)      -> sessions for that department (or host, for
+                               dept_admin) (same columns)
+  incident (slice=status)      -> columns: title, type, status, riskLevel,
+                               notificationDeadline
+  dsr (slice=type)             -> columns: requestType, status, dateCreated
+  appointment (slice=status)   -> columns: visitorName, hostName, status,
+                               scheduledDatetime
+  audit (point=date)           -> columns: action, actorId, resourceType,
+                               timestamp  (honours actor_id/operation_type/
+                               resource_type)
+
+PLATFORM
+  tenantSignups (point=date)   -> columns: companyName, planName, country, signedUpAt
+  planTier (slice=tier) /
+  billingCycle (slice=cycle)   -> columns: companyName, subscriptionStatus,
+                               country, monthlyRevenue
+  incidentStatus / incidentType (slice) / topIncidents (bar=tenant)
+                               -> columns: tenant, type, severity, status, deadline
+  supportStatus / supportPriority (slice) / topSupport (bar=tenant)
+                               -> columns: tenant, subject, priority, status, category
+  onboarding (slice=status)    -> columns: companyName, status, submittedAt
+  geography (slice=country)    -> columns: companyName, planName, country, signedUpAt
+  revenue (point=date)         -> columns: tenant, amountMinor, status, paidAt
+  newSubscriptions (point=date)-> columns: tenant, status, billingCycle, createdAt
+  visitorCheckIns / visitorSignups (point=date)
+                               -> columns: tenant, visitorName, status, timestamp
+  topVisitors / topActivity (bar=tenant)
+                               -> columns: visitorName, company, status, checkInTime
+  invoiceStatus (slice=status) -> columns: tenant, amountMinor, status, createdAt
+
+--------------------------------------------------------------------------------
+AUTH / PERMISSIONS
+--------------------------------------------------------------------------------
+
+Tenant drill: verify_system_user_token (any tenant role) — not permission-gated.
+Admin drill: check_admin_account_status_and_permissions; permission key
+`admin_insights_drill` added to config/role_permissions.ADMIN_PERMISSIONS and
+kept across every preset via the `/v1/admins/dashboard/insights` base-keep
+prefix.
+
+--------------------------------------------------------------------------------
+NOTES / LIMITATIONS
+--------------------------------------------------------------------------------
+
+* traffic/visitStatus drill reads visit_sessions (the public-checkin `checkins`
+  collection is not unioned into the drill rows — those still count in the
+  series, but the drill list is session-shaped). Flag if the panel must include
+  public check-ins.
+* newReturning has no drill (it is a derived split, not a record set) — it
+  returns the empty result.
+* Placement: Insights is rendered ON the dashboard route for both shells
+  (/admin/dashboard, /app/dashboard); there is no separate insights page. No
+  backend impact — same endpoints.
+
+--------------------------------------------------------------------------------
+FILES
+--------------------------------------------------------------------------------
+
+  services/insights_drill_service.py        (new — drill_tenant + drill_admin)
+  api/v1/dashboard_route.py                 (+GET /insights/drill)
+  api/v1/admin_dashboard_route.py           (+GET /insights/drill)
+  config/role_permissions.py                (+admin_insights_drill key)
+  tests/unit/test_insights_drill.py         (new)
+
+================================================================================
+END
+================================================================================

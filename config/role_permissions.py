@@ -56,6 +56,24 @@ ADMIN_PERMISSIONS: list[Permission] = [
         "/v1/admins/dashboard/stats",
         "View platform-wide dashboard",
     ),
+    _p(
+        "admin_insights",
+        ["GET"],
+        "/v1/admins/dashboard/insights",
+        "View range-aware platform-wide insights",
+    ),
+    _p(
+        "admin_insights_export",
+        ["GET"],
+        "/v1/admins/dashboard/insights/export",
+        "Export platform-wide insights",
+    ),
+    _p(
+        "admin_insights_drill",
+        ["GET"],
+        "/v1/admins/dashboard/insights/drill",
+        "Drill into platform-wide insights records",
+    ),
     # Tenant CRUD
     _p("create_tenant", ["POST"], "/v1/tenants/", "Create a tenant"),
     _p("list_tenants", ["GET"], "/v1/tenants/", "List all tenants"),
@@ -1301,6 +1319,10 @@ _ADMIN_BASE_KEEP = _admin_perms_by_path_prefix(
         "/v1/admins/profile",
         "/v1/admins/account",
         "/v1/admins/dashboard/stats",
+        # Range-aware insights + its CSV export — the prefix matches both
+        # ``/insights`` and ``/insights/export`` so every preset keeps them,
+        # exactly like the legacy /stats dashboard.
+        "/v1/admins/dashboard/insights",
         "/v1/admins/me",
     )
 )

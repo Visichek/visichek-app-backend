@@ -266,6 +266,70 @@ async def dashboard_live_stream(
     )
 
 
+@router.get("/insights/drill")
+@document_response(
+    message="Drill-down rows fetched successfully",
+    description=(
+        "Records behind a clicked Insights chart element. `section` is the "
+        "chart's section id; `key` is the slice key, a point's date label "
+        "(YYYY-MM-DD), or an hour/entity id. Honours the SAME range, filters, "
+        "and role scoping as GET /v1/dashboard/insights. Paginated (skip/limit)."
+    ),
+    summary="Insights drill-down (tenant)",
+    response_codes={200: "OK", 401: "Unauthorized", 403: "Forbidden"},
+)
+async def dashboard_insights_drill(
+    section: str,
+    key: str = "",
+    start: Optional[int] = None,
+    stop: Optional[int] = None,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 25,
+    role_view: Optional[str] = None,
+    department_id: Optional[str] = None,
+    branch_id: Optional[str] = None,
+    host_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    operation_type: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    incident_type: Optional[str] = None,
+    incident_status: Optional[str] = None,
+    severity: Optional[str] = None,
+    dsr_type: Optional[str] = None,
+    dsr_status: Optional[str] = None,
+    lawful_basis: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    principal: AuthPrincipal = Depends(_all_tenant_roles),
+) -> Any:
+    from services.insights_drill_service import drill_tenant
+
+    return await drill_tenant(
+        tenant_id=principal.tenant_id or "",
+        caller_user_id=principal.user_id,
+        caller_role=principal.role,
+        section=section,
+        key=key,
+        start=start,
+        stop=stop,
+        skip=skip,
+        limit=limit,
+        role_view=role_view,
+        department_id=department_id,
+        branch_id=branch_id,
+        host_id=host_id,
+        actor_id=actor_id,
+        operation_type=operation_type,
+        resource_type=resource_type,
+        incident_type=incident_type,
+        incident_status=incident_status,
+        severity=severity,
+        dsr_type=dsr_type,
+        dsr_status=dsr_status,
+        lawful_basis=lawful_basis,
+        status_filter=status_filter,
+    )
+
+
 @router.get("/insights/export")
 async def dashboard_insights_export(
     format: str = "csv",

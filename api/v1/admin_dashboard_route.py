@@ -5,6 +5,8 @@ from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 
+from core.csv_export import csv_response
+from core.errors import AppException, ErrorCode
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.response_envelope import document_response
 from schemas.admin_schema import AdminOut
@@ -13,6 +15,7 @@ from services.admin_dashboard_service import (
     get_admin_attention_queue,
     get_admin_dashboard_stats,
 )
+from services.admin_insights_service import get_admin_insights
 from services.billing_report_service import (
     get_billing_summary,
     get_payment_discrepancies,
@@ -117,10 +120,223 @@ async def _load_admin_stats() -> Any:
     )
 
 
-# NOTE: the live SSE stream for this dashboard is the single role-agnostic
-# endpoint GET /v1/dashboard/live/stream (see api/v1/dashboard_route.py). It
-# returns the platform-wide live slice for application admins and the tenant
-# live slice for tenant roles, so there is no admin-specific stream endpoint.
+# ─── Range-aware, tabbed admin insights ───────────────────────────────
+
+
+def _insights_query(
+    start: Optional[int],
+    stop: Optional[int],
+    granularity: Optional[str],
+    tab: Optional[str],
+    plan_tier: Optional[str],
+    subscription_status: Optional[str],
+    billing_cycle: Optional[str],
+    payment_provider: Optional[str],
+    country: Optional[str],
+    tenant_id: Optional[str],
+    incident_type: Optional[str],
+    incident_status: Optional[str],
+    support_status: Optional[str],
+    support_priority: Optional[str],
+    onboarding_status: Optional[str],
+) -> dict:
+    return dict(
+        start=start,
+        stop=stop,
+        granularity=granularity,
+        tab=tab,
+        plan_tier=plan_tier,
+        subscription_status=subscription_status,
+        billing_cycle=billing_cycle,
+        payment_provider=payment_provider,
+        country=country,
+        tenant_id=tenant_id,
+        incident_type=incident_type,
+        incident_status=incident_status,
+        support_status=support_status,
+        support_priority=support_priority,
+        onboarding_status=onboarding_status,
+    )
+
+
+@router.get("/insights")
+@document_response(
+    message="Admin insights fetched successfully",
+    description=(
+        "Range-aware, tabbed platform-admin analytics — the admin-shell "
+        "counterpart to GET /v1/dashboard/insights. Caller-chosen window "
+        "(clamped to the first tenant's creation date), auto-granularity, "
+        "preceding-window KPI trends, per-tab sections (overview/tenants/"
+        "billing/activity/risk), and platform filters. No plan gating."
+    ),
+    summary="Get range-aware admin insights",
+    response_codes={
+        200: "Admin insights fetched successfully",
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        422: "Invalid range (stop before start)",
+    },
+)
+async def admin_dashboard_insights(
+    start: Optional[int] = None,
+    stop: Optional[int] = None,
+    granularity: Optional[str] = None,
+    tab: Optional[str] = None,
+    plan_tier: Optional[str] = None,
+    subscription_status: Optional[str] = None,
+    billing_cycle: Optional[str] = None,
+    payment_provider: Optional[str] = None,
+    country: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    incident_type: Optional[str] = None,
+    incident_status: Optional[str] = None,
+    support_status: Optional[str] = None,
+    support_priority: Optional[str] = None,
+    onboarding_status: Optional[str] = None,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+) -> Any:
+    params = _insights_query(
+        start, stop, granularity, tab, plan_tier, subscription_status,
+        billing_cycle, payment_provider, country, tenant_id, incident_type,
+        incident_status, support_status, support_priority, onboarding_status,
+    )
+
+    async def _compute() -> Any:
+        result = await get_admin_insights(**params)
+        return result.model_dump(mode="json", by_alias=True)
+
+    # Default now-anchored, unfiltered overview is cacheable (60s); custom
+    # range / filters / non-overview tab bypass the cache and compute on demand.
+    is_default = not any(params.values())
+    if is_default:
+        return await get_or_compute(
+            scope_key=PrecomputeScope.GLOBAL.value,
+            resource="admin_dashboard.insights",
+            ttl=60,
+            loader=_compute,
+        )
+    return await _compute()
+
+
+@router.get("/insights/drill")
+@document_response(
+    message="Drill-down rows fetched successfully",
+    description=(
+        "Records behind a clicked admin-insights chart element. `section` is "
+        "the chart's section id; `key` is the slice key, a point's date label "
+        "(YYYY-MM-DD), or a tenant id. Honours the SAME range + filters as "
+        "GET /v1/admins/dashboard/insights. Paginated (skip/limit)."
+    ),
+    summary="Insights drill-down (admin)",
+    response_codes={200: "OK", 401: "Unauthorized", 403: "Forbidden"},
+)
+async def admin_dashboard_insights_drill(
+    section: str,
+    key: str = "",
+    start: Optional[int] = None,
+    stop: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 25,
+    plan_tier: Optional[str] = None,
+    subscription_status: Optional[str] = None,
+    billing_cycle: Optional[str] = None,
+    payment_provider: Optional[str] = None,
+    country: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    incident_type: Optional[str] = None,
+    incident_status: Optional[str] = None,
+    support_status: Optional[str] = None,
+    support_priority: Optional[str] = None,
+    onboarding_status: Optional[str] = None,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+) -> Any:
+    from services.insights_drill_service import drill_admin
+
+    return await drill_admin(
+        section=section,
+        key=key,
+        start=start,
+        stop=stop,
+        skip=max(skip, 0),
+        limit=min(max(limit, 1), 200),
+        plan_tier=plan_tier,
+        subscription_status=subscription_status,
+        billing_cycle=billing_cycle,
+        payment_provider=payment_provider,
+        country=country,
+        tenant_id=tenant_id,
+        incident_type=incident_type,
+        incident_status=incident_status,
+        support_status=support_status,
+        support_priority=support_priority,
+        onboarding_status=onboarding_status,
+    )
+
+
+@router.get("/insights/export")
+async def admin_dashboard_insights_export(
+    format: str = "csv",
+    start: Optional[int] = None,
+    stop: Optional[int] = None,
+    granularity: Optional[str] = None,
+    tab: Optional[str] = None,
+    plan_tier: Optional[str] = None,
+    subscription_status: Optional[str] = None,
+    billing_cycle: Optional[str] = None,
+    payment_provider: Optional[str] = None,
+    country: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    incident_type: Optional[str] = None,
+    incident_status: Optional[str] = None,
+    support_status: Optional[str] = None,
+    support_priority: Optional[str] = None,
+    onboarding_status: Optional[str] = None,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+):
+    if format.lower() != "csv":
+        raise AppException(
+            status_code=422,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Only format=csv is currently supported for admin insights export.",
+        )
+    params = _insights_query(
+        start, stop, granularity, tab, plan_tier, subscription_status,
+        billing_cycle, payment_provider, country, tenant_id, incident_type,
+        incident_status, support_status, support_priority, onboarding_status,
+    )
+    result = await get_admin_insights(**params)
+    rows = _admin_insights_to_rows(result)
+    return csv_response(
+        rows=rows,
+        columns=["section", "key", "label", "value", "extra"],
+        filename=f"admin-insights-{result.meta.tab}",
+    )
+
+
+def _admin_insights_to_rows(result: Any) -> list:
+    """Flatten an AdminInsightsResponse into CSV rows (one per KPI / datum)."""
+    rows: list = []
+    for kpi in result.kpis:
+        rows.append(
+            {"section": "kpi", "key": kpi.key, "label": kpi.label, "value": kpi.value, "extra": kpi.unit or ""}
+        )
+    for sid, section in result.sections.items():
+        if section.points:
+            for p in section.points:
+                rows.append({"section": sid, "key": str(p.timestamp), "label": p.label, "value": p.value, "extra": ""})
+        if section.slices:
+            for s in section.slices:
+                rows.append({"section": sid, "key": s.key, "label": s.label, "value": s.value, "extra": s.percentage})
+        if section.buckets:
+            for b in section.buckets:
+                rows.append({"section": sid, "key": str(b.hour), "label": b.label, "value": b.value, "extra": ""})
+        if section.items:
+            for it in section.items:
+                rows.append({"section": sid, "key": it.id or "", "label": it.label, "value": it.value, "extra": it.percentage})
+        if section.rows:
+            for r in section.rows:
+                rows.append({"section": sid, "key": r.get("id") or r.get("tenantId") or "", "label": r.get("companyName") or "", "value": r.get("monthlyRevenue") or r.get("dateCreated") or "", "extra": r.get("status") or r.get("subscriptionStatus") or ""})
+    return rows
 
 
 # ─── Attention queue (Issue 1 backend) ────────────────────────────────

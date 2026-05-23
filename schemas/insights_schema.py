@@ -62,6 +62,10 @@ class InsightsSection(BaseModel):
     buckets: Optional[List[HourlyBucket]] = None
     items: Optional[List[TopItem]] = None
     events: Optional[List[RecentCheckIn]] = None
+    # ``table`` type (admin insights only): flat camelCase rows + the ordered
+    # list of keys to render. The tenant side never needs this.
+    rows: Optional[List[Dict[str, Any]]] = None
+    columns: Optional[List[str]] = None
     meta: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -87,5 +91,27 @@ class InsightsResponse(BaseModel):
     """Top-level payload for ``GET /v1/dashboard/insights``."""
 
     meta: InsightsMeta
+    kpis: List[Kpi] = Field(default_factory=list)
+    sections: Dict[str, InsightsSection] = Field(default_factory=dict)
+
+
+class AdminInsightsMeta(BaseModel):
+    """Range envelope for the PLATFORM-ADMIN insights endpoint.
+
+    No plan/role gating here — an application admin sees everything. The lower
+    bound is the platform (first tenant), not a single tenant's creation date."""
+
+    platform_launch_at: int = 0  # earliest selectable date (first tenant)
+    earliest_data: int = 0  # first day with platform data (>= launch)
+    applied_range: Dict[str, int] = Field(default_factory=dict)  # post-clamp {start,stop}
+    granularity: str = "day"  # "hour" | "day" | "week" | "month"
+    tab: str = "overview"
+    last_updated: int = Field(default_factory=lambda: int(time.time()))
+
+
+class AdminInsightsResponse(BaseModel):
+    """Top-level payload for ``GET /v1/admins/dashboard/insights``."""
+
+    meta: AdminInsightsMeta
     kpis: List[Kpi] = Field(default_factory=list)
     sections: Dict[str, InsightsSection] = Field(default_factory=dict)
