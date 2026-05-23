@@ -28,6 +28,7 @@ from bson import ObjectId
 from core.database import db
 from core.errors import AppException, ErrorCode
 from schemas.insights_schema import (
+    AppliedFilter,
     HourlyBucket,
     InsightsMeta,
     InsightsResponse,
@@ -1298,6 +1299,64 @@ async def _earliest_data(tenant_id: str, fallback: int) -> int:
     return max(min(candidates), fallback)
 
 
+# ─── Applied-filter chips ─────────────────────────────────────────────
+
+
+def _humanise(value: Any) -> str:
+    """`checked_in` -> `Checked in`, `consent_withdrawal` -> `Consent withdrawal`."""
+    return str(value).replace("_", " ").strip().capitalize()
+
+
+# (param_name, camelCase key, entity collection or None for enum/humanised).
+_TENANT_FILTER_SPECS = [
+    ("department_id", "departmentId", "departments"),
+    ("branch_id", "branchId", "branches"),
+    ("host_id", "hostId", "system_users"),
+    ("actor_id", "actorId", "system_users"),
+    ("operation_type", "operationType", None),
+    ("resource_type", "resourceType", None),
+    ("incident_type", "incidentType", None),
+    ("incident_status", "incidentStatus", None),
+    ("severity", "severity", None),
+    ("dsr_type", "dsrType", None),
+    ("dsr_status", "dsrStatus", None),
+    ("lawful_basis", "lawfulBasis", None),
+    ("status_filter", "statusFilter", None),
+]
+
+
+async def _resolve_entity_label(collection: str, tenant_id: str, raw_id: str) -> str:
+    """Best-effort entity name for a filter id; falls back to the raw id."""
+    if not ObjectId.is_valid(raw_id):
+        return raw_id
+    query: Dict[str, Any] = {"_id": ObjectId(raw_id)}
+    if collection in ("departments", "branches", "system_users"):
+        query["tenant_id"] = tenant_id
+    doc = await db[collection].find_one(query)
+    if not doc:
+        return raw_id
+    if collection == "system_users":
+        return doc.get("full_name") or doc.get("email") or raw_id
+    return doc.get("name") or raw_id
+
+
+async def _build_tenant_applied_filters(
+    tenant_id: str, values: Dict[str, Optional[str]]
+) -> List[AppliedFilter]:
+    out: List[AppliedFilter] = []
+    for param, key, collection in _TENANT_FILTER_SPECS:
+        val = values.get(param)
+        if not val:
+            continue
+        label = (
+            await _resolve_entity_label(collection, tenant_id, val)
+            if collection
+            else _humanise(val)
+        )
+        out.append(AppliedFilter(key=key, label=label))
+    return out
+
+
 # ─── Public entrypoint ────────────────────────────────────────────────
 
 
@@ -1437,6 +1496,25 @@ async def get_insights(
         key: section_results[i] for i, key in enumerate(section_keys)
     }
 
+    applied_filters = await _build_tenant_applied_filters(
+        tenant_id,
+        {
+            "department_id": department_id,
+            "branch_id": branch_id,
+            "host_id": host_id,
+            "actor_id": actor_id,
+            "operation_type": operation_type,
+            "resource_type": resource_type,
+            "incident_type": incident_type,
+            "incident_status": incident_status,
+            "severity": severity,
+            "dsr_type": dsr_type,
+            "dsr_status": dsr_status,
+            "lawful_basis": lawful_basis,
+            "status_filter": status_filter,
+        },
+    )
+
     meta = InsightsMeta(
         role_view=role,
         department_id=scope.department_id,
@@ -1448,6 +1526,7 @@ async def get_insights(
         plan_tier=tier,
         available_sections=available,
         locked_sections=locked,
+        applied_filters=applied_filters,
         last_updated=now,
     )
     return InsightsResponse(meta=meta, kpis=kpis, sections=sections)

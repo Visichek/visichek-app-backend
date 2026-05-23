@@ -69,6 +69,19 @@ class InsightsSection(BaseModel):
     meta: Dict[str, Any] = Field(default_factory=dict)
 
 
+class AppliedFilter(BaseModel):
+    """One active filter, for the removable chip strip.
+
+    ``key`` is the camelCase filter field (``branchId``, ``subscriptionStatus``,
+    ``tenantId`` …) so the FE can drop it from state on removal. ``label`` is the
+    resolved value label — the entity name for id filters
+    (branch/department/host/tenant), a humanised enum otherwise. The FE prepends
+    the field prefix (e.g. "Branch: …")."""
+
+    key: str
+    label: str
+
+
 class InsightsMeta(BaseModel):
     """Range / role / plan envelope returned alongside every Insights payload."""
 
@@ -84,6 +97,7 @@ class InsightsMeta(BaseModel):
     plan_tier: str = "free"
     available_sections: List[str] = Field(default_factory=list)
     locked_sections: List[str] = Field(default_factory=list)
+    applied_filters: List[AppliedFilter] = Field(default_factory=list)
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
@@ -103,9 +117,12 @@ class AdminInsightsMeta(BaseModel):
 
     platform_launch_at: int = 0  # earliest selectable date (first tenant)
     earliest_data: int = 0  # first day with platform data (>= launch)
-    applied_range: Dict[str, int] = Field(default_factory=dict)  # post-clamp {start,stop}
+    applied_range: Dict[str, int] = Field(
+        default_factory=dict
+    )  # post-clamp {start,stop}
     granularity: str = "day"  # "hour" | "day" | "week" | "month"
     tab: str = "overview"
+    applied_filters: List[AppliedFilter] = Field(default_factory=list)
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

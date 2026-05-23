@@ -17,7 +17,11 @@ from schemas.insights_schema import (
     InsightsSection,
     Kpi,
 )
-from services.admin_insights_service import _TAB_SECTIONS, _Filters
+from services.admin_insights_service import (
+    _TAB_SECTIONS,
+    _build_admin_applied_filters,
+    _Filters,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -38,12 +42,31 @@ class TestTabCatalogue:
 
     def test_section_ids_are_known(self):
         known = {
-            "tenantSignups", "revenue", "planTier", "topRevenue", "geography",
-            "roleBreakdown", "recentSignups", "newSubscriptions", "invoiceStatus",
-            "billingCycle", "paymentProvider", "visitorCheckIns", "visitorSignups",
-            "hourly", "topVisitors", "topActivity", "onboarding", "incidents",
-            "incidentType", "incidentStatus", "dsrStatus", "supportStatus",
-            "supportPriority", "topIncidents", "topSupport",
+            "tenantSignups",
+            "revenue",
+            "planTier",
+            "topRevenue",
+            "geography",
+            "roleBreakdown",
+            "recentSignups",
+            "newSubscriptions",
+            "invoiceStatus",
+            "billingCycle",
+            "paymentProvider",
+            "visitorCheckIns",
+            "visitorSignups",
+            "hourly",
+            "topVisitors",
+            "topActivity",
+            "onboarding",
+            "incidents",
+            "incidentType",
+            "incidentStatus",
+            "dsrStatus",
+            "supportStatus",
+            "supportPriority",
+            "topIncidents",
+            "topSupport",
         }
         for tab, ids in _TAB_SECTIONS.items():
             assert set(ids) <= known, f"{tab} references unknown section ids"
@@ -57,6 +80,28 @@ class TestFilters:
         assert f.tenant_id == "t1"
         # Unset filters default to None
         assert f.incident_type is None
+
+
+class TestAppliedFilters:
+    @pytest.mark.asyncio
+    async def test_enum_filters_humanised_with_camelcase_keys(self):
+        # enum/raw filters never touch the DB
+        chips = await _build_admin_applied_filters(
+            {
+                "subscription_status": "active",
+                "plan_tier": "premium",
+                "country": "Nigeria",
+            }
+        )
+        by_key = {c.key: c.label for c in chips}
+        assert by_key["subscriptionStatus"] == "Active"
+        assert by_key["planTier"] == "Premium"
+        assert by_key["country"] == "Nigeria"  # raw value preserved
+
+    @pytest.mark.asyncio
+    async def test_unset_filters_are_omitted(self):
+        chips = await _build_admin_applied_filters({"plan_tier": None, "country": ""})
+        assert chips == []
 
 
 class TestTableSection:
@@ -74,13 +119,15 @@ class TestTableSection:
 
 class TestAdminInsightsRoute:
     @pytest.mark.asyncio
-    async def test_returns_envelope_with_table_section(self, cleanup_dependency_overrides):
+    async def test_returns_envelope_with_table_section(
+        self, cleanup_dependency_overrides
+    ):
         from security.account_status_check import (
             check_admin_account_status_and_permissions,
         )
 
-        app.dependency_overrides[check_admin_account_status_and_permissions] = (
-            lambda: MagicMock()
+        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: (
+            MagicMock()
         )
 
         fake = AdminInsightsResponse(

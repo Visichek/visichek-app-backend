@@ -26,6 +26,7 @@ from core.database import db
 from schemas.insights_schema import (
     AdminInsightsMeta,
     AdminInsightsResponse,
+    AppliedFilter,
     HourlyBucket,
     InsightsSection,
     Kpi,
@@ -43,6 +44,7 @@ from services.insights_service import (
     _auto_granularity,
     _bucket_boundaries,
     _fold_counts,
+    _humanise,
     _raw_unit_counts,
     _resolve_range,
     _trend,
@@ -54,7 +56,13 @@ _DAY = 86400
 # computed.
 _TAB_SECTIONS: Dict[str, List[str]] = {
     "overview": ["tenantSignups", "revenue", "planTier", "topRevenue"],
-    "tenants": ["tenantSignups", "planTier", "geography", "roleBreakdown", "recentSignups"],
+    "tenants": [
+        "tenantSignups",
+        "planTier",
+        "geography",
+        "roleBreakdown",
+        "recentSignups",
+    ],
     "billing": [
         "revenue",
         "newSubscriptions",
@@ -173,10 +181,14 @@ async def _raw_unit_sums(
         if not key:
             continue
         try:
-            dt = datetime.strptime(key, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            dt = datetime.strptime(key, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc
+            )
         except ValueError:
             continue
-        out[int(dt.timestamp())] = out.get(int(dt.timestamp()), 0) + int(doc.get("value", 0) or 0)
+        out[int(dt.timestamp())] = out.get(int(dt.timestamp()), 0) + int(
+            doc.get("value", 0) or 0
+        )
     return out
 
 
@@ -311,7 +323,13 @@ async def _ts_section(
     boundaries = _bucket_boundaries(start, stop, granularity)
     if sum_field:
         raw = await _raw_unit_sums(
-            collection, match, ts_field, sum_field, start=start, stop=stop, granularity=granularity
+            collection,
+            match,
+            ts_field,
+            sum_field,
+            start=start,
+            stop=stop,
+            granularity=granularity,
         )
     else:
         raw = await _raw_unit_counts(
@@ -325,7 +343,9 @@ async def _ts_section(
     )
 
 
-def _table_section(title: str, rows: List[Dict[str, Any]], columns: List[str]) -> InsightsSection:
+def _table_section(
+    title: str, rows: List[Dict[str, Any]], columns: List[str]
+) -> InsightsSection:
     return InsightsSection(type="table", title=title, rows=rows, columns=columns)
 
 
@@ -338,7 +358,9 @@ async def _recent_signup_rows(f: _Filters, limit: int = 10) -> List[Dict[str, An
         sub = await db["subscriptions"].find_one({"tenant_id": tid})
         plan_doc = None
         if sub and sub.get("plan_id"):
-            plan_doc = await db["plans"].find_one({"_id": _safe_objectid(sub["plan_id"])})
+            plan_doc = await db["plans"].find_one(
+                {"_id": _safe_objectid(sub["plan_id"])}
+            )
         rows.append(
             {
                 "id": tid,
@@ -378,7 +400,12 @@ async def _mrr_arr() -> Tuple[float, float]:
     async for doc in db["subscriptions"].aggregate(
         [
             {"$match": {"status": {"$in": ["active", "trialing"]}}},
-            {"$group": {"_id": "$billing_cycle", "total": {"$sum": "$effective_price"}}},
+            {
+                "$group": {
+                    "_id": "$billing_cycle",
+                    "total": {"$sum": "$effective_price"},
+                }
+            },
         ]
     ):
         if doc["_id"] == "monthly":
@@ -401,7 +428,10 @@ async def _payment_success_rate(start: int, stop: int) -> float:
 
 async def _onboarding_acceptance_rate(start: int, stop: int) -> float:
     accepted = await db["onboarding_submissions"].count_documents(
-        {"status": {"$in": ["accepted", "partial_accepted"]}, "date_created": {"$gte": start, "$lte": stop}}
+        {
+            "status": {"$in": ["accepted", "partial_accepted"]},
+            "date_created": {"$gte": start, "$lte": stop},
+        }
     )
     rejected = await db["onboarding_submissions"].count_documents(
         {"status": "rejected", "date_created": {"$gte": start, "$lte": stop}}
@@ -422,34 +452,112 @@ async def _build_kpis(
             db["tenant_companies"].count_documents(tenant_base),
             db["tenant_companies"].count_documents({**tenant_base, "is_active": True}),
             _count_in("tenant_companies", tenant_base, "date_created", start, stop),
-            _count_in("tenant_companies", tenant_base, "date_created", prev_start, prev_stop),
+            _count_in(
+                "tenant_companies", tenant_base, "date_created", prev_start, prev_stop
+            ),
         )
         mrr, _arr = await _mrr_arr()
-        (active_subs, trialing, open_inc, crit, open_dsr, visitors_today, checkins_today,
-         rev_cur, rev_prev, pay_rate, dunning) = await asyncio.gather(
+        (
+            active_subs,
+            trialing,
+            open_inc,
+            crit,
+            open_dsr,
+            visitors_today,
+            checkins_today,
+            rev_cur,
+            rev_prev,
+            pay_rate,
+            dunning,
+        ) = await asyncio.gather(
             db["subscriptions"].count_documents({"status": "active"}),
             db["subscriptions"].count_documents({"status": "trialing"}),
-            db["incident_logs"].count_documents({"status": {"$nin": ["closed", "resolved"]}}),
+            db["incident_logs"].count_documents(
+                {"status": {"$nin": ["closed", "resolved"]}}
+            ),
             db["incident_logs"].count_documents({"risk_level": "critical"}),
-            db["data_subject_requests"].count_documents({"status": {"$nin": ["completed", "rejected"]}}),
-            db["visitor_profiles"].count_documents({"deleted_at": None, "date_created": {"$gte": _start_of_today_ts(now)}}),
-            db["visit_sessions"].count_documents({"check_in_time": {"$gte": _start_of_today_ts(now)}}),
+            db["data_subject_requests"].count_documents(
+                {"status": {"$nin": ["completed", "rejected"]}}
+            ),
+            db["visitor_profiles"].count_documents(
+                {"deleted_at": None, "date_created": {"$gte": _start_of_today_ts(now)}}
+            ),
+            db["visit_sessions"].count_documents(
+                {"check_in_time": {"$gte": _start_of_today_ts(now)}}
+            ),
             _sum_minor_in("invoices", {"status": "paid"}, "paid_at", start, stop),
-            _sum_minor_in("invoices", {"status": "paid"}, "paid_at", prev_start, prev_stop),
+            _sum_minor_in(
+                "invoices", {"status": "paid"}, "paid_at", prev_start, prev_stop
+            ),
             _payment_success_rate(start, stop),
             db["subscriptions"].count_documents({"status": "past_due"}),
         )
         return [
-            Kpi(key="totalTenants", label="Total tenants", value=int(total), description=f"{int(active)} active"),
-            Kpi(key="mrr", label="MRR", value=mrr, unit="₦", description="Monthly recurring revenue (major units)"),
-            Kpi(key="activeSubscriptions", label="Active subscriptions", value=int(active_subs), description=f"{int(trialing)} trialing"),
-            Kpi(key="openIncidents", label="Open incidents", value=int(open_inc), description=f"{int(crit)} critical"),
-            Kpi(key="openDsr", label="Open DSRs", value=int(open_dsr), description="Pending data-subject requests"),
-            Kpi(key="visitorsToday", label="Visitors today", value=int(visitors_today), description=f"{int(checkins_today)} check-ins"),
-            Kpi(key="revenueInRangeMinor", label="Revenue (range)", value=int(rev_cur), unit="minor", trend=_maybe_trend(rev_cur, rev_prev), description="Paid-invoice revenue in range (minor units)"),
-            Kpi(key="newTenantsInRange", label="New tenants", value=int(new_cur), trend=_maybe_trend(new_cur, new_prev), description="Signups in range"),
-            Kpi(key="paymentSuccessRate", label="Payment success", value=pay_rate, unit="%", description="Succeeded / attempted in range"),
-            Kpi(key="dunningQueueSize", label="Dunning queue", value=int(dunning), description="Past-due subscriptions"),
+            Kpi(
+                key="totalTenants",
+                label="Total tenants",
+                value=int(total),
+                description=f"{int(active)} active",
+            ),
+            Kpi(
+                key="mrr",
+                label="MRR",
+                value=mrr,
+                unit="₦",
+                description="Monthly recurring revenue (major units)",
+            ),
+            Kpi(
+                key="activeSubscriptions",
+                label="Active subscriptions",
+                value=int(active_subs),
+                description=f"{int(trialing)} trialing",
+            ),
+            Kpi(
+                key="openIncidents",
+                label="Open incidents",
+                value=int(open_inc),
+                description=f"{int(crit)} critical",
+            ),
+            Kpi(
+                key="openDsr",
+                label="Open DSRs",
+                value=int(open_dsr),
+                description="Pending data-subject requests",
+            ),
+            Kpi(
+                key="visitorsToday",
+                label="Visitors today",
+                value=int(visitors_today),
+                description=f"{int(checkins_today)} check-ins",
+            ),
+            Kpi(
+                key="revenueInRangeMinor",
+                label="Revenue (range)",
+                value=int(rev_cur),
+                unit="minor",
+                trend=_maybe_trend(rev_cur, rev_prev),
+                description="Paid-invoice revenue in range (minor units)",
+            ),
+            Kpi(
+                key="newTenantsInRange",
+                label="New tenants",
+                value=int(new_cur),
+                trend=_maybe_trend(new_cur, new_prev),
+                description="Signups in range",
+            ),
+            Kpi(
+                key="paymentSuccessRate",
+                label="Payment success",
+                value=pay_rate,
+                unit="%",
+                description="Succeeded / attempted in range",
+            ),
+            Kpi(
+                key="dunningQueueSize",
+                label="Dunning queue",
+                value=int(dunning),
+                description="Past-due subscriptions",
+            ),
         ]
 
     if tab == "tenants":
@@ -457,67 +565,191 @@ async def _build_kpis(
             db["tenant_companies"].count_documents(tenant_base),
             db["tenant_companies"].count_documents({**tenant_base, "is_active": True}),
             _count_in("tenant_companies", tenant_base, "date_created", start, stop),
-            _count_in("tenant_companies", tenant_base, "date_created", prev_start, prev_stop),
+            _count_in(
+                "tenant_companies", tenant_base, "date_created", prev_start, prev_stop
+            ),
         )
         return [
             Kpi(key="totalTenants", label="Total tenants", value=int(total)),
             Kpi(key="activeTenants", label="Active tenants", value=int(active)),
-            Kpi(key="inactiveTenants", label="Inactive tenants", value=max(int(total) - int(active), 0)),
-            Kpi(key="newTenantsInRange", label="New tenants", value=int(new_cur), trend=_maybe_trend(new_cur, new_prev), description="Signups in range"),
+            Kpi(
+                key="inactiveTenants",
+                label="Inactive tenants",
+                value=max(int(total) - int(active), 0),
+            ),
+            Kpi(
+                key="newTenantsInRange",
+                label="New tenants",
+                value=int(new_cur),
+                trend=_maybe_trend(new_cur, new_prev),
+                description="Signups in range",
+            ),
         ]
 
     if tab == "billing":
         mrr, arr = await _mrr_arr()
         rev_cur, rev_prev, pay_rate, paid_count, past_due = await asyncio.gather(
             _sum_minor_in("invoices", {"status": "paid"}, "paid_at", start, stop),
-            _sum_minor_in("invoices", {"status": "paid"}, "paid_at", prev_start, prev_stop),
+            _sum_minor_in(
+                "invoices", {"status": "paid"}, "paid_at", prev_start, prev_stop
+            ),
             _payment_success_rate(start, stop),
             _count_in("invoices", {"status": "paid"}, "paid_at", start, stop),
             db["subscriptions"].count_documents({"status": "past_due"}),
         )
         avg_invoice = int(rev_cur / paid_count) if paid_count else 0
         return [
-            Kpi(key="mrr", label="MRR", value=mrr, unit="₦", description="Monthly recurring revenue"),
-            Kpi(key="arr", label="ARR", value=arr, unit="₦", description="Annual recurring revenue"),
-            Kpi(key="revenueInRangeMinor", label="Revenue (range)", value=int(rev_cur), unit="minor", trend=_maybe_trend(rev_cur, rev_prev), description="Paid-invoice revenue in range (minor units)"),
-            Kpi(key="paymentSuccessRate", label="Payment success", value=pay_rate, unit="%", description="Succeeded / attempted in range"),
-            Kpi(key="avgInvoiceMinor", label="Avg invoice", value=avg_invoice, unit="minor", description="Range revenue / paid invoices"),
-            Kpi(key="pastDueSubscriptions", label="Past due", value=int(past_due), description="Subscriptions in dunning"),
+            Kpi(
+                key="mrr",
+                label="MRR",
+                value=mrr,
+                unit="₦",
+                description="Monthly recurring revenue",
+            ),
+            Kpi(
+                key="arr",
+                label="ARR",
+                value=arr,
+                unit="₦",
+                description="Annual recurring revenue",
+            ),
+            Kpi(
+                key="revenueInRangeMinor",
+                label="Revenue (range)",
+                value=int(rev_cur),
+                unit="minor",
+                trend=_maybe_trend(rev_cur, rev_prev),
+                description="Paid-invoice revenue in range (minor units)",
+            ),
+            Kpi(
+                key="paymentSuccessRate",
+                label="Payment success",
+                value=pay_rate,
+                unit="%",
+                description="Succeeded / attempted in range",
+            ),
+            Kpi(
+                key="avgInvoiceMinor",
+                label="Avg invoice",
+                value=avg_invoice,
+                unit="minor",
+                description="Range revenue / paid invoices",
+            ),
+            Kpi(
+                key="pastDueSubscriptions",
+                label="Past due",
+                value=int(past_due),
+                description="Subscriptions in dunning",
+            ),
         ]
 
     if tab == "activity":
         start_today = _start_of_today_ts(now)
-        visitors_today, ci_cur, ci_prev, su_cur, su_prev, onboard_rate = await asyncio.gather(
-            db["visitor_profiles"].count_documents({"deleted_at": None, "date_created": {"$gte": start_today}}),
+        (
+            visitors_today,
+            ci_cur,
+            ci_prev,
+            su_cur,
+            su_prev,
+            onboard_rate,
+        ) = await asyncio.gather(
+            db["visitor_profiles"].count_documents(
+                {"deleted_at": None, "date_created": {"$gte": start_today}}
+            ),
             _count_in("visit_sessions", {}, "check_in_time", start, stop),
             _count_in("visit_sessions", {}, "check_in_time", prev_start, prev_stop),
-            _count_in("visitor_profiles", {"deleted_at": None}, "date_created", start, stop),
-            _count_in("visitor_profiles", {"deleted_at": None}, "date_created", prev_start, prev_stop),
+            _count_in(
+                "visitor_profiles", {"deleted_at": None}, "date_created", start, stop
+            ),
+            _count_in(
+                "visitor_profiles",
+                {"deleted_at": None},
+                "date_created",
+                prev_start,
+                prev_stop,
+            ),
             _onboarding_acceptance_rate(start, stop),
         )
         return [
-            Kpi(key="visitorsToday", label="Visitors today", value=int(visitors_today), description="New visitor profiles today"),
-            Kpi(key="visitorCheckInsInRange", label="Check-ins", value=int(ci_cur), trend=_maybe_trend(ci_cur, ci_prev), description="Cross-tenant check-ins in range"),
-            Kpi(key="newSignupsInRange", label="New visitors", value=int(su_cur), trend=_maybe_trend(su_cur, su_prev), description="Visitor signups in range"),
-            Kpi(key="onboardingAcceptanceRate", label="Onboarding acceptance", value=onboard_rate, unit="%", description="Accepted / decided in range"),
+            Kpi(
+                key="visitorsToday",
+                label="Visitors today",
+                value=int(visitors_today),
+                description="New visitor profiles today",
+            ),
+            Kpi(
+                key="visitorCheckInsInRange",
+                label="Check-ins",
+                value=int(ci_cur),
+                trend=_maybe_trend(ci_cur, ci_prev),
+                description="Cross-tenant check-ins in range",
+            ),
+            Kpi(
+                key="newSignupsInRange",
+                label="New visitors",
+                value=int(su_cur),
+                trend=_maybe_trend(su_cur, su_prev),
+                description="Visitor signups in range",
+            ),
+            Kpi(
+                key="onboardingAcceptanceRate",
+                label="Onboarding acceptance",
+                value=onboard_rate,
+                unit="%",
+                description="Accepted / decided in range",
+            ),
         ]
 
     if tab == "risk":
         open_inc, crit, approaching, open_dsr, support_open = await asyncio.gather(
-            db["incident_logs"].count_documents({"status": {"$nin": ["closed", "resolved"]}}),
+            db["incident_logs"].count_documents(
+                {"status": {"$nin": ["closed", "resolved"]}}
+            ),
             db["incident_logs"].count_documents({"risk_level": "critical"}),
             db["incident_logs"].count_documents(
-                {"notification_deadline": {"$gte": now, "$lte": now + _DAY}, "notification_sent_at": None}
+                {
+                    "notification_deadline": {"$gte": now, "$lte": now + _DAY},
+                    "notification_sent_at": None,
+                }
             ),
-            db["data_subject_requests"].count_documents({"status": {"$nin": ["completed", "rejected"]}}),
-            db["support_cases"].count_documents({"status": {"$nin": ["resolved", "closed"]}}),
+            db["data_subject_requests"].count_documents(
+                {"status": {"$nin": ["completed", "rejected"]}}
+            ),
+            db["support_cases"].count_documents(
+                {"status": {"$nin": ["resolved", "closed"]}}
+            ),
         )
         return [
-            Kpi(key="openIncidents", label="Open incidents", value=int(open_inc), description="Not yet closed"),
-            Kpi(key="criticalIncidents", label="Critical incidents", value=int(crit), description="Critical risk level"),
-            Kpi(key="incidentsApproachingDeadline", label="Approaching deadline", value=int(approaching), description="NDPC 72h within 24h"),
-            Kpi(key="openDsr", label="Open DSRs", value=int(open_dsr), description="Pending data-subject requests"),
-            Kpi(key="supportCasesOpen", label="Open support cases", value=int(support_open), description="Awaiting reply"),
+            Kpi(
+                key="openIncidents",
+                label="Open incidents",
+                value=int(open_inc),
+                description="Not yet closed",
+            ),
+            Kpi(
+                key="criticalIncidents",
+                label="Critical incidents",
+                value=int(crit),
+                description="Critical risk level",
+            ),
+            Kpi(
+                key="incidentsApproachingDeadline",
+                label="Approaching deadline",
+                value=int(approaching),
+                description="NDPC 72h within 24h",
+            ),
+            Kpi(
+                key="openDsr",
+                label="Open DSRs",
+                value=int(open_dsr),
+                description="Pending data-subject requests",
+            ),
+            Kpi(
+                key="supportCasesOpen",
+                label="Open support cases",
+                value=int(support_open),
+                description="Awaiting reply",
+            ),
         ]
 
     return []
@@ -534,49 +766,91 @@ async def _build_section(
 
     if sid == "tenantSignups":
         return await _ts_section(
-            "tenant_companies", tenant_base, "date_created",
-            title="Tenant signups", value_label="Signups",
-            start=start, stop=stop, granularity=granularity,
+            "tenant_companies",
+            tenant_base,
+            "date_created",
+            title="Tenant signups",
+            value_label="Signups",
+            start=start,
+            stop=stop,
+            granularity=granularity,
         )
     if sid == "revenue":
         return await _ts_section(
-            "invoices", {"status": "paid"}, "paid_at",
-            title="Revenue", value_label="Revenue (minor)",
-            start=start, stop=stop, granularity=granularity, sum_field="total_minor",
+            "invoices",
+            {"status": "paid"},
+            "paid_at",
+            title="Revenue",
+            value_label="Revenue (minor)",
+            start=start,
+            stop=stop,
+            granularity=granularity,
+            sum_field="total_minor",
         )
     if sid == "newSubscriptions":
         return await _ts_section(
-            "subscriptions", sub_base, "date_created",
-            title="New subscriptions", value_label="Subscriptions",
-            start=start, stop=stop, granularity=granularity,
+            "subscriptions",
+            sub_base,
+            "date_created",
+            title="New subscriptions",
+            value_label="Subscriptions",
+            start=start,
+            stop=stop,
+            granularity=granularity,
         )
     if sid == "visitorCheckIns":
         return await _ts_section(
-            "visit_sessions", {} if not f.tenant_id else {"tenant_id": f.tenant_id}, "check_in_time",
-            title="Visitor check-ins", value_label="Check-ins",
-            start=start, stop=stop, granularity=granularity,
+            "visit_sessions",
+            {} if not f.tenant_id else {"tenant_id": f.tenant_id},
+            "check_in_time",
+            title="Visitor check-ins",
+            value_label="Check-ins",
+            start=start,
+            stop=stop,
+            granularity=granularity,
         )
     if sid == "visitorSignups":
         return await _ts_section(
-            "visitor_profiles", {"deleted_at": None}, "date_created",
-            title="Visitor signups", value_label="Signups",
-            start=start, stop=stop, granularity=granularity,
+            "visitor_profiles",
+            {"deleted_at": None},
+            "date_created",
+            title="Visitor signups",
+            value_label="Signups",
+            start=start,
+            stop=stop,
+            granularity=granularity,
         )
     if sid == "incidents":
         section = await _ts_section(
-            "incident_logs", _incident_match(f), "date_created",
-            title="Incidents", value_label="Incidents",
-            start=start, stop=stop, granularity=granularity,
+            "incident_logs",
+            _incident_match(f),
+            "date_created",
+            title="Incidents",
+            value_label="Incidents",
+            start=start,
+            stop=stop,
+            granularity=granularity,
         )
         past_deadline, approaching = await asyncio.gather(
             db["incident_logs"].count_documents(
-                {"notification_deadline": {"$lt": now}, "notification_sent_at": None, "status": {"$nin": ["closed", "resolved"]}}
+                {
+                    "notification_deadline": {"$lt": now},
+                    "notification_sent_at": None,
+                    "status": {"$nin": ["closed", "resolved"]},
+                }
             ),
             db["incident_logs"].count_documents(
-                {"notification_deadline": {"$gte": now, "$lte": now + _DAY}, "notification_sent_at": None, "status": {"$nin": ["closed", "resolved"]}}
+                {
+                    "notification_deadline": {"$gte": now, "$lte": now + _DAY},
+                    "notification_sent_at": None,
+                    "status": {"$nin": ["closed", "resolved"]},
+                }
             ),
         )
-        section.meta = {"pastDeadline": int(past_deadline), "approachingDeadline": int(approaching)}
+        section.meta = {
+            "pastDeadline": int(past_deadline),
+            "approachingDeadline": int(approaching),
+        }
         return section
 
     if sid == "planTier":
@@ -592,92 +866,266 @@ async def _build_section(
             plan_doc = await db["plans"].find_one({"_id": _safe_objectid(doc["_id"])})
             tier = (plan_doc or {}).get("tier", "unknown")
             tier_counts[tier] = tier_counts.get(tier, 0) + int(doc["count"])
-        return InsightsSection(type="distribution", title="Plan tiers", slices=_build_distribution(tier_counts))
+        return InsightsSection(
+            type="distribution",
+            title="Plan tiers",
+            slices=_build_distribution(tier_counts),
+        )
 
     if sid == "geography":
-        counts = await _group_count("tenant_companies", {**tenant_base, "country_of_hosting": {"$ne": None}}, "country_of_hosting")
-        return InsightsSection(type="distribution", title="Tenants by country", slices=_build_distribution(counts))
+        counts = await _group_count(
+            "tenant_companies",
+            {**tenant_base, "country_of_hosting": {"$ne": None}},
+            "country_of_hosting",
+        )
+        return InsightsSection(
+            type="distribution",
+            title="Tenants by country",
+            slices=_build_distribution(counts),
+        )
     if sid == "roleBreakdown":
         counts = await _group_count("system_users", {}, "role")
-        return InsightsSection(type="distribution", title="System-user roles", slices=_build_distribution(counts))
+        return InsightsSection(
+            type="distribution",
+            title="System-user roles",
+            slices=_build_distribution(counts),
+        )
     if sid == "invoiceStatus":
-        counts = await _group_count("invoices", {"date_created": {"$gte": start, "$lte": stop}}, "status")
-        return InsightsSection(type="distribution", title="Invoices by status", slices=_build_distribution(counts))
+        counts = await _group_count(
+            "invoices", {"date_created": {"$gte": start, "$lte": stop}}, "status"
+        )
+        return InsightsSection(
+            type="distribution",
+            title="Invoices by status",
+            slices=_build_distribution(counts),
+        )
     if sid == "billingCycle":
-        counts = await _group_count("subscriptions", {**sub_base, "status": {"$in": ["active", "trialing"]}}, "billing_cycle")
-        return InsightsSection(type="distribution", title="Billing cycle", slices=_build_distribution(counts, {"monthly": "Monthly", "yearly": "Yearly"}))
+        counts = await _group_count(
+            "subscriptions",
+            {**sub_base, "status": {"$in": ["active", "trialing"]}},
+            "billing_cycle",
+        )
+        return InsightsSection(
+            type="distribution",
+            title="Billing cycle",
+            slices=_build_distribution(
+                counts, {"monthly": "Monthly", "yearly": "Yearly"}
+            ),
+        )
     if sid == "paymentProvider":
-        counts = await _group_count("tenant_companies", {"is_active": True, "default_payment_provider": {"$ne": None}}, "default_payment_provider")
-        return InsightsSection(type="distribution", title="Payment provider", slices=_build_distribution(counts))
+        counts = await _group_count(
+            "tenant_companies",
+            {"is_active": True, "default_payment_provider": {"$ne": None}},
+            "default_payment_provider",
+        )
+        return InsightsSection(
+            type="distribution",
+            title="Payment provider",
+            slices=_build_distribution(counts),
+        )
     if sid == "incidentType":
-        counts = await _group_count("incident_logs", {**_incident_match(f), "date_created": {"$gte": start, "$lte": stop}}, "incident_type")
-        return InsightsSection(type="distribution", title="Incidents by type", slices=_build_distribution(counts))
+        counts = await _group_count(
+            "incident_logs",
+            {**_incident_match(f), "date_created": {"$gte": start, "$lte": stop}},
+            "incident_type",
+        )
+        return InsightsSection(
+            type="distribution",
+            title="Incidents by type",
+            slices=_build_distribution(counts),
+        )
     if sid == "incidentStatus":
-        counts = await _group_count("incident_logs", {**_incident_match(f), "date_created": {"$gte": start, "$lte": stop}}, "status")
-        return InsightsSection(type="distribution", title="Incidents by status", slices=_build_distribution(counts))
+        counts = await _group_count(
+            "incident_logs",
+            {**_incident_match(f), "date_created": {"$gte": start, "$lte": stop}},
+            "status",
+        )
+        return InsightsSection(
+            type="distribution",
+            title="Incidents by status",
+            slices=_build_distribution(counts),
+        )
     if sid == "dsrStatus":
-        counts = await _group_count("data_subject_requests", {"date_created": {"$gte": start, "$lte": stop}}, "status")
-        return InsightsSection(type="distribution", title="DSRs by status", slices=_build_distribution(counts))
+        counts = await _group_count(
+            "data_subject_requests",
+            {"date_created": {"$gte": start, "$lte": stop}},
+            "status",
+        )
+        return InsightsSection(
+            type="distribution",
+            title="DSRs by status",
+            slices=_build_distribution(counts),
+        )
     if sid == "supportStatus":
-        counts = await _group_count("support_cases", {**_support_match(f), "date_created": {"$gte": start, "$lte": stop}}, "status")
-        return InsightsSection(type="distribution", title="Support by status", slices=_build_distribution(counts))
+        counts = await _group_count(
+            "support_cases",
+            {**_support_match(f), "date_created": {"$gte": start, "$lte": stop}},
+            "status",
+        )
+        return InsightsSection(
+            type="distribution",
+            title="Support by status",
+            slices=_build_distribution(counts),
+        )
     if sid == "supportPriority":
-        counts = await _group_count("support_cases", {**_support_match(f), "date_created": {"$gte": start, "$lte": stop}}, "priority")
-        return InsightsSection(type="distribution", title="Support by priority", slices=_build_distribution(counts))
+        counts = await _group_count(
+            "support_cases",
+            {**_support_match(f), "date_created": {"$gte": start, "$lte": stop}},
+            "priority",
+        )
+        return InsightsSection(
+            type="distribution",
+            title="Support by priority",
+            slices=_build_distribution(counts),
+        )
     if sid == "onboarding":
         onboard_match: Dict[str, Any] = {"date_created": {"$gte": start, "$lte": stop}}
         if f.onboarding_status:
             onboard_match["status"] = f.onboarding_status
         counts = await _group_count("onboarding_submissions", onboard_match, "status")
-        return InsightsSection(type="distribution", title="Onboarding pipeline", slices=_build_distribution(counts))
+        return InsightsSection(
+            type="distribution",
+            title="Onboarding pipeline",
+            slices=_build_distribution(counts),
+        )
 
     if sid == "hourly":
-        hourly_match: Dict[str, Any] = {} if not f.tenant_id else {"tenant_id": f.tenant_id}
+        hourly_match: Dict[str, Any] = (
+            {} if not f.tenant_id else {"tenant_id": f.tenant_id}
+        )
         hour_counts: Dict[int, int] = {}
         async for doc in db["visit_sessions"].aggregate(
             [
-                {"$match": {**hourly_match, "check_in_time": {"$gte": start, "$lte": stop}}},
-                {"$group": {"_id": {"$hour": {"date": {"$toDate": {"$multiply": ["$check_in_time", 1000]}}, "timezone": "UTC"}}, "count": {"$sum": 1}}},
+                {
+                    "$match": {
+                        **hourly_match,
+                        "check_in_time": {"$gte": start, "$lte": stop},
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": {
+                            "$hour": {
+                                "date": {
+                                    "$toDate": {"$multiply": ["$check_in_time", 1000]}
+                                },
+                                "timezone": "UTC",
+                            }
+                        },
+                        "count": {"$sum": 1},
+                    }
+                },
             ]
         ):
             hour_counts[int(doc.get("_id") or 0)] = int(doc.get("count", 0))
-        buckets = [HourlyBucket(hour=h, label=f"{h:02d}:00", value=hour_counts.get(h, 0)) for h in range(24)]
-        return InsightsSection(type="hourly", title="Check-ins by hour", buckets=buckets)
+        buckets = [
+            HourlyBucket(hour=h, label=f"{h:02d}:00", value=hour_counts.get(h, 0))
+            for h in range(24)
+        ]
+        return InsightsSection(
+            type="hourly", title="Check-ins by hour", buckets=buckets
+        )
 
     if sid == "topVisitors":
         return InsightsSection(
-            type="topList", title="Top tenants by visitors",
-            items=await _top_tenants("visit_sessions", {"check_in_time": {"$gte": start, "$lte": stop}}),
+            type="topList",
+            title="Top tenants by visitors",
+            items=await _top_tenants(
+                "visit_sessions", {"check_in_time": {"$gte": start, "$lte": stop}}
+            ),
         )
     if sid == "topActivity":
         return InsightsSection(
-            type="topList", title="Top tenants by activity",
-            items=await _top_tenants("visit_sessions", {"check_in_time": {"$gte": start, "$lte": stop}}),
+            type="topList",
+            title="Top tenants by activity",
+            items=await _top_tenants(
+                "visit_sessions", {"check_in_time": {"$gte": start, "$lte": stop}}
+            ),
         )
     if sid == "topIncidents":
         return InsightsSection(
-            type="topList", title="Top tenants by incidents",
-            items=await _top_tenants("incident_logs", {**_incident_match(f), "date_created": {"$gte": start, "$lte": stop}}),
+            type="topList",
+            title="Top tenants by incidents",
+            items=await _top_tenants(
+                "incident_logs",
+                {**_incident_match(f), "date_created": {"$gte": start, "$lte": stop}},
+            ),
         )
     if sid == "topSupport":
         return InsightsSection(
-            type="topList", title="Top tenants by support",
-            items=await _top_tenants("support_cases", {**_support_match(f), "status": {"$nin": ["resolved", "closed"]}}),
+            type="topList",
+            title="Top tenants by support",
+            items=await _top_tenants(
+                "support_cases",
+                {**_support_match(f), "status": {"$nin": ["resolved", "closed"]}},
+            ),
         )
 
     if sid == "topRevenue":
         return _table_section(
-            "Top tenants by revenue", await _top_revenue_rows(),
+            "Top tenants by revenue",
+            await _top_revenue_rows(),
             ["companyName", "planName", "status", "monthlyRevenue"],
         )
     if sid == "recentSignups":
         return _table_section(
-            "Recent tenant signups", await _recent_signup_rows(f),
-            ["companyName", "planName", "planTier", "subscriptionStatus", "countryOfHosting", "dateCreated"],
+            "Recent tenant signups",
+            await _recent_signup_rows(f),
+            [
+                "companyName",
+                "planName",
+                "planTier",
+                "subscriptionStatus",
+                "countryOfHosting",
+                "dateCreated",
+            ],
         )
 
     # Unknown section id -> empty table (defensive; never happens via _TAB_SECTIONS).
     return InsightsSection(type="table", title=sid, rows=[], columns=[])
+
+
+# ─── Applied-filter chips ─────────────────────────────────────────────
+
+# (param_name, camelCase key, kind: "tenant" | "raw" | "enum").
+_ADMIN_FILTER_SPECS = [
+    ("plan_tier", "planTier", "enum"),
+    ("subscription_status", "subscriptionStatus", "enum"),
+    ("billing_cycle", "billingCycle", "enum"),
+    ("payment_provider", "paymentProvider", "enum"),
+    ("country", "country", "raw"),
+    ("tenant_id", "tenantId", "tenant"),
+    ("incident_type", "incidentType", "enum"),
+    ("incident_status", "incidentStatus", "enum"),
+    ("support_status", "supportStatus", "enum"),
+    ("support_priority", "supportPriority", "enum"),
+    ("onboarding_status", "onboardingStatus", "enum"),
+]
+
+
+async def _resolve_tenant_label(raw_id: str) -> str:
+    if not ObjectId.is_valid(raw_id):
+        return raw_id
+    doc = await db["tenant_companies"].find_one({"_id": ObjectId(raw_id)})
+    return (doc or {}).get("company_name") or raw_id
+
+
+async def _build_admin_applied_filters(
+    values: Dict[str, Optional[str]],
+) -> List[AppliedFilter]:
+    out: List[AppliedFilter] = []
+    for param, key, kind in _ADMIN_FILTER_SPECS:
+        val = values.get(param)
+        if not val:
+            continue
+        if kind == "tenant":
+            label = await _resolve_tenant_label(val)
+        elif kind == "raw":
+            label = str(val)
+        else:
+            label = _humanise(val)
+        out.append(AppliedFilter(key=key, label=label))
+    return out
 
 
 # ─── Public entrypoint ────────────────────────────────────────────────
@@ -706,9 +1154,14 @@ async def get_admin_insights(
     )
     section_list: List[InsightsSection] = list(
         await asyncio.gather(
-            *[_build_section(sid, f, eff_start, eff_stop, gran, now=now) for sid in section_ids]
+            *[
+                _build_section(sid, f, eff_start, eff_stop, gran, now=now)
+                for sid in section_ids
+            ]
         )
     )
+
+    applied_filters = await _build_admin_applied_filters(filters)
 
     meta = AdminInsightsMeta(
         platform_launch_at=launch_at,
@@ -716,6 +1169,7 @@ async def get_admin_insights(
         applied_range={"start": eff_start, "stop": eff_stop},
         granularity=gran,
         tab=active_tab,
+        applied_filters=applied_filters,
         last_updated=now,
     )
     return AdminInsightsResponse(

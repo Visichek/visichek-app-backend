@@ -16,6 +16,8 @@ from schemas.insights_schema import InsightsMeta, InsightsResponse, Kpi
 from services.insights_service import (
     _auto_granularity,
     _bucket_boundaries,
+    _build_tenant_applied_filters,
+    _humanise,
     _resolve_range,
     _trend,
 )
@@ -103,6 +105,35 @@ class TestTrend:
         t = _trend(50, 50, good_when_up=False)
         assert t.direction == "flat"
         assert t.is_good is True
+
+
+class TestAppliedFilters:
+    def test_humanise(self):
+        assert _humanise("checked_in") == "Checked in"
+        assert _humanise("consent_withdrawal") == "Consent withdrawal"
+
+    @pytest.mark.asyncio
+    async def test_enum_filters_get_camelcase_keys_no_db(self):
+        # only enum filters -> never touches the DB
+        chips = await _build_tenant_applied_filters(
+            "tenant-1",
+            {
+                "operation_type": "create",
+                "incident_status": "open",
+                "dsr_type": "consent_withdrawal",
+            },
+        )
+        by_key = {c.key: c.label for c in chips}
+        assert by_key["operationType"] == "Create"
+        assert by_key["incidentStatus"] == "Open"
+        assert by_key["dsrType"] == "Consent withdrawal"
+
+    @pytest.mark.asyncio
+    async def test_unset_filters_omitted(self):
+        chips = await _build_tenant_applied_filters(
+            "t1", {"host_id": None, "severity": ""}
+        )
+        assert chips == []
 
 
 class TestInsightsRoute:

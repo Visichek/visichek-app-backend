@@ -70,14 +70,19 @@ class TestTenantDrillRoute:
         from api.v1.dashboard_route import _all_tenant_roles
 
         principal = AuthPrincipal(
-            user_id="u1", role="super_admin", access_token_id="t",
-            jwt_token="jwt", tenant_id="tenant-1",
+            user_id="u1",
+            role="super_admin",
+            access_token_id="t",
+            jwt_token="jwt",
+            tenant_id="tenant-1",
         )
         app.dependency_overrides[_all_tenant_roles] = lambda: principal
 
         payload = {
             "columns": ["visitorName", "status", "checkInTime"],
-            "rows": [{"visitorName": "Jane", "status": "checked_in", "checkInTime": 123}],
+            "rows": [
+                {"visitorName": "Jane", "status": "checked_in", "checkInTime": 123}
+            ],
             "total": 1,
         }
         with patch(
@@ -110,13 +115,20 @@ class TestAdminDrillRoute:
             check_admin_account_status_and_permissions,
         )
 
-        app.dependency_overrides[check_admin_account_status_and_permissions] = (
-            lambda: MagicMock()
+        app.dependency_overrides[check_admin_account_status_and_permissions] = lambda: (
+            MagicMock()
         )
 
         payload = {
             "columns": ["companyName", "planName", "country", "signedUpAt"],
-            "rows": [{"companyName": "Acme", "planName": "Premium", "country": "NG", "signedUpAt": 1}],
+            "rows": [
+                {
+                    "companyName": "Acme",
+                    "planName": "Premium",
+                    "country": "NG",
+                    "signedUpAt": 1,
+                }
+            ],
             "total": 1,
         }
         with patch(

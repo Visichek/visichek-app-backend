@@ -169,7 +169,17 @@ async def drill_tenant(
                 return _empty()
             match["check_in_time"] = {"$gte": eff_start, "$lte": eff_stop}
             match["$expr"] = {
-                "$eq": [{"$hour": {"date": {"$toDate": {"$multiply": ["$check_in_time", 1000]}}, "timezone": "UTC"}}, hour]
+                "$eq": [
+                    {
+                        "$hour": {
+                            "date": {
+                                "$toDate": {"$multiply": ["$check_in_time", 1000]}
+                            },
+                            "timezone": "UTC",
+                        }
+                    },
+                    hour,
+                ]
             }
         elif section in ("visitStatus", "feed"):
             match["check_in_time"] = {"$gte": eff_start, "$lte": eff_stop}
@@ -191,16 +201,28 @@ async def drill_tenant(
                 "checkInTime": d.get("check_in_time"),
             }
 
-        rows, total = await _paginate("visit_sessions", match, "check_in_time", skip, limit, _vs_row)
+        rows, total = await _paginate(
+            "visit_sessions", match, "check_in_time", skip, limit, _vs_row
+        )
         return {
-            "columns": ["visitorName", "company", "department", "hostName", "status", "checkInTime"],
+            "columns": [
+                "visitorName",
+                "company",
+                "department",
+                "hostName",
+                "status",
+                "checkInTime",
+            ],
             "rows": rows,
             "total": total,
         }
 
     # ── incidents ──
     if section == "incident":
-        match = {"tenant_id": tenant_id, "date_created": {"$gte": eff_start, "$lte": eff_stop}}
+        match = {
+            "tenant_id": tenant_id,
+            "date_created": {"$gte": eff_start, "$lte": eff_stop},
+        }
         # the slice key is a status (the tenant incident section groups by status)
         if key:
             match["status"] = key
@@ -220,12 +242,21 @@ async def drill_tenant(
                 "notificationDeadline": d.get("notification_deadline"),
             }
 
-        rows, total = await _paginate("incident_logs", match, "date_created", skip, limit, _inc_row)
-        return {"columns": ["title", "type", "status", "riskLevel", "notificationDeadline"], "rows": rows, "total": total}
+        rows, total = await _paginate(
+            "incident_logs", match, "date_created", skip, limit, _inc_row
+        )
+        return {
+            "columns": ["title", "type", "status", "riskLevel", "notificationDeadline"],
+            "rows": rows,
+            "total": total,
+        }
 
     # ── DSR ──
     if section == "dsr":
-        match = {"tenant_id": tenant_id, "date_created": {"$gte": eff_start, "$lte": eff_stop}}
+        match = {
+            "tenant_id": tenant_id,
+            "date_created": {"$gte": eff_start, "$lte": eff_stop},
+        }
         if key:
             match["request_type"] = key
         if dsr_type:
@@ -242,12 +273,21 @@ async def drill_tenant(
                 "dateCreated": d.get("date_created"),
             }
 
-        rows, total = await _paginate("data_subject_requests", match, "date_created", skip, limit, _dsr_row)
-        return {"columns": ["requestType", "status", "dateCreated"], "rows": rows, "total": total}
+        rows, total = await _paginate(
+            "data_subject_requests", match, "date_created", skip, limit, _dsr_row
+        )
+        return {
+            "columns": ["requestType", "status", "dateCreated"],
+            "rows": rows,
+            "total": total,
+        }
 
     # ── appointments ──
     if section == "appointment":
-        match = {"tenant_id": tenant_id, "scheduled_datetime": {"$gte": eff_start, "$lte": eff_stop}}
+        match = {
+            "tenant_id": tenant_id,
+            "scheduled_datetime": {"$gte": eff_start, "$lte": eff_stop},
+        }
         if scope.department_ids is not None:
             match["department_id"] = {"$in": scope.department_ids}
         if key:
@@ -261,8 +301,14 @@ async def drill_tenant(
                 "scheduledDatetime": d.get("scheduled_datetime"),
             }
 
-        rows, total = await _paginate("expected_appointments", match, "scheduled_datetime", skip, limit, _appt_row)
-        return {"columns": ["visitorName", "hostName", "status", "scheduledDatetime"], "rows": rows, "total": total}
+        rows, total = await _paginate(
+            "expected_appointments", match, "scheduled_datetime", skip, limit, _appt_row
+        )
+        return {
+            "columns": ["visitorName", "hostName", "status", "scheduledDatetime"],
+            "rows": rows,
+            "total": total,
+        }
 
     # ── audit ──
     if section == "audit":
@@ -291,8 +337,14 @@ async def drill_tenant(
                 "timestamp": d.get("timestamp"),
             }
 
-        rows, total = await _paginate("audit_trail", match, "timestamp", skip, limit, _audit_row)
-        return {"columns": ["action", "actorId", "resourceType", "timestamp"], "rows": rows, "total": total}
+        rows, total = await _paginate(
+            "audit_trail", match, "timestamp", skip, limit, _audit_row
+        )
+        return {
+            "columns": ["action", "actorId", "resourceType", "timestamp"],
+            "rows": rows,
+            "total": total,
+        }
 
     return _empty()
 
@@ -339,7 +391,9 @@ async def drill_admin(
             match["country_of_hosting"] = key
         if country:
             match["country_of_hosting"] = country
-        docs, total = await _paginate_raw("tenant_companies", match, "date_created", skip, limit)
+        docs, total = await _paginate_raw(
+            "tenant_companies", match, "date_created", skip, limit
+        )
         plan_by_tenant = await _plan_names_for_tenants([str(d["_id"]) for d in docs])
         rows = [
             {
@@ -350,7 +404,11 @@ async def drill_admin(
             }
             for d in docs
         ]
-        return {"columns": ["companyName", "planName", "country", "signedUpAt"], "rows": rows, "total": total}
+        return {
+            "columns": ["companyName", "planName", "country", "signedUpAt"],
+            "rows": rows,
+            "total": total,
+        }
 
     # ── plan tier (slice = tier) → tenants on that tier ──
     if section in ("planTier", "billingCycle"):
@@ -363,22 +421,39 @@ async def drill_admin(
             sub_match["status"] = subscription_status
         if billing_cycle and section != "billingCycle":
             sub_match["billing_cycle"] = billing_cycle
-        docs, total = await _paginate_raw("subscriptions", sub_match, "date_created", skip, limit)
+        docs, total = await _paginate_raw(
+            "subscriptions", sub_match, "date_created", skip, limit
+        )
         names = await _resolve_tenant_names([str(d.get("tenant_id")) for d in docs])
         rows = [
             {
-                "companyName": names.get(str(d.get("tenant_id")), {}).get("companyName", "Unknown"),
+                "companyName": names.get(str(d.get("tenant_id")), {}).get(
+                    "companyName", "Unknown"
+                ),
                 "subscriptionStatus": d.get("status"),
                 "country": names.get(str(d.get("tenant_id")), {}).get("country"),
-                "monthlyRevenue": d.get("effective_price") if d.get("billing_cycle") == "monthly" else 0,
+                "monthlyRevenue": d.get("effective_price")
+                if d.get("billing_cycle") == "monthly"
+                else 0,
             }
             for d in docs
         ]
-        return {"columns": ["companyName", "subscriptionStatus", "country", "monthlyRevenue"], "rows": rows, "total": total}
+        return {
+            "columns": [
+                "companyName",
+                "subscriptionStatus",
+                "country",
+                "monthlyRevenue",
+            ],
+            "rows": rows,
+            "total": total,
+        }
 
     # ── incidents (slice = status / type) ──
     if section in ("incidentStatus", "incidentType", "topIncidents"):
-        inc_match: Dict[str, Any] = {"date_created": {"$gte": eff_start, "$lte": eff_stop}}
+        inc_match: Dict[str, Any] = {
+            "date_created": {"$gte": eff_start, "$lte": eff_stop}
+        }
         if section == "incidentStatus":
             inc_match["status"] = key
         elif section == "incidentType":
@@ -391,11 +466,15 @@ async def drill_admin(
             inc_match["status"] = incident_status
         if tenant_id and section != "topIncidents":
             inc_match["tenant_id"] = tenant_id
-        docs, total = await _paginate_raw("incident_logs", inc_match, "date_created", skip, limit)
+        docs, total = await _paginate_raw(
+            "incident_logs", inc_match, "date_created", skip, limit
+        )
         names = await _resolve_tenant_names([str(d.get("tenant_id")) for d in docs])
         rows = [
             {
-                "tenant": names.get(str(d.get("tenant_id")), {}).get("companyName", "Unknown"),
+                "tenant": names.get(str(d.get("tenant_id")), {}).get(
+                    "companyName", "Unknown"
+                ),
                 "type": d.get("incident_type"),
                 "severity": d.get("risk_level"),
                 "status": d.get("status"),
@@ -403,7 +482,11 @@ async def drill_admin(
             }
             for d in docs
         ]
-        return {"columns": ["tenant", "type", "severity", "status", "deadline"], "rows": rows, "total": total}
+        return {
+            "columns": ["tenant", "type", "severity", "status", "deadline"],
+            "rows": rows,
+            "total": total,
+        }
 
     # ── support (slice = status / priority) ──
     if section in ("supportStatus", "supportPriority", "topSupport"):
@@ -418,11 +501,15 @@ async def drill_admin(
             match["status"] = support_status
         if support_priority and section != "supportPriority":
             match["priority"] = support_priority
-        docs, total = await _paginate_raw("support_cases", match, "date_created", skip, limit)
+        docs, total = await _paginate_raw(
+            "support_cases", match, "date_created", skip, limit
+        )
         names = await _resolve_tenant_names([str(d.get("tenant_id")) for d in docs])
         rows = [
             {
-                "tenant": names.get(str(d.get("tenant_id")), {}).get("companyName", "Unknown"),
+                "tenant": names.get(str(d.get("tenant_id")), {}).get(
+                    "companyName", "Unknown"
+                ),
                 "subject": d.get("subject") or d.get("title"),
                 "priority": d.get("priority"),
                 "status": d.get("status"),
@@ -430,7 +517,11 @@ async def drill_admin(
             }
             for d in docs
         ]
-        return {"columns": ["tenant", "subject", "priority", "status", "category"], "rows": rows, "total": total}
+        return {
+            "columns": ["tenant", "subject", "priority", "status", "category"],
+            "rows": rows,
+            "total": total,
+        }
 
     # ── onboarding (slice = status) ──
     if section == "onboarding":
@@ -439,7 +530,9 @@ async def drill_admin(
             match["status"] = key
         if onboarding_status:
             match["status"] = onboarding_status
-        docs, total = await _paginate_raw("onboarding_submissions", match, "date_created", skip, limit)
+        docs, total = await _paginate_raw(
+            "onboarding_submissions", match, "date_created", skip, limit
+        )
         rows = [
             {
                 "companyName": d.get("company_name") or d.get("company"),
@@ -448,7 +541,11 @@ async def drill_admin(
             }
             for d in docs
         ]
-        return {"columns": ["companyName", "status", "submittedAt"], "rows": rows, "total": total}
+        return {
+            "columns": ["companyName", "status", "submittedAt"],
+            "rows": rows,
+            "total": total,
+        }
 
     # ── revenue / subscription / visitor time-series (point = day) ──
     if section in ("revenue", "newSubscriptions", "visitorCheckIns", "visitorSignups"):
@@ -457,31 +554,55 @@ async def drill_admin(
             return _empty()
         lo, hi = window
         if section == "revenue":
-            docs, total = await _paginate_raw("invoices", {"status": "paid", "paid_at": {"$gte": lo, "$lt": hi}}, "paid_at", skip, limit)
+            docs, total = await _paginate_raw(
+                "invoices",
+                {"status": "paid", "paid_at": {"$gte": lo, "$lt": hi}},
+                "paid_at",
+                skip,
+                limit,
+            )
             names = await _resolve_tenant_names([str(d.get("tenant_id")) for d in docs])
             rows = [
                 {
-                    "tenant": names.get(str(d.get("tenant_id")), {}).get("companyName", "Unknown"),
+                    "tenant": names.get(str(d.get("tenant_id")), {}).get(
+                        "companyName", "Unknown"
+                    ),
                     "amountMinor": d.get("total_minor"),
                     "status": d.get("status"),
                     "paidAt": d.get("paid_at"),
                 }
                 for d in docs
             ]
-            return {"columns": ["tenant", "amountMinor", "status", "paidAt"], "rows": rows, "total": total}
+            return {
+                "columns": ["tenant", "amountMinor", "status", "paidAt"],
+                "rows": rows,
+                "total": total,
+            }
         if section == "newSubscriptions":
-            docs, total = await _paginate_raw("subscriptions", {"date_created": {"$gte": lo, "$lt": hi}}, "date_created", skip, limit)
+            docs, total = await _paginate_raw(
+                "subscriptions",
+                {"date_created": {"$gte": lo, "$lt": hi}},
+                "date_created",
+                skip,
+                limit,
+            )
             names = await _resolve_tenant_names([str(d.get("tenant_id")) for d in docs])
             rows = [
                 {
-                    "tenant": names.get(str(d.get("tenant_id")), {}).get("companyName", "Unknown"),
+                    "tenant": names.get(str(d.get("tenant_id")), {}).get(
+                        "companyName", "Unknown"
+                    ),
                     "status": d.get("status"),
                     "billingCycle": d.get("billing_cycle"),
                     "createdAt": d.get("date_created"),
                 }
                 for d in docs
             ]
-            return {"columns": ["tenant", "status", "billingCycle", "createdAt"], "rows": rows, "total": total}
+            return {
+                "columns": ["tenant", "status", "billingCycle", "createdAt"],
+                "rows": rows,
+                "total": total,
+            }
         # visitorCheckIns / visitorSignups
         coll = "visit_sessions" if section == "visitorCheckIns" else "visitor_profiles"
         ts = "check_in_time" if section == "visitorCheckIns" else "date_created"
@@ -492,19 +613,30 @@ async def drill_admin(
         names = await _resolve_tenant_names([str(d.get("tenant_id")) for d in docs])
         rows = [
             {
-                "tenant": names.get(str(d.get("tenant_id")), {}).get("companyName", "Unknown"),
+                "tenant": names.get(str(d.get("tenant_id")), {}).get(
+                    "companyName", "Unknown"
+                ),
                 "visitorName": d.get("visitor_name_snapshot") or d.get("full_name"),
                 "status": d.get("status"),
                 "timestamp": d.get(ts),
             }
             for d in docs
         ]
-        return {"columns": ["tenant", "visitorName", "status", "timestamp"], "rows": rows, "total": total}
+        return {
+            "columns": ["tenant", "visitorName", "status", "timestamp"],
+            "rows": rows,
+            "total": total,
+        }
 
     # ── top tenants by visitors / activity (bar = tenant) ──
     if section in ("topVisitors", "topActivity"):
-        match = {"check_in_time": {"$gte": eff_start, "$lte": eff_stop}, "tenant_id": key}
-        docs, total = await _paginate_raw("visit_sessions", match, "check_in_time", skip, limit)
+        match = {
+            "check_in_time": {"$gte": eff_start, "$lte": eff_stop},
+            "tenant_id": key,
+        }
+        docs, total = await _paginate_raw(
+            "visit_sessions", match, "check_in_time", skip, limit
+        )
         rows = [
             {
                 "visitorName": d.get("visitor_name_snapshot"),
@@ -514,22 +646,34 @@ async def drill_admin(
             }
             for d in docs
         ]
-        return {"columns": ["visitorName", "company", "status", "checkInTime"], "rows": rows, "total": total}
+        return {
+            "columns": ["visitorName", "company", "status", "checkInTime"],
+            "rows": rows,
+            "total": total,
+        }
 
     if section == "invoiceStatus":
         match = {"status": key, "date_created": {"$gte": eff_start, "$lte": eff_stop}}
-        docs, total = await _paginate_raw("invoices", match, "date_created", skip, limit)
+        docs, total = await _paginate_raw(
+            "invoices", match, "date_created", skip, limit
+        )
         names = await _resolve_tenant_names([str(d.get("tenant_id")) for d in docs])
         rows = [
             {
-                "tenant": names.get(str(d.get("tenant_id")), {}).get("companyName", "Unknown"),
+                "tenant": names.get(str(d.get("tenant_id")), {}).get(
+                    "companyName", "Unknown"
+                ),
                 "amountMinor": d.get("total_minor"),
                 "status": d.get("status"),
                 "createdAt": d.get("date_created"),
             }
             for d in docs
         ]
-        return {"columns": ["tenant", "amountMinor", "status", "createdAt"], "rows": rows, "total": total}
+        return {
+            "columns": ["tenant", "amountMinor", "status", "createdAt"],
+            "rows": rows,
+            "total": total,
+        }
 
     return _empty()
 
@@ -551,7 +695,9 @@ async def _plan_names_for_tenants(tenant_ids: List[str]) -> Dict[str, Dict[str, 
     out: Dict[str, Dict[str, Any]] = {}
     if not tenant_ids:
         return out
-    async for sub in db["subscriptions"].find({"tenant_id": {"$in": list(set(tenant_ids))}}):
+    async for sub in db["subscriptions"].find(
+        {"tenant_id": {"$in": list(set(tenant_ids))}}
+    ):
         tid = str(sub.get("tenant_id"))
         if tid in out:
             continue

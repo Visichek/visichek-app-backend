@@ -196,9 +196,21 @@ async def admin_dashboard_insights(
     admin: AdminOut = Depends(check_admin_account_status_and_permissions),
 ) -> Any:
     params = _insights_query(
-        start, stop, granularity, tab, plan_tier, subscription_status,
-        billing_cycle, payment_provider, country, tenant_id, incident_type,
-        incident_status, support_status, support_priority, onboarding_status,
+        start,
+        stop,
+        granularity,
+        tab,
+        plan_tier,
+        subscription_status,
+        billing_cycle,
+        payment_provider,
+        country,
+        tenant_id,
+        incident_type,
+        incident_status,
+        support_status,
+        support_priority,
+        onboarding_status,
     )
 
     async def _compute() -> Any:
@@ -300,9 +312,21 @@ async def admin_dashboard_insights_export(
             message="Only format=csv is currently supported for admin insights export.",
         )
     params = _insights_query(
-        start, stop, granularity, tab, plan_tier, subscription_status,
-        billing_cycle, payment_provider, country, tenant_id, incident_type,
-        incident_status, support_status, support_priority, onboarding_status,
+        start,
+        stop,
+        granularity,
+        tab,
+        plan_tier,
+        subscription_status,
+        billing_cycle,
+        payment_provider,
+        country,
+        tenant_id,
+        incident_type,
+        incident_status,
+        support_status,
+        support_priority,
+        onboarding_status,
     )
     result = await get_admin_insights(**params)
     rows = _admin_insights_to_rows(result)
@@ -318,24 +342,70 @@ def _admin_insights_to_rows(result: Any) -> list:
     rows: list = []
     for kpi in result.kpis:
         rows.append(
-            {"section": "kpi", "key": kpi.key, "label": kpi.label, "value": kpi.value, "extra": kpi.unit or ""}
+            {
+                "section": "kpi",
+                "key": kpi.key,
+                "label": kpi.label,
+                "value": kpi.value,
+                "extra": kpi.unit or "",
+            }
         )
     for sid, section in result.sections.items():
         if section.points:
             for p in section.points:
-                rows.append({"section": sid, "key": str(p.timestamp), "label": p.label, "value": p.value, "extra": ""})
+                rows.append(
+                    {
+                        "section": sid,
+                        "key": str(p.timestamp),
+                        "label": p.label,
+                        "value": p.value,
+                        "extra": "",
+                    }
+                )
         if section.slices:
             for s in section.slices:
-                rows.append({"section": sid, "key": s.key, "label": s.label, "value": s.value, "extra": s.percentage})
+                rows.append(
+                    {
+                        "section": sid,
+                        "key": s.key,
+                        "label": s.label,
+                        "value": s.value,
+                        "extra": s.percentage,
+                    }
+                )
         if section.buckets:
             for b in section.buckets:
-                rows.append({"section": sid, "key": str(b.hour), "label": b.label, "value": b.value, "extra": ""})
+                rows.append(
+                    {
+                        "section": sid,
+                        "key": str(b.hour),
+                        "label": b.label,
+                        "value": b.value,
+                        "extra": "",
+                    }
+                )
         if section.items:
             for it in section.items:
-                rows.append({"section": sid, "key": it.id or "", "label": it.label, "value": it.value, "extra": it.percentage})
+                rows.append(
+                    {
+                        "section": sid,
+                        "key": it.id or "",
+                        "label": it.label,
+                        "value": it.value,
+                        "extra": it.percentage,
+                    }
+                )
         if section.rows:
             for r in section.rows:
-                rows.append({"section": sid, "key": r.get("id") or r.get("tenantId") or "", "label": r.get("companyName") or "", "value": r.get("monthlyRevenue") or r.get("dateCreated") or "", "extra": r.get("status") or r.get("subscriptionStatus") or ""})
+                rows.append(
+                    {
+                        "section": sid,
+                        "key": r.get("id") or r.get("tenantId") or "",
+                        "label": r.get("companyName") or "",
+                        "value": r.get("monthlyRevenue") or r.get("dateCreated") or "",
+                        "extra": r.get("status") or r.get("subscriptionStatus") or "",
+                    }
+                )
     return rows
 
 
