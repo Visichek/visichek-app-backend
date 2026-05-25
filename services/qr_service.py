@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import os
 import time
 
 from core.settings import get_settings
@@ -66,6 +67,60 @@ def sign_registration_token(
         "utf-8"
     )
     return token
+
+
+def sign_checkin_capability(
+    tenant_id: str,
+    checkin_id: str,
+    ttl_seconds: int = 30 * 60,
+) -> str:
+    """Mint a short-lived capability token for public KYC follow-up actions.
+
+    Bound to ``(tenant_id, checkin_id, action="kyc", expiry, nonce)`` and
+    HMAC-signed with the QR secret. Possession of a freshly-created
+    check-in id is no longer enough to skip KYC or poll status — the caller
+    must present this token, which is handed back only in the check-in
+    creation response. The nonce makes each token unique so two check-ins
+    never collide and a leaked token is traceable.
+    """
+    settings = get_settings()
+    secret = settings.qr_signing_secret.encode("utf-8")
+    expiry = int(time.time()) + ttl_seconds
+    nonce = base64.urlsafe_b64encode(os.urandom(9)).decode("utf-8")
+    payload = f"kyc|{tenant_id}|{checkin_id}|{expiry}|{nonce}"
+    signature = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}|{signature}".encode("utf-8")).decode(
+        "utf-8"
+    )
+
+
+def verify_checkin_capability(token: str, *, checkin_id: str) -> bool:
+    """Verify a KYC capability token is valid for ``checkin_id``.
+
+    Returns True only when the token is well-formed, unexpired, signed with
+    the current secret, scoped to ``action="kyc"``, and bound to the exact
+    ``checkin_id`` the caller is acting on. Any mismatch (including a token
+    minted for a different check-in) returns False.
+    """
+    try:
+        settings = get_settings()
+        secret = settings.qr_signing_secret.encode("utf-8")
+        decoded = base64.urlsafe_b64decode(token.encode("utf-8")).decode("utf-8")
+        parts = decoded.split("|")
+        if len(parts) != 6:
+            return False
+        action, tenant_id, tok_checkin_id, expiry_str, nonce, signature = parts
+        if action != "kyc":
+            return False
+        if tok_checkin_id != checkin_id:
+            return False
+        if time.time() > int(expiry_str):
+            return False
+        payload = f"{action}|{tenant_id}|{tok_checkin_id}|{expiry_str}|{nonce}"
+        expected = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(signature, expected)
+    except Exception:
+        return False
 
 
 def verify_registration_token(token: str) -> dict | None:

@@ -15,8 +15,21 @@ class LocalStorageProvider(DocumentStorageProvider):
     backend_name = StorageBackend.LOCAL.value
 
     def __init__(self, root_dir: str) -> None:
-        self._root = Path(root_dir)
+        self._root = Path(root_dir).resolve()
         self._root.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_within_root(self, object_key: str) -> Path:
+        """Resolve ``object_key`` and guarantee it stays under the root.
+
+        Substring ``..`` checks miss tricks like absolute keys, symlinks,
+        and encoded separators. Resolving the full path and asserting it
+        is relative to the (already-resolved) root is the robust check
+        (CWE-22). Raises ``ValueError`` on any escape attempt.
+        """
+        candidate = (self._root / object_key).resolve()
+        if candidate != self._root and self._root not in candidate.parents:
+            raise ValueError("object_key escapes storage root")
+        return candidate
 
     def presign_put(
         self, *, object_key: str, mime_type: str, expires_in: int = 3600
@@ -34,7 +47,7 @@ class LocalStorageProvider(DocumentStorageProvider):
         )
 
     def head_object(self, *, object_key: str) -> StoredObjectInfo | None:
-        file_path = self._root / object_key
+        file_path = self._resolve_within_root(object_key)
         if not file_path.exists():
             return None
         # Local storage has no recorded content type; confirm falls back to
@@ -45,7 +58,7 @@ class LocalStorageProvider(DocumentStorageProvider):
         return f"/v1/documents/local/{quote(object_key, safe='')}"
 
     def delete_object(self, *, object_key: str) -> None:
-        file_path = self._root / object_key
+        file_path = self._resolve_within_root(object_key)
         if file_path.exists():
             file_path.unlink()
 
@@ -56,11 +69,11 @@ class LocalStorageProvider(DocumentStorageProvider):
         return self.read_bytes(object_key=object_key)
 
     def save_bytes(self, *, object_key: str, payload: bytes) -> int:
-        file_path = self._root / object_key
+        file_path = self._resolve_within_root(object_key)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(payload)
         return file_path.stat().st_size
 
     def read_bytes(self, *, object_key: str) -> bytes:
-        file_path = self._root / object_key
+        file_path = self._resolve_within_root(object_key)
         return file_path.read_bytes()

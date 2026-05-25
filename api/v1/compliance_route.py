@@ -73,8 +73,8 @@ async def add_register_entry(
     principal: AuthPrincipal = Depends(_compliance_roles),
 ):
     payload = dpr_data.model_dump(exclude_none=True)
-    if principal.tenant_id:
-        payload["tenant_id"] = principal.tenant_id
+    # tenant_id is token-derived, never client-supplied.
+    payload["tenant_id"] = principal.tenant_id or ""
     return await enqueue_write(
         writer_key="compliance.register_dpr",
         payload=payload,

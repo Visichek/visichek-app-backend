@@ -1,0 +1,172 @@
+SECURITY HARDENING — 2026-05-25
+================================================================================
+Implements the findings and goals from the VisiChek Backend Security Review
+(2026-05-25, commit 0996aeb). This file is the definitive record of what
+changed, what the frontend/ops must do, and how each review item was addressed.
+
+Verification: `ruff check .` and `mypy --ignore-missing-imports .` both clean.
+Tests: tests/unit/test_security_hardening.py (43) + existing suites green.
+
+
+================================================================================
+A. FRONTEND / INTEGRATION-FACING CHANGES (action required)
+================================================================================
+
+A1. KYC public flow now requires a capability token            [BREAKING]
+--------------------------------------------------------------------------------
+A bare check-in id no longer authorizes the public KYC follow-up calls.
+Check-in creation responses now include a short-lived signed token:
+
+    CheckinOut.capability_token   (string; present ONLY on the creation response)
+
+Returned by the public check-in creation endpoints:
+    POST /v1/checkin-configs/{id}/submit
+    POST /v1/public/tenants/{tenant_id}/register   (+ returning-visitor variant)
+
+The frontend MUST capture it and send it back on every KYC call:
+    POST /v1/kyc/initiate   body now requires:  capability_token
+    POST /v1/kyc/skip       body now requires:  capability_token
+    GET  /v1/kyc/status/{checkin_id}?token=<capability_token>
+
+Missing/invalid/mismatched -> 403 AUTH_PERMISSION_DENIED (audited as
+kyc.capability_rejected). Token is bound to the exact checkin_id and tenant,
+and expires (~30 min).
+
+A2. Google OAuth callback no longer puts tokens in the URL     [BEHAVIOUR CHANGE]
+--------------------------------------------------------------------------------
+GET /v1/users/auth/callback previously redirected to
+    {SUCCESS_PAGE_URL}?access_token=...&refresh_token=...
+It now redirects to {SUCCESS_PAGE_URL} with NO query tokens and sets the
+httpOnly auth cookies instead (same cookies as POST /v1/users/login), plus
+Referrer-Policy: no-referrer. The frontend reads the session from cookies and
+must not expect tokens in the URL.
+
+A3. Visitor-verification endpoints now require tenant-user auth [BREAKING for anon]
+--------------------------------------------------------------------------------
+Previously anonymous:
+    POST /v1/visitor-verification/test   ->  renamed POST /v1/visitor-verification/from-id
+    GET  /v1/visitor-verification/visitors
+Both now require a tenant-user bearer/cookie token; tenant_id is taken from the
+token (no longer accepted from the request body/query).
+
+A4. Face-crop diagnostic now requires authentication           [BREAKING for anon]
+--------------------------------------------------------------------------------
+POST /v1/face-crop/test was anonymous (CPU-heavy face detection on an uploaded
+file — an abuse/DoS surface). It now requires any authenticated token. The real
+check-in flow crops faces server-side internally and is unaffected.
+
+A5. CSRF / Origin gate on cookie-authenticated writes
+--------------------------------------------------------------------------------
+Unsafe-method requests (POST/PUT/PATCH/DELETE) authenticated via the auth
+COOKIE (and NOT an Authorization: Bearer header) must carry an Origin (or
+Referer) in the allowed CORS-origins set, else 403 CSRF_ORIGIN_REJECTED.
+Browsers send Origin automatically on fetch/XHR writes, so normal SPA traffic
+is unaffected. Bearer-token clients (mobile/CLI/server) are exempt. Disabled
+when ENV=testing.
+
+
+================================================================================
+B. OPS / ENVIRONMENT CHANGES
+================================================================================
+
+New / changed environment variables:
+    PAYMENT_APP_MODE_ENABLED=false           app-checkout SIMULATOR off in prod unless true
+    ALLOW_LOCAL_STORAGE_IN_PRODUCTION=false  local storage transport off in prod unless true
+    ID_NUMBER_ENCRYPTION_KEY=                 REQUIRED in production
+    OTP_DEV_CODE=                             must NOT be the '123456' default in production
+    FLW_WEBHOOK_SECRET_HASH=                  REQUIRED when FLUTTERWAVE_SECRET_KEY is set
+
+Production now FAILS TO BOOT (RuntimeError) on an unsafe posture: missing
+SECRET_KEY / SESSION_SECRET_KEY / QR_SIGNING_SECRET / ID_NUMBER_ENCRYPTION_KEY,
+a payment provider with no webhook secret, the app simulator as default / no
+real provider, local storage, or the default OTP code. See
+core/security_posture.py (evaluate_security_posture / assert_security_posture,
+wired into the main.py lifespan).
+
+CORS: http://localhost:3000 is no longer a credentialed CORS origin in
+production (allowed only when ENV != production).
+
+
+================================================================================
+C. BACKEND-ONLY CHANGES (no frontend action)
+================================================================================
+- Flutterwave webhooks FAIL CLOSED when no secret is configured; constant-time
+  signature comparison (core/payments/flutterwave_provider.py). The provider is
+  not even registered in production without FLW_WEBHOOK_SECRET_HASH.
+- High-value Flutterwave charge.completed events are re-verified against the
+  Flutterwave API before a subscription is activated; an unverified event is
+  recorded but does NOT grant plan benefits (replayable once reconciled).
+- The app-checkout SIMULATOR provider is registered only outside production (or
+  with PAYMENT_APP_MODE_ENABLED); its routes also 404 in production.
+- Local-storage PUT/GET transport shims 404 in production (unless
+  ALLOW_LOCAL_STORAGE_IN_PRODUCTION); substring ".." checks replaced with
+  resolved-path containment (CWE-22); 25 MiB cap on the PUT shim.
+- Tenant-user account status is enforced on every token use: deactivating /
+  suspending a user revokes all their tokens immediately, refresh is refused
+  for non-ACTIVE accounts, and status is re-checked at every tenant-user
+  verifier (super_admin / receptionist / dept_admin form / any-system-user).
+- /health and /health/ready no longer leak dependency exception strings
+  (details go to logs; responses return a coarse "unreachable").
+- The primary admin's production 2FA is a real per-challenge emailed OTP;
+  OTP_DEV_CODE is only an audited break-glass fallback (logged + audit event
+  admin.otp_break_glass_used; rotate after use).
+
+
+================================================================================
+D. REVIEW COVERAGE MAP
+================================================================================
+Goal 1  Fail closed in production .................. DONE (security_posture.py)
+Goal 2  Remove public debug/test surfaces .......... DONE (visitor-verif + face-crop
+                                                      gated; route-name audit test)
+Goal 3  Enforce account state on every token use ... DONE (verifiers + refresh +
+                                                      token revocation)
+Goal 4  Strict, provider-verified webhooks ......... DONE (fail-closed + provider
+                                                      re-verify + signature suites)
+Goal 5  Separate real billing from simulation ...... DONE (provider gating + guard)
+Goal 6  Capability-based public flows .............. DONE (KYC tokens; upload-confirm
+                                                      already capability-equivalent)
+Goal 7  Keep tokens out of URLs .................... DONE (OAuth cookies + test)
+Goal 8  CSRF / origin protection ................... DONE (Origin-gate middleware)
+
+Findings P0 (visitor-verif), P1 (FLW webhook / account-status / app-checkout /
+local-storage), P2 (OTP / OAuth / KYC) ............. ALL ADDRESSED.
+
+Defense-in-depth: health-detail leakage ............ DONE.
+
+
+================================================================================
+E. TESTS ADDED  (tests/unit/test_security_hardening.py, plus existing suites)
+================================================================================
+- Flutterwave webhook: missing secret / wrong sig / missing header / valid.
+- Paystack webhook: missing / wrong / valid signature.
+- Stripe webhook: missing signature / missing secret / invalid signature.
+- Dojah webhook signatures already covered by tests/unit/test_dojah_provider.py.
+- Flutterwave high-value verification gate (verified / unverified / no-provider).
+- Flutterwave duplicate-event idempotency -> 409.
+- Security posture: every violation class + raises-in-prod / warns-elsewhere.
+- Account-status gate: inactive rejected, active passes, legacy/missing = active,
+  must-change-password blocks normal path but allows change-password endpoint.
+- Deactivated system user refused on refresh (403) + all tokens revoked.
+- KYC capability token: valid / wrong-checkin / tampered / empty / expired.
+- CSRF decision: safe method / bearer / anonymous exempt; good vs bad vs missing
+  origin; Referer fallback.
+- OAuth callback: redirect carries no token fields; tokens delivered via cookies.
+- Public route inventory: visitor-verification routes require auth.
+- Route-name audit: no test/debug/simulator route is mounted without an auth
+  dependency or an explicit environment guard.
+
+
+================================================================================
+F. DEFERRED BY DESIGN (need a product/ops decision — not changed blind)
+================================================================================
+The review's softer "consider / where possible" recommendations are NOT applied
+unilaterally because each is outward-facing and could break live cross-subdomain
+auth or a deployed frontend:
+  * SameSite=Strict for admin cookies — would break legitimate cross-subdomain
+    admin redirects on the shared .visichek.app parent domain. The new
+    CSRF/Origin middleware already mitigates the cross-site write risk.
+  * Splitting admin vs tenant cookies by subdomain — large auth-architecture
+    change; would invalidate every existing session on rollout.
+  * Pruning the Vercel preview CORS origin — left in place in case it is the
+    live deploy target. (localhost:3000 was already removed from prod CORS.)
+Confirm these with frontend/ops and they can be applied.

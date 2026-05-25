@@ -9,6 +9,7 @@ from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
 from schemas.privacy_notice_schema import PrivacyNoticeCreate, PrivacyNoticeUpdate
+from services.audit_service import record_audit_event
 from services.privacy_notice_service import (
     add_privacy_notice,
     retrieve_active_notice,
@@ -17,6 +18,15 @@ from services.privacy_notice_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _pop_actor(data: dict[str, Any]) -> tuple[str, str, Optional[str]]:
+    """Strip actor metadata threaded into the payload by the route so the
+    write handler can record an audit event."""
+    actor_id = data.pop("_actor_id", "") or ""
+    actor_role = data.pop("_actor_role", "") or ""
+    request_id = data.pop("_request_id", None)
+    return actor_id, actor_role, request_id
 
 
 def _enqueue_refresh(tenant_id: str) -> None:
@@ -45,9 +55,25 @@ def _enqueue_refresh(tenant_id: str) -> None:
 async def _privacy_notice_create(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
+    actor_id, actor_role, request_id = _pop_actor(data)
     notice = PrivacyNoticeCreate(**data)
     result = await add_privacy_notice(notice_data=notice, preassigned_id=resource_id)
     _enqueue_refresh(result.tenant_id)
+    if actor_id:
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role or "system_user",
+            action="privacy_notice.created",
+            resource_type="privacy_notice",
+            resource_id=result.id or resource_id,
+            tenant_id=result.tenant_id,
+            details={
+                "title": result.title,
+                "version_code": result.version_code,
+                "is_active": result.is_active,
+            },
+            request_id=request_id,
+        )
     return {
         "id": result.id,
         "tenant_id": result.tenant_id,
@@ -62,12 +88,27 @@ async def _privacy_notice_create(
 async def _privacy_notice_update(
     resource_id: str, data: dict[str, Any]
 ) -> dict[str, Any]:
+    actor_id, actor_role, request_id = _pop_actor(data)
     tenant_id = data.pop("tenant_id", "") or ""
     upd = PrivacyNoticeUpdate(**data)
+    # The fields the client actually submitted (minus the system-managed
+    # last_updated stamp) form the audit "changes" diff.
+    changes = {k: v for k, v in data.items() if k != "last_updated"}
     result = await update_notice_by_id(
         notice_id=resource_id, tenant_id=tenant_id, notice_data=upd
     )
     _enqueue_refresh(tenant_id)
+    if actor_id:
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role or "system_user",
+            action="privacy_notice.updated",
+            resource_type="privacy_notice",
+            resource_id=result.id or resource_id,
+            tenant_id=tenant_id,
+            details={"changes": changes, "version_code": result.version_code},
+            request_id=request_id,
+        )
     return {"id": result.id, "version_code": result.version_code}
 
 

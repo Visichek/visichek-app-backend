@@ -33,6 +33,8 @@ class AppointmentBase(BaseModel):
 
 
 class AppointmentCreate(AppointmentBase):
+    # tenant_id is token-derived and injected by the route; never client-supplied.
+    tenant_id: str = ""
     created_by: Optional[str] = None
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))

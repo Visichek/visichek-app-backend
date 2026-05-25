@@ -907,6 +907,18 @@ async def refresh_system_user_tokens(
     if not user:
         raise HTTPException(status_code=404, detail="System user not found")
 
+    # Account-status gate on refresh: a deactivated / suspended user must not
+    # be able to mint fresh tokens and extend access past the original JWT
+    # lifetime. Tear down whatever tokens remain and refuse.
+    if user.account_status != AccountStatus.ACTIVE:
+        await delete_access_token(accessToken=expired_access_token)
+        await delete_refresh_token(refreshToken=refresh_data.refresh_token)
+        try:
+            await delete_all_tokens_with_user_id(userId=user.id or "")
+        except Exception:
+            pass
+        raise HTTPException(status_code=403, detail="Account is not active")
+
     access_token, refresh_token = await issue_tokens_for_role(
         user_id=user.id or "",
         role=user.role.value,
@@ -988,6 +1000,23 @@ async def update_system_user_by_id(
         except Exception:
             # Token sync is best-effort: stale branch_ids on a token will
             # self-correct at the gate-cache TTL or next refresh.
+            pass
+
+    # Security: when an account leaves ACTIVE (deactivation / suspension)
+    # every live access + refresh token for that user must die immediately.
+    # Otherwise a deactivated tenant user keeps using a still-valid JWT until
+    # it ages out, and — worse — could refresh into brand-new tokens. This is
+    # the primary enforcement point; the verifier-level check in
+    # security/auth.py is defence-in-depth on top of it.
+    if (
+        user_data.account_status is not None
+        and user_data.account_status != AccountStatus.ACTIVE
+    ):
+        try:
+            await delete_all_tokens_with_user_id(userId=user_id)
+        except Exception:
+            # Token revocation is best-effort here — the verifier-level
+            # account-status check still rejects the user even if this fails.
             pass
 
     # Audit with a diff so the trail answers "what changed?", not just "X was

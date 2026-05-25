@@ -105,7 +105,9 @@ async def create_branch_endpoint(
 ):
     """Enqueue branch creation. tenant_id is always enforced from the token."""
     data = payload.model_dump(exclude_none=True)
-    data["tenant_id"] = principal.tenant_id or data.get("tenant_id")
+    # tenant_id is token-derived, never client-supplied (no fallback to the
+    # request body — a forged tenant_id must never win).
+    data["tenant_id"] = principal.tenant_id or ""
     return await enqueue_write(
         writer_key="branch.create",
         payload=data,

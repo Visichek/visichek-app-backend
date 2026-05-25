@@ -16,6 +16,8 @@ class DSRBase(BaseModel):
 
 
 class DSRCreate(DSRBase):
+    # tenant_id is token-derived and injected by the route; never client-supplied.
+    tenant_id: str = ""
     received_at: int = Field(default_factory=lambda: int(time.time()))
     date_created: int = Field(default_factory=lambda: int(time.time()))
 

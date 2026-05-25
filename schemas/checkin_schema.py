@@ -56,6 +56,8 @@ class CheckinBase(BaseModel):
 
 
 class CheckinCreate(CheckinBase):
+    # tenant_id is token-derived and injected by the route; never client-supplied.
+    tenant_id: str = ""
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
@@ -75,6 +77,12 @@ class CheckinOut(CheckinBase):
     id: Optional[str] = Field(default=None, alias="_id")
     date_created: Optional[int] = None
     last_updated: Optional[int] = None
+    # Short-lived signed capability token, populated ONLY on the check-in
+    # creation response (kiosk submit / receptionist create). The public
+    # KYC follow-up endpoints (initiate / skip / status) require it. Never
+    # persisted to the DB and never present on list/read responses — a bare
+    # check-in id must not authorize KYC actions.
+    capability_token: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod

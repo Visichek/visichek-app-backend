@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
+from core.errors import AppException, ErrorCode
 from core.response_envelope import document_response
 from schemas.kyc_schema import (
     KYCInitiateRequestIn,
@@ -20,9 +21,48 @@ from services.kyc_service import (
     replay_stored_kyc_webhook_for_checkin,
     skip_kyc_for_checkin,
 )
+from services.qr_service import verify_checkin_capability
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/kyc", tags=["KYC"])
+
+
+async def _require_capability(checkin_id: str, capability_token: str) -> None:
+    """Reject public KYC follow-up actions that lack a valid capability token.
+
+    The token is bound to this exact ``checkin_id`` and was issued only in
+    the check-in creation response, so possession of a check-in id alone no
+    longer authorizes skipping KYC or polling status (CWE-639 / CWE-862).
+
+    Rejections are audited under a distinct action (``kyc.capability_rejected``)
+    so probing attempts are visible separately from ordinary validation noise.
+    """
+    if not capability_token or not verify_checkin_capability(
+        capability_token, checkin_id=checkin_id
+    ):
+        try:
+            from services.audit_service import record_audit_event
+
+            await record_audit_event(
+                actor_id="anonymous",
+                actor_role="kiosk_visitor",
+                action="kyc.capability_rejected",
+                resource_type="checkin",
+                resource_id=checkin_id,
+                tenant_id=None,
+                details={"reason": "missing_or_invalid_capability_token"},
+            )
+        except Exception:
+            logger.warning(
+                "failed to audit rejected KYC capability for checkin %s",
+                checkin_id,
+                exc_info=True,
+            )
+        raise AppException(
+            status_code=403,
+            code=ErrorCode.AUTH_PERMISSION_DENIED,
+            message="Missing or invalid KYC capability token for this check-in",
+        )
 
 
 @router.post("/initiate", status_code=status.HTTP_201_CREATED)
@@ -47,6 +87,7 @@ router = APIRouter(prefix="/kyc", tags=["KYC"])
 async def initiate_kyc_endpoint(
     payload: KYCInitiateRequestIn,
 ) -> KYCInitiateResponseOut:
+    await _require_capability(payload.checkin_id, payload.capability_token)
     return await initiate_kyc_for_checkin(checkin_id=payload.checkin_id)
 
 
@@ -66,6 +107,7 @@ async def initiate_kyc_endpoint(
     },
 )
 async def skip_kyc_endpoint(payload: KYCSkipRequestIn) -> KYCStatusOut:
+    await _require_capability(payload.checkin_id, payload.capability_token)
     return await skip_kyc_for_checkin(
         checkin_id=payload.checkin_id, reason=payload.reason
     )
@@ -113,8 +155,21 @@ async def replay_kyc_webhook_endpoint(
         "its connection (or vice-versa)."
     ),
     summary="Get KYC status",
+    response_codes={
+        403: "Missing or invalid capability token",
+    },
 )
-async def kyc_status_endpoint(checkin_id: str) -> KYCStatusOut:
+async def kyc_status_endpoint(
+    checkin_id: str,
+    token: str = Query(
+        ...,
+        description=(
+            "Capability token from the check-in creation response, bound to "
+            "this check-in. Required."
+        ),
+    ),
+) -> KYCStatusOut:
+    await _require_capability(checkin_id, token)
     return await get_kyc_status_for_checkin(checkin_id)
 
 

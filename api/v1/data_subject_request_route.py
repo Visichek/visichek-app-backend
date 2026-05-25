@@ -102,8 +102,8 @@ async def create_dsr_endpoint(
     principal: AuthPrincipal = Depends(_dpo_roles),
 ):
     payload = dsr_data.model_dump(exclude_none=True)
-    if principal.tenant_id:
-        payload["tenant_id"] = principal.tenant_id
+    # tenant_id is token-derived, never client-supplied.
+    payload["tenant_id"] = principal.tenant_id or ""
     payload["admin_id"] = principal.user_id
     return await enqueue_write(
         writer_key="dsr.create",

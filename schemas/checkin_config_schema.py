@@ -30,6 +30,8 @@ class CheckinConfigBase(BaseModel):
 
 
 class CheckinConfigCreate(CheckinConfigBase):
+    # tenant_id is token-derived and injected by the route; never client-supplied.
+    tenant_id: str = ""
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 

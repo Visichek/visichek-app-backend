@@ -21,11 +21,25 @@ import html
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from core.settings import get_settings
 from repositories.checkout_repo import get_checkout_by_reference
 from schemas.checkout_schema import CheckoutCompleteRequest, CheckoutStatus
 from services.checkout_service import complete_checkout
 
 router = APIRouter(prefix="/payments/app-checkout", tags=["App Payment Simulator"])
+
+
+def _guard_app_mode() -> None:
+    """Refuse the simulator in production unless break-glass is enabled.
+
+    The simulator confirms payments with a button click, so leaving it
+    reachable in production would let a payer mark their own checkout
+    succeeded. We return 404 (not 403) so the routes are indistinguishable
+    from "not mounted" to an external scanner.
+    """
+    settings = get_settings()
+    if settings.is_production and not settings.payment_app_mode_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 def _format_amount(amount_minor: int, currency: str) -> str:
@@ -151,6 +165,7 @@ if (failBtn) failBtn.addEventListener('click', () => complete('failure'));
 
 @router.get("/{reference}", include_in_schema=False)
 async def render_app_checkout_page(reference: str, request: Request) -> HTMLResponse:
+    _guard_app_mode()
     session = await get_checkout_by_reference(reference)
     if not session:
         # Addon-purchase fallback page — same simulator, different copy.
@@ -207,6 +222,7 @@ async def render_app_checkout_page(reference: str, request: Request) -> HTMLResp
 async def complete_app_checkout(
     reference: str, payload: CheckoutCompleteRequest
 ) -> JSONResponse:
+    _guard_app_mode()
     session = await get_checkout_by_reference(reference)
     if session and session.id is not None:
         result = await complete_checkout(

@@ -37,8 +37,8 @@ async def create_policy(
     principal: AuthPrincipal = Depends(_dpo_roles),
 ):
     payload = policy_data.model_dump(exclude_none=True)
-    if principal.tenant_id:
-        payload["tenant_id"] = principal.tenant_id
+    # tenant_id is token-derived, never client-supplied.
+    payload["tenant_id"] = principal.tenant_id or ""
     return await enqueue_write(
         writer_key="retention_policy.create",
         payload=payload,

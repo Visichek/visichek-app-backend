@@ -29,13 +29,25 @@ class PaymentManager:
         providers: dict[str, PaymentProvider] = {}
 
         if settings.flutterwave_secret_key:
-            try:
-                providers["flutterwave"] = FlutterwavePaymentProvider(
-                    secret_key=settings.flutterwave_secret_key,
-                    webhook_secret_hash=settings.flutterwave_webhook_secret_hash,
+            # In production a Flutterwave provider with no webhook secret
+            # can't verify webhooks (verify_webhook fails closed), so a
+            # forged webhook would otherwise be the only way to "confirm"
+            # a payment. Refuse to register it at all. The startup posture
+            # check (core/security_posture.py) turns this into a hard boot
+            # failure so the misconfiguration is loud, not silent.
+            if settings.is_production and not settings.flutterwave_webhook_secret_hash:
+                logger.error(
+                    "Flutterwave secret key is set but FLW_WEBHOOK_SECRET_HASH "
+                    "is missing; refusing to register Flutterwave in production."
                 )
-            except Exception as err:
-                logger.warning("Flutterwave provider unavailable: %s", err)
+            else:
+                try:
+                    providers["flutterwave"] = FlutterwavePaymentProvider(
+                        secret_key=settings.flutterwave_secret_key,
+                        webhook_secret_hash=settings.flutterwave_webhook_secret_hash,
+                    )
+                except Exception as err:
+                    logger.warning("Flutterwave provider unavailable: %s", err)
 
         if settings.stripe_secret_key:
             try:
@@ -54,16 +66,27 @@ class PaymentManager:
             except Exception as err:
                 logger.warning("Paystack provider unavailable: %s", err)
 
-        # The app provider is always registered as a fallback so a checkout
-        # can still be issued when no external provider is configured.
-        providers["app"] = AppCheckoutPaymentProvider(
-            base_url=(getattr(settings, "app_base_url", "") or "").strip()
-        )
+        # The ``app`` provider is a SIMULATOR — it confirms payments with a
+        # button click and proves nothing about settlement. It is registered
+        # automatically outside production so local/dev/test can issue a
+        # checkout without external keys. In production it is registered ONLY
+        # when PAYMENT_APP_MODE_ENABLED is explicitly set (an audited
+        # break-glass), so a real deployment can never silently fall back to
+        # "click to mark paid".
+        if (not settings.is_production) or settings.payment_app_mode_enabled:
+            providers["app"] = AppCheckoutPaymentProvider(
+                base_url=(getattr(settings, "app_base_url", "") or "").strip()
+            )
+        elif settings.is_production:
+            logger.warning(
+                "App checkout simulator is disabled in production "
+                "(set PAYMENT_APP_MODE_ENABLED=true to force-enable)."
+            )
 
         default_provider = settings.payment_default_provider
         if default_provider not in providers:
-            # Prefer any real provider; fall back to app mode only if neither
-            # Stripe nor Flutterwave is configured.
+            # Prefer any real provider; fall back to app mode only if it is
+            # registered (i.e. outside production or break-glass enabled).
             for preferred in ("stripe", "flutterwave", "paystack", "app"):
                 if preferred in providers:
                     default_provider = preferred

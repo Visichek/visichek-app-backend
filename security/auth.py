@@ -12,6 +12,7 @@ from core.errors import (
     auth_role_mismatch,
 )
 from repositories.tokens_repo import get_access_token, get_access_token_allow_expired
+from schemas.imports import AccountStatus
 from security.cookie_utils import ACCESS_TOKEN_COOKIE
 from security.principal import ALL_ROLES, AuthPrincipal, TENANT_USER_ROLES
 
@@ -41,12 +42,14 @@ _PASSWORD_CHANGE_ALLOWED_PATHS: Final[frozenset[str]] = frozenset(
 )
 
 
-async def _is_must_change_password(user_id: str, *, collection: str) -> bool:
-    """Read the ``must_change_password`` flag for a user/admin.
+async def _fetch_account_flags(user_id: str, *, collection: str) -> dict:
+    """Read security-relevant flags for a user/admin in one projected query.
 
-    Fail-open on DB errors: returns False so a Mongo blip never
-    locks every account out. The next successful read re-applies
-    the block on the offending row.
+    Returns the ``must_change_password`` and ``account_status`` fields so
+    both the password-change gate and the account-status gate share a
+    single DB round-trip. Returns ``{}`` on any DB error so a Mongo blip
+    never locks every account out (fail-open); the next successful read
+    re-applies the gate on the offending row.
     """
     try:
         from bson import ObjectId
@@ -55,11 +58,31 @@ async def _is_must_change_password(user_id: str, *, collection: str) -> bool:
 
         doc = await db[collection].find_one(
             {"_id": ObjectId(user_id)},
-            projection={"must_change_password": 1},
+            projection={"must_change_password": 1, "account_status": 1},
         )
     except Exception:
-        return False
-    return bool(doc and doc.get("must_change_password"))
+        return {}
+    return doc or {}
+
+
+def _is_active_account(raw_status: object) -> bool:
+    """True when a stored ``account_status`` value represents an active account.
+
+    Treats a missing field as active (legacy rows pre-dating the column
+    must keep working). Accepts both the raw string and an enum member.
+    """
+    if raw_status is None:
+        return True
+    value = getattr(raw_status, "value", raw_status)
+    return str(value).upper() == AccountStatus.ACTIVE.value
+
+
+def _raise_account_inactive() -> None:
+    raise AppException(
+        status_code=403,
+        code=ErrorCode.AUTH_ACCOUNT_INACTIVE,
+        message="Account is not active",
+    )
 
 
 def _raise_password_change_required() -> None:
@@ -77,35 +100,54 @@ def _raise_password_change_required() -> None:
     )
 
 
-async def _enforce_must_change_password(
-    request: Request, principal: AuthPrincipal
-) -> None:
-    """Refuse authenticated requests when the row demands a password change.
+async def _enforce_account_gates(request: Request, principal: AuthPrincipal) -> None:
+    """Enforce per-row account gates on every authenticated request.
 
-    Applies to BOTH tenant-user roles (rows in ``system_users``) and
-    application admins (rows in ``admins``). Application users (role
-    ``user``) are not in scope because the public signup flow lets
-    them choose their own password and no admin-driven create path
-    exists for them.
+    Two gates, served by a single projected DB read:
 
-    The allowlist (``_PASSWORD_CHANGE_ALLOWED_PATHS``) lets the
-    change-password endpoints themselves through so the user can lift
-    the block.
+    1. **Account status** — a tenant user (row in ``system_users``)
+       whose ``account_status`` is no longer ACTIVE is refused with 403
+       ``AUTH_ACCOUNT_INACTIVE``, even on the change-password endpoints.
+       This is defence-in-depth alongside token revocation on
+       deactivation: a token that outlived its revocation, or a refresh
+       that slipped through, is still rejected here.
+    2. **Forced password change** — when the row carries
+       ``must_change_password=True`` every request EXCEPT the
+       change-password endpoints (``_PASSWORD_CHANGE_ALLOWED_PATHS``) is
+       refused so the user is funnelled into picking a new password.
+
+    Applies to tenant-user roles (``system_users``) and application
+    admins (``admins``). Application users (role ``user``) are out of
+    scope — they pick their own password at signup and have no
+    admin-driven create path, and active-status for them is enforced by
+    the ``check_user_account_status_and_permissions`` gate.
+
+    Fail-open on DB error (``_fetch_account_flags`` returns ``{}``).
     """
     route = request.scope.get("route")
     route_path = getattr(route, "path", None) or request.url.path
-    if route_path in _PASSWORD_CHANGE_ALLOWED_PATHS:
-        return
+    change_password_path = route_path in _PASSWORD_CHANGE_ALLOWED_PATHS
 
     if principal.role in TENANT_USER_ROLES:
-        if await _is_must_change_password(principal.user_id, collection="system_users"):
+        flags = await _fetch_account_flags(principal.user_id, collection="system_users")
+        if not _is_active_account(flags.get("account_status")):
+            _raise_account_inactive()
+        if not change_password_path and flags.get("must_change_password"):
             _raise_password_change_required()
         return
 
     if principal.role == "admin":
-        if await _is_must_change_password(principal.user_id, collection="admins"):
+        if change_password_path:
+            return
+        flags = await _fetch_account_flags(principal.user_id, collection="admins")
+        if flags.get("must_change_password"):
             _raise_password_change_required()
         return
+
+
+# Backwards-compatible alias — older call sites / tests referenced the
+# password-only name before account-status enforcement was folded in.
+_enforce_must_change_password = _enforce_account_gates
 
 
 # auto_error=False so missing header doesn't 403 before we check cookies
@@ -364,6 +406,7 @@ async def verify_super_admin_token(
         raise auth_role_mismatch(
             required_role="super_admin", actual_role=principal.role
         )
+    await _enforce_account_gates(request, principal)
     return principal
 
 
@@ -391,6 +434,7 @@ async def verify_tenant_form_configure_token(
             required_role="super_admin_or_dept_admin",
             actual_role=principal.role,
         )
+    await _enforce_account_gates(request, principal)
     await _capture_location(request, principal)
     return principal
 
@@ -431,6 +475,7 @@ async def verify_receptionist_token(
         raise auth_role_mismatch(
             required_role="receptionist", actual_role=principal.role
         )
+    await _enforce_account_gates(request, principal)
     return principal
 
 

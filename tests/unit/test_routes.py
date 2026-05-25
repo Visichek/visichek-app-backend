@@ -1219,6 +1219,76 @@ class TestPrivacyNoticeRoutes:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_create_privacy_notice_without_tenant_id(
+        self, cleanup_dependency_overrides
+    ):
+        """tenant_id is token-derived: a body WITHOUT it must NOT 422, and the
+        enqueued payload must carry the principal's tenant_id, not a client one."""
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
+
+        with patch(
+            "api.v1.privacy_notice_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
+                "id": "notice-001",
+                "job_id": "job-notice-create",
+                "status": "queued",
+            }
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/privacy-notices",
+                    json={
+                        "title": "Data Processing Notice",
+                        "summary": "How we process your personal data",
+                    },
+                    headers={"Authorization": "Bearer token-123"},
+                )
+
+            assert response.status_code == 202
+            payload = mock_enqueue.await_args.kwargs["payload"]
+            # Token tenant_id is injected; the body never carried one.
+            assert payload["tenant_id"] == MOCK_SUPER_ADMIN_PRINCIPAL.tenant_id
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_create_privacy_notice_ignores_client_tenant_id(
+        self, cleanup_dependency_overrides
+    ):
+        """A forged tenant_id in the body is overwritten with the token's."""
+        app.dependency_overrides[verify_system_user_token] = lambda: (
+            MOCK_SUPER_ADMIN_PRINCIPAL
+        )
+
+        with patch(
+            "api.v1.privacy_notice_route.enqueue_write", new_callable=AsyncMock
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
+                "id": "notice-001",
+                "job_id": "job-notice-create",
+                "status": "queued",
+            }
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/privacy-notices",
+                    json={"title": "x", "tenant_id": "forged-other-tenant"},
+                    headers={"Authorization": "Bearer token-123"},
+                )
+
+            assert response.status_code == 202
+            payload = mock_enqueue.await_args.kwargs["payload"]
+            assert payload["tenant_id"] == MOCK_SUPER_ADMIN_PRINCIPAL.tenant_id
+            assert payload["tenant_id"] != "forged-other-tenant"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_get_active_privacy_notice(self, cleanup_dependency_overrides):
         """Test retrieving active privacy notice."""
         app.dependency_overrides[verify_system_user_token] = lambda: (

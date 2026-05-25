@@ -143,8 +143,8 @@ async def create_appointment_endpoint(
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
     payload = appt_data.model_dump(exclude_none=True)
-    if principal.tenant_id:
-        payload["tenant_id"] = principal.tenant_id
+    # tenant_id is token-derived, never client-supplied.
+    payload["tenant_id"] = principal.tenant_id or ""
     payload["created_by"] = principal.user_id
     request_id = getattr(request.state, "request_id", None)
     payload["_actor_id"] = principal.user_id

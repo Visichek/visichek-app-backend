@@ -42,6 +42,14 @@ class Settings:
     storage_backend: str
     storage_local_root: str
     payment_default_provider: str
+    # The ``app`` checkout provider is a SIMULATOR, not a real processor.
+    # It is registered automatically outside production; in production it
+    # is registered only when this flag is explicitly set (break-glass).
+    payment_app_mode_enabled: bool
+    # Local filesystem storage exposes unauthenticated PUT/GET transport
+    # shims. It is rejected in production unless this flag is set (for a
+    # deliberately isolated local-only deployment).
+    allow_local_storage_in_production: bool
     stripe_secret_key: str | None
     stripe_webhook_secret: str | None
     flutterwave_secret_key: str | None
@@ -190,6 +198,12 @@ def get_settings() -> Settings:
         payment_default_provider=os.getenv(
             "PAYMENT_DEFAULT_PROVIDER", "flutterwave"
         ).lower(),
+        payment_app_mode_enabled=os.getenv("PAYMENT_APP_MODE_ENABLED", "false").lower()
+        in {"1", "true", "yes"},
+        allow_local_storage_in_production=os.getenv(
+            "ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "false"
+        ).lower()
+        in {"1", "true", "yes"},
         stripe_secret_key=os.getenv("STRIPE_SECRET_KEY"),
         stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET"),
         flutterwave_secret_key=os.getenv("FLUTTERWAVE_SECRET_KEY"),

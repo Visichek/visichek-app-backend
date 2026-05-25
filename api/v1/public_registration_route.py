@@ -26,6 +26,7 @@ from services.checkin_service import (
     submit_verified_checkin_for_tenant,
 )
 from services.consent_service import build_consent_payload
+from services.qr_service import sign_checkin_capability
 from services.public_registration_service import (
     check_returning_visitor_status,
     checkout_visitor_public,
@@ -289,7 +290,7 @@ async def submit_checkin_for_tenant_endpoint(
         consent_accepted_at=consent_accepted_at,
     )
 
-    return await submit_verified_checkin_for_tenant(
+    result = await submit_verified_checkin_for_tenant(
         tenant_id=tenant_id,
         email=email,
         phone=phone,
@@ -304,6 +305,9 @@ async def submit_checkin_for_tenant_endpoint(
         visitor_lng=visitor_lng,
         consent=consent,
     )
+    if result.id:
+        result.capability_token = sign_checkin_capability(result.tenant_id, result.id)
+    return result
 
 
 @router.get("/tenants/{tenant_id}/active-checkin-config")
@@ -466,7 +470,7 @@ async def submit_checkin_for_returning_visitor_endpoint(
         privacy_notice_version_id=body.privacy_notice_version_id,
         consent_accepted_at=body.consent_accepted_at,
     )
-    return await submit_returning_visitor_checkin_by_id(
+    result = await submit_returning_visitor_checkin_by_id(
         tenant_id=tenant_id,
         visitor_id=body.visitor_id,
         purpose=body.purpose,
@@ -475,6 +479,9 @@ async def submit_checkin_for_returning_visitor_endpoint(
         visitor_lng=body.visitor_lng,
         consent=consent,
     )
+    if result.id:
+        result.capability_token = sign_checkin_capability(result.tenant_id, result.id)
+    return result
 
 
 @router.post("/tenants/{tenant_id}/visitor-status")

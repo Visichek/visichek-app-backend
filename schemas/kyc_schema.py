@@ -80,6 +80,9 @@ class KYCInitiateRequestIn(BaseModel):
     """
 
     checkin_id: str
+    # Signed capability token handed back in the check-in creation response.
+    # Required: a bare check-in id no longer authorizes KYC actions.
+    capability_token: str
 
 
 class KYCInitiateResponseOut(BaseModel):
@@ -98,6 +101,8 @@ class KYCSkipRequestIn(BaseModel):
 
     checkin_id: str
     reason: Optional[str] = None
+    # Signed capability token from the check-in creation response. Required.
+    capability_token: str
 
 
 class KYCStatusOut(BaseModel):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -64,6 +65,72 @@ async def record_audit_event(
     }
     fire_and_forget(_insert_audit_event(event_doc), name=f"audit.{action}")
     return None
+
+
+# ---------------------------------------------------------------------------
+# Read auditing
+# ---------------------------------------------------------------------------
+#
+# Tenant-scoped GET requests are recorded to the audit trail so that
+# "who viewed what, when?" is answerable for any tenant resource — not just
+# mutations. This is wired into ``PlanEnforcementMiddleware`` (which already
+# decodes the token, knows the tenant and the resource collection, and maps
+# GET -> "read"), so reads are audited centrally without touching every route.
+# Writes are NOT audited here — they are recorded in their queued writers.
+
+# Collections whose reads we deliberately do NOT audit: the audit trail itself
+# (reading it would generate a read row, which would then be read, …) and the
+# high-frequency dashboard polls that would otherwise flood the trail.
+_READ_AUDIT_SKIP_COLLECTIONS = {"audit", "dashboard"}
+
+_OBJECT_ID_RE = re.compile(r"^[0-9a-fA-F]{24}$")
+
+
+def _resource_id_from_path(path: str) -> str:
+    """Return the trailing ObjectId-looking path segment, else "".
+
+    Detail reads (``/v1/privacy-notices/{id}``) carry the id in the path; list
+    reads (``/v1/privacy-notices``) and named sub-paths (``/active``) do not,
+    so we record an empty resource_id for those.
+    """
+    for segment in reversed(path.strip("/").split("/")):
+        if _OBJECT_ID_RE.match(segment):
+            return segment
+    return ""
+
+
+def should_audit_read(collection: Optional[str]) -> bool:
+    """Whether a read of ``collection`` should be written to the audit trail."""
+    return bool(collection) and collection not in _READ_AUDIT_SKIP_COLLECTIONS
+
+
+async def record_read_audit(
+    *,
+    actor_id: str,
+    actor_role: str,
+    tenant_id: Optional[str],
+    collection: str,
+    path: str,
+    request_id: Optional[str] = None,
+) -> None:
+    """Record a tenant-scoped read (GET) to the audit trail.
+
+    Fire-and-forget and best-effort: skipped for excluded collections and never
+    raises (delegates to ``record_audit_event``, which schedules the insert as
+    a background task).
+    """
+    if not should_audit_read(collection):
+        return
+    await record_audit_event(
+        actor_id=actor_id,
+        actor_role=actor_role,
+        action=f"{collection}.read",
+        resource_type=collection,
+        resource_id=_resource_id_from_path(path),
+        tenant_id=tenant_id,
+        details={"method": "GET", "path": path, "access": "read"},
+        request_id=request_id,
+    )
 
 
 async def get_audit_trail(

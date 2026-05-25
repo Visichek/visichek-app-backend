@@ -13,6 +13,7 @@ from security.principal import AuthPrincipal
 from services.checkin_config_service import enforce_kiosk_submit_access
 from services.checkin_service import submit_verified_checkin
 from services.consent_service import build_consent_payload
+from services.qr_service import sign_checkin_capability
 
 router = APIRouter(prefix="/checkin-configs", tags=["Check-In Submit"])
 
@@ -171,7 +172,7 @@ async def submit_checkin_endpoint(
         consent_accepted_at=consent_accepted_at,
     )
 
-    return await submit_verified_checkin(
+    result = await submit_verified_checkin(
         checkin_config_id=checkin_config_id,
         email=email,
         phone=phone,
@@ -185,3 +186,9 @@ async def submit_checkin_endpoint(
         registration_token=registration_token,
         consent=consent,
     )
+    # Hand the kiosk a signed capability token bound to this check-in so it
+    # can drive the public KYC follow-up endpoints. The bare check-in id is
+    # no longer sufficient to skip KYC or poll status.
+    if result.id:
+        result.capability_token = sign_checkin_capability(result.tenant_id, result.id)
+    return result

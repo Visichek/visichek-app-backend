@@ -123,8 +123,8 @@ async def create_checkin_config(
     principal: AuthPrincipal = Depends(verify_system_user_token("super_admin")),
 ):
     data = payload.model_dump(exclude_none=True)
-    if principal.tenant_id:
-        data["tenant_id"] = principal.tenant_id
+    # tenant_id is token-derived, never client-supplied.
+    data["tenant_id"] = principal.tenant_id or ""
     return await enqueue_write(
         writer_key="checkin_config.create",
         payload=data,

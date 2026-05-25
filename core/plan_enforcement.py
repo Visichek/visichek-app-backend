@@ -483,6 +483,27 @@ class PlanEnforcementMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
+        # Read auditing: record successful tenant-scoped GETs to the audit
+        # trail so "who viewed what, when?" is answerable for reads too (not
+        # just writes, which are audited in their writers). Reuses the identity
+        # and collection already resolved above — no extra token decode. Only
+        # fires for resources mapped in PATH_TO_COLLECTION (the tenant-scoped
+        # set) and for 2xx responses. Fire-and-forget; never blocks the request.
+        if method.upper() == "GET" and collection and 200 <= response.status_code < 300:
+            try:
+                from services.audit_service import record_read_audit
+
+                await record_read_audit(
+                    actor_id=getattr(access_token, "userId", "") or "",
+                    actor_role=role,
+                    tenant_id=tenant_id,
+                    collection=collection,
+                    path=path,
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            except Exception:
+                logger.debug("read-audit failed path=%s", path, exc_info=True)
+
         # Add plan info headers
         response.headers["X-Plan-Tier"] = plan_data.get("tier", "unknown")
         response.headers["X-Subscription-Status"] = plan_data.get(

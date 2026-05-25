@@ -42,8 +42,14 @@ async def create_privacy_notice_endpoint(
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
     payload = notice_data.model_dump(exclude_none=True)
-    if principal.tenant_id:
-        payload["tenant_id"] = principal.tenant_id
+    # tenant_id is token-derived, never client-supplied: overwrite any value
+    # that came in on the request body with the authenticated tenant.
+    payload["tenant_id"] = principal.tenant_id or ""
+    request_id = getattr(request.state, "request_id", None)
+    # Thread actor metadata so the writer can record an audit event.
+    payload["_actor_id"] = principal.user_id
+    payload["_actor_role"] = principal.role
+    payload["_request_id"] = request_id
     return await enqueue_write(
         writer_key="privacy_notice.create",
         payload=payload,
@@ -51,7 +57,7 @@ async def create_privacy_notice_endpoint(
         tenant_id=principal.tenant_id,
         actor_id=principal.user_id,
         actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
+        request_id=request_id,
     )
 
 
@@ -162,6 +168,11 @@ async def update_privacy_notice_endpoint(
     tenant_id = principal.tenant_id or ""
     payload = notice_data.model_dump(exclude_none=True)
     payload["tenant_id"] = tenant_id
+    request_id = getattr(request.state, "request_id", None)
+    # Thread actor metadata so the writer can record an audit event.
+    payload["_actor_id"] = principal.user_id
+    payload["_actor_role"] = principal.role
+    payload["_request_id"] = request_id
     return await enqueue_write(
         writer_key="privacy_notice.update",
         payload=payload,
@@ -170,5 +181,5 @@ async def update_privacy_notice_endpoint(
         tenant_id=tenant_id,
         actor_id=principal.user_id,
         actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
+        request_id=request_id,
     )

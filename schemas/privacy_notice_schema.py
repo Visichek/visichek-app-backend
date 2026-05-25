@@ -28,6 +28,11 @@ class PrivacyNoticeBase(BaseModel):
 
 
 class PrivacyNoticeCreate(PrivacyNoticeBase):
+    # tenant_id is ALWAYS derived from the authenticated token by the route
+    # layer and injected into the payload before the writer reconstructs this
+    # model. Clients never supply it, so it defaults to "" on the request body
+    # (a client-sent value is overwritten with the token's tenant_id).
+    tenant_id: str = ""
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 

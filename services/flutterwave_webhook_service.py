@@ -23,6 +23,38 @@ from schemas.subscription_schema import SubscriptionStatus, SubscriptionUpdate
 logger = logging.getLogger(__name__)
 
 
+def _flutterwave_transaction_verified(tx_ref: str) -> bool:
+    """Independently confirm a transaction succeeded via the Flutterwave API.
+
+    A valid webhook signature proves the body came from Flutterwave, but for
+    high-value billing state changes (activating a paid subscription) we
+    re-query the transaction directly so a replayed/spoofed-then-signed body
+    can't grant benefits. Fail CLOSED: if the provider is configured but the
+    transaction does not verify as successful (or the verify call errors), we
+    return False and the subscription is NOT activated — the event is stored
+    and can be replayed once reconciled. When no Flutterwave provider is
+    configured (e.g. app/dev mode) there is nothing to verify against, so we
+    fall back to trusting the signature that was already checked.
+    """
+    try:
+        from core.payments.types import PaymentStatus
+
+        manager = PaymentManager.get_instance()
+        if not manager.has_provider("flutterwave"):
+            return True
+        provider = manager.get_provider("flutterwave")
+        tx = provider.fetch_transaction(reference=tx_ref)
+        return tx.status == PaymentStatus.SUCCEEDED
+    except Exception:
+        logger.warning(
+            "Flutterwave transaction verification failed for tx_ref=%s; "
+            "refusing to activate benefits on an unverified event",
+            tx_ref,
+            exc_info=True,
+        )
+        return False
+
+
 async def process_flutterwave_webhook(body: bytes, headers: dict[str, str]) -> dict:
     """
     Process a Flutterwave webhook event.
@@ -183,6 +215,24 @@ async def _handle_charge_completed(payload: dict) -> dict:
             logger.info(
                 f"Updated payment transaction: reference={tx_ref}, status=succeeded"
             )
+            # High-value gate: only activate the subscription after an
+            # independent provider-side confirmation that the charge really
+            # succeeded. A signed-but-spoofed/replayed body therefore can't
+            # grant plan benefits.
+            if not _flutterwave_transaction_verified(tx_ref):
+                logger.error(
+                    "Flutterwave charge.completed for tx_ref=%s could not be "
+                    "independently verified; payment recorded but subscription "
+                    "NOT activated (event is stored for replay).",
+                    tx_ref,
+                )
+                return {
+                    "handled": True,
+                    "action": "payment_recorded_unverified",
+                    "reference": tx_ref,
+                    "status": "succeeded",
+                    "activated": False,
+                }
             # Bridge to checkout sessions: activate the subscription if this
             # reference corresponds to a pending checkout.
             try:
@@ -200,6 +250,7 @@ async def _handle_charge_completed(payload: dict) -> dict:
                 "action": "payment_updated",
                 "reference": tx_ref,
                 "status": "succeeded",
+                "activated": True,
             }
         else:
             logger.warning(f"Payment transaction not found: reference={tx_ref}")

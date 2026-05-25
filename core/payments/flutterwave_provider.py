@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 
 import requests  # type: ignore[import-untyped]
@@ -71,7 +72,19 @@ class FlutterwavePaymentProvider(PaymentProvider):
     def verify_webhook(self, *, body: bytes, headers: dict[str, str]) -> WebhookEvent:
         provided = headers.get("verif-hash") or headers.get("Verif-Hash")
         expected = self._webhook_secret_hash
-        if expected and provided != expected:
+        # Fail CLOSED: a Flutterwave provider with no configured webhook
+        # secret cannot verify anything, so every webhook is rejected
+        # rather than trusted. (Previously the check was skipped when
+        # ``expected`` was falsy, which let a forged webhook mark a
+        # payment succeeded.) Production startup also refuses to register
+        # the provider without this secret — see core/security_posture.py.
+        if not expected:
+            raise AppException(
+                status_code=401,
+                code=ErrorCode.PAYMENT_WEBHOOK_INVALID,
+                message="Flutterwave webhook secret is not configured",
+            )
+        if not provided or not hmac.compare_digest(provided, expected):
             raise AppException(
                 status_code=401,
                 code=ErrorCode.PAYMENT_WEBHOOK_INVALID,

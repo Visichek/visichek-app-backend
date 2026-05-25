@@ -19,6 +19,7 @@ from fastapi.responses import Response
 
 from core.errors import auth_permission_denied
 from core.response_envelope import document_response
+from core.settings import get_settings
 from core.storage.local_provider import LocalStorageProvider
 from core.storage.manager import DocumentStorageManager
 from security.auth import verify_any_token
@@ -30,6 +31,22 @@ from services.document_service import (
 )
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
+
+# The local-backend PUT shim accepts a raw body with no provider-side size
+# enforcement, so cap it here to prevent disk-exhaustion via a huge upload.
+_MAX_LOCAL_PUT_BYTES = 25 * 1024 * 1024  # 25 MiB
+
+
+def _local_transport_enabled() -> bool:
+    """Whether the unauthenticated local PUT/GET transport may run.
+
+    The local provider exposes byte read/write with no auth, so these
+    shims are only safe for a local/dev backend or a deliberately
+    isolated local-only deployment. In production they are disabled
+    unless ALLOW_LOCAL_STORAGE_IN_PRODUCTION is explicitly set.
+    """
+    settings = get_settings()
+    return (not settings.is_production) or settings.allow_local_storage_in_production
 
 
 @router.get("/{document_id}")
@@ -92,14 +109,14 @@ async def get_document(
             raise auth_permission_denied("GET:/v1/documents/{document_id}")
         return {"document": doc, "download_url": download_url}
 
-    if ".." in document_id:
-        return Response(status_code=400)
+    if not _local_transport_enabled():
+        return Response(status_code=404)
     provider = DocumentStorageManager.get_instance().provider
     if not isinstance(provider, LocalStorageProvider):
         return Response(status_code=404)
     try:
         data = provider.read_bytes(object_key=document_id)
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError):
         return Response(status_code=404)
     return Response(content=data)
 
@@ -150,27 +167,33 @@ async def upload_local_document(object_key: str, request: Request):
     """LOCAL-backend presign shim — receives the raw PUT body the client sent
     to the ``upload_url`` returned by ``LocalStorageProvider.presign_put``.
     S3 never routes here (the client PUTs straight to S3)."""
-    if ".." in object_key:
-        return Response(status_code=400)
+    if not _local_transport_enabled():
+        return Response(status_code=404)
     provider = DocumentStorageManager.get_instance().provider
     if not isinstance(provider, LocalStorageProvider):
         return Response(status_code=404)
 
     payload = await request.body()
-    provider.save_bytes(object_key=object_key, payload=payload)
+    if len(payload) > _MAX_LOCAL_PUT_BYTES:
+        return Response(status_code=413)
+    try:
+        provider.save_bytes(object_key=object_key, payload=payload)
+    except ValueError:
+        # object_key tried to escape the storage root.
+        return Response(status_code=400)
     return Response(status_code=204)
 
 
 @router.get("/local/{object_key:path}", include_in_schema=False)
 async def read_local_document(object_key: str):
-    if ".." in object_key:
-        return Response(status_code=400)
+    if not _local_transport_enabled():
+        return Response(status_code=404)
     provider = DocumentStorageManager.get_instance().provider
     if not isinstance(provider, LocalStorageProvider):
         return Response(status_code=404)
 
     try:
         data = provider.read_bytes(object_key=object_key)
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError):
         return Response(status_code=404)
     return Response(content=data)

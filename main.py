@@ -242,12 +242,12 @@ def apscheduler_heartbeat() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Startup validation ---
-    if settings.is_production and not settings.session_secret_key:
-        raise RuntimeError(
-            "SESSION_SECRET_KEY must be set in production. Refusing to start."
-        )
-    if settings.is_production and not settings.secret_key:
-        raise RuntimeError("SECRET_KEY must be set in production. Refusing to start.")
+    # Fail closed: refuse to boot in production with missing signing
+    # secrets, unsigned webhooks, the payment simulator, or unauthenticated
+    # local storage. Outside production these only log warnings.
+    from core.security_posture import assert_security_posture
+
+    assert_security_posture(settings)
 
     logger.info("Starting VisiChek backend (env=%s)", settings.env)
 
@@ -562,6 +562,7 @@ async def lifespan(app: FastAPI):
 
 
 from core.case_conversion import CaseConversionMiddleware
+from core.csrf import CsrfOriginMiddleware
 from core.http_cache import HttpCacheMiddleware
 from core.maintenance_mode import MaintenanceModeMiddleware
 from core.plan_enforcement import PlanEnforcementMiddleware
@@ -584,13 +585,18 @@ app.add_middleware(MaintenanceModeMiddleware)
 app.add_middleware(RateLimitingMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 _cors_origins = list(settings.cors_origins) if settings.cors_origins else []
+# Production-grade origins (the live frontends).
 _default_origins = [
-    "http://localhost:3000",
     "https://visichek.app",
     "https://www.visichek.app",
     "https://client.visichek.app",
     "https://visichek-app.vercel.app",
 ]
+# Local dev origins are credentialed-CORS-allowed ONLY outside production — a
+# localhost origin is never a legitimate production caller and allowing it with
+# allow_credentials=True is a needless cross-origin surface.
+if not settings.is_production:
+    _default_origins.append("http://localhost:3000")
 for _origin in _default_origins:
     if _origin not in _cors_origins:
         _cors_origins.append(_origin)
@@ -602,6 +608,12 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Set-Cookie"],
 )
+# CSRF/Origin gate for cookie-authenticated writes. Enforces that an
+# unsafe-method request authenticated by the auth cookie (and not a Bearer
+# header) carries an Origin/Referer in the allowed set. Bearer-authenticated
+# and safe-method requests are exempt. Added last so it is the outermost
+# layer and rejects before any business work runs.
+app.add_middleware(CsrfOriginMiddleware, allowed_origins=set(_cors_origins))
 
 
 @app.exception_handler(HTTPException)
@@ -692,12 +704,13 @@ async def readiness_check():
                 "status": "healthy",
                 "latency_ms": round((time.perf_counter() - start) * 1000, 2),
             }
-        except Exception as exc:
+        except Exception:
             ready = False
+            logger.warning("readiness: MongoDB ping failed", exc_info=True)
             services["mongo"] = {
                 "status": "unhealthy",
                 "latency_ms": round((time.perf_counter() - start) * 1000, 2),
-                "message": str(exc),
+                "message": "unreachable",
             }
 
     start = time.perf_counter()
@@ -707,12 +720,13 @@ async def readiness_check():
             "status": "healthy",
             "latency_ms": round((time.perf_counter() - start) * 1000, 2),
         }
-    except Exception as exc:
+    except Exception:
         ready = False
+        logger.warning("readiness: Redis ping failed", exc_info=True)
         services["redis"] = {
             "status": "unhealthy",
             "latency_ms": round((time.perf_counter() - start) * 1000, 2),
-            "message": str(exc),
+            "message": "unreachable",
         }
 
     status_code = 200 if ready else 503
@@ -743,12 +757,13 @@ async def health_check():
                 "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "message": "MongoDB ping successful",
             }
-        except Exception as exc:
+        except Exception:
             overall_status = "degraded"
+            logger.warning("health: MongoDB ping failed", exc_info=True)
             services["mongo"] = {
                 "status": "unhealthy",
                 "latency_ms": round((time.perf_counter() - start) * 1000, 2),
-                "message": str(exc),
+                "message": "unreachable",
             }
 
     start = time.perf_counter()
@@ -759,12 +774,13 @@ async def health_check():
             "latency_ms": round((time.perf_counter() - start) * 1000, 2),
             "message": "Redis ping successful",
         }
-    except Exception as exc:
+    except Exception:
         overall_status = "degraded"
+        logger.warning("health: Redis ping failed", exc_info=True)
         services["redis"] = {
             "status": "unhealthy",
             "latency_ms": round((time.perf_counter() - start) * 1000, 2),
-            "message": str(exc),
+            "message": "unreachable",
         }
 
     aps_heartbeat = redis_client.get("apscheduler:heartbeat")

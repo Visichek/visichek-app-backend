@@ -25,6 +25,7 @@ from security.auth import verify_user_refresh_token
 from security.cookie_utils import (
     build_auth_response,
     clear_auth_cookies,
+    set_auth_cookies,
     REFRESH_TOKEN_COOKIE,
 )
 from security.principal import AuthPrincipal
@@ -52,7 +53,6 @@ async def auth_callback_user(request: Request):
     user_info = token.get("userinfo")
 
     if user_info:
-        print("✅ Google user info:", user_info)
         rider = UserBase(
             firstName=user_info["name"],
             password="",
@@ -61,15 +61,25 @@ async def auth_callback_user(request: Request):
             loginType=LoginType.google,
         )
         data = await authenticate_user_google(user_data=rider)
-        access_token = data.access_token
-        refresh_token = data.refresh_token
 
-        success_url = f"{SUCCESS_PAGE_URL}?access_token={access_token}&refresh_token={refresh_token}"
-
-        return RedirectResponse(
-            url=success_url,
+        # Security: tokens are delivered ONLY via httpOnly cookies, never in
+        # the redirect URL. Query-string tokens leak through browser history,
+        # proxy/access logs, analytics, and the Referer header. The frontend
+        # reads the session from the cookies the browser now holds; the
+        # redirect carries no credentials.
+        response = RedirectResponse(
+            url=SUCCESS_PAGE_URL,
             status_code=status.HTTP_302_FOUND,
         )
+        set_auth_cookies(
+            response,
+            data.access_token or "",
+            data.refresh_token or "",
+        )
+        # Defence in depth: don't let the destination page leak this URL
+        # (or any future state) onward via the Referer header.
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
 
     raise HTTPException(status_code=400, detail={"message": "No user info found"})
 
