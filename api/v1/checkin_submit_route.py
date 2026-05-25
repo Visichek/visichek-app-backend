@@ -1,7 +1,7 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 
 from core.errors import AppException, ErrorCode, resource_not_found
 from core.response_envelope import document_response
@@ -12,6 +12,7 @@ from security.auth import verify_optional_kiosk_token
 from security.principal import AuthPrincipal
 from services.checkin_config_service import enforce_kiosk_submit_access
 from services.checkin_service import submit_verified_checkin
+from services.consent_service import build_consent_payload
 
 router = APIRouter(prefix="/checkin-configs", tags=["Check-In Submit"])
 
@@ -65,6 +66,7 @@ def _parse_json_dict(raw: str, field_name: str) -> dict:
 )
 async def submit_checkin_endpoint(
     checkin_config_id: str,
+    request: Request,
     phone: str = Form(..., description="Visitor phone — required identity key."),
     full_name: Optional[str] = Form(
         None,
@@ -100,6 +102,17 @@ async def submit_checkin_endpoint(
             "tokens return 400 with code ``INVALID_REGISTRATION_TOKEN`` "
             "rather than silently downgrading to an unscoped check-in."
         ),
+    ),
+    consent_granted: Optional[bool] = Form(
+        None, description='"true"/"false" — visitor accepted the privacy notice'
+    ),
+    consent_method: Optional[str] = Form(None, description='e.g. "kiosk_checkbox"'),
+    privacy_notice_id: Optional[str] = Form(None),
+    privacy_notice_version_id: Optional[str] = Form(
+        None, description="versionId of the notice shown/accepted"
+    ),
+    consent_accepted_at: Optional[int] = Form(
+        None, description="unix seconds the box was ticked"
     ),
     principal: Optional[AuthPrincipal] = Depends(verify_optional_kiosk_token),
 ) -> CheckinOut:
@@ -149,6 +162,15 @@ async def submit_checkin_endpoint(
             )
         file_mime = id_file.content_type or "application/octet-stream"
 
+    consent = build_consent_payload(
+        request,
+        consent_granted=consent_granted,
+        consent_method=consent_method,
+        privacy_notice_id=privacy_notice_id,
+        privacy_notice_version_id=privacy_notice_version_id,
+        consent_accepted_at=consent_accepted_at,
+    )
+
     return await submit_verified_checkin(
         checkin_config_id=checkin_config_id,
         email=email,
@@ -161,4 +183,5 @@ async def submit_checkin_endpoint(
         id_type=id_type,
         kyc_reference_id=kyc_reference_id,
         registration_token=registration_token,
+        consent=consent,
     )

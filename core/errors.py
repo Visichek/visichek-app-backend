@@ -31,6 +31,8 @@ class ErrorCode(str, Enum):
     TRIAL_ALREADY_USED = "TRIAL_ALREADY_USED"
     TRIAL_NOT_SUPPORTED = "TRIAL_NOT_SUPPORTED"
     GEOFENCE_VIOLATION = "GEOFENCE_VIOLATION"
+    CONSENT_REQUIRED = "CONSENT_REQUIRED"
+    DPA_REQUIRED = "DPA_REQUIRED"
 
 
 class AppException(HTTPException):
@@ -75,6 +77,14 @@ def auth_permission_denied(permission_key: str) -> AppException:
         code=ErrorCode.AUTH_PERMISSION_DENIED,
         message="Insufficient permissions",
         details={"permission_key": permission_key},
+    )
+
+
+def consent_required() -> AppException:
+    return AppException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code=ErrorCode.CONSENT_REQUIRED,
+        message="Visitor must accept the privacy notice to check in.",
     )
 
 

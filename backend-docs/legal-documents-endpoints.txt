@@ -1,0 +1,385 @@
+================================================================================
+LEGAL DOCUMENTS — Full API Reference & Lifecycle (Admin Dashboard + Website)
+================================================================================
+
+Audience:        frontend engineers (admin dashboard + public marketing site)
+Backend author:  backend
+Date:            2026-05-25
+Status:          shipped on master
+
+This document covers the platform-level legal documents feature: privacy
+policy, terms of service, service agreements, cookie policy, and any other
+admin-named legal copy. Application admins author/edit/publish documents in
+the admin dashboard; the public marketing website renders the published
+versions.
+
+This is the legal-copy analogue of the blog feature (see
+backend-docs/blog-and-media-endpoints.txt) and shares the same
+infrastructure: the tables list contract (tables.txt §0), the queued-write
+202 + job-poll contract, BlockNote block content, and presigned storage.
+
+NOTE: this is SEPARATE from the tenant-scoped "privacy notice" compliance
+feature (/v1/privacy-notices) which governs per-tenant VISITOR consent. Legal
+documents here are Visichek's OWN public legal copy, managed by application
+admins only.
+
+See also:
+  • backend-docs/tables.txt §0           — list/pagination/queued contract
+  • backend-docs/blog-and-media-endpoints.txt — sibling content feature
+  • CLAUDE.md "Queued Write Pipeline"     — 202 + job polling
+
+================================================================================
+0. CORE CONCEPTS (read first)
+================================================================================
+
+0.1  THE ENVELOPE  —  every response
+─────────────────────────────────────
+All responses are wrapped:
+
+    {
+      "success": true,
+      "message": "Legal documents retrieved",
+      "data": <payload>,
+      "meta": { ... },          // only on list endpoints
+      "requestId": "req-..."
+    }
+
+Field names on the wire are camelCase (the backend stores snake_case and
+converts automatically). So you send/receive `docType`, `publishedBody`,
+`sourceFileUrl`, `currentVersion`, `effectiveAt`, `hasUnpublishedChanges`,
+`dateCreated`, `lastUpdated`, etc. Request bodies accept either case.
+
+0.2  HEAD DOCUMENT vs VERSION SNAPSHOTS
+────────────────────────────────────────
+Each legal document is identified by a stable `slug` (e.g. "privacy-policy")
+and has ONE head record holding:
+
+  • body              — the editable WORKING copy (BlockNote blocks)
+  • publishedBody     — the content currently LIVE on the public site
+  • status            — draft | published | archived
+  • currentVersion    — the live published version number (null if never
+                        published)
+  • hasUnpublishedChanges — true when `body` has edits not yet published
+
+Every PUBLISH writes an immutable snapshot into the version history. Past
+versions are never mutated — that's the legal audit trail ("which terms were
+in effect, and when").
+
+    draft ──edit──> draft ──publish v1──> published ──edit──> published
+                                          (live=v1)   (hasUnpublishedChanges=true)
+                                                       │
+                                                       └─publish v2──> live=v2
+
+0.3  WORKING COPY vs LIVE COPY (important UX rule)
+───────────────────────────────────────────────────
+  • Editing `body` (PATCH) does NOT change what the public sees. It only
+    updates the working copy and flips `hasUnpublishedChanges` to true. The
+    public keeps seeing `publishedBody` until you POST .../publish.
+  • Editing metadata (`title`, `summary`, `docType`) IS reflected publicly
+    immediately — these are head-level fields shown next to the live body.
+    Only the legal TEXT (body) is version-gated.
+
+0.4  CONTENT FORMAT — BlockNote blocks
+────────────────────────────────────────
+`body`, `publishedBody`, and version `body` are arrays of BlockNote blocks,
+the SAME dialect as the blog editor. Supported block types include:
+
+    paragraph, heading (props.level 1–6), bulletListItem, numberedListItem,
+    quote, codeBlock, divider, image (props.url, props.caption), table
+
+Inline content is an array of `{ type:"text", text, styles:{bold,italic,
+underline,strike} }` and `{ type:"link", href, content:[...] }`. Line breaks
+inside a block are `\n` text nodes.
+
+0.5  QUEUED WRITES — 202 + job polling
+────────────────────────────────────────
+All mutations (POST/PATCH/DELETE/publish/archive) return 202 Accepted:
+
+    { "id": "<doc-id>", "jobId": "<job-id>", "status": "queued" }
+
+Poll GET /v1/jobs/{jobId} until status is "succeeded" | "failed". The job
+`result` carries the persisted id/slug/status. For CREATE, the `id` in the
+202 body is the final id (pre-generated) — safe to navigate to immediately.
+
+⚠️  IMPORT and UPLOAD-IMAGE are the exception: they do heavy I/O inline and
+    return a job row already in `succeeded` state, so the first poll resolves
+    immediately. IMPORT additionally returns the converted content inline so
+    the editor can render without a second request (see §2.1).
+
+================================================================================
+1. ADMIN — LIST / READ  (/v1/legal-documents/*)
+================================================================================
+
+Auth: application admin. Granted to the `content_only` and `content_support`
+access presets (and `all_controls`).
+
+1.1  GET  /v1/legal-documents                              List documents
+───────────────────────────────────────────────────────────────────────────
+  Auth:               admin (content_only)
+  Default sort:       -dateCreated
+  Sortable fields:    dateCreated, lastUpdated, publishedAt, effectiveAt,
+                      title, status, docType
+  Search (`q=`):      title, slug, summary
+  Filters:
+    status            draft | published | archived        (multi)
+    docType           privacy_policy | terms_of_service | service_agreement |
+                      cookie_policy | acceptable_use_policy |
+                      data_processing_agreement | refund_policy | sla |
+                      disclaimer | other                   (multi)
+    createdAtGte/Lte  unix epoch s
+    updatedAtGte/Lte  unix epoch s
+    publishedAtGte/Lte unix epoch s
+  Facets (`facets=`): status, doc_type
+
+  Response: data.items[] are COMPACT rows (no body):
+    LegalDocumentListRow {
+      id, slug, title, docType, summary, status,
+      currentVersion, publishedAt, effectiveAt,
+      hasUnpublishedChanges, hasSourceFile,
+      dateCreated, lastUpdated
+    }
+  data.meta { total, skip, limit, hasMore, facets? }
+
+  The unfiltered first page is served from a precompute cache (fast path).
+  Pagination beyond page 1: ?skip=&limit= . There is NO start/stop.
+
+1.2  GET  /v1/legal-documents/{documentId}                 Get one (admin)
+───────────────────────────────────────────────────────────────────────────
+  Returns the FULL head document including the editable `body`, the live
+  `publishedBody`, lifecycle metadata, and `sourceFile` + `sourceFileUrl`
+  (presigned download for the original upload, if any).
+
+  Response: LegalDocumentOut (see §5.1).
+
+1.3  GET  /v1/legal-documents/{documentId}/versions        Version history
+───────────────────────────────────────────────────────────────────────────
+  Query: ?skip=0&limit=50  (limit capped at 200)
+  Response: data.items[] of LegalDocumentVersionOut (newest first),
+            data.meta { skip, limit, count }.
+
+1.4  GET  /v1/legal-documents/{documentId}/versions/{version}   One version
+───────────────────────────────────────────────────────────────────────────
+  Returns a single immutable snapshot (LegalDocumentVersionOut, §5.3).
+  404 LegalDocumentVersion if that version doesn't exist.
+
+1.5  GET  /v1/legal-documents/{documentId}/source          Original file URL
+───────────────────────────────────────────────────────────────────────────
+  Returns a presigned download URL for the original imported Word/PDF:
+    { "url": "...", "fileName": "...", "mimeType": "...", "size": 12345 }
+  404 if the document was not imported from a file.
+  The URL is short-lived (presigned) — fetch on demand, don't cache.
+
+================================================================================
+2. ADMIN — CREATE / IMPORT  (/v1/legal-documents/*)
+================================================================================
+
+2.1  POST  /v1/legal-documents/import          Upload Word/PDF/text → draft
+───────────────────────────────────────────────────────────────────────────
+  multipart/form-data:
+    title     string (required)   display name, e.g. "Privacy Policy"
+    docType   string (optional)   defaults to "other"
+    file      file   (required)   .docx, .pdf, or .txt/.md   (max 25 MB)
+
+  Behaviour:
+    1. The file is converted to BlockNote blocks:
+         • .docx  → high-fidelity (headings, paragraphs, lists, bold/italic,
+                    links, embedded images uploaded + linked).
+         • .pdf   → text extraction; headings detected HEURISTICALLY.
+         • .txt/.md → paragraph blocks.
+    2. The ORIGINAL file is stored privately (presigned download later via
+       §1.5).
+    3. A DRAFT document is created (status="draft").
+
+  Response (inline, already committed):
+    {
+      "id": "...", "jobId": "...", "status": "queued",
+      "document": LegalDocumentOut,    // the created draft
+      "blocks": [ ...BlockNote... ],   // converted body, render immediately
+      "warnings": [ "PDF has no semantic structure; ..." ]
+    }
+
+  ⚠️  ALWAYS surface `warnings` to the admin. PDF conversion is approximate —
+      prompt the user to review headings/spacing before publishing. The draft
+      is fully editable: load `blocks` into the editor, let them fix it, then
+      PATCH + publish as normal.
+
+  Errors:
+    415 UNSUPPORTED_MEDIA_TYPE   file is not .docx/.pdf/.txt/.md
+    413 REQUEST_ENTITY_TOO_LARGE file over 25 MB
+    422                          conversion failed / parser unavailable
+
+2.2  POST  /v1/legal-documents/upload-image    Upload inline body image
+───────────────────────────────────────────────────────────────────────────
+  multipart/form-data: file (image/*)
+  Streams the image to storage and returns its public URL in the job result:
+    { "id": "...", "jobId": "...", "status": "queued" }
+    → poll job → result: { "url": "https://.../uploads/abc.png" }
+  Insert the returned `url` into an `image` block:
+    { "type": "image", "props": { "url": "<url>", "caption": "" } }
+
+2.3  POST  /v1/legal-documents                 Create document (queued)
+───────────────────────────────────────────────────────────────────────────
+  body: LegalDocumentCreate (see §5.2). Minimal:
+    { "title": "Cookie Policy", "docType": "cookie_policy", "body": [ ... ] }
+  `slug` is auto-generated from the title if omitted (and de-duplicated —
+  a clash appends -2, -3, …). Always starts as a DRAFT.
+  Returns 202 + { id, jobId, status }.
+
+================================================================================
+3. ADMIN — EDIT / LIFECYCLE  (/v1/legal-documents/{documentId}/*)
+================================================================================
+
+3.1  PATCH  /v1/legal-documents/{documentId}              Update working copy
+───────────────────────────────────────────────────────────────────────────
+  body: LegalDocumentUpdate — any subset of:
+    { title?, docType?, summary?, body?, slug? }
+  • Sending `body` on a PUBLISHED doc sets hasUnpublishedChanges=true; the
+    public site is unaffected until you publish.
+  • Renaming `slug` keeps it unique (auto-suffix on clash).
+  Returns 202 + { id, jobId, status }.
+
+3.2  POST  /v1/legal-documents/{documentId}/publish       Publish (queued)
+───────────────────────────────────────────────────────────────────────────
+  body (optional):
+    { "effectiveAt": 1716600000,   // unix s; defaults to now
+      "changeNote": "Updated data-retention clause" }
+  Snapshots the current working `body` as the next immutable version,
+  promotes it to `publishedBody`, sets status="published",
+  hasUnpublishedChanges=false, and bumps currentVersion.
+  Returns 202; poll the job for { version }.
+  409 if the working body is empty.
+
+3.3  POST  /v1/legal-documents/{documentId}/archive       Archive (queued)
+───────────────────────────────────────────────────────────────────────────
+  Sets status="archived" and removes the document from the public site
+  (public list + slug lookups exclude non-published docs). The version
+  history is retained. Returns 202.
+
+3.4  DELETE  /v1/legal-documents/{documentId}             Delete (queued)
+───────────────────────────────────────────────────────────────────────────
+  Permanently removes the head document AND its version history. Returns 202.
+  Prefer ARCHIVE for anything that was ever public.
+
+================================================================================
+4. PUBLIC WEBSITE  (/api/v1/legal/*)   — unauthenticated
+================================================================================
+
+Only PUBLISHED documents are exposed, and only their live `publishedBody`.
+Drafts, working copies, and internal storage keys are never returned.
+
+4.1  GET  /api/v1/legal                                    List published
+───────────────────────────────────────────────────────────────────────────
+  Same list contract as §1.1 but:
+    • status==published is enforced server-side (cannot be overridden).
+    • rows are COMPACT (no body):
+        LegalDocumentPublicListRow {
+          id, slug, title, docType, summary, version,
+          effectiveAt, publishedAt
+        }
+    • sortable: dateCreated, publishedAt, effectiveAt, title
+    • filter: docType (multi);  facets: doc_type
+  Default first page served from the precompute cache.
+
+4.2  GET  /api/v1/legal/{slug}                             Get published doc
+───────────────────────────────────────────────────────────────────────────
+  Fetch one published document by slug (e.g. /api/v1/legal/privacy-policy).
+  Response: LegalDocumentPublicOut (§5.4) — includes the live `body`
+  (= publishedBody), `version`, `effectiveAt`, `publishedAt`, and an optional
+  presigned `sourceFileUrl` (original file, if you want a "Download PDF" link).
+  404 if the slug doesn't exist or isn't currently published.
+
+================================================================================
+5. RESPONSE SHAPES & SCHEMAS
+================================================================================
+
+5.1  LegalDocumentOut  (admin full view)
+──────────────────────────────────────────
+  id                     string
+  slug                   string
+  title                  string
+  docType                enum (see §1.1)
+  summary                string | null
+  body                   BlockNote block[]     // editable working copy
+  publishedBody          BlockNote block[] | null  // live copy (null if never
+                                                    // published)
+  status                 "draft" | "published" | "archived"
+  currentVersion         int | null
+  publishedAt            int | null  (unix s)
+  effectiveAt            int | null  (unix s)
+  hasUnpublishedChanges  bool
+  sourceFile             SourceFile | null
+  sourceFileUrl          string | null   // presigned download for the original
+  dateCreated            int  (unix s)
+  lastUpdated            int  (unix s)
+
+5.2  LegalDocumentCreate / LegalDocumentUpdate  (request bodies)
+──────────────────────────────────────────────────────────────────
+  Create:  { title (req), docType?, summary?, body?, slug? }
+  Update:  { title?, docType?, summary?, body?, slug? }   (all optional)
+  Neither accepts status/currentVersion/publishedBody/publishedAt — those are
+  system-managed via the publish/archive endpoints.
+
+5.3  LegalDocumentVersionOut  (immutable snapshot)
+─────────────────────────────────────────────────────
+  id, documentId, slug, title, docType, version (int),
+  body (BlockNote block[]), effectiveAt, publishedAt, publishedBy (admin id),
+  changeNote | null, sourceFile | null, dateCreated
+
+5.4  LegalDocumentPublicOut  (public detail view)
+────────────────────────────────────────────────────
+  id, slug, title, docType, summary, version (int | null),
+  body (BlockNote block[]   // = publishedBody),
+  effectiveAt, publishedAt, sourceFileUrl | null, lastUpdated
+
+5.5  SourceFile
+──────────────────
+  objectKey   string   // internal storage key (admin only; not in public)
+  fileName    string
+  mimeType    string
+  size        int | null
+  uploadedAt  int  (unix s)
+
+================================================================================
+6. SUGGESTED ADMIN-DASHBOARD FLOWS
+================================================================================
+
+A) Create from scratch:
+   POST /v1/legal-documents { title, docType } → poll job → open editor on the
+   returned id → PATCH body as the admin types (autosave) → POST .../publish.
+
+B) Import an existing Word/PDF:
+   POST /v1/legal-documents/import (multipart) → render `document` + `blocks`
+   immediately, show `warnings` → admin reviews/edits → PATCH → publish.
+   "Download original" button → GET .../source for a fresh presigned URL.
+
+C) Update live terms:
+   PATCH body (public unchanged, hasUnpublishedChanges=true; show an
+   "unpublished changes" badge) → POST .../publish → new version, public
+   updates within ~1s of the worker committing.
+
+D) Version diff / audit:
+   GET .../versions for the list, GET .../versions/{n} for a snapshot. Compare
+   two snapshots' `body` client-side to show what changed and when.
+
+================================================================================
+7. ERROR CODES
+================================================================================
+  400  invalid legal document id format        path id is not a 24-char ObjectId
+  400  INVALID_SORT_FIELD / INVALID_FILTER_FIELD / INVALID_FACET_FIELD
+                                                 query used a non-allowlisted field
+  402/403 ...                                    standard auth/plan envelope
+  404  LegalDocument not found                   unknown document id
+  404  LegalDocumentVersion not found            unknown version
+  404  (public) not found or not published       slug missing / not live
+  409  Cannot publish ... empty body             publish with no content
+  413  REQUEST_ENTITY_TOO_LARGE                   import file > 25 MB
+  415  UNSUPPORTED_MEDIA_TYPE                     import file not docx/pdf/txt
+  422  ...                                        conversion failed / parser
+                                                  unavailable
+  AUTH_PERMISSION_DENIED                          admin preset lacks the key
+                                                  (content_only / content_support
+                                                  grant the full set)
+
+================================================================================
+End of file.
+================================================================================

@@ -5,6 +5,7 @@ from typing import Optional
 from pydantic import BaseModel, EmailStr
 
 from schemas.checkin_schema import CheckinPurpose
+from schemas.imports import NoticeDisplayMode
 
 
 class PublicRegistrationRequest(BaseModel):
@@ -17,9 +18,12 @@ class PublicRegistrationRequest(BaseModel):
     purpose: Optional[str] = None
     department_id: Optional[str] = None
     appointment_id: Optional[str] = None
+    # Consent capture (see backend-docs visitor privacy notice contract A.5).
     consent_granted: Optional[bool] = None
     consent_method: Optional[str] = None
+    privacy_notice_id: Optional[str] = None
     privacy_notice_version_id: Optional[str] = None
+    consent_accepted_at: Optional[int] = None
     # Signed QR token from /public/register/verify. When present its scope
     # overrides client-supplied department_id / branch_id.
     registration_token: Optional[str] = None
@@ -45,9 +49,24 @@ class PublicTenantInfoOut(BaseModel):
 
 
 class PublicPrivacyNoticeOut(BaseModel):
-    notice_id: Optional[str] = None
+    """What the kiosk fetches before data capture (contract A.4).
+
+    ``id`` / ``version_id`` are the values the kiosk echoes back on submit so
+    the consent record pins to the exact notice text the visitor accepted.
+    Legacy ``notice_id`` / ``content`` / ``version`` aliases are retained so
+    older frontend builds keep working.
+    """
+
+    id: Optional[str] = None
     title: str
-    content: str
+    summary: Optional[str] = None
+    full_text: Optional[str] = None
+    display_mode: NoticeDisplayMode = NoticeDisplayMode.ACTIVE_CONSENT
+    version_id: Optional[str] = None
+    effective_date: Optional[int] = None
+    # Legacy fields (kept for backward compatibility with older kiosk builds).
+    notice_id: Optional[str] = None
+    content: str = ""
     version: Optional[str] = None
 
 
@@ -163,3 +182,9 @@ class PublicReturningVisitorSubmitRequest(BaseModel):
     visitor_lat: Optional[float] = None
     visitor_lng: Optional[float] = None
     visitor_location_accuracy_m: Optional[float] = None
+    # Consent capture (contract A.5).
+    consent_granted: Optional[bool] = None
+    consent_method: Optional[str] = None
+    privacy_notice_id: Optional[str] = None
+    privacy_notice_version_id: Optional[str] = None
+    consent_accepted_at: Optional[int] = None

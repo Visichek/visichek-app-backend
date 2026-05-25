@@ -65,21 +65,47 @@ async def get_consent_log(
         "department_id": 1,
     }
 
+    # Fetch enough rows from each source to satisfy the page after merge.
+    fetch = skip + limit
     cursor = (
         db[COLLECTION]
         .find(filter_dict, projection)
         .sort("consent_timestamp", -1)
-        .skip(skip)
-        .limit(limit)
+        .limit(fetch)
     )
 
-    results = []
+    results: List[dict] = []
     async for doc in cursor:
         if "_id" in doc and isinstance(doc["_id"], ObjectId):
             doc["_id"] = str(doc["_id"])
+        doc.setdefault("source", "visit_session")
         results.append(doc)
 
-    return results
+    # Union the dedicated consent_records store (kiosk / public submit paths,
+    # which have no visit_sessions row to carry consent on).
+    cr_filter: Dict[str, Any] = {"tenant_id": tenant_id}
+    if principal:
+        cr_filter = apply_department_scope(cr_filter, principal)
+    if start_date or end_date:
+        cr_date: Dict[str, Any] = {}
+        if start_date:
+            cr_date["$gte"] = start_date
+        if end_date:
+            cr_date["$lte"] = end_date
+        cr_filter["consent_timestamp"] = cr_date
+    try:
+        from repositories.consent_record_repo import get_consent_records
+
+        cr_rows = await get_consent_records(cr_filter, skip=0, limit=fetch)
+        for row in cr_rows:
+            row.setdefault("source", "consent_record")
+            results.append(row)
+    except Exception:
+        pass
+
+    # Merge both sources newest-first, then apply the requested page window.
+    results.sort(key=lambda r: r.get("consent_timestamp") or 0, reverse=True)
+    return results[skip : skip + limit]
 
 
 async def get_consent_log_count(
@@ -105,7 +131,14 @@ async def get_consent_log_count(
             date_filter["$lte"] = end_date
         filter_dict["consent_timestamp"] = date_filter
 
-    return await db[COLLECTION].count_documents(filter_dict)
+    session_count = await db[COLLECTION].count_documents(filter_dict)
+    try:
+        from repositories.consent_record_repo import count_consent_records
+
+        consent_record_count = await count_consent_records(filter_dict)
+    except Exception:
+        consent_record_count = 0
+    return session_count + consent_record_count
 
 
 async def generate_compliance_export(tenant_id: str) -> bytes:

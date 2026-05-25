@@ -30,6 +30,10 @@ from schemas.checkin_schema import (
 )
 from schemas.imports import IDType
 from schemas.summary_schema import VisitorBriefSummary
+from services.consent_service import (
+    enforce_consent_if_required,
+    record_visitor_consent,
+)
 from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
 
 
@@ -377,6 +381,7 @@ async def submit_verified_checkin(
     visitor_lng: Optional[float] = None,
     kyc_reference_id: Optional[str] = None,
     registration_token: Optional[str] = None,
+    consent: Optional[dict] = None,
 ) -> CheckinOut:
     """Single-step check-in that optionally runs ID verification.
 
@@ -434,6 +439,7 @@ async def submit_verified_checkin(
         visitor_lat=visitor_lat,
         visitor_lng=visitor_lng,
         kyc_reference_id=kyc_reference_id,
+        consent=consent,
     )
 
     # Phase A3 audit hook (Issue 5). Land a focused event on the
@@ -481,6 +487,7 @@ async def submit_returning_visitor_checkin_by_id(
     tenant_specific_data: dict,
     visitor_lat: Optional[float] = None,
     visitor_lng: Optional[float] = None,
+    consent: Optional[dict] = None,
 ) -> CheckinOut:
     """Submit a check-in for an already-known visitor using their visitor_id.
 
@@ -522,6 +529,11 @@ async def submit_returning_visitor_checkin_by_id(
     visitor = await get_visitor({"_id": visitor_id, "tenant_id": tenant_id})
     if visitor is None:
         raise resource_not_found(resource="Visitor", resource_id=visitor_id)
+
+    consent = consent or {}
+    await enforce_consent_if_required(
+        tenant_id, consent_granted=consent.get("consent_granted")
+    )
 
     await _enforce_tenant_geofence(
         tenant_id=tenant_id,
@@ -571,6 +583,22 @@ async def submit_returning_visitor_checkin_by_id(
     )
     checkin = await create_checkin(create_data)
     invalidate_tenant_dashboard_cache(tenant_id)
+
+    # Persist consent acceptance for the returning visitor (fire-and-forget).
+    await record_visitor_consent(
+        tenant_id=tenant_id,
+        consent_granted=consent.get("consent_granted"),
+        consent_method=consent.get("consent_method"),
+        privacy_notice_id=consent.get("privacy_notice_id"),
+        privacy_notice_version_id=consent.get("privacy_notice_version_id"),
+        consent_accepted_at=consent.get("consent_accepted_at"),
+        checkin_id=checkin.id,
+        visitor_id=visitor_id,
+        visitor_name_snapshot=visitor.full_name,
+        department_id=tenant_specific_data.get("department_id"),
+        client_ip=consent.get("client_ip"),
+        user_agent=consent.get("user_agent"),
+    )
 
     # Keep the VisitorProfile visit counter in sync (fire-and-forget).
     try:
@@ -628,6 +656,7 @@ async def submit_verified_checkin_for_tenant(
     visitor_lat: Optional[float] = None,
     visitor_lng: Optional[float] = None,
     kyc_reference_id: Optional[str] = None,
+    consent: Optional[dict] = None,
 ) -> CheckinOut:
     """Tenant-scoped submit. Resolves the tenant's active config, or falls back
     to the default required-field set when the tenant hasn't configured one yet.
@@ -672,6 +701,7 @@ async def submit_verified_checkin_for_tenant(
         visitor_lat=visitor_lat,
         visitor_lng=visitor_lng,
         kyc_reference_id=kyc_reference_id,
+        consent=consent,
     )
 
 
@@ -691,9 +721,17 @@ async def _submit_verified_checkin_core(
     visitor_lat: Optional[float] = None,
     visitor_lng: Optional[float] = None,
     kyc_reference_id: Optional[str] = None,
+    consent: Optional[dict] = None,
 ) -> CheckinOut:
     from repositories.visitor_repo import find_visitor_by_email_or_phone_any
     from schemas.visitor_schema import VisitorCreate
+
+    consent = consent or {}
+    # Defence-in-depth: reject when the active notice requires explicit consent
+    # but none was granted (the frontend already gates this).
+    await enforce_consent_if_required(
+        tenant_id, consent_granted=consent.get("consent_granted")
+    )
 
     # Phone is the visitor identity key — required system-wide.
     # Email is optional (tenants can flip it to required on their config,
@@ -920,6 +958,24 @@ async def _submit_verified_checkin_core(
     )
     checkin = await create_checkin(create_data)
     invalidate_tenant_dashboard_cache(tenant_id)
+
+    # Persist the visitor's consent acceptance (fire-and-forget). The kiosk
+    # submit path has no visit_sessions row, so consent lives in the dedicated
+    # consent_records collection surfaced by GET /v1/compliance/consent-log.
+    await record_visitor_consent(
+        tenant_id=tenant_id,
+        consent_granted=consent.get("consent_granted"),
+        consent_method=consent.get("consent_method"),
+        privacy_notice_id=consent.get("privacy_notice_id"),
+        privacy_notice_version_id=consent.get("privacy_notice_version_id"),
+        consent_accepted_at=consent.get("consent_accepted_at"),
+        checkin_id=checkin.id,
+        visitor_id=visitor_id,
+        visitor_name_snapshot=visitor.full_name,
+        department_id=tenant_specific_data.get("department_id"),
+        client_ip=consent.get("client_ip"),
+        user_agent=consent.get("user_agent"),
+    )
 
     # If the visitor came in with a pre-run KYC reference, link the
     # verification record so the webhook lands on the correct check-in.

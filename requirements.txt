@@ -45,6 +45,11 @@ limits
 reportlab==4.0.9
 openpyxl==3.1.5
 
+# Legal-document import: Word/PDF → BlockNote conversion
+mammoth==1.8.0
+pdfplumber==0.11.4
+beautifulsoup4==4.12.3
+
 # Face detection (test endpoint)
 opencv-python
 inference-sdk

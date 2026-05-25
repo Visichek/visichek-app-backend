@@ -557,6 +557,74 @@ ADMIN_PERMISSIONS: list[Permission] = [
         "Update media category",
     ),
     _p("delete_media", ["DELETE"], "/v1/media/{media_id}", "Delete media"),
+    # Legal documents (admin) — platform legal copy (privacy policy, ToS, etc.)
+    _p("list_legal_documents", ["GET"], "/v1/legal-documents", "List legal documents"),
+    _p(
+        "import_legal_document",
+        ["POST"],
+        "/v1/legal-documents/import",
+        "Import a Word/PDF/text file into a draft legal document",
+    ),
+    _p(
+        "upload_legal_image",
+        ["POST"],
+        "/v1/legal-documents/upload-image",
+        "Upload an inline image for a legal document body",
+    ),
+    _p(
+        "create_legal_document",
+        ["POST"],
+        "/v1/legal-documents",
+        "Create legal document",
+    ),
+    _p(
+        "get_legal_document",
+        ["GET"],
+        "/v1/legal-documents/{document_id}",
+        "Get legal document by id",
+    ),
+    _p(
+        "update_legal_document",
+        ["PATCH"],
+        "/v1/legal-documents/{document_id}",
+        "Update legal document",
+    ),
+    _p(
+        "delete_legal_document",
+        ["DELETE"],
+        "/v1/legal-documents/{document_id}",
+        "Delete legal document",
+    ),
+    _p(
+        "publish_legal_document",
+        ["POST"],
+        "/v1/legal-documents/{document_id}/publish",
+        "Publish a legal document",
+    ),
+    _p(
+        "archive_legal_document",
+        ["POST"],
+        "/v1/legal-documents/{document_id}/archive",
+        "Archive a legal document",
+    ),
+    _p(
+        "list_legal_document_versions",
+        ["GET"],
+        "/v1/legal-documents/{document_id}/versions",
+        "List legal document version history",
+    ),
+    _p(
+        "get_legal_document_version",
+        ["GET"],
+        "/v1/legal-documents/{document_id}/versions/{version}",
+        "Get a legal document version",
+    ),
+    _p(
+        "get_legal_document_source",
+        ["GET"],
+        "/v1/legal-documents/{document_id}/source",
+        "Get the original source-file download URL",
+    ),
     # Blog-admin compatibility aliases (live under /v1/admins/*)
     _p(
         "admin_me_alias",
@@ -1351,6 +1419,7 @@ ADMIN_CONTENT_PERMISSIONS: list[Permission] = (
             "/v1/faqs",
             "/v1/blogs",
             "/v1/media",
+            "/v1/legal-documents",
         )
     )
 )

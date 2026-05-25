@@ -146,7 +146,9 @@ async def register_visitor_public(
         consent_method = (
             getattr(request, "consent_method", None) or "digital_acceptance"
         )
-        consent_timestamp_val = int(time.time())
+        consent_timestamp_val = getattr(request, "consent_accepted_at", None) or int(
+            time.time()
+        )
 
     # Get or create visitor profile
     profile = await get_or_create_visitor_profile(
@@ -311,18 +313,41 @@ async def get_public_privacy_notice(tenant_id: str) -> PublicPrivacyNoticeOut:
 
     notice = await get_active_notice_for_tenant(tenant_id)
     if not notice:
+        # Seed-on-read: ensure the kiosk always has a usable notice (A.4 / A.2).
+        try:
+            from services.privacy_notice_service import seed_default_privacy_notice
+
+            notice = await seed_default_privacy_notice(tenant_id)
+        except Exception:
+            notice = None
+
+    if not notice:
         return PublicPrivacyNoticeOut(
-            notice_id=None,
+            id=None,
             title="No privacy notice available",
             content="",
+            version_id=None,
             version=None,
         )
 
+    full_text = getattr(notice, "full_text", None) or ""
+    version_code = getattr(notice, "version_code", None)
     return PublicPrivacyNoticeOut(
+        id=notice.id,
+        title=getattr(notice, "title", "Privacy Notice") or "Privacy Notice",
+        summary=getattr(notice, "summary", None),
+        full_text=full_text,
+        display_mode=getattr(notice, "display_mode", None)
+        or __import__(
+            "schemas.imports", fromlist=["NoticeDisplayMode"]
+        ).NoticeDisplayMode.ACTIVE_CONSENT,
+        version_id=version_code,
+        effective_date=getattr(notice, "effective_date", None)
+        or getattr(notice, "effective_from", None),
+        # Legacy aliases.
         notice_id=notice.id,
-        title=getattr(notice, "title", "Privacy Notice"),
-        content=getattr(notice, "content", ""),
-        version=getattr(notice, "version", None),
+        content=full_text or (getattr(notice, "summary", None) or ""),
+        version=version_code,
     )
 
 

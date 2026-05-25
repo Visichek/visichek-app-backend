@@ -132,6 +132,55 @@ async def test_confirm_tenant_info_success(cleanup_dependency_overrides):
 
 @pytest.mark.asyncio
 @pytest.mark.unit
+async def test_confirm_tenant_info_accepts_dpa_fields(cleanup_dependency_overrides):
+    """The confirm endpoint whitelists dpaAccepted / dpaAcceptedAt (no 422) and
+    forwards them to the service."""
+    app.dependency_overrides[verify_super_admin_token] = lambda: (
+        MOCK_SUPER_ADMIN_PRINCIPAL
+    )
+
+    with patch(
+        "api.v1.onboarding_route.confirm_tenant_info",
+        new_callable=AsyncMock,
+    ) as mock_confirm:
+        mock_confirm.return_value = {
+            "tenant_id": "tenant-001",
+            "company_name": "Acme Clinics",
+            "dpo_contact_email": None,
+            "privacy_policy_url": None,
+            "country_of_hosting": None,
+            "onboarding_info_confirmed": True,
+            "onboarding_info_confirmed_at": 1716200000,
+            "dpa_accepted": True,
+            "dpa_accepted_at": 1716200000,
+            "dpa_version": "1.0",
+            "onboarding_submission_id": None,
+            "onboarding_fields": {},
+            "onboarding_field_labels": {},
+            "onboarding_field_order": [],
+        }
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/v1/onboarding/me/tenant-confirmation",
+                json={"dpaAccepted": True, "dpaAcceptedAt": 1716200000},
+                headers={"Authorization": "Bearer token-123"},
+            )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["dpaAccepted"] is True
+    assert body["data"]["dpaVersion"] == "1.0"
+    # The whitelisted fields reached the service (camel -> snake conversion).
+    payload = mock_confirm.await_args.args[0]
+    assert getattr(payload, "dpa_accepted") is True
+    assert getattr(payload, "dpa_accepted_at") == 1716200000
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
 async def test_confirm_tenant_info_empty_body_is_valid(cleanup_dependency_overrides):
     """A bare confirmation (no edits) is accepted — every field is optional."""
     app.dependency_overrides[verify_super_admin_token] = lambda: (

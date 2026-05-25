@@ -1260,10 +1260,16 @@ class TestPrivacyNoticeRoutes:
             MOCK_SUPER_ADMIN_PRINCIPAL
         )
 
-        with patch(
-            "api.v1.privacy_notice_route.retrieve_privacy_notices",
-            new_callable=AsyncMock,
-        ) as mock_list:
+        with (
+            patch(
+                "api.v1.privacy_notice_route.retrieve_privacy_notices",
+                new_callable=AsyncMock,
+            ) as mock_list,
+            patch(
+                "api.v1.privacy_notice_route.count_privacy_notices_for_tenant",
+                new_callable=AsyncMock,
+            ) as mock_count,
+        ):
             mock_list.return_value = [
                 {
                     "id": "notice-001",
@@ -1273,12 +1279,13 @@ class TestPrivacyNoticeRoutes:
                     "is_active": True,
                 }
             ]
+            mock_count.return_value = 1
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.get(
-                    "/v1/privacy-notices?start=0&stop=100",
+                    "/v1/privacy-notices?skip=0&limit=100",
                     headers={"Authorization": "Bearer token-123"},
                 )
 
@@ -1286,6 +1293,10 @@ class TestPrivacyNoticeRoutes:
             data = response.json()
             assert data["success"] is True
             assert len(data["data"]) == 1
+            # skip/limit contract: counts surface in meta
+            assert data["meta"]["total"] == 1
+            assert data["meta"]["skip"] == 0
+            assert data["meta"]["limit"] == 100
 
     @pytest.mark.asyncio
     @pytest.mark.unit

@@ -82,3 +82,7 @@ from services import tenant_form_writer as _tenant_form_writer  # noqa: F401
 # blog/writers/). Imports the modules for their decorator side-effects.
 from blog.writers import blog_writer as _blog_writer  # noqa: F401
 from blog.writers import media_writer as _media_writer  # noqa: F401
+
+# Cluster 13 — legal documents (writers + precomputes live under
+# legal/writers/). Platform-level legal copy (privacy policy, ToS, etc.).
+from legal.writers import legal_document_writer as _legal_document_writer  # noqa: F401

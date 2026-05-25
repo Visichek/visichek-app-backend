@@ -40,6 +40,12 @@ async def get_active_notice_for_tenant(tenant_id: str) -> Optional[PrivacyNotice
     return await get_privacy_notice({"tenant_id": tenant_id, "is_active": True})
 
 
+async def count_privacy_notices(filter_dict: dict = {}) -> int:
+    if filter_dict is None:
+        filter_dict = {}
+    return await db.privacy_notice_versions.count_documents(filter_dict)
+
+
 async def get_privacy_notices(
     filter_dict: dict = {}, start=0, stop=100
 ) -> List[PrivacyNoticeOut]:

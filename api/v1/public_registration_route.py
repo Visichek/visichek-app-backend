@@ -1,7 +1,7 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 
 from core.errors import AppException, ErrorCode
 from core.queue.entity_cache import get_or_compute_entity
@@ -25,6 +25,7 @@ from services.checkin_service import (
     submit_returning_visitor_checkin_by_id,
     submit_verified_checkin_for_tenant,
 )
+from services.consent_service import build_consent_payload
 from services.public_registration_service import (
     check_returning_visitor_status,
     checkout_visitor_public,
@@ -198,6 +199,7 @@ def _parse_json_dict(raw: str, field_name: str) -> dict:
 )
 async def submit_checkin_for_tenant_endpoint(
     tenant_id: str,
+    request: Request,
     phone: str = Form(..., description="Visitor phone — required identity key."),
     full_name: Optional[str] = Form(
         None,
@@ -228,6 +230,17 @@ async def submit_checkin_for_tenant_endpoint(
             "When supplied the backend skips OCR and trusts the Dojah "
             "result (subject to plan + tenant settings allowing KYC)."
         ),
+    ),
+    consent_granted: Optional[bool] = Form(
+        None, description='"true"/"false" — visitor accepted the privacy notice'
+    ),
+    consent_method: Optional[str] = Form(None, description='e.g. "kiosk_checkbox"'),
+    privacy_notice_id: Optional[str] = Form(None),
+    privacy_notice_version_id: Optional[str] = Form(
+        None, description="versionId of the notice shown/accepted"
+    ),
+    consent_accepted_at: Optional[int] = Form(
+        None, description="unix seconds the box was ticked"
     ),
     principal: Optional[AuthPrincipal] = Depends(verify_optional_kiosk_token),
 ) -> CheckinOut:
@@ -267,6 +280,15 @@ async def submit_checkin_for_tenant_endpoint(
             )
         file_mime = id_file.content_type or "application/octet-stream"
 
+    consent = build_consent_payload(
+        request,
+        consent_granted=consent_granted,
+        consent_method=consent_method,
+        privacy_notice_id=privacy_notice_id,
+        privacy_notice_version_id=privacy_notice_version_id,
+        consent_accepted_at=consent_accepted_at,
+    )
+
     return await submit_verified_checkin_for_tenant(
         tenant_id=tenant_id,
         email=email,
@@ -280,6 +302,7 @@ async def submit_checkin_for_tenant_endpoint(
         kyc_reference_id=kyc_reference_id,
         visitor_lat=visitor_lat,
         visitor_lng=visitor_lng,
+        consent=consent,
     )
 
 
@@ -430,17 +453,27 @@ async def public_ocr_scan_endpoint(tenant_id: str, file: UploadFile = File(...))
 )
 async def submit_checkin_for_returning_visitor_endpoint(
     tenant_id: str,
-    request: PublicReturningVisitorSubmitRequest,
+    body: PublicReturningVisitorSubmitRequest,
+    http_request: Request,
     principal: Optional[AuthPrincipal] = Depends(verify_optional_kiosk_token),
 ) -> CheckinOut:
     await enforce_kiosk_submit_access(tenant_id=tenant_id, principal=principal)
+    consent = build_consent_payload(
+        http_request,
+        consent_granted=body.consent_granted,
+        consent_method=body.consent_method,
+        privacy_notice_id=body.privacy_notice_id,
+        privacy_notice_version_id=body.privacy_notice_version_id,
+        consent_accepted_at=body.consent_accepted_at,
+    )
     return await submit_returning_visitor_checkin_by_id(
         tenant_id=tenant_id,
-        visitor_id=request.visitor_id,
-        purpose=request.purpose,
-        tenant_specific_data=request.tenant_specific_data,
-        visitor_lat=request.visitor_lat,
-        visitor_lng=request.visitor_lng,
+        visitor_id=body.visitor_id,
+        purpose=body.purpose,
+        tenant_specific_data=body.tenant_specific_data,
+        visitor_lat=body.visitor_lat,
+        visitor_lng=body.visitor_lng,
+        consent=consent,
     )
 
 

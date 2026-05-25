@@ -52,6 +52,13 @@ class TenantBase(BaseModel):
     onboarding_info_confirmed: bool = False
     onboarding_info_confirmed_at: Optional[int] = None
 
+    # Data Processing Agreement (DPA) acceptance, captured on the first-login
+    # "Confirm company details" screen (see api/v1/onboarding_route.py).
+    dpa_accepted: bool = False
+    dpa_accepted_at: Optional[int] = None
+    dpa_accepted_by: Optional[str] = None  # super_admin user id who accepted
+    dpa_version: Optional[str] = None  # DPA version in force at accept time
+
 
 class TenantCreate(TenantBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
@@ -84,6 +91,10 @@ class TenantUpdate(BaseModel):
     mfa_user_override_allowed: Optional[bool] = None
     onboarding_info_confirmed: Optional[bool] = None
     onboarding_info_confirmed_at: Optional[int] = None
+    dpa_accepted: Optional[bool] = None
+    dpa_accepted_at: Optional[int] = None
+    dpa_accepted_by: Optional[str] = None
+    dpa_version: Optional[str] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
@@ -176,6 +187,10 @@ class TenantInfoConfirmRequest(BaseModel):
     dpo_contact_email: Optional[EmailStr] = None
     privacy_policy_url: Optional[str] = None
     country_of_hosting: Optional[str] = None
+    # DPA acceptance — whitelisted on this endpoint so the confirm flow does
+    # not 422 (the FE only ever sends dpa_accepted=true when the box is ticked).
+    dpa_accepted: Optional[bool] = None
+    dpa_accepted_at: Optional[int] = None
 
 
 class TenantInfoConfirmationOut(BaseModel):
@@ -197,6 +212,12 @@ class TenantInfoConfirmationOut(BaseModel):
 
     onboarding_info_confirmed: bool = False
     onboarding_info_confirmed_at: Optional[int] = None
+
+    # DPA acceptance read-back so the FE can show "accepted on <date>" and not
+    # re-prompt.
+    dpa_accepted: bool = False
+    dpa_accepted_at: Optional[int] = None
+    dpa_version: Optional[str] = None
 
     # Read-only onboarding context (the form the tenant originally submitted).
     onboarding_submission_id: Optional[str] = None

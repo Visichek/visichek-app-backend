@@ -902,6 +902,11 @@ from blog.routes.admin_compat_route import router as v1_blog_admin_compat_router
 from blog.routes.public_articles_route import router as blog_public_articles_router
 from blog.routes.public_media_route import router as blog_public_media_router
 
+# Legal documents. Admin CRUD lives under /v1/legal-documents (application
+# admin, content_only preset); public published reads under /api/v1/legal.
+from legal.routes.admin_legal_route import router as v1_legal_admin_router
+from legal.routes.public_legal_route import router as legal_public_router
+
 app.include_router(v1_admin_route_router, prefix="/v1")
 app.include_router(v1_documents_route_router, prefix="/v1")
 app.include_router(v1_payments_route_router, prefix="/v1")
@@ -1013,6 +1018,11 @@ app.include_router(v1_blog_admin_compat_router, prefix="/v1")
 # request ids) with the rest of the API.
 app.include_router(blog_public_articles_router, prefix="/api/v1")
 app.include_router(blog_public_media_router, prefix="/api/v1")
+
+# ----- Legal documents -----
+# Admin CRUD (/v1/legal-documents) + public published reads (/api/v1/legal).
+app.include_router(v1_legal_admin_router, prefix="/v1")
+app.include_router(legal_public_router, prefix="/api/v1")
 # --- auto-routes-end ---
 
 # Serve blog uploads from local disk when Cloudflare R2 isn't configured.

@@ -1,4 +1,4 @@
-from typing import Annotated, Any, List
+from typing import Annotated, Any, List, Tuple
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
@@ -9,6 +9,7 @@ from schemas.privacy_notice_schema import PrivacyNoticeCreate, PrivacyNoticeUpda
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.privacy_notice_service import (
+    count_privacy_notices_for_tenant,
     retrieve_active_notice,
     retrieve_privacy_notices,
 )
@@ -73,6 +74,9 @@ async def get_active_notice(
     tenant_id = principal.tenant_id or ""
     if not tenant_id:
         return await retrieve_active_notice(tenant_id=tenant_id)
+    # Seed-on-read: a tenant that never authored a notice still gets the
+    # VisiChek default so the kiosk consent gate works on day one. The seed
+    # is a one-time write on the first cache miss; subsequent reads are warm.
     return await get_or_compute(
         scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
         resource="privacy_notice.active",
@@ -82,7 +86,7 @@ async def get_active_notice(
 
 
 async def _load_active_notice(tenant_id: str) -> Any:
-    notice = await retrieve_active_notice(tenant_id=tenant_id)
+    notice = await retrieve_active_notice(tenant_id=tenant_id, seed_if_missing=True)
     return (
         notice.model_dump(mode="json", by_alias=True)
         if hasattr(notice, "model_dump")
@@ -99,19 +103,29 @@ async def _load_active_notice(tenant_id: str) -> Any:
     response_codes={401: "Unauthorized token", 403: "Insufficient permissions"},
 )
 async def list_privacy_notices(
-    start: Annotated[int, Query(ge=0)] = 0,
-    stop: Annotated[int, Query(gt=0)] = 100,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(gt=0, le=200)] = 100,
     principal: AuthPrincipal = Depends(_admin_roles),
-) -> Any:
+) -> Tuple[List[Any], dict]:
     tenant_id = principal.tenant_id or ""
-    if start == 0 and stop == 100 and tenant_id:
-        return await get_or_compute(
+    total = await count_privacy_notices_for_tenant(tenant_id) if tenant_id else 0
+    meta = {"total": total, "skip": skip, "limit": limit}
+    if skip == 0 and limit == 100 and tenant_id:
+        items = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
             resource="privacy_notices.list",
             ttl=60,
             loader=lambda: _load_notices_for_tenant(tenant_id),
         )
-    return await retrieve_privacy_notices(tenant_id=tenant_id, start=start, stop=stop)
+        return items, meta
+    notices = await retrieve_privacy_notices(
+        tenant_id=tenant_id, start=skip, stop=skip + limit
+    )
+    items = [
+        n.model_dump(mode="json", by_alias=True) if hasattr(n, "model_dump") else n
+        for n in notices
+    ]
+    return items, meta
 
 
 async def _load_notices_for_tenant(tenant_id: str) -> List[Any]:

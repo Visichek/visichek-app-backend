@@ -1,0 +1,159 @@
+================================================================================
+VISITOR PRIVACY NOTICE + CONSENT  AND  TENANT DPA — BACKEND IMPLEMENTATION NOTES
+================================================================================
+
+Author:   backend
+Date:     2026-05-25
+Status:   implemented on master
+Re:       Frontend contract "Visitor Privacy Notice + Consent AND Tenant DPA"
+
+This documents exactly what shipped on the backend for the two features the
+frontend specced, and flags every place the implemented behaviour differs from
+or refines the request so the frontend can rely on it.
+
+================================================================================
+PART A — VISITOR PRIVACY NOTICE + CONSENT
+================================================================================
+
+A.1  PrivacyNotice SHAPE (what the admin endpoints now return)
+--------------------------------------------------------------
+The notice schema was extended (camelCase on the wire):
+
+  PrivacyNotice {
+    id, tenantId,
+    title, summary?, fullText?,            // fullText is the NEW inline body
+    displayMode: "passive" | "active_consent",   // default active_consent
+    isActive,
+    effectiveDate?,                        // unix seconds
+    versionCode?,                          // opaque version string (= versionId)
+    createdAt, updatedAt                   // unix seconds
+  }
+
+Notes:
+  • `fullText` is the inline policy/terms text (NEW). The legacy `fullPolicyUrl`
+    (external link) field is retained but is no longer the primary content.
+  • `createdAt` / `updatedAt` are emitted (not `dateCreated`/`lastUpdated`).
+  • A notice's opaque version identifier is `versionCode`. It is exposed on the
+    public endpoint as `versionId` (see A.4). The frontend never sets it.
+
+A.2  VERSIONING (how versionId behaves)
+---------------------------------------
+  • Auto-minted on create when the client omits it (ISO-8601 UTC microsecond
+    string).
+  • RE-MINTED automatically on any PATCH that changes title / summary / fullText
+    / displayMode (the legal text). Toggling `isActive` or editing
+    `effectiveDate` alone does NOT bump the version.
+  • One stable row per notice (the notice `id` does not change across edits).
+    Each consent acceptance stores the `versionCode` in force at accept time, so
+    "which version did the visitor agree to" is always answerable.
+
+A.3  TENANT MANAGEMENT ENDPOINTS (cookie-auth; super_admin + dpo)
+----------------------------------------------------------------
+  GET    /v1/privacy-notices?skip=&limit=     → { data: PrivacyNotice[], meta }
+         meta = { total, skip, limit }.  *** skip/limit, NOT start/stop ***
+  GET    /v1/privacy-notices/active           → PrivacyNotice (auto-seeds the
+         default if the tenant has none — see A.2/Appendix).
+  POST   /v1/privacy-notices                  → 202 { id, jobId, status }
+         (queued write; poll GET /v1/jobs/{jobId}). Body: title (req),
+         summary?, fullText?, displayMode?, effectiveDate?. version_code is
+         system-assigned. Single-active is enforced (creating an active notice
+         deactivates the prior active one). title length 1..200 → 422 otherwise.
+  PATCH  /v1/privacy-notices/{noticeId}        → 202 { id, jobId, status }
+         Mints a new version when the legal text changes (A.2). Setting
+         isActive=true deactivates the previously active notice.
+
+  These are QUEUED writes (202 + job poll), consistent with the rest of the
+  platform — NOT synchronous 200/201.
+
+A.4  PUBLIC KIOSK ENDPOINT (unchanged URL, enriched body)
+---------------------------------------------------------
+  GET /v1/public/register/{tenantId}/privacy-notice   (no auth)
+  Now returns:
+    {
+      id, title, summary?, fullText?,
+      displayMode, versionId,          // versionId == the notice versionCode
+      effectiveDate?,
+      // legacy aliases kept for old kiosk builds:
+      noticeId, content, version
+    }
+  If the tenant has no active notice it is SEEDED (default template) and
+  returned, so this effectively always returns a usable notice.
+
+A.5  RECORDING VISITOR CONSENT  (the key piece)
+-----------------------------------------------
+Storage decision: a DEDICATED `consent_records` collection is the canonical
+store for consent captured on the kiosk / public submit paths (those create
+`checkins` rows, which have no `visit_sessions` row to carry consent on).
+GET /v1/compliance/consent-log now UNIONS `visit_sessions` consent (legacy desk
++ self-registration path) with `consent_records` (kiosk paths), newest-first,
+with a `source` field on each row ("visit_session" | "consent_record").
+
+Consent fields are now accepted on:
+
+  MULTIPART (snake_case FORM fields):
+    POST /v1/checkin-configs/{configId}/submit
+    POST /v1/public/tenants/{tenantId}/submit
+      consent_granted ("true"/"false"), consent_method, privacy_notice_id,
+      privacy_notice_version_id, consent_accepted_at (unix s)
+
+  JSON (camelCase body):
+    POST /v1/public/tenants/{tenantId}/submit-by-visitor-id
+    POST /v1/public/register/{tenantId}
+      consentGranted, consentMethod, privacyNoticeId, privacyNoticeVersionId,
+      consentAcceptedAt
+
+  client_ip + user_agent are taken from the request (X-Forwarded-For /
+  User-Agent), NEVER from the body.
+
+ENFORCEMENT (defence in depth):
+  When the tenant's ACTIVE notice has displayMode == "active_consent" and the
+  submit lacks consent (consent_granted not true), the backend rejects with
+  HTTP 422, envelope data.code = "CONSENT_REQUIRED",
+  message "Visitor must accept the privacy notice to check in."
+  • No active notice  → nothing required (submit proceeds).
+  • passive notice    → consent fields optional/informational.
+  • A consent-lookup failure FAILS OPEN (the kiosk is never blocked by a
+    transient DB/Redis blip).
+
+A.6  DEFAULT NOTICE SEEDING
+---------------------------
+Every tenant is seeded with the VisiChek-style default active notice
+(displayMode=active_consent, NDPA-aligned template, {{COMPANY_NAME}} +
+DPO-contact substituted) at provisioning time (both the onboarding-accept path
+and the legacy bootstrap path), AND lazily on first read of the active notice
+if somehow missing. The tenant can fully edit it afterwards.
+
+================================================================================
+PART B — TENANT DPA ACCEPTANCE
+================================================================================
+
+Decision: behaviour shipped is **STORE** (not accept-and-ignore).
+
+  POST /v1/onboarding/me/tenant-confirmation  (super_admin)
+    Now whitelists and PERSISTS: dpaAccepted, dpaAcceptedAt.
+    • dpaAccepted=true stamps the tenant with dpa_accepted=true,
+      dpa_accepted_at (body value or server receipt time),
+      dpa_accepted_by (the super_admin's user id), and dpa_version
+      (currently "1.0"; bumped server-side when the DPA text changes).
+    • A false/missing dpaAccepted is ignored (the rest of the confirm still
+      succeeds). No 422 on the new fields.
+
+  GET /v1/onboarding/me/tenant-confirmation  (super_admin)
+    Now also returns: dpaAccepted (bool), dpaAcceptedAt (unix s), dpaVersion.
+
+  Tenant record persists: dpa_accepted, dpa_accepted_at, dpa_accepted_by,
+  dpa_version.
+
+  No DPA_REQUIRED gate is enforced yet (the error code exists but is not wired
+  to block privileged actions). The frontend's own confirm-button gate remains
+  the enforcement point. If a hard gate is later desired, say so.
+
+================================================================================
+ERROR CODES (new)
+================================================================================
+  CONSENT_REQUIRED   422  active_consent notice + missing consent on submit
+  DPA_REQUIRED            defined, not yet enforced (reserved for a future gate)
+
+================================================================================
+End of file.
+================================================================================

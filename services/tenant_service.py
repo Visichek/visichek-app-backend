@@ -183,10 +183,42 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
             "tenant_enum seeding failed for tenant_id=%s", tenant.id, exc_info=True
         )
 
+    # 6. Seed the VisiChek-style default visitor privacy notice so the kiosk
+    # consent gate works on day one. Best-effort; the active-notice read path
+    # also seeds lazily as a fallback.
+    await _seed_default_privacy_notice_safe(
+        tenant.id or "", tenant.company_name, tenant.dpo_contact_email
+    )
+
     return {
         "tenant": tenant,
         "super_admin": super_admin,
     }
+
+
+async def _seed_default_privacy_notice_safe(
+    tenant_id: str,
+    company_name: Optional[str],
+    dpo_contact_email: Optional[str],
+) -> None:
+    if not tenant_id:
+        return
+    try:
+        from services.privacy_notice_service import seed_default_privacy_notice
+
+        await seed_default_privacy_notice(
+            tenant_id,
+            company_name=company_name,
+            dpo_contact_email=dpo_contact_email,
+        )
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "default privacy notice seeding failed for tenant_id=%s",
+            tenant_id,
+            exc_info=True,
+        )
 
 
 async def add_tenant(
@@ -233,6 +265,13 @@ async def add_tenant(
             tenant.id,
             exc_info=True,
         )
+
+    # Seed the default visitor privacy notice (best-effort; lazy-seeded on read
+    # as a fallback). Covers the self-onboarding accept / partial-accept paths
+    # which both provision the tenant through add_tenant.
+    await _seed_default_privacy_notice_safe(
+        tenant.id or "", tenant.company_name, tenant.dpo_contact_email
+    )
 
     return tenant
 
@@ -351,6 +390,11 @@ async def _load_onboarding_context(tenant_id: str) -> Optional[Any]:
         return None
 
 
+# Version of VisiChek's Data Processing Agreement currently in force. Bump this
+# when the DPA text changes so re-acceptance can be required.
+CURRENT_DPA_VERSION = "1.0"
+
+
 def _build_confirmation_out(
     tenant: TenantOut, submission: Optional[Any]
 ) -> TenantInfoConfirmationOut:
@@ -362,6 +406,9 @@ def _build_confirmation_out(
         country_of_hosting=tenant.country_of_hosting,
         onboarding_info_confirmed=tenant.onboarding_info_confirmed,
         onboarding_info_confirmed_at=tenant.onboarding_info_confirmed_at,
+        dpa_accepted=getattr(tenant, "dpa_accepted", False) or False,
+        dpa_accepted_at=getattr(tenant, "dpa_accepted_at", None),
+        dpa_version=getattr(tenant, "dpa_version", None),
         onboarding_submission_id=getattr(submission, "id", None),
         onboarding_fields=dict(getattr(submission, "payload", {}) or {}),
         onboarding_field_labels=dict(getattr(submission, "field_labels", {}) or {}),
@@ -398,14 +445,33 @@ async def confirm_tenant_info(
     before = await retrieve_tenant_by_id(tenant_id)
 
     edits = payload.model_dump(exclude_none=True)
+
+    # DPA acceptance is request-only signalling — pull it out of the editable
+    # company-field diff and translate it into system-managed tenant fields
+    # (dpa_accepted_by / dpa_version are never client-supplied). The FE only
+    # ever sends dpa_accepted=true; a false/missing value is ignored.
+    dpa_accepted = edits.pop("dpa_accepted", None)
+    dpa_accepted_at = edits.pop("dpa_accepted_at", None)
+
     changes: dict[str, Any] = {}
     for key, new_value in edits.items():
         old_value = getattr(before, key, None)
         if old_value != new_value:
             changes[key] = {"from": old_value, "to": new_value}
 
+    dpa_update: dict[str, Any] = {}
+    if dpa_accepted and not getattr(before, "dpa_accepted", False):
+        dpa_update = {
+            "dpa_accepted": True,
+            "dpa_accepted_at": dpa_accepted_at or int(time.time()),
+            "dpa_accepted_by": actor_id,
+            "dpa_version": CURRENT_DPA_VERSION,
+        }
+        changes["dpa_accepted"] = {"from": False, "to": True}
+
     update = TenantUpdate(
         **edits,
+        **dpa_update,
         onboarding_info_confirmed=True,
         onboarding_info_confirmed_at=int(time.time()),
     )
