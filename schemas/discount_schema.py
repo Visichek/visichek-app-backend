@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from schemas.imports import *
-from pydantic import Field
+from pydantic import AliasChoices, ConfigDict, Field
 import time
 
 
@@ -23,10 +23,20 @@ class DiscountStatus(str, Enum):
 
 
 class DiscountBase(BaseModel):
+    # The frontend posts this field as ``type`` (and reads it back as
+    # ``discountType``), while the service/repo/tests use ``discount_type``.
+    # Accept all three on input via validation aliases; serialization keeps
+    # the canonical ``discount_type`` name (→ ``discountType`` after case
+    # conversion), so reads are unchanged.
+    model_config = ConfigDict(populate_by_name=True)
+
     code: str  # e.g. "LAUNCH50", "ENTERPRISE_DEAL"
     name: str
     description: Optional[str] = None
-    discount_type: DiscountType = DiscountType.PERCENTAGE
+    discount_type: DiscountType = Field(
+        default=DiscountType.PERCENTAGE,
+        validation_alias=AliasChoices("discount_type", "type", "discountType"),
+    )
     value: float  # percentage (0-100) or fixed amount
     scope: DiscountScope = DiscountScope.GLOBAL
     status: DiscountStatus = DiscountStatus.ACTIVE
@@ -73,10 +83,15 @@ class DiscountCreate(DiscountBase):
 
 
 class DiscountUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     code: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
-    discount_type: Optional[DiscountType] = None
+    discount_type: Optional[DiscountType] = Field(
+        default=None,
+        validation_alias=AliasChoices("discount_type", "type", "discountType"),
+    )
     value: Optional[float] = None
     scope: Optional[DiscountScope] = None
     status: Optional[DiscountStatus] = None

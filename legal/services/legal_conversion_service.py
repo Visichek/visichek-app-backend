@@ -9,9 +9,15 @@ Supported inputs:
   reliable semantic structure, so headings are *heuristic* (short,
   non-terminated, title/upper-case lines). A warning is returned so the
   admin knows to review before publishing.
-* ``.txt`` / ``.md`` — split into paragraph blocks on blank lines.
+* ``.md`` / ``.markdown`` — parsed via ``markdown-it-py`` → HTML → the
+  same HTML→BlockNote pipeline as ``.docx``, so headings, bold/italic,
+  lists, quotes, code, links and rules survive. Falls back to plain
+  paragraphs (with a warning) if the parser is unavailable.
+* ``.txt``         — genuinely unstructured: split into paragraph blocks
+  on blank lines.
 
-Heavy parsers (``mammoth``, ``pdfplumber``, ``bs4``) are imported lazily
+Heavy parsers (``mammoth``, ``pdfplumber``, ``bs4``, ``markdown-it-py``)
+are imported lazily
 inside the functions so the app boots even before they're ``pip``-installed;
 a missing parser surfaces as a clean HTTP 422 instead of an import crash.
 """
@@ -57,14 +63,19 @@ def _block(block_type: str, content: Any = None, props: Optional[dict] = None) -
 
 
 def detect_kind(filename: str, content_type: str) -> str:
-    """Return one of ``docx`` | ``pdf`` | ``text`` | ``unsupported``."""
+    """Return one of ``docx`` | ``pdf`` | ``markdown`` | ``text`` | ``unsupported``."""
     name = (filename or "").lower()
     ctype = (content_type or "").lower()
     if name.endswith(".docx") or ctype == _DOCX_MIME:
         return "docx"
     if name.endswith(".pdf") or ctype == "application/pdf":
         return "pdf"
-    if name.endswith((".txt", ".md", ".markdown")) or ctype.startswith("text/"):
+    if name.endswith((".md", ".markdown")) or ctype in (
+        "text/markdown",
+        "text/x-markdown",
+    ):
+        return "markdown"
+    if name.endswith(".txt") or ctype.startswith("text/"):
         return "text"
     return "unsupported"
 
@@ -78,13 +89,15 @@ async def convert_upload_to_blocks(
         return await _convert_docx(file_bytes)
     if kind == "pdf":
         return _convert_pdf(file_bytes)
+    if kind == "markdown":
+        return await _convert_markdown(file_bytes)
     if kind == "text":
         return _convert_text(file_bytes), []
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         detail=(
             f"Unsupported document type for conversion: "
-            f"{content_type or filename!r}. Supported: .docx, .pdf, .txt/.md."
+            f"{content_type or filename!r}. Supported: .docx, .pdf, .md, .txt."
         ),
     )
 
@@ -154,11 +167,14 @@ async def _append_element_blocks(
         return
 
     if name in _HEADING_TAGS:
+        # BlockNote's default heading schema only supports levels 1–3;
+        # clamp deeper headings (h4–h6) so the block isn't rejected on load.
+        level = min(_HEADING_TAGS[name], 3)
         blocks.append(
             _block(
                 "heading",
                 _inline_content(el),
-                props={"level": _HEADING_TAGS[name]},
+                props={"level": level},
             )
         )
     elif name == "p":
@@ -309,6 +325,46 @@ async def _upload_data_uri(data_uri: str, warnings: List[str]) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Markdown → HTML → blocks
+# ---------------------------------------------------------------------------
+
+
+def _decode(file_bytes: bytes) -> str:
+    try:
+        return file_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return file_bytes.decode("latin-1", errors="replace")
+
+
+async def _convert_markdown(file_bytes: bytes) -> Tuple[List[Block], List[str]]:
+    """Render Markdown to HTML, then reuse the HTML→BlockNote pipeline.
+
+    Falls back to plain paragraphs (with a warning) when ``markdown-it-py``
+    is unavailable, so import never hard-fails on the parser being missing.
+    """
+    text = _decode(file_bytes)
+    try:
+        from markdown_it import MarkdownIt  # type: ignore
+    except Exception as exc:  # pragma: no cover - optional dep
+        logger.warning("markdown-it-py import failed: %s", exc)
+        return (
+            _text_to_blocks(text, detect_headings=False),
+            [
+                "Markdown parser unavailable; imported as plain text. "
+                "Install markdown-it-py to preserve headings and formatting."
+            ],
+        )
+
+    md = MarkdownIt("commonmark").enable(["table", "strikethrough"])
+    html = md.render(text)
+    warnings: List[str] = []
+    blocks = await _html_to_blocks(html, warnings)
+    if not blocks:
+        warnings.append("Document appeared empty after conversion.")
+    return blocks, warnings
+
+
+# ---------------------------------------------------------------------------
 # PDF → blocks (heuristic structure)
 # ---------------------------------------------------------------------------
 
@@ -354,11 +410,7 @@ def _convert_pdf(file_bytes: bytes) -> Tuple[List[Block], List[str]]:
 
 
 def _convert_text(file_bytes: bytes) -> List[Block]:
-    try:
-        text = file_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        text = file_bytes.decode("latin-1", errors="replace")
-    return _text_to_blocks(text, detect_headings=False)
+    return _text_to_blocks(_decode(file_bytes), detect_headings=False)
 
 
 def _looks_like_heading(line: str) -> bool:

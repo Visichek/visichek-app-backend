@@ -122,8 +122,31 @@ class TestConversion:
         assert detect_kind("a.docx", "") == "docx"
         assert detect_kind("a.pdf", "") == "pdf"
         assert detect_kind("a.txt", "") == "text"
+        assert detect_kind("a.md", "") == "markdown"
+        assert detect_kind("a.markdown", "") == "markdown"
+        assert detect_kind("", "text/markdown") == "markdown"
         assert detect_kind("", "application/pdf") == "pdf"
         assert detect_kind("a.bin", "application/octet-stream") == "unsupported"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_markdown_converts_to_structured_blocks(self):
+        from legal.services.legal_conversion_service import convert_upload_to_blocks
+
+        md = b"# Title\n\nA **bold** word.\n\n## Sub\n\n- one\n- two\n\n#### Deep\n"
+        blocks, _ = await convert_upload_to_blocks(md, "doc.md", "text/markdown")
+        types = [b["type"] for b in blocks]
+        # Markdown structure must survive — not be dumped as plain paragraphs.
+        assert "heading" in types
+        assert "bulletListItem" in types
+        # First block is the H1 with level 1.
+        assert blocks[0]["type"] == "heading" and blocks[0]["props"]["level"] == 1
+        # h4 clamps to BlockNote's max supported level (3).
+        deep = [b for b in blocks if b["type"] == "heading"][-1]
+        assert deep["props"]["level"] == 3
+        # Inline bold style is preserved.
+        para = next(b for b in blocks if b["type"] == "paragraph")
+        assert any(n.get("styles", {}).get("bold") for n in para["content"])
 
     @pytest.mark.unit
     def test_looks_like_heading(self):
