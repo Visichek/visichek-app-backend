@@ -58,6 +58,30 @@ _PLAN_TIERS = frozenset(
 _SUB_STATUSES = frozenset(
     {"active", "trialing", "past_due", "cancelled", "suspended", "expired", "none"}
 )
+_LAWFUL_BASES = frozenset({"consent", "legitimate_interest"})
+
+
+def _optional_bool_builder(mongo_field: str):
+    """Build a predicate for an optional boolean tenant flag.
+
+    These flags (``onboarding_info_confirmed``, ``dpa_accepted``,
+    ``cross_border_approved``) were added after tenants already existed,
+    so older documents simply omit them. A missing field must read as
+    ``False`` for filtering: ``true`` matches only a stored ``True``,
+    while ``false`` matches a stored ``False`` *or* an absent field via
+    ``$ne: True``. Selecting both values imposes no constraint.
+    """
+
+    def _build(values):
+        wants_true = "true" in values
+        wants_false = "false" in values
+        if wants_true and wants_false:
+            return {}
+        if wants_true:
+            return {mongo_field: True}
+        return {mongo_field: {"$ne": True}}
+
+    return _build
 
 
 TENANTS_LIST_SPEC = ListSpec(
@@ -79,6 +103,30 @@ TENANTS_LIST_SPEC = ListSpec(
         ),
         "isActive": FilterDef(
             name="isActive", coerce=coerce_bool, mongo_field="is_active"
+        ),
+        "onboardingInfoConfirmed": FilterDef(
+            name="onboardingInfoConfirmed",
+            multi=True,
+            allowed_values=frozenset({"true", "false"}),
+            builder=_optional_bool_builder("onboarding_info_confirmed"),
+        ),
+        "dpaAccepted": FilterDef(
+            name="dpaAccepted",
+            multi=True,
+            allowed_values=frozenset({"true", "false"}),
+            builder=_optional_bool_builder("dpa_accepted"),
+        ),
+        "crossBorderApproved": FilterDef(
+            name="crossBorderApproved",
+            multi=True,
+            allowed_values=frozenset({"true", "false"}),
+            builder=_optional_bool_builder("cross_border_approved"),
+        ),
+        "lawfulBasis": FilterDef(
+            name="lawfulBasis",
+            multi=True,
+            allowed_values=_LAWFUL_BASES,
+            mongo_field="lawful_basis",
         ),
     },
     range_filters={"createdAt": "date_created"},

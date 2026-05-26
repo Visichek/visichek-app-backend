@@ -16,8 +16,11 @@ from schemas.visit_session_schema import (
     DenyVisitorRequest,
     VisitSessionUpdate,
 )
+from schemas.summary_schema import VisitorBriefSummary
+from schemas.visitor_schema import VisitorEditRequest
 from security.auth import verify_system_user_token, verify_any_system_user_token
 from security.principal import AuthPrincipal
+from services.visitor_service import edit_visitor_details
 from services.visit_session_service import (
     check_in_visitor,
     check_out_visitor,
@@ -1201,4 +1204,49 @@ async def download_badge(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=badge_{session_id}.pdf"},
+    )
+
+
+# NOTE: declared LAST so the dynamic single-segment ``/{visitor_id}`` does not
+# shadow the more specific ``/sessions/...`` routes above. ``visitor_id`` is the
+# canonical ``visitors`` collection id (CheckinOut.visitorId / the embedded
+# checkin.visitor.id) — not a visit-session id.
+@router.patch("/{visitor_id}", response_model=VisitorBriefSummary)
+@document_response(
+    message="Visitor details updated",
+    status_code=status.HTTP_200_OK,
+    description=(
+        "Correct a visitor's identity fields (name, email, phone, company) "
+        "after the record exists — e.g. fix a kiosk typo, add a missing "
+        "email, update a phone. Partial update: only keys present in the body "
+        "are touched; an explicit null on email/company clears it. Identity / "
+        "permission fields (verified, verificationMethod, role, tenantId) are "
+        "ignored if sent. The edit propagates to the linked visitor profile "
+        "and is reflected on the embedded checkin.visitor on next fetch. "
+        "Allowed roles: receptionist / dept_admin / super_admin "
+        "(visitor:edit_profile)."
+    ),
+    summary="Edit visitor details (receptionist/dept_admin/super_admin)",
+    response_codes={
+        401: "Unauthorized",
+        403: "Forbidden — caller lacks visitor:edit_profile",
+        404: "Visitor not found (unknown id or outside caller's tenant)",
+        422: "Validation error (empty body / invalid email / invalid phone)",
+    },
+)
+async def edit_visitor_endpoint(
+    visitor_id: str,
+    payload: VisitorEditRequest,
+    request: Request,
+    principal: AuthPrincipal = Depends(_checkin_roles),
+):
+    """Edit a visitor's identity fields (receptionist/dept_admin/super_admin)."""
+    tenant_id = principal.tenant_id or ""
+    return await edit_visitor_details(
+        visitor_id=visitor_id,
+        tenant_id=tenant_id,
+        payload=payload,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
     )

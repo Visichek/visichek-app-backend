@@ -16,10 +16,12 @@ from services.checkin_service import (
     list_checkins_analytics,
     list_checkins_for_tenant,
     list_pending_approvals_for_tenant,
+    manually_verify_checkin,
 )
 from services.notification_service import schedule_resource_read_receipt
 from schemas.checkin_schema import (
     CheckinConfirmRequest,
+    CheckinManualVerifyRequest,
     CheckinWithVisitorOut,
     PendingApprovalItem,
 )
@@ -212,6 +214,48 @@ async def confirm_pending_checkin(
 ):
     """Approve or reject a check-in (receptionist/super_admin)."""
     return await confirm_checkin(checkin_id, principal, payload)
+
+
+@router.post(
+    "/checkins/{checkin_id}/manual-verify",
+    response_model=CheckinWithVisitorOut,
+    status_code=status.HTTP_200_OK,
+)
+@document_response(
+    message="Visitor manually verified",
+    description=(
+        "Mark a check-in's visitor as verified by hand (staff-vouched). "
+        "Reception uses this when a physical ID was checked in person — "
+        "walk-ins, skipped scan, OCR failure. Flips ``verified=true`` and "
+        "``verificationMethod='manual'`` on BOTH the check-in and the linked "
+        "visitor and records who vouched (name + role + time, taken from the "
+        "session, never the body). Does NOT change the check-in state — "
+        "verification and approval are independent axes. Body accepts an "
+        "optional ``notes`` string only."
+    ),
+    summary="Manually verify a check-in's visitor (receptionist/dept_admin/super_admin)",
+    response_codes={
+        401: "Unauthorized",
+        403: "Forbidden — caller lacks checkin:approve",
+        404: "Check-in not found (unknown id or outside caller's tenant)",
+        409: "Check-in is already verified",
+    },
+)
+async def manual_verify_checkin_endpoint(
+    checkin_id: str,
+    request: Request,
+    payload: CheckinManualVerifyRequest = Body(default=CheckinManualVerifyRequest()),
+    principal: AuthPrincipal = Depends(
+        verify_system_user_token("receptionist", "dept_admin", "super_admin")
+    ),
+):
+    """Staff-vouched manual verification (receptionist/dept_admin/super_admin)."""
+    return await manually_verify_checkin(
+        checkin_id,
+        principal,
+        notes=payload.notes,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 # NOTE: The bulk ``/checkins/bulk/force-approve-pending`` route MUST be

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from schemas.imports import *
+from schemas.summary_schema import ManualVerificationInfo
 
 
 # Sensible defaults per purpose-of-visit value. Aligned with the
@@ -49,6 +50,12 @@ class CheckinBase(BaseModel):
     purpose: CheckinPurpose
     state: CheckinState = CheckinState.PENDING_APPROVAL
     verified: bool = False
+    # How the visitor's identity was verified for this check-in. None until
+    # a verification path sets it; "manual" when staff vouched by hand.
+    verification_method: Optional[VerificationMethod] = None
+    # Attribution snapshot for a staff-vouched (manual) verification; null
+    # for automated (id_scan / qr_upload / host_approval) or unverified.
+    manual_verification: Optional[ManualVerificationInfo] = None
     approved_by_user_id: Optional[str] = None
     approved_at: Optional[int] = None
     rejection_reason: Optional[str] = None
@@ -65,6 +72,8 @@ class CheckinCreate(CheckinBase):
 class CheckinUpdate(BaseModel):
     state: Optional[CheckinState] = None
     verified: Optional[bool] = None
+    verification_method: Optional[VerificationMethod] = None
+    manual_verification: Optional[ManualVerificationInfo] = None
     approved_by_user_id: Optional[str] = None
     approved_at: Optional[int] = None
     rejection_reason: Optional[str] = None
@@ -108,6 +117,16 @@ class CheckinSubmitRequest(BaseModel):
 
 class CheckinConfirmRequest(BaseModel):
     action: str  # "approve" or "reject"
+    notes: Optional[str] = None
+
+
+class CheckinManualVerifyRequest(BaseModel):
+    """Body for POST /v1/checkins/{checkin_id}/manual-verify.
+
+    The verifier identity is taken from the authenticated session — never
+    from the body. ``notes`` is the only accepted field (the staff member's
+    note, e.g. "Checked national ID card against the visitor in person")."""
+
     notes: Optional[str] = None
 
 

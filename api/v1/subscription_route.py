@@ -14,7 +14,7 @@ from core.list_params import FilterDef, ListSpec, parse_list_query
 from core.list_runner import run_list
 from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
-from core.queue.write_pipeline import enqueue_write
+from core.queue.write_pipeline import enqueue_write, enqueue_write_inline
 from core.response_envelope import document_response
 from schemas.subscription_schema import (
     BillingCycle,
@@ -143,18 +143,21 @@ class UpdateOverridesRequest(BaseModel):
     message="Subscription creation queued",
     status_code=status.HTTP_202_ACCEPTED,
     description=(
-        "Enqueue a subscription create. The real subscription id is returned via "
-        "``GET /v1/jobs/{job_id}`` once the worker commits — the 202 body's ``id`` "
-        "is speculative for subscription writes."
+        "Create a subscription. Runs inline (synchronously) so the new plan "
+        "is committed and the plan/enforcement caches are refreshed before the "
+        "response returns — the next request already sees the new plan. Keeps "
+        "the queued-write contract: returns ``{ id, job_id, status }`` and the "
+        "job row is written ``SUCCEEDED`` so ``GET /v1/jobs/{job_id}`` resolves "
+        "on the first poll. The returned ``id`` is the real subscription id."
     ),
-    summary="Create subscription (async)",
+    summary="Create subscription (inline)",
 )
 async def create_subscription_endpoint(
     payload: SubscribeTenantRequest,
     request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
 ):
-    return await enqueue_write(
+    return await enqueue_write_inline(
         writer_key="subscription.create",
         payload=payload.model_dump(exclude_none=True),
         resource_type="subscription",
@@ -311,14 +314,20 @@ async def get_subscription_endpoint(
 @document_response(
     message="Plan change queued",
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Change plan (async)",
+    description=(
+        "Change a tenant's plan. Runs inline (synchronously) so the new plan "
+        "is committed and caches refreshed before the response returns. Keeps "
+        "the queued-write contract: ``{ id, job_id, status }`` with the job "
+        "row written ``SUCCEEDED`` for an immediate first poll."
+    ),
+    summary="Change plan (inline)",
 )
 async def change_plan_endpoint(
     payload: ChangePlanRequest,
     request: Request,
     admin=Depends(check_admin_account_status_and_permissions),
 ):
-    return await enqueue_write(
+    return await enqueue_write_inline(
         writer_key="subscription.change_plan",
         payload=payload.model_dump(exclude_none=True),
         resource_type="subscription",

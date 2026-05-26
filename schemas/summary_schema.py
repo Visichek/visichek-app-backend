@@ -63,6 +63,25 @@ class VisitorProfileBriefSummary(BaseModel):
     company: Optional[str] = None
 
 
+class ManualVerificationInfo(BaseModel):
+    """Attribution snapshot for a staff-vouched (manual) verification.
+
+    Recorded on BOTH the ``checkins`` row and the linked ``visitors`` row
+    when a staff member marks a visitor verified by hand (walk-in, skipped
+    scan, OCR failure). ``verified_by_name`` / ``verified_by_role`` are
+    denormalized point-in-time snapshots so the visitors list can render
+    "Verified by Ada Receptionist (Receptionist) · 2h ago" without a second
+    lookup per row; they intentionally do NOT track later staff renames."""
+
+    manual: bool = True
+    verified_by_user_id: str
+    verified_by_name: Optional[str] = None
+    verified_by_role: Optional[str] = None
+    verified_at: int
+    method: str = "manual"
+    notes: Optional[str] = None
+
+
 class VisitorBriefSummary(BaseModel):
     """Snapshot of a ``visitors`` collection record embedded on a check-in
     payload so the receptionist / approver can cross-check the visitor's
@@ -81,6 +100,11 @@ class VisitorBriefSummary(BaseModel):
     verified: bool = False
     verification_method: Optional[str] = None
     portrait_url: Optional[str] = None
+    # Present only when a staff member has manually verified the visitor;
+    # null/absent for id_scan-verified or unverified visitors.
+    manual_verification: Optional[ManualVerificationInfo] = None
+    created_at: Optional[int] = None
+    last_visit_at: Optional[int] = None
 
 
 class AppointmentBriefSummary(BaseModel):

@@ -58,6 +58,7 @@ _VERIFICATION_METHOD_LABELS: Dict[str, str] = {
     "id_scan": "ID scan",
     "qr_upload": "QR upload",
     "host_approval": "Host approval",
+    "manual": "Manual",
 }
 _BADGE_FORMAT_LABELS: Dict[str, str] = {"A6": "A6", "A7": "A7"}
 _APPOINTMENT_STATUS_LABELS: Dict[str, str] = {

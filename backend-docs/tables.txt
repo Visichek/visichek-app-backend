@@ -207,6 +207,10 @@ GET /v1/tenants
     planTier          free | starter | professional | enterprise | custom | none
     subscriptionStatus active | trialing | past_due | cancelled | suspended | expired | none
     isActive          true | false   (alias for status, useful in URLs)
+    onboardingInfoConfirmed true | false  (false also matches docs missing the flag)
+    dpaAccepted       true | false  (false also matches docs missing the flag)
+    crossBorderApproved true | false  (false also matches docs missing the flag)
+    lawfulBasis       consent | legitimate_interest
     createdAtGte/Lte  unix epoch s
   Facets (`facets=`): status   →   { active, inactive, all }
 

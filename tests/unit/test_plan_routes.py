@@ -228,7 +228,7 @@ class TestPlanRoutes:
 
 
 class TestSubscriptionRoutes:
-    @patch("api.v1.subscription_route.enqueue_write", new_callable=AsyncMock)
+    @patch("api.v1.subscription_route.enqueue_write_inline", new_callable=AsyncMock)
     async def test_create_subscription(self, mock_enqueue, client):
         mock_enqueue.return_value = {
             "id": "sub_test",
@@ -269,7 +269,7 @@ class TestSubscriptionRoutes:
             resp.json()["data"].get("plan_id") or resp.json()["data"].get("planId")
         ) == "plan_test"
 
-    @patch("api.v1.subscription_route.enqueue_write", new_callable=AsyncMock)
+    @patch("api.v1.subscription_route.enqueue_write_inline", new_callable=AsyncMock)
     async def test_change_plan(self, mock_enqueue, client):
         mock_enqueue.return_value = {
             "id": "sub_test",

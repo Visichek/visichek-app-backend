@@ -83,6 +83,9 @@ class VerificationMethod(str, Enum):
     ID_SCAN = "id_scan"
     QR_UPLOAD = "qr_upload"
     HOST_APPROVAL = "host_approval"
+    # A staff member vouched for the visitor's identity from the
+    # receptionist UI without an automated scan (manual ID check).
+    MANUAL = "manual"
 
 
 class VerificationStatus(str, Enum):

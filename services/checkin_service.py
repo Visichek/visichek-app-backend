@@ -28,8 +28,8 @@ from schemas.checkin_schema import (
     CheckinUpdate,
     CheckinWithVisitorOut,
 )
-from schemas.imports import IDType
-from schemas.summary_schema import VisitorBriefSummary
+from schemas.imports import IDType, VerificationMethod
+from schemas.summary_schema import ManualVerificationInfo, VisitorBriefSummary
 from services.consent_service import (
     enforce_consent_if_required,
     record_visitor_consent,
@@ -109,6 +109,17 @@ async def _enforce_tenant_geofence(
 
 def _visitor_to_brief(visitor: Any) -> VisitorBriefSummary:
     bio = visitor.bio_data or {}
+    manual = getattr(visitor, "manual_verification", None)
+    # A manual (staff-vouched) verification wins the displayed method: the
+    # ``verification_method`` column on the visitor row historically stores
+    # the ID *document* type (IDType), so we derive "manual" from the
+    # attribution block rather than overloading that column.
+    if manual is not None:
+        method = "manual"
+    elif visitor.verification_method is not None:
+        method = visitor.verification_method.value
+    else:
+        method = None
     return VisitorBriefSummary(
         id=visitor.id or "",
         full_name=visitor.full_name,
@@ -116,12 +127,10 @@ def _visitor_to_brief(visitor: Any) -> VisitorBriefSummary:
         phone=visitor.phone,
         company=bio.get("company") or bio.get("organization"),
         verified=bool(visitor.verified),
-        verification_method=(
-            visitor.verification_method.value
-            if visitor.verification_method is not None
-            else None
-        ),
+        verification_method=method,
         portrait_url=visitor.portrait_url,
+        manual_verification=manual,
+        created_at=getattr(visitor, "date_created", None),
     )
 
 
@@ -1727,6 +1736,135 @@ async def force_approve_pending_verification(
         )
 
     return updated
+
+
+async def _resolve_verifier_identity(
+    user_id: str,
+) -> tuple[Optional[str], Optional[str]]:
+    """Best-effort (full_name, role) for the verifying system user.
+
+    The auth principal only carries the user id + role, so the display
+    name is fetched from the ``system_users`` collection. Returns
+    ``(None, None)`` rather than raising if the lookup fails — a missing
+    name must not block a legitimate verification."""
+    from bson import ObjectId
+
+    if not ObjectId.is_valid(user_id):
+        return None, None
+    try:
+        from repositories.system_user_repo import get_system_user
+
+        user = await get_system_user({"_id": ObjectId(user_id)})
+    except Exception:
+        return None, None
+    if user is None:
+        return None, None
+    role = user.role.value if hasattr(user.role, "value") else (user.role or None)
+    return user.full_name, role
+
+
+async def manually_verify_checkin(
+    checkin_id: str,
+    principal,
+    *,
+    notes: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> CheckinWithVisitorOut:
+    """Staff-vouched ("manual") verification of a check-in's visitor.
+
+    Reception checks a physical ID by hand (walk-in, scan skipped, OCR
+    failed) and flips ``verified=True`` on BOTH the check-in and the linked
+    visitor, stamping a point-in-time attribution block (who vouched, their
+    role, when) taken from the authenticated session — never from the body.
+
+    Verification and approval are independent axes: this does NOT change the
+    check-in's ``state`` and never auto-approves. Returns the enriched
+    check-in so the receptionist UI can render the attribution line
+    immediately."""
+    tenant_id = principal.tenant_id or ""
+
+    # Tenant isolation: scope the lookup to the caller's tenant so a
+    # cross-tenant id leaks nothing — a miss is a 404, not a 403.
+    checkin = await get_checkin({"_id": checkin_id, "tenant_id": tenant_id})
+    if not checkin:
+        raise resource_not_found(resource="Checkin", resource_id=checkin_id)
+
+    # Guard the double-submit race — the frontend hides the Verify button
+    # once verified, but two tabs / a slow network could still race.
+    if bool(checkin.verified):
+        raise AppException(
+            status_code=409,
+            code=ErrorCode.CONFLICT,
+            message="Check-in is already verified.",
+            details={"checkin_id": checkin_id},
+        )
+
+    now = int(time.time())
+    verifier_name, verifier_role = await _resolve_verifier_identity(principal.user_id)
+    clean_notes = (notes or "").strip() or None
+
+    info = ManualVerificationInfo(
+        manual=True,
+        verified_by_user_id=principal.user_id,
+        verified_by_name=verifier_name,
+        verified_by_role=verifier_role or principal.role,
+        verified_at=now,
+        method=VerificationMethod.MANUAL.value,
+        notes=clean_notes,
+    )
+
+    # 1. Flip the check-in. state is left untouched on purpose.
+    updated = await update_checkin(
+        checkin_id,
+        CheckinUpdate(
+            verified=True,
+            verification_method=VerificationMethod.MANUAL,
+            manual_verification=info,
+        ),
+    )
+
+    # 2. Flip the linked visitor profile so the same attribution shows up
+    #    on every read of the visitor (live-joined onto check-in rows).
+    from repositories.visitor_repo import get_visitor, update_visitor
+    from schemas.visitor_schema import VisitorUpdate
+
+    visitor = await get_visitor({"_id": checkin.visitor_id, "tenant_id": tenant_id})
+    if visitor is not None and visitor.id:
+        await update_visitor(
+            visitor.id,
+            VisitorUpdate(verified=True, manual_verification=info),
+        )
+
+    invalidate_tenant_dashboard_cache(tenant_id)
+
+    # 3. Audit — identity/PII mutation, reportable under NDPA.
+    try:
+        from services.audit_service import record_audit_event
+
+        await record_audit_event(
+            actor_id=principal.user_id,
+            actor_role=principal.role,
+            action="checkin.manual_verify",
+            resource_type="checkin",
+            resource_id=checkin_id,
+            tenant_id=tenant_id,
+            details={
+                "visitor_id": checkin.visitor_id,
+                "verified_by_name": verifier_name,
+                "verified_by_role": verifier_role or principal.role,
+                "notes": clean_notes,
+            },
+            request_id=request_id,
+        )
+    except Exception:
+        logger.warning(
+            "checkin.manual_verify audit record failed for checkin %s",
+            checkin_id,
+            exc_info=True,
+        )
+
+    enriched = await _enrich_checkins_with_visitors(tenant_id, [updated])
+    return enriched[0]
 
 
 async def list_checkins_analytics(

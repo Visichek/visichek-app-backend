@@ -383,6 +383,56 @@ async def enqueue_write(
     }
 
 
+async def enqueue_write_inline(
+    *,
+    writer_key: str,
+    payload: dict[str, Any],
+    resource_type: str,
+    resource_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    actor_role: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> dict[str, str]:
+    """Run a registered writer synchronously on the request thread.
+
+    Drop-in replacement for :func:`enqueue_write` for the rare write that
+    must reflect immediately (e.g. a subscription upgrade gating the very
+    next request) while keeping the queued-write HTTP contract intact:
+
+    * The same registered ``writer_key`` handler runs — no duplicated logic.
+    * The same ``{ id, job_id, status }`` body is returned, so the frontend
+      keeps polling ``GET /v1/jobs/{job_id}`` unchanged. The job row is
+      written ``SUCCEEDED`` (via :func:`record_inline_completed_write`), so
+      the first poll resolves immediately.
+    * The same cache-invalidation cascades fire, so reads see fresh state.
+
+    The trade-off vs :func:`enqueue_write`: the request thread blocks on the
+    write, and a writer exception surfaces synchronously (as a normal error
+    response) instead of via a failed job row. Use only for low-frequency,
+    latency-sensitive mutations.
+
+    For CREATE-style writers whose underlying service assigns its own id,
+    the real id from the writer's result is used for the job row and the
+    returned body (no speculative id).
+    """
+    speculative_id = resource_id or str(ObjectId())
+    result = await execute_writer(writer_key, speculative_id, payload)
+    result = result or {}
+    final_id = str(result.get("id") or speculative_id)
+    return await record_inline_completed_write(
+        writer_key=writer_key,
+        payload=payload,
+        resource_type=resource_type,
+        result=result,
+        resource_id=final_id,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        request_id=request_id,
+    )
+
+
 async def record_inline_completed_write(
     *,
     writer_key: str,
