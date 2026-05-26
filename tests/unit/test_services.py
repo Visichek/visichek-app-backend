@@ -677,6 +677,8 @@ class TestAppointmentService:
             host_id=host_id,
             department_id=department_id,
             scheduled_datetime=1700000000,
+            visitor_name_snapshot="Jane Smith",
+            visitor_phone="+2348012345678",
         )
         created_appt = AppointmentOut(
             id=appt_id,

@@ -30,10 +30,37 @@ from services.plan_limits import (
 # non-optional) and surfaced to the frontend via
 # :func:`describe_appointment_form_requirements` so the schedule UI
 # can split them visually from the tenant-configurable section.
-SYSTEM_REQUIRED_APPOINTMENT_FIELDS: tuple[str, ...] = (
-    "host_id",
-    "department_id",
-    "scheduled_datetime",
+SYSTEM_REQUIRED_APPOINTMENT_FIELDS: tuple[dict, ...] = (
+    {"key": "host_id", "label": "Host", "type": "host_picker", "required": True},
+    {
+        "key": "department_id",
+        "label": "Department",
+        "type": "department_picker",
+        "required": True,
+    },
+    {
+        "key": "scheduled_datetime",
+        "label": "Scheduled date & time",
+        "type": "datetime",
+        "required": True,
+    },
+    # Visitor identity — stored on the appointment (visitor_name_snapshot /
+    # visitor_phone columns) so the appointment-driven check-in never prompts
+    # for a name or phone that was already captured at schedule time. Enforced
+    # by AppointmentCreate.validate_visitor_identity (skipped when an existing
+    # visitor_profile_id is linked, which supplies the identity).
+    {
+        "key": "visitor_name_snapshot",
+        "label": "Visitor full name",
+        "type": "text",
+        "required": True,
+    },
+    {
+        "key": "visitor_phone",
+        "label": "Visitor phone number",
+        "type": "phone",
+        "required": True,
+    },
 )
 
 
@@ -160,9 +187,7 @@ async def describe_appointment_form_requirements(tenant_id: str) -> dict:
         tenant_id=tenant_id, target_type=FormTargetType.APPOINTMENT.value
     )
     return {
-        "system_required_fields": [
-            {"key": k, "required": True} for k in SYSTEM_REQUIRED_APPOINTMENT_FIELDS
-        ],
+        "system_required_fields": [dict(f) for f in SYSTEM_REQUIRED_APPOINTMENT_FIELDS],
         "tenant_form_id": form.form_id if form else None,
         "tenant_form_version": form.version if form else None,
         "tenant_required_fields": (
@@ -270,6 +295,8 @@ async def retrieve_appointment_by_id_with_summary(
 
 _AUDITABLE_UPDATE_FIELDS = (
     "visitor_profile_id",
+    "visitor_name_snapshot",
+    "visitor_phone",
     "status",
     "scheduled_datetime",
     "purpose",

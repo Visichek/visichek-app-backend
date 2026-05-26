@@ -174,12 +174,24 @@ editable through the form-builder.
   expected_duration_minutes  (integer, optional, maps_to=expected_duration_minutes)
 
 System-required appointment fields (host_id, department_id,
-scheduled_datetime) are NOT in the tenant form — they live on
-first-class appointment columns and are enforced by `AppointmentCreate`
-Pydantic + `services/appointment_service.SYSTEM_REQUIRED_APPOINTMENT_FIELDS`.
+scheduled_datetime, visitor_name_snapshot, visitor_phone) are NOT in the
+tenant form — they live on first-class appointment columns and are
+enforced by `AppointmentCreate` Pydantic +
+`services/appointment_service.SYSTEM_REQUIRED_APPOINTMENT_FIELDS`.
 `describe_appointment_form_requirements` returns them under a separate
-`system_required_fields` key so the schedule UI renders them as a
-fixed section above the tenant-editable section.
+`system_required_fields` key (each entry carries key/label/type/required)
+so the schedule UI renders them as a fixed section above the
+tenant-editable section.
+
+visitor_name_snapshot + visitor_phone are captured at schedule time so
+the appointment-driven check-in (`check_in_from_appointment`) never has
+to prompt the receptionist for a name/phone that was already collected
+when the visit was booked. The pair is required UNLESS an existing
+`visitor_profile_id` is linked on the create — then the stored profile
+supplies the identity and the schedule form omits them.  Tenants used to
+lose phone/full_name when they replaced the appointment form's default
+bio fields (full_name/phone) with their own questions and marked nothing
+required; promoting them to system fields closes that gap.
 
 --------------------------------------------------------------------------------
 4. AUTOSAVE → PUBLISH — the super_admin's HTTP path
@@ -319,7 +331,9 @@ fixed section above the tenant-editable section.
   GET /v1/appointments/form-requirements
 
   Returns:
-    system_required_fields  — host_id, department_id, scheduled_datetime
+    system_required_fields  — host_id, department_id, scheduled_datetime,
+                              visitor_name_snapshot, visitor_phone
+                              (each: key, label, type, required)
     tenant_form_id          — id of the published appointment form, or null
     tenant_form_version     — version, or null
     tenant_required_fields  — the published form's fields with labels,

@@ -481,6 +481,7 @@ class VisichekLoadUser(HttpUser):
             "department_id": self.department_id,
             "host_id": self.user_id,
             "visitor_name_snapshot": f"Guest {random.randint(100, 999)}",
+            "visitor_phone": f"+234801{random.randint(1000000, 9999999)}",
             "scheduled_datetime": future_time,
             "purpose": random.choice(
                 ["Meeting", "Interview", "Consultation", "Review"]

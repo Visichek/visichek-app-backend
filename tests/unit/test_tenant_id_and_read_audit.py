@@ -37,7 +37,11 @@ class TestTenantIdOptionalOnCreateSchemas:
         from schemas.appointment_schema import AppointmentCreate
 
         appt = AppointmentCreate(
-            host_id="h1", department_id="d1", scheduled_datetime=1779667200
+            host_id="h1",
+            department_id="d1",
+            scheduled_datetime=1779667200,
+            visitor_name_snapshot="Jane Smith",
+            visitor_phone="+2348012345678",
         )
         assert appt.tenant_id == ""
 

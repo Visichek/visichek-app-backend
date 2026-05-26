@@ -645,6 +645,8 @@ class TestAppointmentFlow:
             host_id=host.id or "",
             department_id=dept.id or "",
             scheduled_datetime=scheduled_time,
+            visitor_name_snapshot="Scheduled Visitor",
+            visitor_phone="5551234567",
             purpose="Scheduled meeting",
             status=AppointmentStatus.SCHEDULED,
         )

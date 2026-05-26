@@ -366,7 +366,11 @@ async def check_in_from_appointment(
             details={"missing_field": "full_name", "prompt_required": True},
         )
 
-    resolved_phone = phone or profile_phone
+    # Resolution order: explicit override (desk correction) → linked visitor
+    # profile → the phone snapshotted on the appointment at schedule time.
+    # The last source is why phone is a system-required schedule field — it
+    # removes the check-in prompt for the common "booked then walked in" case.
+    resolved_phone = phone or profile_phone or appointment.visitor_phone
     if not resolved_phone:
         # Surface a structured error so the kiosk / receptionist UI can pop a
         # "please enter the visitor's phone number" prompt and resubmit with

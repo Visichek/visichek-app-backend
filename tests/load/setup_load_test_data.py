@@ -489,6 +489,7 @@ async def create_appointments(
             "department_id": department_id,
             "host_id": host_id,
             "visitor_name_snapshot": f"Guest {random.randint(1000, 9999)}",
+            "visitor_phone": f"+234801{random.randint(1000000, 9999999)}",
             "scheduled_datetime": future_time,
             "purpose": random.choice(purposes),
             "status": "scheduled",

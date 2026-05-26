@@ -8,7 +8,14 @@ class AppointmentBase(BaseModel):
     visitor_profile_id: Optional[str] = None
     host_id: str
     department_id: str
+    # Visitor identity captured at schedule time. Both are system-required
+    # on create (see AppointmentCreate.validate_visitor_identity) unless an
+    # existing visitor_profile_id is linked, in which case the profile
+    # supplies them. Storing the phone here (not just the name) means the
+    # appointment-driven check-in never has to prompt the receptionist for
+    # a phone number that was already collected when the visit was booked.
     visitor_name_snapshot: Optional[str] = None
+    visitor_phone: Optional[str] = None
     host_name_snapshot: Optional[str] = None
     scheduled_datetime: int
     purpose: Optional[str] = None
@@ -39,9 +46,37 @@ class AppointmentCreate(AppointmentBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
+    @model_validator(mode="after")
+    def validate_visitor_identity(self):
+        """Visitor full name + phone are system-required at schedule time.
+
+        These mirror ``SYSTEM_REQUIRED_APPOINTMENT_FIELDS`` and exist so the
+        appointment-driven check-in (``check_in_from_appointment``) always has
+        the visitor's name and phone on hand and never has to prompt the
+        receptionist for them. The one exception is when an existing
+        ``visitor_profile_id`` is linked — the stored profile supplies the
+        identity, so the schedule form doesn't re-collect it.
+        """
+        if self.visitor_profile_id:
+            return self
+        missing = []
+        if not (self.visitor_name_snapshot or "").strip():
+            missing.append("visitor_name_snapshot")
+        if not (self.visitor_phone or "").strip():
+            missing.append("visitor_phone")
+        if missing:
+            raise ValueError(
+                "Missing required visitor fields: "
+                + ", ".join(missing)
+                + " (required unless a visitor_profile_id is provided)"
+            )
+        return self
+
 
 class AppointmentUpdate(BaseModel):
     visitor_profile_id: Optional[str] = None
+    visitor_name_snapshot: Optional[str] = None
+    visitor_phone: Optional[str] = None
     status: Optional[AppointmentStatus] = None
     scheduled_datetime: Optional[int] = None
     purpose: Optional[str] = None

@@ -681,14 +681,44 @@ class TestAppointmentSchema:
             host_id="host111",
             department_id="dept789",
             scheduled_datetime=now + 3600,
+            visitor_name_snapshot="Jane Smith",
+            visitor_phone="+2348012345678",
         )
         assert payload.tenant_id == "tenant123"
         assert payload.host_id == "host111"
         assert payload.department_id == "dept789"
         assert payload.scheduled_datetime == now + 3600
+        assert payload.visitor_name_snapshot == "Jane Smith"
+        assert payload.visitor_phone == "+2348012345678"
         assert payload.status == AppointmentStatus.SCHEDULED
         assert isinstance(payload.date_created, int)
         assert isinstance(payload.last_updated, int)
+
+    def test_appointment_create_requires_visitor_name_and_phone(self):
+        """Visitor name + phone are system-required when no profile is linked."""
+        now = int(time.time())
+        with pytest.raises(ValidationError):
+            AppointmentCreate(
+                tenant_id="tenant123",
+                host_id="host111",
+                department_id="dept789",
+                scheduled_datetime=now + 3600,
+                visitor_name_snapshot="Jane Smith",
+                # visitor_phone missing -> rejected
+            )
+
+    def test_appointment_create_visitor_identity_from_profile(self):
+        """A linked visitor_profile_id exempts name/phone (profile supplies them)."""
+        now = int(time.time())
+        payload = AppointmentCreate(
+            tenant_id="tenant123",
+            host_id="host111",
+            department_id="dept789",
+            scheduled_datetime=now + 3600,
+            visitor_profile_id="visitor456",
+        )
+        assert payload.visitor_profile_id == "visitor456"
+        assert payload.visitor_phone is None
 
     def test_appointment_create_with_optional_fields(self):
         """Test AppointmentCreate with optional fields."""
