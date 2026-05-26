@@ -174,6 +174,51 @@ class TestConversion:
         blocks = _text_to_blocks(text, detect_headings=False)
         assert all(b["type"] == "paragraph" for b in blocks)
 
+    @pytest.mark.unit
+    def test_pdf_lines_reconstruct_structure(self):
+        """Layout reconstruction: font size → headings, gaps → paragraphs,
+        leading glyphs (incl. undecodable cid bullets) → list items, and the
+        whole page must NOT collapse into one paragraph."""
+        from collections import Counter
+
+        from legal.services.legal_conversion_service import _pdf_lines_to_blocks
+
+        # Mirrors a real pdfplumber page: body=10pt, headings=18pt, bullets=12pt
+        # with the bullet glyph emitted as "(cid:127)".
+        page = [
+            {"text": "Privacy Policy", "top": 81.7, "size": 18.0},
+            {"text": "1. Introduction", "top": 121.7, "size": 18.0},
+            {
+                "text": "Body line one of the intro paragraph here.",
+                "top": 148.1,
+                "size": 10.0,
+            },
+            {
+                "text": "Still the same first paragraph wrapping on.",
+                "top": 160.1,
+                "size": 10.0,
+            },
+            {
+                "text": "A second paragraph after a larger gap above.",
+                "top": 178.1,
+                "size": 10.0,
+            },
+            {"text": "(cid:127) First bullet item", "top": 248.1, "size": 12.0},
+            {"text": "(cid:127) Second bullet item", "top": 266.1, "size": 12.0},
+        ]
+        size_counter: Counter = Counter({10: 80, 18: 4, 12: 6})
+        blocks = _pdf_lines_to_blocks([page], size_counter)
+        types = [b["type"] for b in blocks]
+
+        assert types[0] == "heading" and blocks[0]["props"]["level"] == 1
+        # The two body paragraphs must be separate, not one mega-paragraph.
+        assert types.count("paragraph") == 2
+        # Bullets become list items with the cid glyph stripped.
+        bullets = [b for b in blocks if b["type"] == "bulletListItem"]
+        assert len(bullets) == 2
+        assert "(cid:" not in bullets[0]["content"][0]["text"]
+        assert bullets[0]["content"][0]["text"] == "First bullet item"
+
 
 # ---------------------------------------------------------------------------
 # Permission config coverage (pure)

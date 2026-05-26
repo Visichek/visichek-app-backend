@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
@@ -64,8 +65,10 @@ def _block(block_type: str, content: Any = None, props: Optional[dict] = None) -
 
 def detect_kind(filename: str, content_type: str) -> str:
     """Return one of ``docx`` | ``pdf`` | ``markdown`` | ``text`` | ``unsupported``."""
+
     name = (filename or "").lower()
     ctype = (content_type or "").lower()
+
     if name.endswith(".docx") or ctype == _DOCX_MIME:
         return "docx"
     if name.endswith(".pdf") or ctype == "application/pdf":
@@ -369,6 +372,24 @@ async def _convert_markdown(file_bytes: bytes) -> Tuple[List[Block], List[str]]:
 # ---------------------------------------------------------------------------
 
 
+# Undecodable glyph artifacts pdfplumber emits for unmapped chars, e.g.
+# bullets that come out as "(cid:127)".
+_CID_RE = re.compile(r"\(cid:\d+\)")
+# A leading bullet glyph (or an undecodable cid standing in for one).
+_PDF_BULLET_RE = re.compile(r"^\s*(?:\(cid:\d+\)|[•·▪◦‣⁃○●▸▹–—\-\*])\s+")
+# A leading "1." / "2)" ordered-list marker.
+_PDF_NUM_RE = re.compile(r"^\s*\d{1,3}[.)]\s+")
+# A heading is a line whose font is at least this much larger than body text.
+_PDF_HEADING_FACTOR = 1.3
+# A vertical gap larger than this multiple of the body line height ends a
+# paragraph.
+_PDF_PARA_GAP_FACTOR = 1.4
+
+
+def _strip_inline_cid(text: str) -> str:
+    return _CID_RE.sub("", text).strip()
+
+
 def _convert_pdf(file_bytes: bytes) -> Tuple[List[Block], List[str]]:
     try:
         import io
@@ -382,14 +403,36 @@ def _convert_pdf(file_bytes: bytes) -> Tuple[List[Block], List[str]]:
         )
 
     warnings = [
-        "PDF has no semantic structure; headings were detected heuristically. "
-        "Please review the imported content before publishing."
+        "PDF carries no semantic structure; layout was reconstructed "
+        "heuristically from font sizes and spacing. Please review the "
+        "imported content before publishing."
     ]
-    pages_text: List[str] = []
+
+    # Per-page list of {text, top, size}; size_counter weights font sizes by
+    # character count so the most common size is the body text size.
+    page_lines: List[List[Dict[str, Any]]] = []
+    size_counter: Counter = Counter()
     try:
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             for page in pdf.pages:
-                pages_text.append(page.extract_text() or "")
+                try:
+                    raw_lines = page.extract_text_lines()
+                except Exception:  # pragma: no cover - layout fallback
+                    raw_lines = []
+                norm: List[Dict[str, Any]] = []
+                for ln in raw_lines:
+                    chars = ln.get("chars") or []
+                    sizes = [c.get("size") for c in chars if c.get("size")]
+                    for s in sizes:
+                        size_counter[round(s)] += 1
+                    norm.append(
+                        {
+                            "text": ln.get("text", ""),
+                            "top": float(ln.get("top", 0.0)),
+                            "size": max(sizes) if sizes else 0.0,
+                        }
+                    )
+                page_lines.append(norm)
     except Exception as exc:
         logger.exception("pdfplumber extraction failed")
         raise HTTPException(
@@ -397,8 +440,162 @@ def _convert_pdf(file_bytes: bytes) -> Tuple[List[Block], List[str]]:
             detail=f"Failed to extract PDF text: {exc}",
         )
 
-    full_text = "\n".join(pages_text)
-    blocks = _text_to_blocks(full_text, detect_headings=True)
+    # No structured lines (older pdfplumber, or odd PDF): fall back to flat
+    # text extraction so we degrade rather than fail.
+    if not any(page_lines):
+        return _convert_pdf_flat(file_bytes, warnings)
+
+    blocks = _pdf_lines_to_blocks(page_lines, size_counter)
+    if not blocks:
+        warnings.append("No extractable text found (the PDF may be scanned images).")
+    return blocks, warnings
+
+
+def _pdf_lines_to_blocks(
+    page_lines: List[List[Dict[str, Any]]], size_counter: Counter
+) -> List[Block]:
+    body_size = size_counter.most_common(1)[0][0] if size_counter else 0.0
+
+    # Estimate body line height from gaps between consecutive body-size lines
+    # (heading / list gaps would otherwise inflate the estimate).
+    body_gaps: List[float] = []
+    all_gaps: List[float] = []
+    for lines in page_lines:
+        for prev, cur in zip(lines, lines[1:]):
+            gap = cur["top"] - prev["top"]
+            if gap <= 0:
+                continue
+            all_gaps.append(gap)
+            if (
+                body_size
+                and abs(prev["size"] - body_size) <= 1.0
+                and abs(cur["size"] - body_size) <= 1.0
+            ):
+                body_gaps.append(gap)
+    # The body line height is the *most common* gap (mode): within-paragraph
+    # spacing dominates, while paragraph-break gaps are comparatively rare.
+    # Median would be skewed by those break gaps on short documents.
+    sample = body_gaps if body_gaps else all_gaps
+    if sample:
+        line_gap = float(Counter(round(g) for g in sample).most_common(1)[0][0])
+    else:
+        line_gap = 0.0
+    para_break = line_gap * _PDF_PARA_GAP_FACTOR
+
+    # Pass 1: classify every line. Heading levels are assigned after we know
+    # the full set of heading font sizes.
+    classified: List[Dict[str, Any]] = []
+    heading_sizes: set[int] = set()
+    for pidx, lines in enumerate(page_lines):
+        for ln in lines:
+            raw = ln["text"]
+            text = _strip_inline_cid(raw)
+            size = ln["size"]
+            is_big = bool(body_size) and size >= body_size * _PDF_HEADING_FACTOR
+            if is_big and text:
+                kind, content = "heading", text
+                heading_sizes.add(round(size))
+            elif _PDF_BULLET_RE.match(raw):
+                kind = "bullet"
+                content = _strip_inline_cid(_PDF_BULLET_RE.sub("", raw, count=1))
+            elif _PDF_NUM_RE.match(text):
+                kind = "number"
+                content = _PDF_NUM_RE.sub("", text, count=1).strip()
+            elif text and _looks_like_heading(text):
+                kind, content = "heading", text
+            elif text:
+                kind, content = "body", text
+            else:
+                continue
+            classified.append(
+                {
+                    "kind": kind,
+                    "text": content,
+                    "size": size,
+                    "top": ln["top"],
+                    "page": pidx,
+                }
+            )
+
+    size_levels = {
+        s: min(i + 1, 3) for i, s in enumerate(sorted(heading_sizes, reverse=True))
+    }
+
+    # Pass 2: emit blocks, grouping consecutive body lines into paragraphs and
+    # folding wrapped continuation lines back into the preceding list item.
+    blocks: List[Block] = []
+    para_buf: List[str] = []
+    prev_top: Optional[float] = None
+    prev_page: Optional[int] = None
+
+    def flush() -> None:
+        if para_buf:
+            joined = " ".join(para_buf).strip()
+            if joined:
+                blocks.append(_block("paragraph", [_text_node(joined)]))
+            para_buf.clear()
+
+    for ln in classified:
+        kind = ln["kind"]
+        page_changed = prev_page is not None and ln["page"] != prev_page
+        gap = (
+            ln["top"] - prev_top if prev_top is not None and not page_changed else None
+        )
+        if kind == "body":
+            wraps_list = (
+                not para_buf
+                and bool(blocks)
+                and blocks[-1]["type"] in ("bulletListItem", "numberedListItem")
+                and not page_changed
+                and gap is not None
+                and gap <= para_break
+            )
+            if wraps_list:
+                blocks[-1]["content"][0]["text"] += " " + ln["text"]
+            else:
+                if page_changed or (
+                    gap is not None and para_break and gap > para_break
+                ):
+                    flush()
+                para_buf.append(ln["text"])
+        else:
+            flush()
+            if kind == "heading":
+                level = size_levels.get(round(ln["size"]), 2)
+                blocks.append(
+                    _block("heading", [_text_node(ln["text"])], props={"level": level})
+                )
+            elif kind == "bullet":
+                blocks.append(_block("bulletListItem", [_text_node(ln["text"])]))
+            else:  # number
+                blocks.append(_block("numberedListItem", [_text_node(ln["text"])]))
+        prev_top = ln["top"]
+        prev_page = ln["page"]
+    flush()
+    return blocks
+
+
+def _convert_pdf_flat(
+    file_bytes: bytes, warnings: List[str]
+) -> Tuple[List[Block], List[str]]:
+    """Fallback: flat text extraction when line layout is unavailable."""
+    import io
+
+    import pdfplumber  # type: ignore
+
+    pages_text: List[str] = []
+    try:
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                pages_text.append(_strip_inline_cid(page.extract_text() or ""))
+    except Exception as exc:
+        logger.exception("pdfplumber extraction failed")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Failed to extract PDF text: {exc}",
+        )
+
+    blocks = _text_to_blocks("\n".join(pages_text), detect_headings=True)
     if not blocks:
         warnings.append("No extractable text found (the PDF may be scanned images).")
     return blocks, warnings
