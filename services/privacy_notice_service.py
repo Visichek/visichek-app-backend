@@ -100,11 +100,7 @@ async def seed_default_privacy_notice(
     if existing:
         return existing
 
-    if (
-        company_name is None
-        or dpo_contact_email is None
-        or retention_days is None
-    ):
+    if company_name is None or dpo_contact_email is None or retention_days is None:
         tenant = None
         if ObjectId.is_valid(tenant_id):
             tenant = await get_tenant({"_id": ObjectId(tenant_id)})

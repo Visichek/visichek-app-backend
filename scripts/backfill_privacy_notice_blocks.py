@@ -27,9 +27,7 @@ async def main() -> None:
     from services.privacy_notice_backfill import backfill_blocknote_privacy_notices
 
     dry_run = "--dry-run" in sys.argv
-    print(
-        f"Backfilling visitor privacy notices to BlockNote (dry_run={dry_run}) ..."
-    )
+    print(f"Backfilling visitor privacy notices to BlockNote (dry_run={dry_run}) ...")
     summary = await backfill_blocknote_privacy_notices(dry_run=dry_run)
     print(json.dumps(summary, indent=2, default=str))
     print("Dry run complete — no changes written." if dry_run else "Done.")

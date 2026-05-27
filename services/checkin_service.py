@@ -1181,9 +1181,7 @@ async def submit_checkin(
         checkin_config_id=checkin_config_id,
         id_extraction_id=req.id_extraction_id,
         tenant_specific_data=req.tenant_specific_data,
-        branch_id=await _resolve_checkin_branch_id(
-            tenant_id, req.tenant_specific_data
-        ),
+        branch_id=await _resolve_checkin_branch_id(tenant_id, req.tenant_specific_data),
         purpose=req.purpose,
         state=initial_state,
         verified=visitor.verified,

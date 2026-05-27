@@ -86,7 +86,10 @@ _TEMPLATE: List[tuple[str, str]] = [
         "applicable data-protection laws.",
     ),
     ("h", "Contact for privacy questions"),
-    ("p", "If you have questions about how your information is handled, please contact:"),
+    (
+        "p",
+        "If you have questions about how your information is handled, please contact:",
+    ),
     ("p", _TOKEN_PRIVACY),
 ]
 

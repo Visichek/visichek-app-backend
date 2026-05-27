@@ -1246,7 +1246,9 @@ async def retrieve_visitors_awaiting_checkout(
             branch_filter=branch_filter,
         ),
         count_awaiting_checkout_sessions(
-            tenant_id=tenant_id, department_id=department_id, branch_filter=branch_filter
+            tenant_id=tenant_id,
+            department_id=department_id,
+            branch_filter=branch_filter,
         ),
         count_approved_checkins_for_checkout(
             tenant_id=tenant_id, branch_filter=branch_filter

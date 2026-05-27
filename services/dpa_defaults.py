@@ -29,7 +29,9 @@ Block = Dict[str, Any]
 
 DEFAULT_DPA_TITLE = "Data Processing Agreement"
 
-_ASSET_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dpa_template_blocks.json")
+_ASSET_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "dpa_template_blocks.json"
+)
 
 # The Organization placeholders embedded in the source document. Apostrophe is
 # matched permissively (straight ' / curly ’ / backtick) because the source was
@@ -56,8 +58,10 @@ def _load_template() -> Optional[Dict[str, Any]]:
     with open(_ASSET_PATH, "r", encoding="utf-8") as fh:
         data = json.load(fh)
     # Tolerate either the bare asset shape or an API envelope ({data:{body}}).
-    if isinstance(data, dict) and "body" not in data and isinstance(
-        data.get("data"), dict
+    if (
+        isinstance(data, dict)
+        and "body" not in data
+        and isinstance(data.get("data"), dict)
     ):
         data = data["data"]
     _TEMPLATE_CACHE = data
@@ -120,13 +124,13 @@ def _flatten(blocks: List[Block]) -> str:
     lines: List[str] = []
     for block in blocks:
         text = "".join(
-            n.get("text", "")
-            for n in block.get("content", [])
-            if isinstance(n, dict)
+            n.get("text", "") for n in block.get("content", []) if isinstance(n, dict)
         )
         if not text:
             continue
-        prefix = "- " if block.get("type") in ("bulletListItem", "numberedListItem") else ""
+        prefix = (
+            "- " if block.get("type") in ("bulletListItem", "numberedListItem") else ""
+        )
         lines.append(prefix + text)
     return "\n".join(lines)
 

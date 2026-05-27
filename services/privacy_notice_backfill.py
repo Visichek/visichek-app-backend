@@ -61,7 +61,9 @@ async def _iter_all_tenants() -> AsyncIterator[Any]:
         start += _PAGE
 
 
-async def backfill_blocknote_privacy_notices(*, dry_run: bool = False) -> Dict[str, Any]:
+async def backfill_blocknote_privacy_notices(
+    *, dry_run: bool = False
+) -> Dict[str, Any]:
     """Walk every tenant and bring its active privacy notice onto BlockNote.
 
     Returns a summary dict with per-outcome counts and any per-tenant errors.
@@ -106,7 +108,8 @@ async def backfill_blocknote_privacy_notices(*, dry_run: bool = False) -> Dict[s
             # BlockNote blocks with this tenant's details substituted.
             contact_email = await _resolve_main_super_admin_email(tenant_id)
             content = build_default_notice_content(
-                company_name=getattr(tenant, "company_name", None) or "Our organisation",
+                company_name=getattr(tenant, "company_name", None)
+                or "Our organisation",
                 contact_email=contact_email,
                 privacy_contact=getattr(tenant, "dpo_contact_email", None),
                 retention_days=getattr(tenant, "retention_days", None),

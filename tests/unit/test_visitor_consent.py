@@ -122,9 +122,7 @@ async def test_backfill_migrates_legacy_plaintext_notice():
 async def test_backfill_skips_notice_already_on_blocks():
     from services import privacy_notice_backfill as bf
 
-    tenant = SimpleNamespace(
-        id=str(ObjectId()), company_name="Acme", is_active=True
-    )
+    tenant = SimpleNamespace(id=str(ObjectId()), company_name="Acme", is_active=True)
     block_notice = SimpleNamespace(
         id=str(ObjectId()), body=[{"id": "x", "type": "paragraph"}]
     )

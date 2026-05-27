@@ -59,7 +59,9 @@ _FAKE_TEMPLATE = {
             "id": "x4",
             "type": "heading",
             "props": {"level": 2},
-            "content": [{"type": "text", "text": "1. Parties", "styles": {"bold": True}}],
+            "content": [
+                {"type": "text", "text": "1. Parties", "styles": {"bold": True}}
+            ],
             "children": [],
         },
     ],
@@ -135,7 +137,15 @@ async def test_retrieve_or_build_creates_when_missing():
         "title": "Data Processing Agreement",
         "summary": "s",
         "full_text": "f",
-        "body": [{"id": "b_1", "type": "paragraph", "props": {}, "content": [], "children": []}],
+        "body": [
+            {
+                "id": "b_1",
+                "type": "paragraph",
+                "props": {},
+                "content": [],
+                "children": [],
+            }
+        ],
     }
     with (
         patch.object(svc, "get_dpa_for_tenant", new_callable=AsyncMock) as gd,
@@ -272,7 +282,9 @@ async def test_ensure_template_loaded_reads_db_when_cache_empty():
         title="Data Processing Agreement",
         summary="s",
         published_body=None,
-        body=[{"id": "x", "type": "paragraph", "props": {}, "content": [], "children": []}],
+        body=[
+            {"id": "x", "type": "paragraph", "props": {}, "content": [], "children": []}
+        ],
     )
     with (
         patch.object(svc, "template_is_available", return_value=False),
