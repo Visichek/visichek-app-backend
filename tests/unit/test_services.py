@@ -906,7 +906,11 @@ class TestVisitSessionService:
             check_in_method=CheckInMethod.MANUAL,
         )
 
-        result = await check_in_visitor(request, tenant_id, receptionist_id)
+        # Pass an explicit branch_id (as the route does, resolved from the
+        # receptionist's token) so the service skips the HQ-branch DB fallback.
+        result = await check_in_visitor(
+            request, tenant_id, receptionist_id, branch_id=str(ObjectId())
+        )
 
         assert result["session"].id == session_id
         mock_create_session.assert_called_once()

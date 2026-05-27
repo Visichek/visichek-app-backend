@@ -360,3 +360,73 @@ async def test_branch_list_route():
                 assert resp.status_code == 200
         finally:
             app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Read-scope helpers (branch isolation on lists)
+# ---------------------------------------------------------------------------
+
+
+class TestBranchScopeHelpers:
+    """``branch_scope_filter`` / ``filter_items_for_branch`` are pure (no DB):
+    branch-scoped roles see only their assigned branches; unscoped roles see
+    everything."""
+
+    def _principal(self, role, branch_ids):
+        from security.principal import AuthPrincipal
+
+        return AuthPrincipal(
+            user_id="u1",
+            role=role,
+            access_token_id="tok",
+            jwt_token="jwt",
+            tenant_id="t1",
+            branch_ids=branch_ids,
+        )
+
+    @pytest.mark.asyncio
+    async def test_scope_filter_none_for_unscoped_role(self):
+        from services.branch_service import branch_scope_filter
+
+        # super_admin is unscoped → no filter (full tenant visibility).
+        p = self._principal("super_admin", ["branch-1"])
+        assert await branch_scope_filter(p, "t1") is None
+
+    @pytest.mark.asyncio
+    async def test_scope_filter_restricts_branch_scoped_role(self):
+        from services.branch_service import branch_scope_filter
+
+        p = self._principal("receptionist", ["branch-1", "branch-2"])
+        assert await branch_scope_filter(p, "t1") == {
+            "branch_id": {"$in": ["branch-1", "branch-2"]}
+        }
+
+    @pytest.mark.asyncio
+    async def test_scope_filter_fails_closed_with_no_branches(self):
+        from services.branch_service import branch_scope_filter
+
+        p = self._principal("receptionist", [])
+        # Empty $in matches nothing — never wide-open.
+        assert await branch_scope_filter(p, "t1") == {"branch_id": {"$in": []}}
+
+    @pytest.mark.asyncio
+    async def test_filter_items_unscoped_passthrough(self):
+        from services.branch_service import filter_items_for_branch
+
+        p = self._principal("auditor", ["branch-1"])
+        items = [{"id": "a", "branch_id": "branch-9"}, {"id": "b"}]
+        assert await filter_items_for_branch(p, "t1", items) == items
+
+    @pytest.mark.asyncio
+    async def test_filter_items_branch_scoped_keeps_only_own_branch(self):
+        from services.branch_service import filter_items_for_branch
+
+        p = self._principal("dept_admin", ["branch-1"])
+        items = [
+            {"id": "a", "branch_id": "branch-1"},
+            {"id": "b", "branch_id": "branch-2"},
+            {"id": "c", "branchId": "branch-1"},  # camelCase from cache dump
+            {"id": "d"},  # untagged → excluded post-backfill
+        ]
+        kept = await filter_items_for_branch(p, "t1", items)
+        assert [it["id"] for it in kept] == ["a", "c"]

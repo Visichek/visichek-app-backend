@@ -21,24 +21,180 @@ from services.privacy_notice_defaults import build_default_notice_content
 # --- Default notice template (APPENDIX 1) -----------------------------------
 
 
-@pytest.mark.unit
-def test_default_notice_substitutes_company_and_dpo():
-    content = build_default_notice_content(
-        company_name="Acme Health", dpo_contact_email="dpo@acme.example.com"
+def _all_block_text(blocks):
+    return "\n".join(
+        "".join(node.get("text", "") for node in b.get("content", [])) for b in blocks
     )
-    assert content["title"] == "Visitor Privacy Notice"
-    assert "Acme Health" in content["summary"]
-    assert "Acme Health" in content["full_text"]
-    # DPO contact line is appended when an email exists.
-    assert "at dpo@acme.example.com" in content["full_text"]
-    assert "{{" not in content["full_text"]
 
 
 @pytest.mark.unit
-def test_default_notice_omits_dpo_line_when_absent():
+def test_default_notice_substitutes_tenant_details():
+    content = build_default_notice_content(
+        company_name="Acme Health",
+        contact_email="admin@acme.example.com",
+        privacy_contact="dpo@acme.example.com",
+        retention_days=90,
+    )
+    assert content["title"] == "Visitor Privacy Policy"
+    assert "Acme Health" in content["summary"]
+
+    blocks = content["body"]
+    assert isinstance(blocks, list) and blocks
+    body_text = _all_block_text(blocks)
+    # Every per-tenant placeholder is substituted into the block content.
+    assert "Acme Health" in body_text
+    assert "admin@acme.example.com" in body_text  # general contact
+    assert "dpo@acme.example.com" in body_text  # privacy/DPO contact
+    assert "90 days" in body_text
+    assert "{{" not in body_text
+    # The flattened full_text mirrors the block content for the kiosk gate.
+    assert "{{" not in content["full_text"]
+    assert "Acme Health" in content["full_text"]
+
+
+@pytest.mark.unit
+def test_default_notice_block_shape_matches_editor_schema():
     content = build_default_notice_content(company_name="Acme Health")
-    assert "{{DPO_CONTACT_LINE}}" not in content["full_text"]
-    assert "dpo@" not in content["full_text"]
+    for block in content["body"]:
+        assert set(block) >= {"id", "type", "props", "content", "children"}
+        assert block["type"] in {"paragraph", "heading", "bulletListItem"}
+        assert block["children"] == []
+        if block["type"] == "heading":
+            assert block["props"] == {"level": 2}
+            assert block["content"][0]["styles"] == {"bold": True}
+        else:
+            assert block["props"] == {}
+
+
+@pytest.mark.unit
+def test_default_notice_falls_back_when_contacts_absent():
+    # No emails on file: builder uses neutral phrasing, never a stray token.
+    content = build_default_notice_content(company_name="Acme Health")
+    body_text = _all_block_text(content["body"])
+    assert "{{" not in body_text
+    assert "the facility administrator" in body_text
+
+
+# --- BlockNote backfill (one-off migration) ----------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_backfill_migrates_legacy_plaintext_notice():
+    from services import privacy_notice_backfill as bf
+
+    tenant = SimpleNamespace(
+        id=str(ObjectId()),
+        company_name="Acme Health",
+        dpo_contact_email="dpo@acme.example.com",
+        retention_days=90,
+        is_active=True,
+    )
+    legacy_notice = SimpleNamespace(id=str(ObjectId()), body=[])
+
+    with (
+        patch.object(bf, "get_tenants", new_callable=AsyncMock) as gt,
+        patch.object(bf, "get_active_notice_for_tenant", new_callable=AsyncMock) as ga,
+        patch.object(bf, "update_privacy_notice", new_callable=AsyncMock) as up,
+        patch.object(
+            bf, "_resolve_main_super_admin_email", new_callable=AsyncMock
+        ) as ge,
+        patch.object(bf, "record_audit_event", new_callable=AsyncMock),
+    ):
+        gt.return_value = [tenant]
+        ga.return_value = legacy_notice
+        ge.return_value = "admin@acme.example.com"
+        up.return_value = SimpleNamespace(id=legacy_notice.id, version_code="v-new")
+
+        summary = await bf.backfill_blocknote_privacy_notices()
+
+    assert summary["migrated"] == 1
+    assert summary["skipped"] == 0
+    assert summary["failed"] == 0
+    # The legacy notice is updated with a non-empty BlockNote body + new version.
+    passed: PrivacyNoticeUpdate = up.await_args.args[1]
+    assert passed.body
+    assert passed.version_code is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_backfill_skips_notice_already_on_blocks():
+    from services import privacy_notice_backfill as bf
+
+    tenant = SimpleNamespace(
+        id=str(ObjectId()), company_name="Acme", is_active=True
+    )
+    block_notice = SimpleNamespace(
+        id=str(ObjectId()), body=[{"id": "x", "type": "paragraph"}]
+    )
+
+    with (
+        patch.object(bf, "get_tenants", new_callable=AsyncMock) as gt,
+        patch.object(bf, "get_active_notice_for_tenant", new_callable=AsyncMock) as ga,
+        patch.object(bf, "update_privacy_notice", new_callable=AsyncMock) as up,
+    ):
+        gt.return_value = [tenant]
+        ga.return_value = block_notice
+
+        summary = await bf.backfill_blocknote_privacy_notices()
+
+    assert summary["skipped"] == 1
+    assert summary["migrated"] == 0
+    up.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_backfill_dry_run_writes_nothing():
+    from services import privacy_notice_backfill as bf
+
+    tenant = SimpleNamespace(
+        id=str(ObjectId()),
+        company_name="Acme",
+        dpo_contact_email=None,
+        retention_days=30,
+        is_active=True,
+    )
+    legacy_notice = SimpleNamespace(id=str(ObjectId()), body=[])
+
+    with (
+        patch.object(bf, "get_tenants", new_callable=AsyncMock) as gt,
+        patch.object(bf, "get_active_notice_for_tenant", new_callable=AsyncMock) as ga,
+        patch.object(bf, "update_privacy_notice", new_callable=AsyncMock) as up,
+        patch.object(
+            bf, "_resolve_main_super_admin_email", new_callable=AsyncMock
+        ) as ge,
+    ):
+        gt.return_value = [tenant]
+        ga.return_value = legacy_notice
+        ge.return_value = None
+
+        summary = await bf.backfill_blocknote_privacy_notices(dry_run=True)
+
+    assert summary["migrated"] == 1
+    up.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_backfill_seeds_active_tenant_without_notice():
+    from services import privacy_notice_backfill as bf
+
+    tenant = SimpleNamespace(id=str(ObjectId()), company_name="Acme", is_active=True)
+
+    with (
+        patch.object(bf, "get_tenants", new_callable=AsyncMock) as gt,
+        patch.object(bf, "get_active_notice_for_tenant", new_callable=AsyncMock) as ga,
+        patch.object(bf, "seed_default_privacy_notice", new_callable=AsyncMock) as seed,
+    ):
+        gt.return_value = [tenant]
+        ga.return_value = None
+
+        summary = await bf.backfill_blocknote_privacy_notices()
+
+    assert summary["seeded"] == 1
+    seed.assert_awaited_once()
 
 
 # --- Version minting on content change (A.1) ---------------------------------

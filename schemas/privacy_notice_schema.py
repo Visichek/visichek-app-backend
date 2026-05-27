@@ -1,4 +1,5 @@
 from schemas.imports import *
+from typing import Any, Dict, List
 from pydantic import Field
 import time
 
@@ -7,9 +8,9 @@ class PrivacyNoticeBase(BaseModel):
     tenant_id: str
     # Opaque, monotonic version identifier. Exposed publicly as ``versionId``.
     # Auto-minted by the service layer when omitted, and re-minted whenever the
-    # legal text (title / summary / full_text / display_mode) changes so consent
-    # records can prove WHICH text a visitor agreed to. Optional on the wire —
-    # clients never set it.
+    # legal text (title / summary / full_text / body / display_mode) changes so
+    # consent records can prove WHICH text a visitor agreed to. Optional on the
+    # wire — clients never set it.
     version_code: Optional[str] = None
     title: str
     summary: Optional[str] = None
@@ -17,6 +18,12 @@ class PrivacyNoticeBase(BaseModel):
     # is the inline copy the kiosk renders; ``full_policy_url`` is the legacy
     # external-link field, retained for backward compatibility.
     full_text: Optional[str] = None
+    # The rich, editor-authored copy as BlockNote content blocks. This is the
+    # canonical source the tenant edits in the rich-text editor; ``full_text``
+    # is kept as a flattened plain-text fallback for the kiosk consent gate.
+    # Each block matches the BlockNote shape: {id, type, props, content,
+    # children}. Empty for legacy notices authored before the migration.
+    body: List[Dict[str, Any]] = Field(default_factory=list)
     full_policy_url: Optional[str] = None
     # Whether the visitor must explicitly accept (active_consent) or the notice
     # is merely displayed (passive). Defaults to active_consent for new notices.
@@ -41,6 +48,7 @@ class PrivacyNoticeUpdate(BaseModel):
     title: Optional[str] = None
     summary: Optional[str] = None
     full_text: Optional[str] = None
+    body: Optional[List[Dict[str, Any]]] = None
     full_policy_url: Optional[str] = None
     display_mode: Optional[NoticeDisplayMode] = None
     effective_date: Optional[int] = None
@@ -58,6 +66,7 @@ class PrivacyNoticeOut(BaseModel):
     title: str
     summary: Optional[str] = None
     full_text: Optional[str] = None
+    body: List[Dict[str, Any]] = Field(default_factory=list)
     full_policy_url: Optional[str] = None
     display_mode: NoticeDisplayMode = NoticeDisplayMode.ACTIVE_CONSENT
     is_active: bool = True

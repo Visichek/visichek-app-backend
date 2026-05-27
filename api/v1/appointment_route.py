@@ -146,6 +146,16 @@ async def create_appointment_endpoint(
     # tenant_id is token-derived, never client-supplied.
     payload["tenant_id"] = principal.tenant_id or ""
     payload["created_by"] = principal.user_id
+    # Branch is resolved from the caller's token (branch-scoped roles are
+    # pinned to their own branch; super_admins may pass an explicit one,
+    # else HQ). Stored on the appointment so branch separation holds.
+    from services.branch_service import resolve_branch_for_principal
+
+    payload["branch_id"] = await resolve_branch_for_principal(
+        principal,
+        principal.tenant_id or "",
+        explicit_branch_id=payload.get("branch_id"),
+    )
     request_id = getattr(request.state, "request_id", None)
     payload["_actor_id"] = principal.user_id
     payload["_actor_role"] = principal.role
@@ -182,6 +192,8 @@ async def list_appointments(
             "items": [],
             "meta": {"total": 0, "skip": 0, "limit": 25, "hasMore": False},
         }
+    from services.branch_service import branch_scope_filter, filter_items_for_branch
+
     if _is_default_appt_listing(request):
         cached = await get_or_compute(
             scope_key=f"{PrecomputeScope.TENANT.value}:{tenant_id}",
@@ -190,6 +202,11 @@ async def list_appointments(
             loader=lambda: _load_appointments_for_tenant(tenant_id),
         )
         items = cached if isinstance(cached, list) else []
+        # The precompute cache is tenant-wide; scope it to the caller's
+        # branch(es) so a branch-scoped user only sees their branch. Filter
+        # BEFORE limiting so the page is complete. Unscoped roles (super_admin
+        # / auditor / dpo) get the full tenant list unchanged.
+        items = await filter_items_for_branch(principal, tenant_id, items)
         limited = items[: APPOINTMENTS_LIST_SPEC.default_limit]
         result = {
             "items": limited,
@@ -204,10 +221,9 @@ async def list_appointments(
         return result
     query = parse_list_query(request, APPOINTMENTS_LIST_SPEC)
     base_filter: dict[str, Any] = {"tenant_id": tenant_id}
-    if principal.is_branch_scoped:
-        branch_filter = principal.branch_filter()
-        if branch_filter:
-            base_filter.update(branch_filter)
+    scope = await branch_scope_filter(principal, tenant_id)
+    if scope:
+        base_filter.update(scope)
     result = await run_list(
         collection=db.expected_appointments,
         query=query,

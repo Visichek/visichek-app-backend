@@ -198,10 +198,17 @@ async def generate_registration_qr(
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
     from services.visit_session_service import generate_tenant_registration_qr
+    from services.branch_service import resolve_branch_for_principal
 
-    tenant_id = principal.tenant_id
+    tenant_id = principal.tenant_id or ""
+    # super_admin is branch-unscoped: honour an explicit branch_id (validated
+    # against the tenant), else scope the QR to HQ. The signed branch then
+    # rides every registration made from this QR.
+    resolved_branch_id = await resolve_branch_for_principal(
+        principal, tenant_id, explicit_branch_id=branch_id
+    )
     return await generate_tenant_registration_qr(
-        tenant_id or "", department_id, branch_id
+        tenant_id, department_id, resolved_branch_id
     )
 
 

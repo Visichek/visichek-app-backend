@@ -83,8 +83,15 @@ async def list_pending_checkins(
 
         raise auth_permission_denied("tenant_scope")
 
+    from services.branch_service import branch_scope_filter
+
+    branch_filter = await branch_scope_filter(principal, tenant_id)
     checkins, total = await list_checkins_for_tenant(
-        tenant_id=tenant_id, state=state, skip=skip, limit=limit
+        tenant_id=tenant_id,
+        state=state,
+        skip=skip,
+        limit=limit,
+        branch_filter=branch_filter,
     )
     schedule_resource_read_receipt(
         user_id=principal.user_id,
@@ -133,11 +140,15 @@ async def list_pending_approvals_endpoint(
 
         raise auth_permission_denied("tenant_scope")
 
+    from services.branch_service import branch_scope_filter
+
+    branch_filter = await branch_scope_filter(principal, tenant_id)
     rows, total = await list_pending_approvals_for_tenant(
         tenant_id=tenant_id,
         skip=skip,
         limit=limit,
         include_appointments=include_appointments,
+        branch_filter=branch_filter,
     )
     # Rows mix two sources — clear the matching notification per source type.
     checkin_ids = [str(r.id) for r in rows if r.id and r.source_type == "checkin"]

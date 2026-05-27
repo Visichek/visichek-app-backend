@@ -379,6 +379,18 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("faq_bootstrap failed at startup", exc_info=True)
 
+    # Per-tenant DPA bootstrap. Loads the Data Processing Agreement template
+    # from the legal_documents collection into the in-process cache and
+    # backfills a per-tenant DPA copy for every existing tenant. Idempotent;
+    # a no-op on environments without the DPA legal document.
+    try:
+        from services.dpa_bootstrap import run_dpa_bootstrap
+
+        dpa_bootstrap_summary = await run_dpa_bootstrap()
+        logger.info("dpa_bootstrap summary: %s", dpa_bootstrap_summary)
+    except Exception:
+        logger.warning("dpa_bootstrap failed at startup", exc_info=True)
+
     # Schedule retention cleanup job
     from services.retention_service import run_retention_cleanup
 

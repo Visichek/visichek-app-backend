@@ -252,14 +252,16 @@ async def _enrich_appointment(appt: AppointmentOut) -> AppointmentWithSummaryOut
         resolve_appointment_host_summary,
         resolve_user_summary,
         resolve_visitor_profile_summary,
+        resolve_branch_summary,
     )
 
-    tenant_s, dept_s, host_s, visitor_s, creator_s = await asyncio.gather(
+    tenant_s, dept_s, host_s, visitor_s, creator_s, branch_s = await asyncio.gather(
         resolve_tenant_summary(appt.tenant_id),
         resolve_department_summary(appt.department_id),
         resolve_appointment_host_summary(appt.host_id),
         resolve_visitor_profile_summary(appt.visitor_profile_id),
         resolve_user_summary(appt.created_by),
+        resolve_branch_summary(appt.branch_id),
     )
     data = appt.model_dump(by_alias=False)
     data["tenant_summary"] = tenant_s
@@ -267,6 +269,7 @@ async def _enrich_appointment(appt: AppointmentOut) -> AppointmentWithSummaryOut
     data["host_summary"] = host_s
     data["visitor_profile_summary"] = visitor_s
     data["created_by_summary"] = creator_s
+    data["branch_summary"] = branch_s
     # Surface the host-uploaded photo as a presigned URL so the
     # receptionist UI doesn't need a second roundtrip through storage.
     data["expected_visitor_photo_url"] = _resolve_appointment_photo_url(

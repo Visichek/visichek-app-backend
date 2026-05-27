@@ -8,7 +8,7 @@ branch creation). The maximum number of branches is controlled by the
 tenant's subscription plan via ``TenantCapLimit.max_branches``.
 """
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from bson import ObjectId
 from fastapi import HTTPException, status
@@ -136,6 +136,134 @@ async def ensure_default_branch(tenant_id: str, company_name: str) -> BranchOut:
         is_headquarters=True,
     )
     return await create_branch(branch_data)
+
+
+async def resolve_hq_branch_id(tenant_id: str) -> Optional[str]:
+    """Return the tenant's headquarters branch id — the "HQ data" bucket.
+
+    Records created without an explicit branch (and all historical
+    branch-null data) belong to HQ. Prefers the ``is_headquarters`` branch,
+    falls back to the oldest branch, and returns ``None`` only when the
+    tenant has no branches at all (which bootstrap should have prevented).
+    """
+    hq = await get_branch({"tenant_id": tenant_id, "is_headquarters": True})
+    if hq:
+        return hq.id
+    branches = await get_branches({"tenant_id": tenant_id}, start=0, stop=1)
+    return branches[0].id if branches else None
+
+
+async def resolve_branch_for_principal(
+    principal: Any,
+    tenant_id: str,
+    explicit_branch_id: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve the branch a new record should be tagged with.
+
+    Policy (see the branch-separation rule):
+
+    * **Branch-scoped roles** (``dept_admin`` / ``receptionist`` /
+      ``security_officer``) always write to their own assigned branch. An
+      explicit ``branch_id`` outside their assignment is rejected with 403
+      — they must not be able to tag data to a branch they can't see.
+    * **Unscoped roles** (``super_admin``, app admins) may pass an explicit
+      ``branch_id`` (validated to belong to the tenant); otherwise the
+      record falls back to the tenant's HQ branch.
+
+    Returns ``None`` only when the tenant genuinely has no branches.
+    """
+    is_branch_scoped = bool(getattr(principal, "is_branch_scoped", False))
+    assigned = list(getattr(principal, "branch_ids", None) or [])
+
+    if is_branch_scoped:
+        if explicit_branch_id and explicit_branch_id not in assigned:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only create records for a branch you are assigned to.",
+            )
+        if explicit_branch_id:
+            return explicit_branch_id
+        if assigned:
+            return assigned[0]
+        return await resolve_hq_branch_id(tenant_id)
+
+    # Unscoped roles: honour an explicit, tenant-owned branch; else HQ.
+    if explicit_branch_id:
+        if not ObjectId.is_valid(explicit_branch_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid branch ID format",
+            )
+        branch = await get_branch(
+            {"_id": ObjectId(explicit_branch_id), "tenant_id": tenant_id}
+        )
+        if not branch:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Branch not found for this tenant",
+            )
+        return explicit_branch_id
+    return await resolve_hq_branch_id(tenant_id)
+
+
+async def branch_scope_filter(
+    principal: Any,
+    tenant_id: str,
+    field: str = "branch_id",
+) -> Optional[dict]:
+    """Mongo filter fragment that scopes a list query to a branch-scoped
+    principal's branches — merge it into a query's ``filter_dict``.
+
+    * Returns ``None`` for **unscoped** principals (super_admin / auditor /
+      dpo / app admins) — they see every branch ("full details").
+    * Returns ``{"branch_id": {"$in": [...]}}`` for **branch-scoped** roles
+      (dept_admin / receptionist / security_officer): only rows tagged with
+      one of their assigned branches.
+
+    A scoped user with no branches matches nothing (``$in: []``) — fail
+    closed, never wide-open. Legacy null-branch records are migrated to the
+    tenant HQ branch by ``services.branch_backfill`` so HQ-assigned users
+    still see them; reads stay a pure, DB-free comparison on the token's
+    ``branch_ids`` (mirrors ``AuthPrincipal.branch_filter``).
+
+    ``tenant_id`` is accepted for call-site symmetry but unused — kept so
+    callers don't have to special-case scoped vs. unscoped resolution.
+    """
+    _ = tenant_id
+    if not getattr(principal, "is_branch_scoped", False):
+        return None
+    ids = list(getattr(principal, "branch_ids", None) or [])
+    return {field: {"$in": ids}}
+
+
+async def filter_items_for_branch(
+    principal: Any,
+    tenant_id: str,
+    items: list,
+    field: str = "branch_id",
+) -> list:
+    """In-memory counterpart to :func:`branch_scope_filter` for already
+    materialized lists (e.g. the precompute cache, which holds enriched
+    dicts). Unscoped principals get the list unchanged.
+
+    Accepts dicts (snake_case or camelCase keys) or model objects. Like
+    :func:`branch_scope_filter`, this is a pure comparison against the
+    token's ``branch_ids`` — no DB lookup.
+    """
+    _ = tenant_id
+    if not getattr(principal, "is_branch_scoped", False):
+        return items
+    ids = set(getattr(principal, "branch_ids", None) or [])
+    camel = "".join(
+        part.capitalize() if i else part for i, part in enumerate(field.split("_"))
+    )
+
+    def _branch_of(item: Any) -> Optional[str]:
+        if isinstance(item, dict):
+            return item.get(field) or item.get(camel)
+        return getattr(item, field, None)
+
+    return [it for it in items if _branch_of(it) in ids]
 
 
 async def lock_down_to_hq(tenant_id: str) -> int:

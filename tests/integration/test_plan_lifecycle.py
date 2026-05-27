@@ -311,13 +311,15 @@ class TestSubscriptionLifecycle:
         )
         await complete_write(integration_client, resp1, admin_auth_headers)
 
-        # Duplicate — worker rejects (already actively subscribed to this plan)
+        # Duplicate — POST /v1/subscriptions runs the writer INLINE
+        # (enqueue_write_inline), so a constraint violation surfaces
+        # synchronously as a 409 rather than a queued 202 + failed job.
         resp2 = await integration_client.post(
             "/v1/subscriptions",
             json={"tenant_id": tenant_id, "plan_id": plan_id},
             headers=admin_auth_headers,
         )
-        await expect_write_failure(integration_client, resp2, admin_auth_headers)
+        assert resp2.status_code == 409, resp2.text
 
     async def test_cancel_subscription(
         self,

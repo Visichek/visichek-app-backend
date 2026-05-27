@@ -25,6 +25,9 @@ MOCK_DEPT_ADMIN_PRINCIPAL = AuthPrincipal(
     access_token_id="token-dept-001",
     jwt_token="jwt-token-dept-001",
     tenant_id="tenant-001",
+    # Branch-scoped roles carry their assigned branch on the token; set it so
+    # the routes' branch resolution returns it without a DB fallback.
+    branch_ids=["branch-001"],
 )
 
 MOCK_DPO_PRINCIPAL = AuthPrincipal(

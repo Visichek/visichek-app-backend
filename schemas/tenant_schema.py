@@ -5,6 +5,10 @@ import time
 
 class TenantBase(BaseModel):
     company_name: str
+    # The Organization's representative legal address, used as the Controller
+    # address in the per-tenant Data Processing Agreement. Collected/edited on
+    # the first-login "Confirm company details" screen.
+    organization_address: Optional[str] = None
     lawful_basis: LawfulBasis = LawfulBasis.LEGITIMATE_INTEREST
     notice_display_mode: NoticeDisplayMode = NoticeDisplayMode.PASSIVE
     retention_days: int = 1095  # 3 years default
@@ -67,6 +71,7 @@ class TenantCreate(TenantBase):
 
 class TenantUpdate(BaseModel):
     company_name: Optional[str] = None
+    organization_address: Optional[str] = None
     lawful_basis: Optional[LawfulBasis] = None
     notice_display_mode: Optional[NoticeDisplayMode] = None
     retention_days: Optional[int] = None
@@ -184,6 +189,7 @@ class TenantInfoConfirmRequest(BaseModel):
     """
 
     company_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    organization_address: Optional[str] = Field(default=None, max_length=500)
     dpo_contact_email: Optional[EmailStr] = None
     privacy_policy_url: Optional[str] = None
     country_of_hosting: Optional[str] = None
@@ -206,6 +212,7 @@ class TenantInfoConfirmationOut(BaseModel):
 
     tenant_id: str
     company_name: str
+    organization_address: Optional[str] = None
     dpo_contact_email: Optional[str] = None
     privacy_policy_url: Optional[str] = None
     country_of_hosting: Optional[str] = None

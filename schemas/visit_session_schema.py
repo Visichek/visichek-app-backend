@@ -7,6 +7,11 @@ class VisitSessionBase(BaseModel):
     tenant_id: str
     visitor_profile_id: str
     department_id: str
+    # Branch this visit belongs to. Resolved from the receptionist's token
+    # (manual check-in) or the registration QR token's scope (public/kiosk
+    # flow), falling back to the tenant HQ. Branch-null sessions predate
+    # branch separation and are treated as HQ data.
+    branch_id: Optional[str] = None
     host_id: Optional[str] = None
     receptionist_id: Optional[str] = None
     appointment_id: Optional[str] = None
@@ -113,6 +118,7 @@ from schemas.summary_schema import (  # noqa: E402
     VisitorBriefSummary,
     VisitorProfileBriefSummary,
     AppointmentBriefSummary,
+    BranchBriefSummary,
 )
 
 
@@ -130,6 +136,7 @@ class VisitSessionWithSummaryOut(VisitSessionOut):
     verified_by_summary: Optional[UserBriefSummary] = None
     consent_captured_by_summary: Optional[UserBriefSummary] = None
     denied_by_summary: Optional[UserBriefSummary] = None
+    branch_summary: Optional[BranchBriefSummary] = None
 
 
 # Request schemas for check-in/check-out endpoints

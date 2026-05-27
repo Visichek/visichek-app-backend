@@ -80,20 +80,31 @@ def _approved_for_checkout_filter(tenant_id: str) -> dict:
 
 
 async def get_approved_checkins_for_checkout(
-    tenant_id: str, start: int = 0, stop: int = 50
+    tenant_id: str,
+    start: int = 0,
+    stop: int = 50,
+    branch_filter: Optional[dict] = None,
 ) -> list[CheckinOut]:
     """Approved check-ins that have not been checked out yet."""
+    f = _approved_for_checkout_filter(tenant_id)
+    if branch_filter:
+        f.update(branch_filter)
     return await get_checkins(
-        _approved_for_checkout_filter(tenant_id),
+        f,
         skip=start,
         limit=stop - start,
         sort=[("approved_at", -1), ("date_created", -1)],
     )
 
 
-async def count_approved_checkins_for_checkout(tenant_id: str) -> int:
+async def count_approved_checkins_for_checkout(
+    tenant_id: str, branch_filter: Optional[dict] = None
+) -> int:
     """Count approved check-ins that are still awaiting checkout."""
-    return await count_checkins(_approved_for_checkout_filter(tenant_id))
+    f = _approved_for_checkout_filter(tenant_id)
+    if branch_filter:
+        f.update(branch_filter)
+    return await count_checkins(f)
 
 
 async def get_active_pending_for_visitor(

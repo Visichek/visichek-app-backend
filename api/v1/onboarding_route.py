@@ -20,7 +20,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, status
 
+from core.errors import resource_not_found
 from core.response_envelope import document_response
+from schemas.dpa_schema import DpaAgreementOut
 from schemas.onboarding_submission_schema import (
     OnboardingCompleteRequest,
     OnboardingPendingFieldsOut,
@@ -33,6 +35,7 @@ from schemas.tenant_schema import (
 )
 from security.auth import verify_super_admin_token
 from security.principal import AuthPrincipal
+from services.dpa_service import retrieve_or_build_tenant_dpa
 from services.onboarding_submission_service import (
     complete_onboarding_for_user,
     get_pending_fields_for_user,
@@ -195,3 +198,33 @@ async def confirm_my_tenant_info(
         actor_role=principal.role,
         request_id=getattr(request.state, "request_id", None),
     )
+
+
+@router.get("/me/dpa")
+@document_response(
+    message="Data Processing Agreement fetched",
+    description=(
+        "Returns the calling super_admin's tenant-scoped Data Processing "
+        "Agreement as BlockNote content blocks, with the Organization party "
+        "block filled in from the tenant's legal name, address and main "
+        "super_admin contact email. While not yet accepted, the copy is "
+        "rebuilt from the tenant's current details on each read (so edits made "
+        "on the confirmation screen are reflected); once accepted, the frozen "
+        "snapshot of exactly what was agreed is returned. Acceptance is done "
+        "via POST /v1/onboarding/me/tenant-confirmation with dpa_accepted=true. "
+        "Returns 404 when the DPA template has not been configured yet."
+    ),
+    summary="Get my tenant's Data Processing Agreement",
+    response_codes={
+        401: "Unauthorized",
+        403: "Not a super_admin",
+        404: "DPA not configured",
+    },
+)
+async def get_my_dpa(
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+) -> DpaAgreementOut:
+    dpa = await retrieve_or_build_tenant_dpa(principal.tenant_id or "")
+    if dpa is None:
+        raise resource_not_found(resource="Data Processing Agreement")
+    return dpa

@@ -37,7 +37,19 @@ async def backfill_branch_assignments() -> dict[str, int]:
         "tenants_seen": 0,
         "tenants_with_new_branch": 0,
         "users_updated": 0,
+        "records_tagged_hq": 0,
     }
+
+    # Collections whose rows carry a ``branch_id`` and are read through the
+    # branch-scoped list filter. Legacy rows created before branch separation
+    # have no branch_id; tag them to HQ so they remain visible to HQ-assigned
+    # branch-scoped users (reads do a strict ``branch_id $in branch_ids``
+    # match — see services.branch_service.branch_scope_filter).
+    _branch_scoped_collections = (
+        "expected_appointments",
+        "visit_sessions",
+        "checkins",
+    )
 
     cursor = db.tenant_companies.find({})
     async for tenant_doc in cursor:
@@ -97,5 +109,31 @@ async def backfill_branch_assignments() -> dict[str, int]:
                 tenant_id,
                 exc_info=True,
             )
+
+        # Tag legacy branch-null records (appointments / visit sessions /
+        # check-ins) to HQ so branch-scoped reads still surface them.
+        for coll in _branch_scoped_collections:
+            try:
+                res2: Any = await db[coll].update_many(
+                    {
+                        "tenant_id": tenant_id,
+                        "$or": [
+                            {"branch_id": {"$exists": False}},
+                            {"branch_id": None},
+                            {"branch_id": ""},
+                        ],
+                    },
+                    {"$set": {"branch_id": hq_id}},
+                )
+                summary["records_tagged_hq"] += int(
+                    getattr(res2, "modified_count", 0) or 0
+                )
+            except Exception:
+                logger.warning(
+                    "branch_backfill: %s branch tagging failed for tenant=%s",
+                    coll,
+                    tenant_id,
+                    exc_info=True,
+                )
 
     return summary

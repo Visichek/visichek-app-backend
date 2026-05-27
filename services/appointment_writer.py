@@ -80,6 +80,7 @@ async def _appointment_create(resource_id: str, data: dict[str, Any]) -> dict[st
             details={
                 "host_id": result.host_id,
                 "department_id": result.department_id,
+                "branch_id": result.branch_id,
                 "visitor_profile_id": result.visitor_profile_id,
                 "scheduled_datetime": result.scheduled_datetime,
             },

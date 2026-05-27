@@ -102,23 +102,23 @@ async def get_due_scheduled_appointments_for_checkout(
     department_id: Optional[str] = None,
     start: int = 0,
     stop: int = 50,
+    branch_filter: Optional[dict] = None,
 ) -> List[AppointmentOut]:
     """Scheduled appointments whose scheduled day is today or earlier."""
-    return await get_appointments(
-        filter_dict=_due_scheduled_checkout_filter(
-            tenant_id, due_before_ts, department_id
-        ),
-        start=start,
-        stop=stop,
-    )
+    f = _due_scheduled_checkout_filter(tenant_id, due_before_ts, department_id)
+    if branch_filter:
+        f.update(branch_filter)
+    return await get_appointments(filter_dict=f, start=start, stop=stop)
 
 
 async def count_due_scheduled_appointments_for_checkout(
     tenant_id: str,
     due_before_ts: int,
     department_id: Optional[str] = None,
+    branch_filter: Optional[dict] = None,
 ) -> int:
     """Count scheduled appointments whose scheduled day is today or earlier."""
-    return await count_appointments(
-        _due_scheduled_checkout_filter(tenant_id, due_before_ts, department_id)
-    )
+    f = _due_scheduled_checkout_filter(tenant_id, due_before_ts, department_id)
+    if branch_filter:
+        f.update(branch_filter)
+    return await count_appointments(f)

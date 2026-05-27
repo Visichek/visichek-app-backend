@@ -14,6 +14,7 @@ from repositories.privacy_notice_repo import (
     update_privacy_notice,
 )
 from repositories.tenant_repo import get_tenant
+from schemas.imports import NoticeDisplayMode
 from schemas.privacy_notice_schema import (
     PrivacyNoticeCreate,
     PrivacyNoticeUpdate,
@@ -23,7 +24,7 @@ from services.privacy_notice_defaults import build_default_notice_content
 
 # Fields whose change mints a new version (A.1). Toggling is_active or editing
 # effective_date alone does NOT bump the version.
-_VERSIONED_FIELDS = ("title", "summary", "full_text", "display_mode")
+_VERSIONED_FIELDS = ("title", "summary", "full_text", "body", "display_mode")
 
 
 def _mint_version_code() -> str:
@@ -66,11 +67,28 @@ async def add_privacy_notice(
     return await create_privacy_notice(notice_data, preassigned_id=preassigned_id)
 
 
+async def _resolve_main_super_admin_email(tenant_id: str) -> Optional[str]:
+    """Best-effort lookup of the tenant's main super_admin email (the general
+    privacy-contact address baked into the seeded notice). Never raises —
+    seeding must not fail because the lookup hiccuped."""
+    if not ObjectId.is_valid(tenant_id):
+        return None
+    try:
+        from repositories.system_user_repo import get_main_super_admin
+
+        main_sa = await get_main_super_admin(tenant_id)
+        return getattr(main_sa, "email", None)
+    except Exception:
+        return None
+
+
 async def seed_default_privacy_notice(
     tenant_id: str,
     *,
     company_name: Optional[str] = None,
     dpo_contact_email: Optional[str] = None,
+    contact_email: Optional[str] = None,
+    retention_days: Optional[int] = None,
 ) -> Optional[PrivacyNoticeOut]:
     """Create the VisiChek-style default active notice for a tenant.
 
@@ -82,7 +100,11 @@ async def seed_default_privacy_notice(
     if existing:
         return existing
 
-    if company_name is None or dpo_contact_email is None:
+    if (
+        company_name is None
+        or dpo_contact_email is None
+        or retention_days is None
+    ):
         tenant = None
         if ObjectId.is_valid(tenant_id):
             tenant = await get_tenant({"_id": ObjectId(tenant_id)})
@@ -90,10 +112,20 @@ async def seed_default_privacy_notice(
             company_name = getattr(tenant, "company_name", None) or "Our organisation"
         if dpo_contact_email is None:
             dpo_contact_email = getattr(tenant, "dpo_contact_email", None)
+        if retention_days is None:
+            retention_days = getattr(tenant, "retention_days", None)
+
+    # General contact = the tenant's main super_admin email (per product
+    # decision); the privacy/DPO contact prefers the DPO address and falls
+    # back to that same general contact inside the builder.
+    if contact_email is None:
+        contact_email = await _resolve_main_super_admin_email(tenant_id)
 
     content = build_default_notice_content(
         company_name=company_name or "Our organisation",
-        dpo_contact_email=dpo_contact_email,
+        contact_email=contact_email,
+        privacy_contact=dpo_contact_email,
+        retention_days=retention_days,
     )
     now = int(time.time())
     notice = PrivacyNoticeCreate(
@@ -101,9 +133,8 @@ async def seed_default_privacy_notice(
         title=content["title"],
         summary=content["summary"],
         full_text=content["full_text"],
-        display_mode=__import__(
-            "schemas.imports", fromlist=["NoticeDisplayMode"]
-        ).NoticeDisplayMode.ACTIVE_CONSENT,
+        body=content["body"],
+        display_mode=NoticeDisplayMode.ACTIVE_CONSENT,
         is_active=True,
         effective_date=now,
     )

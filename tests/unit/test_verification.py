@@ -25,6 +25,9 @@ MOCK_RECEPTIONIST_PRINCIPAL = AuthPrincipal(
     access_token_id="token-rec-001",
     jwt_token="jwt-token-rec-001",
     tenant_id="tenant-001",
+    # Branch-scoped roles carry their assigned branch on the token; set it so
+    # the routes' branch resolution returns it without a DB fallback.
+    branch_ids=["branch-001"],
 )
 
 MOCK_HOST_PRINCIPAL = AuthPrincipal(
@@ -33,6 +36,7 @@ MOCK_HOST_PRINCIPAL = AuthPrincipal(
     access_token_id="token-host-001",
     jwt_token="jwt-token-host-001",
     tenant_id="tenant-001",
+    branch_ids=["branch-001"],
 )
 
 

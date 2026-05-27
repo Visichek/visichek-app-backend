@@ -357,57 +357,114 @@ deploy, every existing user appears as "based at Headquarters" on the
 user list until super_admin reassigns them.
 
 --------------------------------------------------------------------------------
-8. WHAT'S COMING IN PHASE 4 (HEADS-UP ONLY)
+8. PHASE 4 — NOW LIVE (appointments / visit-sessions / check-ins)
 --------------------------------------------------------------------------------
 
-This phase is queued, NOT shipped yet. Code defensively for it now so
-the rollout doesn't require a synchronous FE change:
+SHIPPED. This was previously a "heads-up only" preview; it is now
+deployed for the visitor-operations resources below. (Departments,
+incidents, dashboard stats, and audit logs are NOT branch-filtered yet
+— see "STILL PENDING" at the end of this section.)
 
-A) Every list response that contains a branch-bound resource will
-   include `branch_id` and `branch_summary` per record:
+A) `branch_id` + `branch_summary` on responses
+
+   These records now carry a top-level `branch_id`, and their
+   "with-summary" responses (lists + single-item reads) carry a
+   `branch_summary`:
+
+     - appointments        (AppointmentOut / AppointmentWithSummaryOut)
+     - visit_sessions      (VisitSessionOut / VisitSessionWithSummaryOut)
+     - check-ins           (CheckinOut / CheckinWithVisitorOut)
+
+   Shape:
 
    {
      "id": "...",
-     "branch_id": "650a...",
-     "branch_summary": {
+     "branchId": "650a...",
+     "branchSummary": {            // camelCase over the wire
        "id": "650a...",
        "name": "Headquarters",
-       "is_active": true
+       "isActive": true
      },
      ...
    }
 
-   For BRANCH-SCOPED users (dept_admin / receptionist / security_officer):
-     `branch_summary` MAY be null in the response — they always operate
-     inside their own branch so the redundant label is suppressed.
+   `branchSummary` is populated for EVERY role whenever `branchId`
+   resolves (it is NOT suppressed for branch-scoped users). It is null
+   only if the branch id is unset/invalid. The bare `CheckinOut` create
+   response carries `branchId` but no `branchSummary` (summaries are
+   embedded on the list/read shapes, not the speculative create body).
 
-   For UNSCOPED users (super_admin / auditor / dpo / app admin):
-     `branch_summary` is populated on every record so the UI can show
-     "Branch: HQ", "Branch: Lagos Office", etc. without a follow-up
-     fetch.
+B) Read-path filtering — LIVE
 
-B) Read-path filtering: branch-scoped users automatically only see
-   data from their `principal.branch_ids` on:
-     - visitors, visit_sessions
-     - appointments
-     - departments (filter by department.branch_id)
-     - incidents
-     - dashboard stats (rolled up to the user's branches)
+   Branch-scoped users (dept_admin / receptionist / security_officer)
+   now AUTOMATICALLY see only records whose `branch_id` is in their
+   `principal.branch_ids`. Unscoped users (super_admin / auditor / dpo /
+   app admin) see the whole tenant. Endpoints affected:
+
+     - GET /v1/appointments
+     - GET /v1/visitors/active
+     - GET /v1/visitors/sessions
+     - GET /v1/visitors/sessions/pending
+     - GET /v1/visitors/awaiting-checkout
+     - GET /v1/tenants/{tenant_id}/checkins
+     - GET /v1/tenants/{tenant_id}/pending-approvals
+
+   Filtering is transparent (no new query param): the server reads the
+   branch set from the caller's token. A receptionist at "Lagos Office"
+   calling GET /v1/appointments simply gets fewer rows than a
+   super_admin would. A branch-scoped user with NO branch assigned sees
+   an empty list (fail-closed) — this can happen with a stale token
+   issued before the branch backfill; re-login fixes it.
+
+C) Writes are branch-stamped from the token
+
+   - POST /v1/appointments and the visitor check-in flow tag the new
+     record with the caller's branch automatically. Do NOT send
+     `branch_id` in these bodies — it is ignored / overridden for
+     branch-scoped roles and validated against the tenant for
+     super_admin.
+   - Public/kiosk registration inherits the branch from the signed QR
+     token (see D); appointment-driven check-ins inherit the
+     appointment's branch.
+
+D) BREAKING CHANGE — QR registration endpoints no longer take a body
+   `branch_id`
+
+   `POST /v1/visitors/registration-qr` and
+   `POST /v1/super-admin/registration-qr` now resolve the branch from
+   the caller's token:
+
+     - branch-scoped roles are pinned to their own branch; passing a
+       different `branch_id` returns 403.
+     - super_admin MAY pass an explicit `branch_id`, but it must belong
+       to the tenant or the call returns 404.
+     - omitting `branch_id` scopes the QR to the caller's branch
+       (branch-scoped) or the tenant HQ (super_admin).
+
+   The signed branch then rides every visit/check-in registered via that
+   QR. ACTION: stop sending an arbitrary `branch_id` in the QR-generation
+   request body; for super_admin, only send a branch the tenant owns.
+
+E) Legacy data
+
+   Records created before this change had no `branch_id`. A one-time
+   boot backfill tags every legacy appointment / visit_session / check-in
+   to the tenant HQ branch, so HQ-assigned users still see that history
+   and branch-scoped filtering doesn't silently hide it.
+
+STILL PENDING (NOT branch-filtered yet — do not assume isolation):
+     - departments, incidents
+     - dashboard stats (still tenant-wide rollups)
      - audit logs
+     - visitor PROFILES (tenant-scoped, not branch-bound)
 
-   Unscoped users see everything in the tenant; the response carries
-   `branch_id` + `branch_summary` per record so they can group / filter
-   client-side.
-
-ACTION FOR THE FE NOW:
-  - Wherever you render a user list / visitor list / appointment list,
-    treat `branch_id` and `branch_summary` as OPTIONAL fields that may
-    appear after the next deploy. Don't crash on them, don't crash
-    without them.
-  - Plan the "branch column" UI now so you can flip it on without a
-    schema reshuffle. Hide the column when every row's `branch_id`
-    matches the current user (i.e. branch-scoped user looking at their
-    own branch).
+ACTION FOR THE FE:
+  - Render `branchSummary.name` as a "Branch" column/label on the lists
+    in (B). Hide it for branch-scoped users looking at their own single
+    branch (every row matches), show it for unscoped users.
+  - Remove any `branch_id` field from QR-generation request bodies.
+  - Treat `branchId` / `branchSummary` as present on the (A) resources;
+    still tolerate null `branchSummary`.
 
 ================================================================================
 END OF FILE

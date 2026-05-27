@@ -45,6 +45,13 @@ class CheckinBase(BaseModel):
     tenant_id: str
     visitor_id: str
     checkin_config_id: str
+    # Branch this check-in belongs to. Resolved from the registration QR
+    # token's scope (kiosk/public flow) or the staff member's token, falling
+    # back to the tenant HQ. Branch-null check-ins predate branch separation
+    # and are treated as HQ data. Promoted from the legacy
+    # ``tenant_specific_data['branch_id']`` to a first-class field so reads
+    # can filter on it and branch_filter() applies.
+    branch_id: Optional[str] = None
     id_extraction_id: Optional[str] = None
     tenant_specific_data: dict
     purpose: CheckinPurpose
@@ -138,7 +145,10 @@ class CheckinListItem(BaseModel):
     created_at: int
 
 
-from schemas.summary_schema import VisitorBriefSummary  # noqa: E402
+from schemas.summary_schema import (  # noqa: E402
+    VisitorBriefSummary,
+    BranchBriefSummary,
+)
 
 
 class PendingApprovalItem(BaseModel):
@@ -194,3 +204,4 @@ class CheckinWithVisitorOut(CheckinOut):
     approver can still see the pending state and reject it."""
 
     visitor: Optional[VisitorBriefSummary] = None
+    branch_summary: Optional[BranchBriefSummary] = None

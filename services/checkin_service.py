@@ -40,6 +40,25 @@ from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
 logger = logging.getLogger(__name__)
 
 
+async def _resolve_checkin_branch_id(
+    tenant_id: str, tenant_specific_data: Optional[dict]
+) -> Optional[str]:
+    """Resolve the branch a check-in belongs to.
+
+    The signed registration QR scope (when present) is stamped onto
+    ``tenant_specific_data['branch_id']`` by ``_enforce_registration_token_scope``;
+    that wins. Otherwise the check-in falls back to the tenant HQ so it is
+    never branch-null going forward. The value is promoted to the first-class
+    ``CheckinCreate.branch_id`` field by the callers.
+    """
+    branch_id = (tenant_specific_data or {}).get("branch_id")
+    if branch_id:
+        return branch_id
+    from services.branch_service import resolve_hq_branch_id
+
+    return await resolve_hq_branch_id(tenant_id)
+
+
 async def _enforce_tenant_geofence(
     *,
     tenant_id: str,
@@ -154,6 +173,17 @@ async def _enrich_checkins_with_visitors(
     visitors = await get_visitors_by_ids(tenant_id=tenant_id, visitor_ids=visitor_ids)
     by_id = {v.id: v for v in visitors if v.id}
 
+    # Resolve a BranchBriefSummary for each distinct branch referenced, so the
+    # approval queue renders the originating branch without a follow-up call.
+    import asyncio
+    from services.summary_resolver import resolve_branch_summary
+
+    branch_ids = list({c.branch_id for c in checkins if c.branch_id})
+    branch_summaries = await asyncio.gather(
+        *[resolve_branch_summary(bid) for bid in branch_ids]
+    )
+    branch_by_id = dict(zip(branch_ids, branch_summaries))
+
     enriched: list[CheckinWithVisitorOut] = []
     for c in checkins:
         visitor = by_id.get(c.visitor_id)
@@ -161,6 +191,7 @@ async def _enrich_checkins_with_visitors(
             CheckinWithVisitorOut(
                 **c.model_dump(by_alias=True),
                 visitor=_visitor_to_brief(visitor) if visitor is not None else None,
+                branch_summary=branch_by_id.get(c.branch_id) if c.branch_id else None,
             )
         )
     return enriched
@@ -586,6 +617,7 @@ async def submit_returning_visitor_checkin_by_id(
         checkin_config_id=checkin_config_id,
         id_extraction_id=None,
         tenant_specific_data=tenant_specific_data,
+        branch_id=await _resolve_checkin_branch_id(tenant_id, tenant_specific_data),
         purpose=purpose,
         state=CheckinState.PENDING_APPROVAL,
         verified=visitor.verified,
@@ -961,6 +993,7 @@ async def _submit_verified_checkin_core(
         checkin_config_id=checkin_config_id,
         id_extraction_id=id_extraction_id,
         tenant_specific_data=tenant_specific_data,
+        branch_id=await _resolve_checkin_branch_id(tenant_id, tenant_specific_data),
         purpose=purpose,
         state=initial_state,
         verified=visitor_verified,
@@ -1148,6 +1181,9 @@ async def submit_checkin(
         checkin_config_id=checkin_config_id,
         id_extraction_id=req.id_extraction_id,
         tenant_specific_data=req.tenant_specific_data,
+        branch_id=await _resolve_checkin_branch_id(
+            tenant_id, req.tenant_specific_data
+        ),
         purpose=req.purpose,
         state=initial_state,
         verified=visitor.verified,
@@ -1183,14 +1219,24 @@ async def submit_checkin(
 
 
 async def list_checkins_for_tenant(
-    tenant_id: str, state: Optional[str] = None, skip: int = 0, limit: int = 20
+    tenant_id: str,
+    state: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 20,
+    branch_filter: Optional[dict] = None,
 ) -> tuple[list[CheckinWithVisitorOut], int]:
     """List check-ins for a tenant with optional state filter. Each row is
     enriched with a ``VisitorBriefSummary`` so the approval UI can show who
-    the visitor is without a second request."""
-    filter_dict = {"tenant_id": tenant_id}
+    the visitor is without a second request.
+
+    ``branch_filter`` (from ``branch_service.branch_scope_filter``) scopes the
+    query to a branch-scoped caller's branches; ``None`` for unscoped roles.
+    """
+    filter_dict: dict = {"tenant_id": tenant_id}
     if state:
         filter_dict["state"] = state
+    if branch_filter:
+        filter_dict.update(branch_filter)
 
     checkins = await get_checkins(filter_dict, skip=skip, limit=limit)
     total = await count_checkins(filter_dict)
@@ -1212,6 +1258,7 @@ async def list_pending_approvals_for_tenant(
     skip: int = 0,
     limit: int = 50,
     include_appointments: bool = True,
+    branch_filter: Optional[dict] = None,
 ) -> tuple[list, int]:
     """Unified approval queue: kiosk check-ins awaiting approval +
     SCHEDULED appointments the host pre-vetted.
@@ -1242,10 +1289,12 @@ async def list_pending_approvals_for_tenant(
     # a webhook lands. The frontend distinguishes the two states via the
     # ``state`` field on each row and renders a "KYC in progress" badge for
     # pending_verification.
-    pending_filter = {
+    pending_filter: dict = {
         "tenant_id": tenant_id,
         "state": {"$in": ["pending_approval", "pending_verification"]},
     }
+    if branch_filter:
+        pending_filter.update(branch_filter)
     pending_checkins = await get_checkins(pending_filter, skip=0, limit=200)
     enriched_checkins = await _enrich_checkins_with_visitors(
         tenant_id, pending_checkins
@@ -1281,10 +1330,12 @@ async def list_pending_approvals_for_tenant(
 
     appointment_total = 0
     if include_appointments:
-        appt_filter = {
+        appt_filter: dict = {
             "tenant_id": tenant_id,
             "status": AppointmentStatus.SCHEDULED.value,
         }
+        if branch_filter:
+            appt_filter.update(branch_filter)
         appointments = await get_appointments(
             filter_dict=appt_filter, start=0, stop=200
         )

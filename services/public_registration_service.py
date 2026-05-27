@@ -185,11 +185,31 @@ async def register_visitor_public(
             if not department_id and hasattr(appointment, "department_id"):
                 department_id = appointment.department_id
 
+    # Resolve the branch this public registration belongs to. The signed QR
+    # token's scope wins (the receptionist/super_admin who minted it pinned
+    # the branch); an appointment-linked walk-in inherits the appointment's
+    # branch; otherwise it falls back to the tenant HQ so the session is
+    # never branch-null going forward.
+    from services.branch_service import resolve_hq_branch_id
+
+    branch_id: Optional[str] = None
+    if token_scope and token_scope.get("branch_id"):
+        branch_id = token_scope["branch_id"]
+    if not branch_id and appointment_id and ObjectId.is_valid(appointment_id):
+        appt_for_branch = await get_appointment(
+            {"_id": ObjectId(appointment_id), "tenant_id": tenant_id}
+        )
+        if appt_for_branch is not None:
+            branch_id = getattr(appt_for_branch, "branch_id", None)
+    if not branch_id:
+        branch_id = await resolve_hq_branch_id(tenant_id)
+
     # Create visit session with REGISTERED status
     session_data = VisitSessionCreate(
         tenant_id=tenant_id,
         visitor_profile_id=profile.id or "",
         department_id=department_id or "",
+        branch_id=branch_id,
         host_id=host_id,
         appointment_id=appointment_id,
         check_in_method=CheckInMethod.QR,

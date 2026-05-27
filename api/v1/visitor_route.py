@@ -80,10 +80,20 @@ async def generate_registration_qr_endpoint(
     principal: AuthPrincipal = Depends(_checkin_roles),
 ):
     tenant_id = principal.tenant_id or ""
+    # Pin the QR to the caller's branch. Branch-scoped roles (receptionist /
+    # dept_admin) can only mint a QR for their own branch; a super_admin may
+    # pass an explicit branch_id, otherwise the token is scoped to HQ. The
+    # signed branch_id then flows onto every visit/check-in registered via
+    # this QR, so branch separation holds end-to-end.
+    from services.branch_service import resolve_branch_for_principal
+
+    branch_id = await resolve_branch_for_principal(
+        principal, tenant_id, explicit_branch_id=request.branch_id
+    )
     return await generate_tenant_registration_qr(
         tenant_id=tenant_id,
         department_id=request.department_id,
-        branch_id=request.branch_id,
+        branch_id=branch_id,
     )
 
 
@@ -156,10 +166,16 @@ async def check_in(
     principal: AuthPrincipal = Depends(_checkin_roles),
 ):
     tenant_id = principal.tenant_id or ""
+    # Tag the visit with the receptionist's branch (branch-scoped roles are
+    # pinned to their own branch; super_admins fall back to HQ).
+    from services.branch_service import resolve_branch_for_principal
+
+    branch_id = await resolve_branch_for_principal(principal, tenant_id)
     return await check_in_visitor(
         request=request,
         tenant_id=tenant_id,
         receptionist_id=principal.user_id,
+        branch_id=branch_id,
     )
 
 
@@ -283,8 +299,13 @@ async def list_active_visitors(
     principal: AuthPrincipal = Depends(verify_any_system_user_token),
 ):
     tenant_id = principal.tenant_id or ""
+    # Branch-scoped roles only see their branch's active visitors; unscoped
+    # roles (super_admin / auditor / dpo) see the whole tenant.
+    from services.branch_service import branch_scope_filter
+
+    branch_filter = await branch_scope_filter(principal, tenant_id)
     return await retrieve_active_visitors(
-        tenant_id=tenant_id, department_id=department_id
+        tenant_id=tenant_id, department_id=department_id, branch_filter=branch_filter
     )
 
 
@@ -313,11 +334,15 @@ async def list_visitors_awaiting_checkout(
     principal: AuthPrincipal = Depends(_checkin_roles),
 ):
     tenant_id = principal.tenant_id or ""
+    from services.branch_service import branch_scope_filter
+
+    branch_filter = await branch_scope_filter(principal, tenant_id)
     items, total = await retrieve_visitors_awaiting_checkout(
         tenant_id=tenant_id,
         department_id=department_id,
         start=start,
         stop=stop,
+        branch_filter=branch_filter,
     )
     return items, {"total": total, "start": start, "stop": stop}
 
@@ -382,8 +407,15 @@ async def list_visit_sessions(
     ),
 ) -> list[VisitSessionWithSummaryOut]:
     tenant_id = principal.tenant_id or ""
+    from services.branch_service import branch_scope_filter
+
+    branch_filter = await branch_scope_filter(principal, tenant_id)
     return await retrieve_visit_sessions_with_summary(
-        tenant_id=tenant_id, department_id=department_id, start=start, stop=stop
+        tenant_id=tenant_id,
+        department_id=department_id,
+        start=start,
+        stop=stop,
+        branch_filter=branch_filter,
     )
 
 
@@ -406,8 +438,15 @@ async def list_pending_sessions(
     ),
 ):
     tenant_id = principal.tenant_id or ""
+    from services.branch_service import branch_scope_filter
+
+    branch_filter = await branch_scope_filter(principal, tenant_id)
     return await retrieve_pending_sessions(
-        tenant_id=tenant_id, department_id=department_id, start=start, stop=stop
+        tenant_id=tenant_id,
+        department_id=department_id,
+        start=start,
+        stop=stop,
+        branch_filter=branch_filter,
     )
 
 

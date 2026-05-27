@@ -89,8 +89,14 @@ async def check_in_visitor(
     request: CheckInRequest,
     tenant_id: str,
     receptionist_id: str,
+    branch_id: Optional[str] = None,
 ) -> dict:
-    """Phase 1A: Register visitor — create session with status=REGISTERED, no badge yet."""
+    """Phase 1A: Register visitor — create session with status=REGISTERED, no badge yet.
+
+    ``branch_id`` is resolved from the receptionist's token by the route and
+    stored on the session so branch separation holds. ``None`` only when the
+    tenant has no branches (legacy / HQ data).
+    """
     # 0. Enforce plan cap on visit sessions created this calendar month
     month_start, month_end = get_month_bounds()
     month_count = await count_visit_sessions(
@@ -238,11 +244,21 @@ async def check_in_visitor(
     elif request.check_in_method == CheckInMethod.QR:
         verification_method = VerificationMethod.QR_UPLOAD
 
+    # 6A. Resolve the branch this visit belongs to. The route passes the
+    # receptionist's branch; if it couldn't (legacy token with no branch),
+    # fall back to the tenant HQ so the session is never branch-null going
+    # forward.
+    if not branch_id:
+        from services.branch_service import resolve_hq_branch_id
+
+        branch_id = await resolve_hq_branch_id(tenant_id)
+
     # 7. Create visit session with status=REGISTERED (not CHECKED_IN)
     session_data = VisitSessionCreate(
         tenant_id=tenant_id,
         visitor_profile_id=profile.id or "",
         department_id=dept_id,
+        branch_id=branch_id,
         host_id=host_id,
         receptionist_id=receptionist_id,
         appointment_id=appointment_id,
@@ -405,6 +421,10 @@ async def check_in_from_appointment(
         request=request,
         tenant_id=tenant_id,
         receptionist_id=receptionist_id,
+        # Inherit the appointment's branch so the visit stays in the same
+        # branch the appointment was booked under (falls back to HQ inside
+        # check_in_visitor when the appointment predates branch separation).
+        branch_id=getattr(appointment, "branch_id", None),
     )
 
     if not issue_badge:
@@ -690,7 +710,11 @@ async def deny_visitor(
 
 
 async def retrieve_pending_sessions(
-    tenant_id: str, department_id: Optional[str] = None, start=0, stop=100
+    tenant_id: str,
+    department_id: Optional[str] = None,
+    start=0,
+    stop=100,
+    branch_filter: Optional[dict] = None,
 ):
     """Phase 1C: Get sessions with status in (REGISTERED, PENDING_VERIFICATION)."""
     filter_dict: dict = {
@@ -704,6 +728,8 @@ async def retrieve_pending_sessions(
     }
     if department_id:
         filter_dict["department_id"] = department_id
+    if branch_filter:
+        filter_dict.update(branch_filter)
     return await get_visit_sessions(filter_dict=filter_dict, start=start, stop=stop)
 
 
@@ -978,8 +1004,14 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Checkou
     )
 
 
-async def retrieve_active_visitors(tenant_id: str, department_id: Optional[str] = None):
-    return await get_active_visitors(tenant_id=tenant_id, department_id=department_id)
+async def retrieve_active_visitors(
+    tenant_id: str,
+    department_id: Optional[str] = None,
+    branch_filter: Optional[dict] = None,
+):
+    return await get_active_visitors(
+        tenant_id=tenant_id, department_id=department_id, branch_filter=branch_filter
+    )
 
 
 def _json_details(model: Any) -> dict[str, Any]:
@@ -1170,6 +1202,7 @@ async def retrieve_visitors_awaiting_checkout(
     department_id: Optional[str] = None,
     start: int = 0,
     stop: int = 50,
+    branch_filter: Optional[dict] = None,
 ) -> tuple[list[AwaitingCheckoutItem], int]:
     """Paginated manual-checkout selector across all eligible visitor sources.
 
@@ -1196,11 +1229,13 @@ async def retrieve_visitors_awaiting_checkout(
             department_id=department_id,
             start=0,
             stop=page_stop,
+            branch_filter=branch_filter,
         ),
         get_approved_checkins_for_checkout(
             tenant_id=tenant_id,
             start=0,
             stop=page_stop,
+            branch_filter=branch_filter,
         ),
         get_due_scheduled_appointments_for_checkout(
             tenant_id=tenant_id,
@@ -1208,15 +1243,19 @@ async def retrieve_visitors_awaiting_checkout(
             department_id=department_id,
             start=0,
             stop=page_stop,
+            branch_filter=branch_filter,
         ),
         count_awaiting_checkout_sessions(
-            tenant_id=tenant_id, department_id=department_id
+            tenant_id=tenant_id, department_id=department_id, branch_filter=branch_filter
         ),
-        count_approved_checkins_for_checkout(tenant_id=tenant_id),
+        count_approved_checkins_for_checkout(
+            tenant_id=tenant_id, branch_filter=branch_filter
+        ),
         count_due_scheduled_appointments_for_checkout(
             tenant_id=tenant_id,
             due_before_ts=due_before_ts,
             department_id=department_id,
+            branch_filter=branch_filter,
         ),
     )
 
@@ -1252,11 +1291,17 @@ async def retrieve_visit_session_by_id(
 
 
 async def retrieve_visit_sessions(
-    tenant_id: str, department_id: Optional[str] = None, start=0, stop=100
+    tenant_id: str,
+    department_id: Optional[str] = None,
+    start=0,
+    stop=100,
+    branch_filter: Optional[dict] = None,
 ):
     filter_dict: dict = {"tenant_id": tenant_id}
     if department_id:
         filter_dict["department_id"] = department_id
+    if branch_filter:
+        filter_dict.update(branch_filter)
     return await get_visit_sessions(filter_dict=filter_dict, start=start, stop=stop)
 
 
@@ -1269,6 +1314,7 @@ async def _enrich_visit_session(session: VisitSessionOut) -> VisitSessionWithSum
         resolve_visitor_profile_summary,
         resolve_system_user_summary,
         resolve_appointment_summary,
+        resolve_branch_summary,
     )
 
     (
@@ -1281,6 +1327,7 @@ async def _enrich_visit_session(session: VisitSessionOut) -> VisitSessionWithSum
         verified_by_s,
         consent_capture_s,
         denied_by_s,
+        branch_s,
     ) = await asyncio.gather(
         resolve_tenant_summary(session.tenant_id),
         resolve_department_summary(session.department_id),
@@ -1291,6 +1338,7 @@ async def _enrich_visit_session(session: VisitSessionOut) -> VisitSessionWithSum
         resolve_system_user_summary(session.verified_by),
         resolve_system_user_summary(session.consent_captured_by_user_id),
         resolve_system_user_summary(session.denied_by),
+        resolve_branch_summary(session.branch_id),
     )
     data = session.model_dump(by_alias=False)
     data["tenant_summary"] = tenant_s
@@ -1302,16 +1350,25 @@ async def _enrich_visit_session(session: VisitSessionOut) -> VisitSessionWithSum
     data["verified_by_summary"] = verified_by_s
     data["consent_captured_by_summary"] = consent_capture_s
     data["denied_by_summary"] = denied_by_s
+    data["branch_summary"] = branch_s
     return VisitSessionWithSummaryOut(**data)
 
 
 async def retrieve_visit_sessions_with_summary(
-    tenant_id: str, department_id: Optional[str] = None, start: int = 0, stop: int = 100
+    tenant_id: str,
+    department_id: Optional[str] = None,
+    start: int = 0,
+    stop: int = 100,
+    branch_filter: Optional[dict] = None,
 ):
     import asyncio
 
     sessions = await retrieve_visit_sessions(
-        tenant_id=tenant_id, department_id=department_id, start=start, stop=stop
+        tenant_id=tenant_id,
+        department_id=department_id,
+        start=start,
+        stop=stop,
+        branch_filter=branch_filter,
     )
     return list(await asyncio.gather(*[_enrich_visit_session(s) for s in sessions]))
 

@@ -761,6 +761,29 @@ async def _section_top_departments(
         )
         title = "Top hosts"
     else:
+        # Fold in the check-in collection. Kiosk / receptionist submissions
+        # are stored as ``checkins`` (with the department under
+        # ``tenant_specific_data.department_id``), NOT ``visit_sessions``, so
+        # counting only the latter silently drops every visit that came
+        # through the check-in flow — which is most of them. Every other
+        # Insights section sums both collections; this one must too.
+        ci_field = "tenant_specific_data.department_id"
+        ci_pipeline = [
+            {
+                "$match": {
+                    **_checkin_match(scope, start=start, stop=stop),
+                    ci_field: {"$nin": [None, ""]},
+                }
+            },
+            {"$group": {"_id": f"${ci_field}", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": limit},
+        ]
+        async for doc in db["checkins"].aggregate(ci_pipeline):
+            key = doc.get("_id")
+            if key:
+                counts[str(key)] = counts.get(str(key), 0) + int(doc.get("count", 0))
+
         label_map, extras = await _resolve_id_labels(
             "departments", list(counts.keys()), "name"
         )

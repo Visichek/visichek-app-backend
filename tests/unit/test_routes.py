@@ -37,6 +37,9 @@ MOCK_RECEPTIONIST_PRINCIPAL = AuthPrincipal(
     access_token_id="token-789",
     jwt_token="jwt-token-789",
     tenant_id="tenant-001",
+    # Branch-scoped roles carry their assigned branch on the token; set it so
+    # the routes' branch resolution returns it without a DB fallback.
+    branch_ids=["branch-001"],
 )
 
 MOCK_SECURITY_OFFICER_PRINCIPAL = AuthPrincipal(
@@ -1053,6 +1056,9 @@ class TestAppointmentRoutes:
                 {
                     "id": "appt-001",
                     "tenant_id": "tenant-001",
+                    # Branch-scoped reads filter on branch_id; tag the row to
+                    # the receptionist's branch so it survives the scope filter.
+                    "branch_id": "branch-001",
                     "visitor_name_snapshot": "John Doe",
                     "host_name_snapshot": "Jane Smith",
                     "scheduled_datetime": 1712618400,

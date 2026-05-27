@@ -53,11 +53,15 @@ async def get_visit_sessions(
 
 
 async def get_active_visitors(
-    tenant_id: str, department_id: Optional[str] = None
+    tenant_id: str,
+    department_id: Optional[str] = None,
+    branch_filter: Optional[dict] = None,
 ) -> List[VisitSessionOut]:
     filter_dict: dict = {"tenant_id": tenant_id, "status": "checked_in"}
     if department_id:
         filter_dict["department_id"] = department_id
+    if branch_filter:
+        filter_dict.update(branch_filter)
     return await get_visit_sessions(filter_dict=filter_dict, start=0, stop=1000)
 
 
@@ -75,21 +79,24 @@ async def get_awaiting_checkout_sessions(
     department_id: Optional[str] = None,
     start: int = 0,
     stop: int = 50,
+    branch_filter: Optional[dict] = None,
 ) -> List[VisitSessionOut]:
     """Visitors currently checked-in (status=checked_in) and not yet checked-out."""
-    return await get_visit_sessions(
-        filter_dict=_awaiting_checkout_filter(tenant_id, department_id),
-        start=start,
-        stop=stop,
-    )
+    f = _awaiting_checkout_filter(tenant_id, department_id)
+    if branch_filter:
+        f.update(branch_filter)
+    return await get_visit_sessions(filter_dict=f, start=start, stop=stop)
 
 
 async def count_awaiting_checkout_sessions(
-    tenant_id: str, department_id: Optional[str] = None
+    tenant_id: str,
+    department_id: Optional[str] = None,
+    branch_filter: Optional[dict] = None,
 ) -> int:
-    return await count_visit_sessions(
-        _awaiting_checkout_filter(tenant_id, department_id)
-    )
+    f = _awaiting_checkout_filter(tenant_id, department_id)
+    if branch_filter:
+        f.update(branch_filter)
+    return await count_visit_sessions(f)
 
 
 async def get_visit_session_by_badge_token(

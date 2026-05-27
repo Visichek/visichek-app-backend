@@ -8,6 +8,12 @@ class AppointmentBase(BaseModel):
     visitor_profile_id: Optional[str] = None
     host_id: str
     department_id: str
+    # Branch this appointment belongs to. Resolved from the creating user's
+    # token (or the tenant HQ for unscoped roles) by the route — never
+    # client-supplied. Branch-null appointments predate branch separation
+    # and are treated as HQ data. Drives the branchId list filter and the
+    # branch_filter() read scoping for branch-scoped roles.
+    branch_id: Optional[str] = None
     # Visitor identity captured at schedule time. Both are system-required
     # on create (see AppointmentCreate.validate_visitor_identity) unless an
     # existing visitor_profile_id is linked, in which case the profile
@@ -117,6 +123,7 @@ from schemas.summary_schema import (  # noqa: E402
     HostBriefSummary,
     UserBriefSummary,
     VisitorProfileBriefSummary,
+    BranchBriefSummary,
 )
 
 
@@ -131,3 +138,4 @@ class AppointmentWithSummaryOut(AppointmentOut):
     host_summary: Optional[HostBriefSummary] = None
     visitor_profile_summary: Optional[VisitorProfileBriefSummary] = None
     created_by_summary: Optional[UserBriefSummary] = None
+    branch_summary: Optional[BranchBriefSummary] = None

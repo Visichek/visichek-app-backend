@@ -1,87 +1,191 @@
-"""VisiChek-style default visitor privacy notice (APPENDIX 1).
+"""VisiChek-style default visitor privacy policy.
 
 Seeded on tenant provisioning (and lazily on first read of the active notice)
 so the visitor-consent feature works on day one without the tenant authoring
-anything. The tenant can fully edit the seeded notice afterwards.
+anything. The tenant can fully edit the seeded notice afterwards in the
+rich-text (BlockNote) editor.
+
+The canonical copy is the BlockNote ``body`` (a list of content blocks shaped
+``{id, type, props, content, children}`` exactly as the frontend editor
+round-trips). ``summary`` and ``full_text`` are flattened plain-text
+projections of the same template, kept for the kiosk consent gate and any
+caller that still reads the legacy plain-text fields.
 """
 
 from __future__ import annotations
 
-from typing import Optional
+import uuid
+from typing import Any, Dict, List, Optional
 
-DEFAULT_NOTICE_TITLE = "Visitor Privacy Notice"
+DEFAULT_NOTICE_TITLE = "Visitor Privacy Policy"
 
-_DEFAULT_SUMMARY = (
-    "{{COMPANY_NAME}} uses VisiChek to manage visitor check-in. We collect the "
-    "personal details you provide here (such as your name, phone number, and the "
-    "purpose of your visit) only to register your visit, keep our premises secure, "
-    "and meet our legal and safety obligations. By continuing, you confirm you have "
-    "read this notice and consent to your information being processed for these "
-    "purposes."
-)
+Block = Dict[str, Any]
 
-_DEFAULT_FULL_TEXT = """WHO PROCESSES YOUR DATA
-{{COMPANY_NAME}} is the data controller for the information collected during
-visitor check-in. VisiChek acts as a data processor on {{COMPANY_NAME}}'s behalf
-and processes your data only on its documented instructions.
+# Substitution tokens. The service layer fills these per-tenant on seed:
+#   {{COMPANY_NAME}}     -> tenant.company_name
+#   {{RETENTION_PERIOD}} -> e.g. "1095 days", from the tenant's retention policy
+#   {{CONTACT_EMAIL}}    -> tenant main super_admin email (general contact)
+#   {{PRIVACY_CONTACT}}  -> tenant DPO email, falling back to the contact email
+_TOKEN_COMPANY = "{{COMPANY_NAME}}"
+_TOKEN_RETENTION = "{{RETENTION_PERIOD}}"
+_TOKEN_CONTACT = "{{CONTACT_EMAIL}}"
+_TOKEN_PRIVACY = "{{PRIVACY_CONTACT}}"
 
-WHAT WE COLLECT
-- Identity and contact details you enter (e.g. full name, phone number, email,
-  company/organisation).
-- Visit details (host, department, purpose of visit, time of arrival and
-  departure).
-- Where enabled by {{COMPANY_NAME}}: a photograph, a scan of a government-issued
-  ID for verification, and your approximate location at check-in for site
-  safety/geofencing.
+# The template, expressed as (kind, text) tuples. ``h`` = level-2 bold heading,
+# ``p`` = paragraph, ``li`` = bullet list item. Mirrors the editor-authored
+# document the tenants approved; the placeholders are substituted at seed time.
+_TEMPLATE: List[tuple[str, str]] = [
+    (
+        "p",
+        f"{_TOKEN_COMPANY} collects visitor information at reception to support "
+        "facility access control, appointment validation, and visitor-session "
+        "recordkeeping.",
+    ),
+    ("h", "What information we collect"),
+    ("p", "We may collect:"),
+    ("li", "Your name"),
+    ("li", "Your phone number"),
+    ("li", "Your email"),
+    ("li", "Organisation/company name"),
+    ("li", "Host name"),
+    ("li", "Purpose of visit"),
+    ("li", "Check-in and check-out time"),
+    ("li", "Badge identifier"),
+    ("p", "Where necessary for identity verification:"),
+    ("li", "Selected identity details from your ID document"),
+    ("li", "A visitor photograph if no ID is available"),
+    ("h", "Why we collect this information"),
+    ("p", "Your information is collected to:"),
+    ("li", "Verify visitor identity"),
+    ("li", "Manage access to this facility"),
+    ("li", "Maintain visitor logs for security and compliance purposes"),
+    (
+        "p",
+        "This processing supports our legitimate interest in maintaining a safe "
+        "and controlled facility environment.",
+    ),
+    ("h", "How long your information is kept"),
+    (
+        "p",
+        f"Visitor records are retained for {_TOKEN_RETENTION}. After this period, "
+        "records are securely deleted unless required for legal or security "
+        "purposes.",
+    ),
+    ("h", "Who processes your information"),
+    (
+        "p",
+        f"Visitor information is collected by {_TOKEN_COMPANY} using the VisiChek "
+        "visitor management platform. VisiChek processes visitor information on "
+        "our behalf as a service provider.",
+    ),
+    ("h", "Your rights"),
+    (
+        "p",
+        "You may request access to or correction of your visitor record by "
+        f"contacting {_TOKEN_CONTACT}. Requests are handled in accordance with "
+        "applicable data-protection laws.",
+    ),
+    ("h", "Contact for privacy questions"),
+    ("p", "If you have questions about how your information is handled, please contact:"),
+    ("p", _TOKEN_PRIVACY),
+]
 
-WHY WE COLLECT IT (PURPOSE)
-- To register and manage your visit and produce a visitor badge.
-- To maintain a secure record of who is on the premises for safety, security,
-  and emergency/evacuation purposes.
-- To comply with legal, regulatory, and health-and-safety obligations.
 
-LAWFUL BASIS
-We rely on your consent for this check-in and, where applicable, on our
-legitimate interest in keeping our premises and people safe, in line with the
-Nigeria Data Protection Act (NDPA).
-
-HOW LONG WE KEEP IT
-Your visit records are retained only as long as necessary for the purposes
-above and in accordance with {{COMPANY_NAME}}'s retention policy, after which
-they are deleted or anonymised.
-
-WHO WE SHARE IT WITH
-We do not sell your data. It may be shared with {{COMPANY_NAME}} staff who need
-it to host or approve your visit, and with service providers (such as VisiChek)
-under appropriate data-protection terms. We disclose data to authorities only
-where required by law.
-
-YOUR RIGHTS
-Under the NDPA you have the right to access, correct, or request deletion of
-your personal data, and to withdraw consent. To exercise these rights, contact
-{{COMPANY_NAME}}{{DPO_CONTACT_LINE}}.
-
-YOUR CHOICE
-Providing this information is voluntary, but we may be unable to authorise your
-visit without it. By ticking "I accept" you confirm you have read and understood
-this notice."""
+def _new_id() -> str:
+    return uuid.uuid4().hex[:16]
 
 
-def _substitute(text: str, company_name: str, dpo_contact_email: Optional[str]) -> str:
-    dpo_line = f" at {dpo_contact_email}" if dpo_contact_email else ""
-    return text.replace("{{COMPANY_NAME}}", company_name or "Our organisation").replace(
-        "{{DPO_CONTACT_LINE}}", dpo_line
+def _make_block(kind: str, text: str) -> Block:
+    """Build a single BlockNote block matching the frontend editor's shape."""
+    if kind == "h":
+        return {
+            "id": _new_id(),
+            "type": "heading",
+            "props": {"level": 2},
+            "content": [{"type": "text", "text": text, "styles": {"bold": True}}],
+            "children": [],
+        }
+    block_type = "bulletListItem" if kind == "li" else "paragraph"
+    return {
+        "id": _new_id(),
+        "type": block_type,
+        "props": {},
+        "content": [{"type": "text", "text": text, "styles": {}}],
+        "children": [],
+    }
+
+
+def _format_retention(retention_days: Optional[int]) -> str:
+    if retention_days and retention_days > 0:
+        return f"{retention_days} days"
+    return "the period set out in our data-retention policy"
+
+
+def _substitute(
+    text: str,
+    *,
+    company_name: str,
+    retention: str,
+    contact_email: str,
+    privacy_contact: str,
+) -> str:
+    return (
+        text.replace(_TOKEN_COMPANY, company_name)
+        .replace(_TOKEN_RETENTION, retention)
+        .replace(_TOKEN_CONTACT, contact_email)
+        .replace(_TOKEN_PRIVACY, privacy_contact)
     )
+
+
+def _flatten(blocks: List[Block]) -> str:
+    """Project the block list onto plain text for the legacy ``full_text``."""
+    lines: List[str] = []
+    for block in blocks:
+        text = "".join(node.get("text", "") for node in block.get("content", []))
+        if not text:
+            continue
+        lines.append(f"- {text}" if block.get("type") == "bulletListItem" else text)
+    return "\n".join(lines)
 
 
 def build_default_notice_content(
     company_name: str,
-    dpo_contact_email: Optional[str] = None,
+    *,
+    contact_email: Optional[str] = None,
+    privacy_contact: Optional[str] = None,
+    retention_days: Optional[int] = None,
 ) -> dict:
     """Return the seeded default notice's ``title`` / ``summary`` / ``full_text``
-    with ``{{COMPANY_NAME}}`` and the optional DPO contact line substituted."""
+    / ``body`` with every per-tenant placeholder substituted.
+
+    ``body`` is the canonical BlockNote content; ``summary`` and ``full_text``
+    are flattened projections kept for the kiosk and legacy readers.
+    """
+    company = company_name or "Our organisation"
+    retention = _format_retention(retention_days)
+    # The general contact falls back to a neutral phrase only when a tenant has
+    # neither a main super_admin email nor a DPO email on file.
+    contact = contact_email or "the facility administrator"
+    # Privacy contact prefers the DPO/privacy address, then the general contact.
+    privacy = privacy_contact or contact
+
+    blocks: List[Block] = []
+    for kind, raw in _TEMPLATE:
+        text = _substitute(
+            raw,
+            company_name=company,
+            retention=retention,
+            contact_email=contact,
+            privacy_contact=privacy,
+        )
+        blocks.append(_make_block(kind, text))
+
+    # The summary is the opening paragraph (already substituted).
+    summary = "".join(node.get("text", "") for node in blocks[0]["content"])
+
     return {
         "title": DEFAULT_NOTICE_TITLE,
-        "summary": _substitute(_DEFAULT_SUMMARY, company_name, dpo_contact_email),
-        "full_text": _substitute(_DEFAULT_FULL_TEXT, company_name, dpo_contact_email),
+        "summary": summary,
+        "full_text": _flatten(blocks),
+        "body": blocks,
     }
