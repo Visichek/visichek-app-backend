@@ -731,16 +731,22 @@ async def _section_top_departments(
     """Top departments by visit count in range. For dept_admin (``by_host``)
     this degenerates to top hosts within the department."""
     field = "host_id" if by_host else "department_id"
+    # When summing across visit_sessions + checkins (the ``not by_host`` path
+    # below), each side must over-fetch before the Python merge: a department
+    # that's #11 on one side and #1 on the other would otherwise lose its
+    # #11-side contribution to the per-pipeline $limit. ``by_host`` is
+    # visit-sessions-only, so the requested limit is sufficient there.
+    per_side_limit = max(limit * 10, 100) if not by_host else limit
     pipeline = [
         {
             "$match": {
                 **_visit_match(scope, start=start, stop=stop),
-                field: {"$ne": None},
+                field: {"$nin": [None, ""]},
             }
         },
         {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}},
-        {"$limit": limit},
+        {"$limit": per_side_limit},
     ]
     counts: Dict[str, int] = {}
     async for doc in db["visit_sessions"].aggregate(pipeline):
@@ -777,7 +783,7 @@ async def _section_top_departments(
             },
             {"$group": {"_id": f"${ci_field}", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},
-            {"$limit": limit},
+            {"$limit": per_side_limit},
         ]
         async for doc in db["checkins"].aggregate(ci_pipeline):
             key = doc.get("_id")

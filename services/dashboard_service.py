@@ -923,8 +923,13 @@ async def _top_lists(tenant_id: str, department_id: Optional[str]) -> Dict[str, 
     checkin_base = _checkin_match(tenant_id, department_id)
 
     async def _grouped(field: str, top_n: int = 10) -> Dict[str, int]:
+        # Exclude empty-string buckets server-side. Public registrations land on
+        # visit_sessions with ``department_id=""`` when the QR scope had no
+        # department; an empty-string bucket otherwise occupies one of the
+        # returned slots only to be dropped by the post-loop filter, costing a
+        # real department its place in the top-N.
         pipeline = [
-            {"$match": {**base, field: {"$ne": None}}},
+            {"$match": {**base, field: {"$nin": [None, ""]}}},
             {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},
             {"$limit": top_n},
@@ -952,6 +957,14 @@ async def _top_lists(tenant_id: str, department_id: Optional[str]) -> Dict[str, 
             out[_normalise_count_key(key)] = int(doc.get("count", 0))
         return out
 
+    # For rollups summed across visit_sessions + checkins (departments,
+    # purposes, branches), each side must over-fetch before the Python merge:
+    # the true top-10 of the combined set can include a row that's #11 on one
+    # side and #1 on the other, and a per-side $limit of 10 would silently
+    # drop the #11 contribution. Bumping to 100 makes that truncation
+    # vanishingly rare for realistic tenant sizes while keeping the queries
+    # index-bound and cheap.
+    _MERGED_OVERFETCH = 100
     (
         session_dept_counts,
         checkin_dept_counts,
@@ -964,16 +977,18 @@ async def _top_lists(tenant_id: str, department_id: Optional[str]) -> Dict[str, 
         check_in_method_counts,
         checkin_branch_counts,
     ) = await asyncio.gather(
-        _grouped("department_id"),
-        _grouped_checkins("tenant_specific_data.department_id"),
+        _grouped("department_id", top_n=_MERGED_OVERFETCH),
+        _grouped_checkins(
+            "tenant_specific_data.department_id", top_n=_MERGED_OVERFETCH
+        ),
         _grouped("host_id"),
         _grouped("company_snapshot"),
         _grouped("visitor_profile_id"),
-        _grouped("purpose"),
-        _grouped_checkins("purpose.purpose"),
+        _grouped("purpose", top_n=_MERGED_OVERFETCH),
+        _grouped_checkins("purpose.purpose", top_n=_MERGED_OVERFETCH),
         _grouped("denial_reason"),
         _grouped("check_in_method"),
-        _grouped_checkins("tenant_specific_data.branch_id"),
+        _grouped_checkins("tenant_specific_data.branch_id", top_n=_MERGED_OVERFETCH),
     )
     dept_counts = _merge_counts(session_dept_counts, checkin_dept_counts)
     purpose_counts = _merge_counts(session_purpose_counts, checkin_purpose_counts)
