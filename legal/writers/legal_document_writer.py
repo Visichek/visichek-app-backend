@@ -176,12 +176,31 @@ async def _legal_publish(resource_id: str, data: dict[str, Any]) -> dict[str, An
         request_id=request_id,
     )
     _enqueue_legal_list_refresh()
+    _on_agreement_master_published(doc.slug)
     return {
         "id": doc.id,
         "slug": doc.slug,
         "status": doc.status.value,
         "version": doc.current_version,
     }
+
+
+def _on_agreement_master_published(slug: Optional[str]) -> None:
+    """When an agreement master is (re)published, force every tenant to
+    re-evaluate acceptance: drop the cached master version + all per-tenant
+    gate states so the next request re-prompts. Best-effort."""
+    try:
+        from services.tenant_agreements.config import is_agreement_slug
+
+        if not is_agreement_slug(slug):
+            return
+        from services.tenant_agreement_service import clear_all_states
+        from services.tenant_agreements.master import invalidate_master_version
+
+        invalidate_master_version(slug or "")
+        clear_all_states()
+    except Exception:
+        logger.warning("agreement publish cache invalidation failed", exc_info=True)
 
 
 @write_handler("legal_document.archive", invalidates=_LEGAL_INVALIDATIONS)

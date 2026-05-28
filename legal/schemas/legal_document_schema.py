@@ -149,6 +149,25 @@ def _coerce_objectid(values: Any) -> Any:
     return values
 
 
+def _annotate_agreement(values: Any) -> Any:
+    """Tag a head-doc dict with whether its slug is a tenant agreement.
+
+    Lets the admin editor warn that publishing this document forces every
+    tenant to re-accept. Single source of truth is the agreement registry.
+    """
+    if not isinstance(values, dict):
+        return values
+    try:
+        from services.tenant_agreements.config import agreement_key_for_slug
+
+        key = agreement_key_for_slug(values.get("slug") or "")
+    except Exception:
+        key = None
+    values["agreement_key"] = key
+    values["is_tenant_agreement"] = key is not None
+    return values
+
+
 class LegalDocumentOut(LegalDocumentBase):
     """Full admin-facing document (working copy + lifecycle metadata)."""
 
@@ -163,6 +182,10 @@ class LegalDocumentOut(LegalDocumentBase):
     source_file: Optional[SourceFile] = None
     # Resolved presigned download URL for the original upload (read-only).
     source_file_url: Optional[str] = None
+    # True when this document is one of the platform's tenant agreements
+    # (DPA / Visitor Privacy Policy). Read-only, derived from the slug.
+    is_tenant_agreement: bool = False
+    agreement_key: Optional[str] = None
     date_created: Optional[int] = Field(
         default=None,
         validation_alias=AliasChoices("date_created", "dateCreated"),
@@ -177,7 +200,7 @@ class LegalDocumentOut(LegalDocumentBase):
     @model_validator(mode="before")
     @classmethod
     def _before(cls, values: Any) -> Any:
-        return _coerce_objectid(values)
+        return _annotate_agreement(_coerce_objectid(values))
 
     model_config = {
         "populate_by_name": True,

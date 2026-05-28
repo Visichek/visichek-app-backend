@@ -45,6 +45,12 @@ from services import user_location_writer as _user_location_writer  # noqa: F401
 
 # Cluster 4 — billing / plans / discounts
 from services import discount_writer as _discount_writer  # noqa: F401
+
+# Discount-available fan-out tasks (discount.announce / .announce_batch).
+# Imported here so both web + worker register the @task handlers at boot.
+from services import (  # noqa: F401
+    discount_notification_service as _discount_notification_service,
+)
 from services import invoice_writer as _invoice_writer  # noqa: F401
 from services import plan_writer as _plan_writer  # noqa: F401
 from services import subscription_writer as _subscription_writer  # noqa: F401

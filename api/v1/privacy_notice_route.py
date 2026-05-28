@@ -2,8 +2,8 @@ from typing import Annotated, Any, List, Tuple
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from core.errors import AppException, ErrorCode
 from core.queue.precompute import PrecomputeScope, get_or_compute
-from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.privacy_notice_schema import PrivacyNoticeCreate, PrivacyNoticeUpdate
 from security.auth import verify_system_user_token
@@ -19,21 +19,36 @@ router = APIRouter(prefix="/privacy-notices", tags=["Privacy Notices"])
 _admin_roles = verify_system_user_token("super_admin", "dpo")
 
 
-@router.post("")
+def _managed_by_platform() -> AppException:
+    """The visitor privacy notice is now derived from the platform-managed
+    Visitor Privacy Policy master (authored by the application admin and
+    accepted via /v1/agreements). Tenants can no longer author their own."""
+    return AppException(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ErrorCode.CONFLICT,
+        message=(
+            "The visitor privacy notice is managed by the platform and derived "
+            "from the Visitor Privacy Policy. It can no longer be edited per "
+            "tenant. View it via GET /v1/privacy-notices/active or "
+            "GET /v1/agreements/visitor_privacy_policy."
+        ),
+        details={"code": "PRIVACY_NOTICE_MANAGED_BY_PLATFORM"},
+    )
+
+
+@router.post("", deprecated=True)
 @document_response(
-    message="Privacy notice creation queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Create privacy notice (async)",
-    description="Enqueue a privacy notice create. Only super_admin and dpo roles can submit.",
-    success_example={
-        "id": "507f1f77bcf86cd799439011",
-        "job_id": "a2c4e6f8-1234-4abc-8def-0123456789ab",
-        "status": "queued",
-    },
+    message="Privacy notice authoring is managed by the platform",
+    summary="Create privacy notice (DISABLED — managed by platform)",
+    description=(
+        "DISABLED. The visitor privacy notice is derived from the platform "
+        "Visitor Privacy Policy master and can no longer be authored per tenant. "
+        "Always returns 409 PRIVACY_NOTICE_MANAGED_BY_PLATFORM."
+    ),
     response_codes={
         401: "Unauthorized token",
         403: "Insufficient permissions",
-        422: "Invalid payload",
+        409: "Managed by platform — tenant authoring disabled",
     },
 )
 async def create_privacy_notice_endpoint(
@@ -41,24 +56,9 @@ async def create_privacy_notice_endpoint(
     request: Request,
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
-    payload = notice_data.model_dump(exclude_none=True)
-    # tenant_id is token-derived, never client-supplied: overwrite any value
-    # that came in on the request body with the authenticated tenant.
-    payload["tenant_id"] = principal.tenant_id or ""
-    request_id = getattr(request.state, "request_id", None)
-    # Thread actor metadata so the writer can record an audit event.
-    payload["_actor_id"] = principal.user_id
-    payload["_actor_role"] = principal.role
-    payload["_request_id"] = request_id
-    return await enqueue_write(
-        writer_key="privacy_notice.create",
-        payload=payload,
-        resource_type="privacy_notice",
-        tenant_id=principal.tenant_id,
-        actor_id=principal.user_id,
-        actor_role=principal.role,
-        request_id=request_id,
-    )
+    # Tenant self-authoring is disabled — the notice is derived from the
+    # platform Visitor Privacy Policy master.
+    raise _managed_by_platform()
 
 
 @router.get("/active")
@@ -142,21 +142,18 @@ async def _load_notices_for_tenant(tenant_id: str) -> List[Any]:
     ]
 
 
-@router.patch("/{notice_id}")
+@router.patch("/{notice_id}", deprecated=True)
 @document_response(
-    message="Privacy notice update queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Update privacy notice (async)",
-    description="Enqueue a partial privacy notice update.",
-    success_example={
-        "id": "507f1f77bcf86cd799439011",
-        "job_id": "b3d5f7a9-2345-4def-8abc-1234567890bc",
-        "status": "queued",
-    },
+    message="Privacy notice authoring is managed by the platform",
+    summary="Update privacy notice (DISABLED — managed by platform)",
+    description=(
+        "DISABLED. See the create endpoint — always returns 409 "
+        "PRIVACY_NOTICE_MANAGED_BY_PLATFORM."
+    ),
     response_codes={
         401: "Unauthorized token",
         403: "Insufficient permissions",
-        422: "Invalid payload",
+        409: "Managed by platform — tenant authoring disabled",
     },
 )
 async def update_privacy_notice_endpoint(
@@ -165,21 +162,5 @@ async def update_privacy_notice_endpoint(
     request: Request,
     principal: AuthPrincipal = Depends(_admin_roles),
 ):
-    tenant_id = principal.tenant_id or ""
-    payload = notice_data.model_dump(exclude_none=True)
-    payload["tenant_id"] = tenant_id
-    request_id = getattr(request.state, "request_id", None)
-    # Thread actor metadata so the writer can record an audit event.
-    payload["_actor_id"] = principal.user_id
-    payload["_actor_role"] = principal.role
-    payload["_request_id"] = request_id
-    return await enqueue_write(
-        writer_key="privacy_notice.update",
-        payload=payload,
-        resource_type="privacy_notice",
-        resource_id=notice_id,
-        tenant_id=tenant_id,
-        actor_id=principal.user_id,
-        actor_role=principal.role,
-        request_id=request_id,
-    )
+    # Tenant self-authoring is disabled — see create endpoint.
+    raise _managed_by_platform()

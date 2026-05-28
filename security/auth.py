@@ -42,6 +42,93 @@ _PASSWORD_CHANGE_ALLOWED_PATHS: Final[frozenset[str]] = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# tenant-agreement acceptance enforcement
+#
+# Application admins maintain two master legal documents — the Data Processing
+# Agreement and the Visitor Privacy Policy — that every tenant must accept at
+# their current published version to keep using the service. Publishing a new
+# version forces re-acceptance.
+#
+# The gate is INTENTIONALLY NARROW: it does NOT block login, the
+# acceptance/profile/settings/session endpoints, or any read. It blocks ONLY
+# the core operational WRITES (creating appointments, submitting/processing
+# visitor information, check-ins, badges) — the day-to-day "using the service"
+# actions — until the tenant's super_admin accepts. So a blocked tenant can
+# still sign in, see what is pending, accept it, manage their account, and
+# browse — they just can't run visitor operations until they agree.
+#
+# Matched by route-path PREFIX (the template, not the literal URL) + method.
+# ---------------------------------------------------------------------------
+
+#: Operational surfaces whose WRITES are gated until agreements are accepted.
+#: Reads (GET/HEAD/OPTIONS) on these paths are never blocked.
+_AGREEMENT_GATED_PREFIXES: Final[tuple[str, ...]] = (
+    "/v1/appointments",  # create / manage appointments
+    "/v1/visitors",  # visitor records
+    "/v1/visitor-profiles",  # visitor identity profiles
+    "/v1/visitor-verification",  # ID verification
+    "/v1/checkins",  # check-in approval / lifecycle
+    "/v1/checkin-configs",  # kiosk config + authenticated check-in submit
+    "/v1/badges",  # badge issuance
+)
+
+_AGREEMENT_GATED_METHODS: Final[frozenset[str]] = frozenset(
+    {"POST", "PUT", "PATCH", "DELETE"}
+)
+
+
+def _is_agreement_gated(method: str, route_path: str) -> bool:
+    """True only for a WRITE to a core operational surface."""
+    if method.upper() not in _AGREEMENT_GATED_METHODS:
+        return False
+    return any(route_path.startswith(p) for p in _AGREEMENT_GATED_PREFIXES)
+
+
+def _raise_agreement_acceptance_required(pending: list[str]) -> None:
+    raise AppException(
+        status_code=403,
+        code=ErrorCode.AUTH_PERMISSION_DENIED,
+        message=(
+            "Your organization must accept the latest platform agreements before "
+            "running visitor operations. A super admin can review and accept them "
+            "under GET /v1/agreements."
+        ),
+        details={
+            "code": "AGREEMENT_ACCEPTANCE_REQUIRED",
+            "pending": pending,
+            "allowed_endpoints": ["/v1/agreements", "/v1/agreements/{key}/accept"],
+        },
+    )
+
+
+async def _enforce_agreement_acceptance(
+    request: Request, principal: AuthPrincipal
+) -> None:
+    """Block core operational writes until the tenant accepts current agreements.
+
+    Only fires for WRITES to the gated operational surfaces
+    (``_AGREEMENT_GATED_PREFIXES``); login, acceptance, profile/settings/session
+    endpoints and all reads pass through untouched. Fail-open on any error so a
+    Redis/Mongo blip never locks a tenant out.
+    """
+    tenant_id = principal.tenant_id
+    if not tenant_id:
+        return
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None) or request.url.path
+    if not _is_agreement_gated(request.method, route_path):
+        return
+    try:
+        from services.tenant_agreement_service import agreements_gate_check
+
+        ok, pending = await agreements_gate_check(tenant_id)
+    except Exception:
+        return  # fail-open
+    if not ok:
+        _raise_agreement_acceptance_required(pending)
+
+
 async def _fetch_account_flags(user_id: str, *, collection: str) -> dict:
     """Read security-relevant flags for a user/admin in one projected query.
 
@@ -134,6 +221,7 @@ async def _enforce_account_gates(request: Request, principal: AuthPrincipal) -> 
             _raise_account_inactive()
         if not change_password_path and flags.get("must_change_password"):
             _raise_password_change_required()
+        await _enforce_agreement_acceptance(request, principal)
         return
 
     if principal.role == "admin":

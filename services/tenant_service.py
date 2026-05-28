@@ -183,17 +183,10 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
             "tenant_enum seeding failed for tenant_id=%s", tenant.id, exc_info=True
         )
 
-    # 6. Seed the VisiChek-style default visitor privacy notice so the kiosk
-    # consent gate works on day one. Best-effort; the active-notice read path
-    # also seeds lazily as a fallback.
-    await _seed_default_privacy_notice_safe(
-        tenant.id or "", tenant.company_name, tenant.dpo_contact_email
-    )
-
-    # Seed the per-tenant Data Processing Agreement copy. The main super_admin
-    # exists by this point (bootstrap path), so the contact email resolves;
-    # the copy is also rebuilt on read while unaccepted as a fallback.
-    await _seed_tenant_dpa_safe(tenant.id or "")
+    # 6. Seed the per-tenant agreement copies (DPA + Visitor Privacy Policy)
+    # so the kiosk notice is available and the acceptance gate can resolve
+    # immediately. Best-effort; the read paths rebuild lazily as a fallback.
+    await _seed_tenant_agreements_safe(tenant.id or "")
 
     return {
         "tenant": tenant,
@@ -201,45 +194,25 @@ async def bootstrap_tenant(payload: TenantBootstrapRequest) -> dict:
     }
 
 
-async def _seed_default_privacy_notice_safe(
-    tenant_id: str,
-    company_name: Optional[str],
-    dpo_contact_email: Optional[str],
-) -> None:
+async def _seed_tenant_agreements_safe(tenant_id: str) -> None:
+    """Best-effort seed of the per-tenant agreement copies on provisioning.
+
+    Builds an (unaccepted) copy of every registered agreement. No-op when a
+    master template is absent; the read paths rebuild lazily too. Replaces the
+    former separate privacy-notice + DPA seeds (both are now agreements)."""
     if not tenant_id:
         return
     try:
-        from services.privacy_notice_service import seed_default_privacy_notice
+        from services.tenant_agreements.seed import seed_tenant_agreements
 
-        await seed_default_privacy_notice(
-            tenant_id,
-            company_name=company_name,
-            dpo_contact_email=dpo_contact_email,
-        )
+        await seed_tenant_agreements(tenant_id)
     except Exception:
         import logging as _logging
 
         _logging.getLogger(__name__).warning(
-            "default privacy notice seeding failed for tenant_id=%s",
+            "tenant agreements seeding failed for tenant_id=%s",
             tenant_id,
             exc_info=True,
-        )
-
-
-async def _seed_tenant_dpa_safe(tenant_id: str) -> None:
-    """Best-effort seed of the per-tenant DPA copy on provisioning. No-op when
-    the DPA template asset is absent; the read path rebuilds it lazily too."""
-    if not tenant_id:
-        return
-    try:
-        from services.dpa_service import seed_tenant_dpa
-
-        await seed_tenant_dpa(tenant_id)
-    except Exception:
-        import logging as _logging
-
-        _logging.getLogger(__name__).warning(
-            "tenant DPA seeding failed for tenant_id=%s", tenant_id, exc_info=True
         )
 
 
@@ -288,17 +261,10 @@ async def add_tenant(
             exc_info=True,
         )
 
-    # Seed the default visitor privacy notice (best-effort; lazy-seeded on read
-    # as a fallback). Covers the self-onboarding accept / partial-accept paths
-    # which both provision the tenant through add_tenant.
-    await _seed_default_privacy_notice_safe(
-        tenant.id or "", tenant.company_name, tenant.dpo_contact_email
-    )
-
-    # Seed the per-tenant DPA copy too. The super_admin may not exist yet on
-    # this path (created separately), so the contact email may fall back; the
-    # copy is rebuilt from current details on read until the tenant accepts.
-    await _seed_tenant_dpa_safe(tenant.id or "")
+    # Seed the per-tenant agreement copies (DPA + Visitor Privacy Policy).
+    # Covers the self-onboarding accept / partial-accept paths which both
+    # provision the tenant through add_tenant. Best-effort; rebuilt on read.
+    await _seed_tenant_agreements_safe(tenant.id or "")
 
     return tenant
 
@@ -517,17 +483,20 @@ async def confirm_tenant_info(
     except Exception:
         pass
 
-    # If the DPA was just accepted, freeze the tenant's per-tenant DPA copy —
+    # If the DPA was just accepted, freeze the tenant's DPA agreement copy —
     # built from the company details we just saved (incl. organization_address)
-    # — as the immutable record of what was agreed. Best-effort: a missing DPA
-    # template or transient error must never block the confirmation flow.
+    # — as the immutable record of what was agreed, and clear the acceptance
+    # gate. Best-effort: a missing master or transient error must never block
+    # the confirmation flow.
     if dpa_update:
         try:
-            from services.dpa_service import mark_tenant_dpa_accepted
+            from services.tenant_agreement_service import mark_accepted
 
-            await mark_tenant_dpa_accepted(
+            await mark_accepted(
                 tenant_id,
+                "dpa",
                 actor_id=actor_id,
+                actor_role=actor_role,
                 accepted_at=dpa_update.get("dpa_accepted_at"),
                 request_id=request_id,
             )
@@ -535,7 +504,9 @@ async def confirm_tenant_info(
             import logging as _logging
 
             _logging.getLogger(__name__).warning(
-                "DPA copy acceptance failed for tenant_id=%s", tenant_id, exc_info=True
+                "DPA agreement acceptance failed for tenant_id=%s",
+                tenant_id,
+                exc_info=True,
             )
 
     try:

@@ -222,6 +222,17 @@ new_user_added = _make_template(
 )
 
 
+discount_available = _make_template(
+    key="notif_discount_available",
+    subject_template="A discount is available for your subscription",
+    title_template="You've unlocked a discount",
+    intro_template=(
+        "Hello {recipient_name}, {message} Click below to apply it at checkout "
+        "before it expires."
+    ),
+)
+
+
 ALL_TEMPLATES = [
     incident_deadline,
     visitor_check_in,
@@ -229,4 +240,5 @@ ALL_TEMPLATES = [
     dsr_submitted,
     subscription_alert,
     new_user_added,
+    discount_available,
 ]

@@ -379,17 +379,17 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("faq_bootstrap failed at startup", exc_info=True)
 
-    # Per-tenant DPA bootstrap. Loads the Data Processing Agreement template
-    # from the legal_documents collection into the in-process cache and
-    # backfills a per-tenant DPA copy for every existing tenant. Idempotent;
-    # a no-op on environments without the DPA legal document.
+    # Tenant-agreements bootstrap. Ensures the master legal documents (DPA +
+    # Visitor Privacy Policy) exist as drafts and backfills a per-tenant
+    # agreement row for every existing tenant (carrying over legacy DPA
+    # acceptance). Idempotent; safe on every boot.
     try:
-        from services.dpa_bootstrap import run_dpa_bootstrap
+        from services.tenant_agreements.bootstrap import run_agreements_bootstrap
 
-        dpa_bootstrap_summary = await run_dpa_bootstrap()
-        logger.info("dpa_bootstrap summary: %s", dpa_bootstrap_summary)
+        agreements_bootstrap_summary = await run_agreements_bootstrap()
+        logger.info("agreements_bootstrap summary: %s", agreements_bootstrap_summary)
     except Exception:
-        logger.warning("dpa_bootstrap failed at startup", exc_info=True)
+        logger.warning("agreements_bootstrap failed at startup", exc_info=True)
 
     # Schedule retention cleanup job
     from services.retention_service import run_retention_cleanup
@@ -839,6 +839,7 @@ from api.v1.visitor_profile_route import router as v1_visitor_profile_route_rout
 from api.v1.appointment_route import router as v1_appointment_route_router
 from api.v1.host_route import router as v1_host_route_router
 from api.v1.privacy_notice_route import router as v1_privacy_notice_route_router
+from api.v1.tenant_agreement_route import router as v1_tenant_agreement_route_router
 from api.v1.dashboard_route import router as v1_dashboard_route_router
 from api.v1.super_admin_route import router as v1_super_admin_route_router
 from api.v1.data_subject_request_route import router as v1_dsr_route_router
@@ -958,6 +959,7 @@ app.include_router(v1_visitor_profile_route_router, prefix="/v1")
 app.include_router(v1_appointment_route_router, prefix="/v1")
 app.include_router(v1_host_route_router, prefix="/v1")
 app.include_router(v1_privacy_notice_route_router, prefix="/v1")
+app.include_router(v1_tenant_agreement_route_router, prefix="/v1")
 app.include_router(v1_dashboard_route_router, prefix="/v1")
 app.include_router(v1_super_admin_route_router, prefix="/v1")
 app.include_router(v1_dsr_route_router, prefix="/v1")

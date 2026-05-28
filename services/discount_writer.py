@@ -36,7 +36,46 @@ async def _discount_create(resource_id: str, data: dict[str, Any]) -> dict[str, 
     discount = DiscountCreate(**data)
     result = await add_discount(discount_data=discount, preassigned_id=resource_id)
     _enqueue_list_refresh()
+    await _fan_out_discount_notifications(result)
     return {"id": result.id, "code": result.code}
+
+
+async def _fan_out_discount_notifications(result: Any) -> None:
+    """Notify + email eligible tenants that a new discount is available.
+
+    Only active discounts are worth announcing — a discount created in a
+    disabled state shouldn't ping anyone. Fire-and-forget: never raises.
+    """
+    from schemas.discount_schema import DiscountStatus
+    from services.discount_notification_service import enqueue_discount_announcement
+
+    try:
+        if getattr(result, "status", None) != DiscountStatus.ACTIVE:
+            return
+        scope = result.scope.value if hasattr(result.scope, "value") else result.scope
+        d_type = (
+            result.discount_type.value
+            if hasattr(result.discount_type, "value")
+            else result.discount_type
+        )
+        # Hand off to the queue: this only enqueues a coordinator task, so the
+        # write commits fast even for a global discount that will reach every
+        # tenant. The coordinator paginates + fans out into bounded batches.
+        enqueue_discount_announcement(
+            discount_id=result.id or "",
+            code=result.code,
+            name=result.name,
+            scope=scope,
+            discount_type=d_type,
+            value=result.value,
+            target_tenant_id=result.target_tenant_id,
+            target_plan_ids=result.target_plan_ids,
+            valid_until=result.valid_until,
+        )
+    except Exception:
+        logger.warning(
+            "discount_writer: discount-available fan-out failed", exc_info=True
+        )
 
 
 @write_handler("discount.update", invalidates=["discounts.list"])

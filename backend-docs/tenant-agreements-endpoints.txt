@@ -1,0 +1,239 @@
+================================================================================
+TENANT AGREEMENTS — Editor (admin) + Acceptance/Display (tenant) Frontend Handoff
+================================================================================
+
+Audience:        frontend engineers (admin dashboard + tenant app + kiosk)
+Backend author:  backend
+Date:            2026-05-28
+Status:          shipped on master
+
+WHAT THIS IS
+────────────
+Two platform-managed master legal documents now govern every tenant:
+
+  • Data Processing Agreement   (key: "dpa",                     slug: data-processing-agreement)
+  • Visitor Privacy Policy      (key: "visitor_privacy_policy",  slug: visitor-privacy-policy)
+
+The APPLICATION ADMIN authors/edits/publishes these in the existing legal
+editor (/v1/legal-documents — same BlockNote editor as the website legal copy).
+The documents contain fixed [placeholder] tokens that the backend substitutes
+per tenant from the tenant's own details.
+
+Every tenant must ACCEPT the current PUBLISHED version of each document to keep
+using the service. Publishing a new version forces re-acceptance. Until a
+tenant's super_admin accepts, ALL tenant-role users are blocked from privileged
+actions with HTTP 403 AGREEMENT_ACCEPTANCE_REQUIRED. Declining is recorded but
+does NOT delete anything — the tenant simply stays blocked until they accept.
+
+The per-tenant visitor privacy notice is no longer authored by tenants — it is
+DERIVED from the Visitor Privacy Policy master (see §4). The old tenant write
+endpoints are disabled.
+
+================================================================================
+1. ADMIN — AUTHORING THE MASTERS (/v1/legal-documents/*)
+================================================================================
+
+No new admin endpoints. Use the existing legal-documents API
+(see backend-docs/legal-documents-endpoints.txt) to edit + publish the two
+master documents. They are seeded as DRAFTS automatically on first boot.
+
+1.1  Identifying an agreement document
+───────────────────────────────────────
+Every LegalDocumentOut now carries two read-only fields derived from the slug:
+
+    isTenantAgreement : bool       // true for the two masters above
+    agreementKey      : string|null  // "dpa" | "visitor_privacy_policy" | null
+
+Use them to badge the document in the list/editor and to warn the admin:
+"Publishing a new version will require ALL tenants to re-accept before they can
+continue using VisiChek."
+
+1.2  Placeholder tokens (FIXED ALLOWLIST)
+───────────────────────────────────────
+Authors insert placeholders as plain bracketed text in any paragraph/heading/
+list block. ONLY these tokens are substituted (everything else in [...] is left
+verbatim, so ordinary square brackets in legal copy are safe):
+
+    [company_name]            tenant company / legal name
+    [organization_address]    tenant organization address
+    [contact_email]           tenant main super_admin email (falls back to DPO)
+    [dpo_contact_email]       tenant DPO contact email
+    [retention_period]        e.g. "1095 days" from the tenant's retention policy
+    [country_of_hosting]      tenant data-hosting country
+    [effective_date]          reserved (currently resolves to the fallback)
+
+Tokens are case- and space-insensitive: [Company Name], [company_name] and
+[COMPANY NAME] all resolve. A token whose tenant value is unset renders as the
+literal "[To be provided]" so gaps are visible/reviewable.
+
+Editor UX suggestion: offer these tokens in an insert menu and highlight known
+[tokens] in the editor. There is NO new BlockNote block type — tokens are just
+text. To preview, call the tenant read endpoint (§2) for any tenant, or render
+"[To be provided]" for every token.
+
+Backward compatibility: the legacy verbose DPA placeholders
+([Insert Organization's representative legal name/address/email]) still resolve
+(mapped to company_name / organization_address / contact_email).
+
+1.3  Publish = force re-acceptance
+───────────────────────────────────
+POST /v1/legal-documents/{id}/publish behaves exactly as before (snapshots a new
+immutable version, bumps currentVersion). When the published doc is one of the
+two masters, the backend additionally invalidates the per-tenant acceptance
+caches so every tenant is re-prompted within ~2 minutes. Drafts are NOT enforced
+— nothing is required of tenants until the master is first published.
+
+================================================================================
+2. TENANT — VIEW + ACCEPT/DECLINE (/v1/agreements/*)
+================================================================================
+
+Auth: any tenant-role token for reads; super_admin token for accept/decline.
+These are SYNCHRONOUS (NOT queued) — accept returns 200 with the frozen copy and
+clears the gate within the same response. All /v1/agreements/* paths remain
+reachable even while the tenant is blocked.
+
+2.1  GET /v1/agreements                                    List all agreements
+───────────────────────────────────────────────────────────────────────────
+  Returns an array (one per agreement) of the resolved copy + acceptance state:
+    [ TenantAgreement, ... ]   (see §5)
+
+2.2  GET /v1/agreements/pending                            What must be accepted
+───────────────────────────────────────────────────────────────────────────
+  { "pending": ["dpa", ...], "mustAccept": true|false }
+  Use on login to decide whether to route into the acceptance screen.
+
+2.3  GET /v1/agreements/{key}                              One resolved agreement
+───────────────────────────────────────────────────────────────────────────
+  key ∈ { "dpa", "visitor_privacy_policy" }. Returns one TenantAgreement (§5)
+  with the BlockNote `body` fully substituted for this tenant. 404 if the key is
+  unknown or the master is not configured yet.
+
+2.4  POST /v1/agreements/{key}/accept                      Accept (super_admin)
+───────────────────────────────────────────────────────────────────────────
+  No body. Freezes the resolved copy as the immutable record of what was agreed,
+  stamps acceptedAt/acceptedBy, and clears the gate. Returns 200 + TenantAgreement.
+  404 if the master is not configured.
+
+2.5  POST /v1/agreements/{key}/decline                    Decline (super_admin)
+───────────────────────────────────────────────────────────────────────────
+  No body. Records the decline. The tenant STAYS blocked (no deletion). Returns:
+    { "declined": true, "stillBlocked": true }
+
+================================================================================
+3. THE ACCEPTANCE GATE (how the 403 behaves)  — INTENTIONALLY NARROW
+================================================================================
+
+The gate does NOT lock the tenant out of the app. Login, the acceptance screen,
+profile/“me”, settings, sessions, notifications, dashboards and ALL reads work
+normally while an agreement is pending. The gate blocks ONLY the core
+operational WRITES — the day-to-day "using the service" actions — until the
+tenant accepts.
+
+BLOCKED while pending (only POST/PUT/PATCH/DELETE on these surfaces):
+  /v1/appointments*          create / manage appointments
+  /v1/visitors*              visitor records
+  /v1/visitor-profiles*      visitor identity profiles
+  /v1/visitor-verification*  ID verification
+  /v1/checkins*              check-in approval / lifecycle
+  /v1/checkin-configs*       kiosk config + authenticated check-in submit
+  /v1/badges*                badge issuance
+
+NOT blocked (always reachable):
+  • Login / token refresh (never pass through the gate at all)
+  • GET/reads on EVERYTHING, including the operational surfaces above
+  • /v1/agreements/*  (view + accept/decline)
+  • /v1/auth/*, /v1/account, /v1/user-settings, /v1/settings, /v1/sessions*
+  • notifications, profile, branding, departments/branches/hosts, billing, etc.
+
+A blocked write returns:
+
+  HTTP 403
+  {
+    "success": false,
+    "message": "Your organization must accept the latest platform agreements before running visitor operations ...",
+    "code": "AUTH_PERMISSION_DENIED",
+    "details": {
+      "code": "AGREEMENT_ACCEPTANCE_REQUIRED",
+      "pending": ["dpa", "visitor_privacy_policy"],
+      "allowed_endpoints": ["/v1/agreements", "/v1/agreements/{key}/accept"]
+    }
+  }
+
+Recommended FE handling:
+  • On login, call GET /v1/agreements/pending. If mustAccept is true, surface a
+    banner / modal prompting acceptance (and for the super_admin, the accept
+    action). You do NOT need to hard-redirect — the rest of the app is usable.
+  • Also detect details.code === "AGREEMENT_ACCEPTANCE_REQUIRED" on any 403 from
+    an operational write (e.g. creating an appointment / submitting a visitor)
+    and prompt acceptance there too.
+  • Only the super_admin can accept. For other roles, show a "waiting for your
+    administrator to accept updated agreements" message on the blocked action.
+
+Propagation: after publishing a new master version, tenants are re-prompted
+within ~2 minutes (cache TTL). Acceptance clears the gate immediately.
+
+NOTE on the public kiosk: the public visitor-submission endpoints
+(/v1/public/register/*, /v1/public/tenants/*/submit) are anonymous (no tenant
+token) and are NOT gated — a visitor at the kiosk is never blocked by the
+tenant's pending agreement. Staff-driven (authenticated) check-in submission via
+/v1/checkin-configs/* and /v1/checkins/* IS gated.
+
+================================================================================
+4. KIOSK VISITOR NOTICE IS NOW DERIVED (tenant authoring DISABLED)
+================================================================================
+
+The visitor privacy notice shown at check-in is now derived from the Visitor
+Privacy Policy master (templated per tenant). Tenants can no longer author it.
+
+  • GET /v1/privacy-notices/active                       → derived notice (unchanged shape)
+  • GET /v1/public/register/{tenantId}/privacy-notice    → derived notice (kiosk, unchanged shape)
+  • GET /v1/privacy-notices                              → still lists (read-only)
+  • POST /v1/privacy-notices    → 409 { details.code: "PRIVACY_NOTICE_MANAGED_BY_PLATFORM" }
+  • PATCH /v1/privacy-notices/{id} → 409 (same)
+
+The kiosk notice's `versionId` now mirrors the master's published version
+number (a stringified int, e.g. "2"). Visitor consent recording is UNCHANGED —
+keep sending privacyNoticeId / privacyNoticeVersionId on submit; when the master
+is republished the versionId changes so consent records still pin the exact
+text the visitor saw. Remove any tenant-facing "edit visitor privacy notice" UI.
+
+================================================================================
+5. RESPONSE SHAPE — TenantAgreement (camelCase on the wire)
+================================================================================
+
+  id                string
+  tenantId          string
+  agreementKey      "dpa" | "visitor_privacy_policy"
+  masterSlug        string
+  version           int           // master version this copy was built from
+  title             string        // placeholders substituted
+  summary           string | null
+  fullText          string | null // flattened plain-text projection
+  body              BlockNote block[]   // substituted, ready to render
+  accepted          bool
+  acceptedAt        int | null    // unix seconds
+  acceptedBy        string | null // super_admin user id
+  declinedAt        int | null    // unix seconds (last decline)
+  createdAt         int           // unix seconds
+  updatedAt         int           // unix seconds
+
+`body` is the same BlockNote dialect as the legal/blog editors (paragraph,
+heading, bulletListItem, numberedListItem, quote, etc.), with inline
+{ type:"text", text, styles } / { type:"link", href, content } nodes.
+
+================================================================================
+6. MIGRATION NOTES (existing behaviour preserved)
+================================================================================
+
+• The old per-tenant DPA flow is fully migrated onto this framework. Existing
+  tenants who already accepted the DPA are NOT re-prompted (their acceptance is
+  carried over on boot).
+• GET /v1/onboarding/me/dpa still returns the tenant's DPA (now a
+  TenantAgreement shape). POST /v1/onboarding/me/tenant-confirmation with
+  dpaAccepted=true still records DPA acceptance and now also clears the gate —
+  this remains a valid way to accept the DPA during first-login onboarding (the
+  /v1/agreements/dpa/accept endpoint is the general path).
+
+================================================================================
+End of file.
+================================================================================

@@ -265,6 +265,13 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
         {},
     ),
     ("privacy_notices", [("tenant_id", ASCENDING), ("version", ASCENDING)], {}),
+    # Tenant agreements (DPA + Visitor Privacy Policy): one row per
+    # (tenant, agreement). Unique compound backs the upsert + the gate lookup.
+    (
+        "tenant_agreements",
+        [("tenant_id", ASCENDING), ("agreement_key", ASCENDING)],
+        {"unique": True},
+    ),
     ("sub_processors", [("tenant_id", ASCENDING)], {}),
     # ── settings / sessions / notifications ──────────────────────────
     (

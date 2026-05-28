@@ -23,11 +23,11 @@ load_dotenv()
 
 
 async def main() -> None:
-    from services.dpa_backfill import backfill_tenant_dpa
+    from services.tenant_agreements.bootstrap import backfill_tenant_agreements
 
     dry_run = "--dry-run" in sys.argv
-    print(f"Backfilling per-tenant DPA copies (dry_run={dry_run}) ...")
-    summary = await backfill_tenant_dpa(dry_run=dry_run)
+    print(f"Backfilling per-tenant agreement copies (dry_run={dry_run}) ...")
+    summary = await backfill_tenant_agreements(dry_run=dry_run)
     print(json.dumps(summary, indent=2, default=str))
     print("Dry run complete — no changes written." if dry_run else "Done.")
 

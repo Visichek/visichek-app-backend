@@ -137,9 +137,55 @@ async def seed_default_privacy_notice(
     return await add_privacy_notice(notice_data=notice)
 
 
+async def _derive_active_notice_from_master(
+    tenant_id: str,
+) -> Optional[PrivacyNoticeOut]:
+    """Build the active visitor notice from the platform Visitor Privacy Policy
+    master, with the tenant's ``[placeholder]`` tokens substituted.
+
+    This is the source of truth now — the kiosk notice is no longer authored by
+    the tenant. ``version_code`` mirrors the master's published version (an int)
+    so visitor consent records still pin the exact version they agreed to.
+    Returns ``None`` when no master is configured (caller falls back).
+    """
+    try:
+        from services.tenant_agreement_service import retrieve_or_build
+
+        agreement = await retrieve_or_build(tenant_id, "visitor_privacy_policy")
+    except Exception:
+        return None
+    if agreement is None:
+        return None
+    return PrivacyNoticeOut.model_validate(
+        {
+            "_id": agreement.id,
+            "tenant_id": tenant_id,
+            "version_code": str(agreement.version),
+            "title": agreement.title,
+            "summary": agreement.summary,
+            "full_text": agreement.full_text,
+            "body": agreement.body,
+            "display_mode": NoticeDisplayMode.ACTIVE_CONSENT,
+            "is_active": True,
+            "effective_date": agreement.accepted_at or agreement.created_at,
+            "created_at": agreement.created_at,
+            "updated_at": agreement.updated_at,
+        }
+    )
+
+
 async def retrieve_active_notice(
     tenant_id: str, *, seed_if_missing: bool = False
 ) -> PrivacyNoticeOut:
+    # The active visitor notice is derived from the platform Visitor Privacy
+    # Policy master (tenants no longer author it). Fall back to any legacy
+    # tenant-authored / seeded notice so the kiosk never breaks in an
+    # environment where the master is not configured yet.
+    if ObjectId.is_valid(tenant_id):
+        derived = await _derive_active_notice_from_master(tenant_id)
+        if derived is not None:
+            return derived
+
     result = await get_active_notice_for_tenant(tenant_id)
     if not result and seed_if_missing and ObjectId.is_valid(tenant_id):
         seeded = await seed_default_privacy_notice(tenant_id)

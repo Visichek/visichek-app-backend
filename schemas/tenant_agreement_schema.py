@@ -1,42 +1,51 @@
-"""Per-tenant Data Processing Agreement record.
+"""Per-tenant agreement acceptance record.
 
-Each tenant gets its own DPA copy (stored in ``tenant_dpa_agreements``) built
-from the committed template with the Organization party block filled in from
-the tenant's details. Before acceptance the copy is refreshed from the current
-tenant fields on read; on acceptance the resolved body is frozen as the
-immutable record of exactly what the tenant agreed to.
+One row per ``(tenant_id, agreement_key)`` in ``tenant_agreements``. While
+unaccepted (or accepted at an older master version) the copy is rebuilt from
+the current master template + the tenant's current details on every read; on
+acceptance the resolved ``body`` is frozen as the immutable record of exactly
+what the tenant agreed to and at which master ``version``.
+
+This unified store replaces the bespoke ``tenant_dpa_agreements`` collection —
+the DPA is now one ``agreement_key`` among others.
 """
 
-from schemas.imports import *
+from schemas.imports import *  # noqa: F401,F403  (BaseModel, ObjectId, Optional, ...)
 from typing import Any, Dict, List
 from pydantic import Field
 import time
 
 
-class DpaAgreementBase(BaseModel):
+class TenantAgreementBase(BaseModel):
     tenant_id: str
-    # DPA text version in force (mirrors services.tenant_service.CURRENT_DPA_VERSION).
-    version: str
+    # Stable agreement identifier from services.tenant_agreements.config.
+    agreement_key: str
+    # The reserved legal-document slug the master came from.
+    master_slug: str
+    # Master ``current_version`` (int) this copy was built from. Re-acceptance
+    # is required when the master is published past this number.
+    version: int = 0
     title: str
     summary: Optional[str] = None
     # Flattened plain-text projection of ``body`` for non-rich consumers.
     full_text: Optional[str] = None
-    # The canonical BlockNote content blocks ({id, type, props, content, children}).
+    # Canonical BlockNote content ({id, type, props, content, children}) with
+    # every allowlisted [placeholder] substituted from the tenant's details.
     body: List[Dict[str, Any]] = Field(default_factory=list)
-    # Acceptance state. ``accepted`` mirrors tenant.dpa_accepted but scoped to
-    # this exact resolved copy + version.
     accepted: bool = False
     accepted_at: Optional[int] = None
     accepted_by: Optional[str] = None
+    # Last time the tenant explicitly declined this version (gate stays active).
+    declined_at: Optional[int] = None
 
 
-class DpaAgreementCreate(DpaAgreementBase):
+class TenantAgreementCreate(TenantAgreementBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
-class DpaAgreementUpdate(BaseModel):
-    version: Optional[str] = None
+class TenantAgreementUpdate(BaseModel):
+    version: Optional[int] = None
     title: Optional[str] = None
     summary: Optional[str] = None
     full_text: Optional[str] = None
@@ -44,13 +53,16 @@ class DpaAgreementUpdate(BaseModel):
     accepted: Optional[bool] = None
     accepted_at: Optional[int] = None
     accepted_by: Optional[str] = None
+    declined_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
-class DpaAgreementOut(BaseModel):
+class TenantAgreementOut(BaseModel):
     id: Optional[str] = Field(default=None, alias="_id")
     tenant_id: str
-    version: str
+    agreement_key: str
+    master_slug: Optional[str] = None
+    version: int = 0
     title: str
     summary: Optional[str] = None
     full_text: Optional[str] = None
@@ -58,7 +70,8 @@ class DpaAgreementOut(BaseModel):
     accepted: bool = False
     accepted_at: Optional[int] = None
     accepted_by: Optional[str] = None
-    # Exposed on the wire as createdAt / updatedAt (the frontend contract).
+    declined_at: Optional[int] = None
+    # Exposed on the wire as createdAt / updatedAt (frontend contract).
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 

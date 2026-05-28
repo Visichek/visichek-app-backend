@@ -15,7 +15,6 @@ from repositories.visit_session_repo import (
 from repositories.tenant_repo import get_tenant
 from repositories.department_repo import get_department, get_departments
 from repositories.appointment_repo import get_appointment
-from repositories.privacy_notice_repo import get_active_notice_for_tenant
 from repositories.visitor_profile_repo import (
     get_visitor_profile,
     get_visitor_profile_by_email,
@@ -331,15 +330,16 @@ async def get_public_privacy_notice(tenant_id: str) -> PublicPrivacyNoticeOut:
     if not ObjectId.is_valid(tenant_id):
         raise HTTPException(status_code=400, detail="Invalid tenant ID")
 
-    notice = await get_active_notice_for_tenant(tenant_id)
-    if not notice:
-        # Seed-on-read: ensure the kiosk always has a usable notice (A.4 / A.2).
-        try:
-            from services.privacy_notice_service import seed_default_privacy_notice
+    # The active notice is derived from the platform Visitor Privacy Policy
+    # master (tenants no longer author it); retrieve_active_notice falls back to
+    # any legacy seeded notice so the kiosk always has a usable notice.
+    notice = None
+    try:
+        from services.privacy_notice_service import retrieve_active_notice
 
-            notice = await seed_default_privacy_notice(tenant_id)
-        except Exception:
-            notice = None
+        notice = await retrieve_active_notice(tenant_id, seed_if_missing=True)
+    except Exception:
+        notice = None
 
     if not notice:
         return PublicPrivacyNoticeOut(

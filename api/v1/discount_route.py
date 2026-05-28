@@ -188,46 +188,6 @@ async def get_discount_by_code_endpoint(
     )
 
 
-@router.get("/{discount_id}")
-@document_response(
-    message="Discount retrieved successfully",
-    summary="Get discount",
-)
-async def get_discount_endpoint(
-    discount_id: str,
-    admin=Depends(check_admin_account_status_and_permissions),
-) -> Any:
-    return await get_or_compute_entity(
-        entity_type="discount",
-        entity_id=discount_id,
-        loader=lambda: retrieve_discount_by_id(discount_id),
-    )
-
-
-@router.put("/{discount_id}")
-@document_response(
-    message="Discount update queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    description="Enqueue a discount update.",
-    summary="Update discount (async)",
-)
-async def update_discount_endpoint(
-    discount_id: str,
-    payload: DiscountUpdate,
-    request: Request,
-    admin=Depends(check_admin_account_status_and_permissions),
-):
-    return await enqueue_write(
-        writer_key="discount.update",
-        payload=payload.model_dump(exclude_none=True),
-        resource_type="discount",
-        resource_id=discount_id,
-        actor_id=getattr(admin, "id", None),
-        actor_role="admin",
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
 @router.post("/validate")
 @document_response(
     message="Discount code is valid",
@@ -270,6 +230,46 @@ async def preview_discount_endpoint(
         tenant_id=tenant_id,
         plan_id=plan_id,
         billing_cycle=billing_cycle,
+    )
+
+
+@router.get("/{discount_id}")
+@document_response(
+    message="Discount retrieved successfully",
+    summary="Get discount",
+)
+async def get_discount_endpoint(
+    discount_id: str,
+    admin=Depends(check_admin_account_status_and_permissions),
+) -> Any:
+    return await get_or_compute_entity(
+        entity_type="discount",
+        entity_id=discount_id,
+        loader=lambda: retrieve_discount_by_id(discount_id),
+    )
+
+
+@router.put("/{discount_id}")
+@document_response(
+    message="Discount update queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description="Enqueue a discount update.",
+    summary="Update discount (async)",
+)
+async def update_discount_endpoint(
+    discount_id: str,
+    payload: DiscountUpdate,
+    request: Request,
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    return await enqueue_write(
+        writer_key="discount.update",
+        payload=payload.model_dump(exclude_none=True),
+        resource_type="discount",
+        resource_id=discount_id,
+        actor_id=getattr(admin, "id", None),
+        actor_role="admin",
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
