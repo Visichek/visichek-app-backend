@@ -744,9 +744,7 @@ async def get_public_badge_pass(token: str) -> PublicBadgePassOut:
     # Map the checkin's lifecycle state onto VisitStatus so the
     # frontend can drive its existing status pill off a single enum.
     state_value = (
-        checkin.state.value
-        if hasattr(checkin.state, "value")
-        else str(checkin.state)
+        checkin.state.value if hasattr(checkin.state, "value") else str(checkin.state)
     )
     state_to_visit_status = {
         "approved": VisitStatus.CHECKED_IN.value,
@@ -754,9 +752,7 @@ async def get_public_badge_pass(token: str) -> PublicBadgePassOut:
         "rejected": VisitStatus.DENIED.value,
         "pending_approval": VisitStatus.PENDING_VERIFICATION.value,
     }
-    status_value = state_to_visit_status.get(
-        state_value, VisitStatus.REGISTERED.value
-    )
+    status_value = state_to_visit_status.get(state_value, VisitStatus.REGISTERED.value)
 
     tenant = await _resolve_badge_pass_tenant(badge.tenant_id)
 

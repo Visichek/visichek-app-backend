@@ -217,9 +217,7 @@ class TestPublicEndpoints:
             assert response.status_code in (400, 404)
 
     @pytest.mark.asyncio
-    async def test_public_badge_pass_returns_pass(
-        self, cleanup_dependency_overrides
-    ):
+    async def test_public_badge_pass_returns_pass(self, cleanup_dependency_overrides):
         token = "bqt_test_123"
         resp = PublicBadgePassOut(
             token=token,
@@ -256,10 +254,7 @@ class TestPublicEndpoints:
                 payload.get("visitorName") == "Nathaniel Uriri"
                 or payload.get("visitor_name") == "Nathaniel Uriri"
             )
-            assert (
-                payload.get("token") == token
-                or payload.get("Token") == token
-            )
+            assert payload.get("token") == token or payload.get("Token") == token
             tenant = payload.get("tenant") or {}
             assert (
                 tenant.get("brandingEnabled") is True
@@ -299,9 +294,7 @@ class TestPublicEndpoints:
             token=token,
             visitor_name="Jane Visitor",
             status="checked_in",
-            tenant=PublicBadgePassTenant(
-                company_name="Acme", branding_enabled=False
-            ),
+            tenant=PublicBadgePassTenant(company_name="Acme", branding_enabled=False),
         )
         with patch(
             "api.v1.public_registration_route.get_public_badge_pass",
