@@ -6,6 +6,7 @@ from typing import Optional
 from bson import ObjectId
 from fastapi import HTTPException
 
+from core.errors import resource_not_found
 from repositories.visit_session_repo import (
     count_visit_sessions,
     create_visit_session,
@@ -25,6 +26,8 @@ from repositories.system_user_repo import get_system_user
 from repositories.tenant_settings_repo import get_tenant_settings
 from schemas.public_registration_schema import (
     PublicAppointmentLookupOut,
+    PublicBadgePassOut,
+    PublicBadgePassTenant,
     PublicCheckoutResponse,
     PublicDepartmentOut,
     PublicFinalizeRequest,
@@ -621,4 +624,151 @@ async def finalize_public_registration(
         receptionist_id=receptionist.id or request.receptionist_code,
         tenant_id=tenant_id,
         badge_format="A7",
+    )
+
+
+async def _resolve_badge_pass_tenant(tenant_id: str) -> PublicBadgePassTenant:
+    """Build the tenant sub-object for the public badge pass.
+
+    Honours the ``custom_branding`` plan flag: when off, the tenant logo
+    is suppressed even if one is stored — the print template falls back
+    to the VisiChek mark.
+    """
+    company_name = "VisiChek"
+    if ObjectId.is_valid(tenant_id):
+        tenant = await get_tenant({"_id": ObjectId(tenant_id)})
+        if tenant and getattr(tenant, "company_name", None):
+            company_name = tenant.company_name
+
+    branding_enabled = False
+    try:
+        from services.plan_cache_service import resolve_tenant_plan
+
+        resolved = await resolve_tenant_plan(tenant_id)
+        if resolved:
+            branding_enabled = bool(resolved.get("custom_branding"))
+    except Exception:
+        branding_enabled = False
+
+    logo_url: Optional[str] = None
+    if branding_enabled:
+        try:
+            from services.branding_service import retrieve_branding_by_tenant
+
+            branding = await retrieve_branding_by_tenant(tenant_id)
+            logo_url = getattr(branding, "logo_url", None) or None
+        except Exception:
+            logo_url = None
+
+    return PublicBadgePassTenant(
+        company_name=company_name,
+        logo_url=logo_url,
+        branding_enabled=branding_enabled,
+    )
+
+
+async def get_public_badge_pass(token: str) -> PublicBadgePassOut:
+    """Resolve a visitor badge token into the printable badge pass.
+
+    Public, unauthenticated. The token itself is the only credential —
+    knowing the token is sufficient to render the badge. The payload is
+    deliberately limited to the non-sensitive fields the printed badge
+    shows: no email, phone, ID number, or portrait.
+
+    Accepts two token shapes:
+
+    * Signed visit-session ``badge_qr_token`` (HMAC over the session id),
+      issued by ``POST /v1/visitors/sessions/{id}/confirm`` and used by
+      the kiosk / public flow.
+    * The random ``qr_code_value`` on the ``badges`` collection issued by
+      the staff-driven check-in approval flow (``confirm_checkin``). This
+      is what the "badge is ready" email link carries.
+    """
+    if not token:
+        raise resource_not_found(resource="Badge", resource_id=token)
+
+    # 1) Try the signed visit-session token first.
+    session_id = verify_badge_token(token)
+    if session_id and ObjectId.is_valid(session_id):
+        session = await get_visit_session({"_id": ObjectId(session_id)})
+        if session:
+            tenant = await _resolve_badge_pass_tenant(session.tenant_id)
+            status_value = (
+                session.status.value
+                if hasattr(session.status, "value")
+                else str(session.status)
+            )
+            return PublicBadgePassOut(
+                token=token,
+                visitor_name=getattr(session, "visitor_name_snapshot", None)
+                or "Visitor",
+                company=getattr(session, "company_snapshot", None),
+                purpose=getattr(session, "purpose", None),
+                host_name=getattr(session, "host_name_snapshot", None),
+                department_name=getattr(session, "department_name_snapshot", None),
+                status=status_value,
+                issued_at=getattr(session, "badge_generation_time", None)
+                or getattr(session, "check_in_time", None),
+                expires_at=getattr(session, "badge_expiry", None),
+                tenant=tenant,
+            )
+
+    # 2) Fall back to looking the token up as a ``badges.qr_code_value``
+    #    (the staff-approved check-in flow). The email link uses this
+    #    token shape, so resolving it here is what makes the "badge is
+    #    ready" button land on a real badge.
+    from repositories.badge_repo import get_badge_by_qr_value
+    from repositories.checkin_repo import get_checkin
+    from repositories.visitor_repo import get_visitor
+
+    badge = await get_badge_by_qr_value(token)
+    if not badge:
+        raise resource_not_found(resource="Badge", resource_id=token)
+
+    if badge.revoked_at is not None:
+        raise resource_not_found(resource="Badge", resource_id=token)
+
+    checkin = await get_checkin({"_id": badge.checkin_id})
+    if not checkin:
+        raise resource_not_found(resource="Badge", resource_id=token)
+
+    visitor = await get_visitor({"_id": checkin.visitor_id})
+    visitor_name = (
+        getattr(visitor, "full_name", None) if visitor else None
+    ) or "Visitor"
+    company = getattr(visitor, "company", None) if visitor else None
+    purpose_value = None
+    if getattr(checkin, "purpose", None):
+        purpose_value = getattr(checkin.purpose, "purpose", None)
+
+    # Map the checkin's lifecycle state onto VisitStatus so the
+    # frontend can drive its existing status pill off a single enum.
+    state_value = (
+        checkin.state.value
+        if hasattr(checkin.state, "value")
+        else str(checkin.state)
+    )
+    state_to_visit_status = {
+        "approved": VisitStatus.CHECKED_IN.value,
+        "checked_out": VisitStatus.CHECKED_OUT.value,
+        "rejected": VisitStatus.DENIED.value,
+        "pending_approval": VisitStatus.PENDING_VERIFICATION.value,
+    }
+    status_value = state_to_visit_status.get(
+        state_value, VisitStatus.REGISTERED.value
+    )
+
+    tenant = await _resolve_badge_pass_tenant(badge.tenant_id)
+
+    return PublicBadgePassOut(
+        token=token,
+        visitor_name=visitor_name,
+        company=company,
+        purpose=purpose_value,
+        host_name=None,
+        department_name=None,
+        status=status_value,
+        issued_at=badge.issued_at,
+        expires_at=badge.expires_at,
+        tenant=tenant,
     )

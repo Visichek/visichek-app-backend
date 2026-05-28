@@ -31,6 +31,7 @@ from services.public_registration_service import (
     check_returning_visitor_status,
     checkout_visitor_public,
     finalize_public_registration,
+    get_public_badge_pass,
     get_public_privacy_notice,
     get_public_tenant_info,
     list_public_departments,
@@ -551,3 +552,37 @@ async def finalize_registration_public_endpoint(
     tenant_id: str, request: PublicFinalizeRequest
 ):
     return await finalize_public_registration(tenant_id=tenant_id, request=request)
+
+
+@router.get("/badge/{token}")
+@document_response(
+    message="Printable badge pass retrieved",
+    description=(
+        "Resolve a visitor's signed ``badge_qr_token`` into the data needed "
+        "to render a printable A6/A7 visitor badge. Unauthenticated — the "
+        "token itself is the only credential (treat it as a bearer "
+        "capability). Returns only non-sensitive fields: no email, phone, "
+        "ID number, or portrait. The same token is minted at check-in "
+        "confirm and accepted by ``POST /v1/public/checkout``."
+    ),
+    summary="Public printable visitor badge (by token)",
+    success_example={
+        "token": "bqt_9f3c…",
+        "visitor_name": "Nathaniel Uriri",
+        "company": "Introgroup Technologies",
+        "purpose": "Quarterly partnership review",
+        "host_name": "Ada Receptionist",
+        "department_name": "Operations",
+        "status": "checked_in",
+        "issued_at": 1748419200,
+        "expires_at": 1748448000,
+        "tenant": {
+            "company_name": "Doux Finance",
+            "logo_url": "https://cdn.example.com/tenants/doux/logo.png",
+            "branding_enabled": True,
+        },
+    },
+    response_codes={404: "Badge not found / token invalid or expired"},
+)
+async def public_badge_pass_endpoint(token: str):
+    return await get_public_badge_pass(token)

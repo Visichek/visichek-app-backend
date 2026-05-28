@@ -149,9 +149,10 @@ class TestSecurityPosture:
 
 
 class _FakeRequest:
-    def __init__(self, path: str = "/v1/some/protected"):
+    def __init__(self, path: str = "/v1/some/protected", method: str = "GET"):
         self.scope: dict = {}
         self.url = type("U", (), {"path": path})()
+        self.method = method
 
 
 def _principal(role: str = "receptionist"):

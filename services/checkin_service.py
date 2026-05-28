@@ -1513,6 +1513,22 @@ async def _send_visitor_badge_email_if_enabled(
     badge_pdf_object_key = getattr(badge, "badge_pdf_object_key", None)
     badge_url = try_resolve_download_url(badge_pdf_object_key) or ""
 
+    # Public printable-badge page URL — the frontend hosts
+    # ``/badge/{token}`` and resolves the token via
+    # ``GET /v1/public/badge/{token}``. The token here is the badge's
+    # ``qr_code_value`` (random opaque value minted by this approval
+    # flow); the public endpoint accepts both that and the kiosk-flow
+    # signed token. Empty string when ``APP_BASE_URL`` is unset — the
+    # template hides the button rather than emitting a broken link.
+    from core.settings import get_settings
+
+    badge_qr_token = getattr(badge, "qr_code_value", "") or ""
+    badge_page_url = ""
+    if badge_qr_token:
+        base = (get_settings().app_base_url or "").rstrip("/")
+        if base:
+            badge_page_url = f"{base}/badge/{badge_qr_token}"
+
     expires_at_iso = ""
     if getattr(badge, "expires_at", None):
         from datetime import datetime, timezone
@@ -1541,7 +1557,8 @@ async def _send_visitor_badge_email_if_enabled(
                 "host_name": "",  # TODO: resolve from checkin context
                 "department_name": "",  # TODO: resolve from checkin context
                 "badge_url": badge_url,
-                "badge_qr_token": getattr(badge, "qr_code_value", "") or "",
+                "badge_page_url": badge_page_url,
+                "badge_qr_token": badge_qr_token,
                 "expires_at_formatted": expires_at_iso,
                 "checkin_id": checkin_id,
             },

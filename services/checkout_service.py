@@ -17,7 +17,7 @@ import uuid
 from typing import List, Optional, Tuple
 
 from bson import ObjectId
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 
 from core.errors import AppException, ErrorCode, resource_not_found
 from core.payments import PaymentIntentRequest, PaymentManager
@@ -61,6 +61,44 @@ logger = logging.getLogger(__name__)
 
 # Provider selection order when no preferred provider is supplied.
 _PROVIDER_PREFERENCE: Tuple[str, ...] = ("stripe", "flutterwave", "paystack", "app")
+
+
+# ---------------------------------------------------------------------------
+# Checkout URL resolver
+# ---------------------------------------------------------------------------
+
+
+def resolve_full_checkout_url(
+    url: Optional[str], request: Optional[Request] = None
+) -> str:
+    """Return an absolute URL the frontend can open directly.
+
+    Provider-hosted URLs (Stripe / Flutterwave / Paystack) are already
+    absolute and pass through unchanged. The app-mode simulator stores a
+    relative path when ``APP_BASE_URL`` is unset; in that case we prepend
+    the configured base — or fall back to the incoming request's host so
+    the response is never a bare path.
+    """
+    if not url or url.startswith(("http://", "https://")):
+        return url or ""
+    base = (get_settings().app_base_url or "").rstrip("/")
+    if not base and request is not None:
+        base = str(request.base_url).rstrip("/")
+    if not base:
+        return url
+    return f"{base}/{url.lstrip('/')}"
+
+
+def with_full_checkout_url(
+    session: CheckoutSessionOut, request: Optional[Request] = None
+) -> CheckoutSessionOut:
+    """Return a copy of ``session`` with ``checkout_url`` made absolute."""
+    if not session.checkout_url:
+        return session
+    resolved = resolve_full_checkout_url(session.checkout_url, request)
+    if resolved == session.checkout_url:
+        return session
+    return session.model_copy(update={"checkout_url": resolved})
 
 
 # ---------------------------------------------------------------------------

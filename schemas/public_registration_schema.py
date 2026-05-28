@@ -160,6 +160,31 @@ class PublicVisitorStatusOut(BaseModel):
     id_verified_recently: bool = False
 
 
+class PublicBadgePassTenant(BaseModel):
+    """Tenant sub-object on the public printable badge pass."""
+
+    company_name: str
+    logo_url: Optional[str] = None
+    branding_enabled: bool = False
+
+
+class PublicBadgePassOut(BaseModel):
+    """Public printable visitor badge — reachable by anyone holding the
+    visitor's ``badge_qr_token``. Carries only the non-sensitive fields the
+    badge prints (no email, phone, ID number, or portrait)."""
+
+    token: str
+    visitor_name: str
+    company: Optional[str] = None
+    purpose: Optional[str] = None
+    host_name: Optional[str] = None
+    department_name: Optional[str] = None
+    status: str
+    issued_at: Optional[int] = None
+    expires_at: Optional[int] = None
+    tenant: PublicBadgePassTenant
+
+
 class PublicReturningVisitorSubmitRequest(BaseModel):
     """Minimal submit body for a recognised returning visitor.
 

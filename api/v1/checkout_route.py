@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from core.errors import auth_permission_denied
 from core.queue.entity_cache import get_or_compute_entity
@@ -32,6 +32,8 @@ from services.checkout_service import (
     create_checkout_session,
     get_tenant_checkout,
     list_tenant_checkouts,
+    resolve_full_checkout_url,
+    with_full_checkout_url,
 )
 from services.paystack_billing_service import initiate_trial_card_capture
 
@@ -58,6 +60,7 @@ def _require_tenant_scope(principal: AuthPrincipal) -> str:
 )
 async def create_checkout_endpoint(
     payload: CheckoutCreateRequest,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ) -> CheckoutSessionOut:
     tenant_id = _require_tenant_scope(principal)
@@ -69,7 +72,7 @@ async def create_checkout_endpoint(
         else None
     )
     email = getattr(su, "email", None) if su else None
-    return await create_checkout_session(
+    session = await create_checkout_session(
         tenant_id=tenant_id,
         created_by_user_id=principal.user_id,
         plan_id=payload.plan_id,
@@ -81,6 +84,7 @@ async def create_checkout_endpoint(
         metadata=payload.metadata,
         customer_email=email,
     )
+    return with_full_checkout_url(session, request)
 
 
 @router.post("/trial-card-capture")
@@ -98,6 +102,7 @@ async def create_checkout_endpoint(
 )
 async def trial_card_capture_endpoint(
     payload: TrialCardCaptureRequest,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ) -> TrialCardCaptureOut:
     tenant_id = _require_tenant_scope(principal)
@@ -117,6 +122,9 @@ async def trial_card_capture_endpoint(
         email=email,
         redirect_url=payload.redirect_url,
     )
+    result["authorization_url"] = resolve_full_checkout_url(
+        result.get("authorization_url"), request
+    )
     return TrialCardCaptureOut(**result)
 
 
@@ -132,6 +140,7 @@ async def trial_card_capture_endpoint(
     include_meta=True,
 )
 async def list_checkout_sessions_endpoint(
+    request: Request,
     status_filter: Optional[CheckoutStatus] = Query(None, alias="status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
@@ -145,7 +154,7 @@ async def list_checkout_sessions_endpoint(
         limit=limit,
     )
     return {
-        "items": items,
+        "items": [with_full_checkout_url(item, request) for item in items],
         "meta": {"total": total, "skip": skip, "limit": limit},
     }
 
@@ -158,16 +167,18 @@ async def list_checkout_sessions_endpoint(
 )
 async def get_checkout_endpoint(
     checkout_id: str,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ):
     tenant_id = _require_tenant_scope(principal)
-    return await get_or_compute_entity(
+    session = await get_or_compute_entity(
         entity_type="checkout_session",
         entity_id=checkout_id,
         loader=lambda: get_tenant_checkout(
             tenant_id=tenant_id, checkout_id=checkout_id
         ),
     )
+    return with_full_checkout_url(session, request)
 
 
 @router.post("/sessions/{checkout_id}/cancel")
@@ -182,11 +193,13 @@ async def get_checkout_endpoint(
 )
 async def cancel_checkout_endpoint(
     checkout_id: str,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_super_admin_token),
 ) -> CheckoutSessionOut:
     tenant_id = _require_tenant_scope(principal)
-    return await cancel_checkout(
+    session = await cancel_checkout(
         tenant_id=tenant_id,
         checkout_id=checkout_id,
         cancelled_by_user_id=principal.user_id,
     )
+    return with_full_checkout_url(session, request)
