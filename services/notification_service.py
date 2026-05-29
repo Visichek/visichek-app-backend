@@ -131,7 +131,80 @@ async def send_notification(
                 exc_info=True,
             )
 
+    # Push fan-out: deliver to the user's registered devices via the
+    # configured push provider. Gated by the user's push preferences and
+    # always best-effort — the in-app notification has already landed.
+    try:
+        await _maybe_dispatch_push(
+            notification=notification,
+            user_id=user_id,
+            user_type=user_type,
+            preference_flag=preference_flag,
+            title=title,
+            body=body,
+            link=link,
+        )
+    except Exception:
+        logger.warning(
+            "send_notification: push fan-out failed for user_id=%s",
+            user_id,
+            exc_info=True,
+        )
+
     return notification
+
+
+async def _maybe_dispatch_push(
+    *,
+    notification: NotificationOut,
+    user_id: str,
+    user_type: UserType,
+    preference_flag: Optional[str],
+    title: str,
+    body: str,
+    link: Optional[str],
+) -> None:
+    """Enqueue a push send if the user's preferences allow it.
+
+    Push is gated by the per-user master ``push_enabled`` toggle plus a
+    per-event flag. The per-event flag is derived from the email
+    ``preference_flag`` (``email_on_x`` → ``push_on_x``) so every existing
+    ``notify_*`` helper gates push without a new argument; notifications
+    sent with no ``preference_flag`` (operational alerts like check-in
+    approval) are gated by the master toggle only.
+
+    Conservative on error: if preferences can't be read, push is skipped
+    (it is more intrusive than the in-app badge, which always lands).
+    """
+    try:
+        prefs = await retrieve_or_create_notification_preferences(user_id, user_type)
+    except Exception:
+        logger.warning(
+            "push gate: preferences unreadable for user_id=%s; skipping push",
+            user_id,
+            exc_info=True,
+        )
+        return
+
+    if not bool(getattr(prefs, "push_enabled", True)):
+        return
+
+    if preference_flag and preference_flag.startswith("email_on_"):
+        push_flag = "push_on_" + preference_flag[len("email_on_") :]
+        if not bool(getattr(prefs, push_flag, True)):
+            return
+
+    from services.push_service import enqueue_push
+
+    enqueue_push(
+        user_id=user_id,
+        user_type=getattr(user_type, "value", user_type),
+        title=title,
+        body=body,
+        link=link,
+        notification_id=notification.id,
+        type=getattr(notification.type, "value", notification.type),
+    )
 
 
 async def _dispatch_email_for_notification(

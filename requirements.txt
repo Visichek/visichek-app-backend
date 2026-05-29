@@ -29,6 +29,9 @@ python-flutterwave
 # Scheduling
 APScheduler==3.11.0
 
+# Web Push (VAPID) — push notification provider (core/push/webpush_provider.py)
+pywebpush==2.0.0
+
 # HTTP & Utilities
 requests
 PyYAML==6.0.2

@@ -864,6 +864,7 @@ from api.v1.public_registration_route import (
 )
 from api.v1.public_rights_route import router as v1_public_rights_route_router
 from api.v1.notification_route import router as v1_notification_route_router
+from api.v1.push_route import router as v1_push_route_router
 from api.v1.admin_settings_route import router as v1_admin_settings_route_router
 from api.v1.system_user_settings_route import (
     router as v1_system_user_settings_route_router,
@@ -983,6 +984,7 @@ app.include_router(v1_invoice_route_router, prefix="/v1")
 app.include_router(v1_public_registration_route_router, prefix="/v1")
 app.include_router(v1_public_rights_route_router, prefix="/v1")
 app.include_router(v1_notification_route_router, prefix="/v1")
+app.include_router(v1_push_route_router, prefix="/v1")
 app.include_router(v1_admin_settings_route_router, prefix="/v1")
 # v1_system_user_settings_route_router is included earlier (before system_user_route)
 # to avoid PATCH/DELETE "/{user_id}" shadowing its static paths.

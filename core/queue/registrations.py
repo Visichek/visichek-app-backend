@@ -43,6 +43,10 @@ from services import notification_writer as _notification_writer  # noqa: F401
 from services import user_settings_writer as _user_settings_writer  # noqa: F401
 from services import user_location_writer as _user_location_writer  # noqa: F401
 
+# Push notifications — registers the @task("push.send") handler so both
+# web (enqueue) and worker (dispatch) processes know the task at boot.
+from services import push_service as _push_service  # noqa: F401
+
 # Cluster 4 — billing / plans / discounts
 from services import discount_writer as _discount_writer  # noqa: F401
 

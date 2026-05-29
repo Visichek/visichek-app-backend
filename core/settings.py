@@ -144,6 +144,27 @@ class Settings:
     # retained so the path stays functional during transition.
     freeimage_api_key: str | None = None
 
+    # ------------------------------------------------------------------
+    # Push notifications (pluggable provider — see core/push/)
+    # ------------------------------------------------------------------
+    # ``push_provider`` selects the transport (currently ``webpush``).
+    # Swapping to FCM/APNs/OneSignal means a new provider class in
+    # core/push/ + flipping this value; nothing else changes.
+    push_provider: str = "webpush"
+    # How long the push service holds a message for an offline device.
+    push_ttl_seconds: int = 24 * 60 * 60
+    # Web Push (VAPID) credentials. ``vapid_public_key`` is the base64url
+    # application server key the frontend passes to
+    # ``pushManager.subscribe``; ``vapid_private_key`` signs outgoing
+    # pushes; ``vapid_subject`` is the contact (``mailto:`` or URL) the
+    # push service can reach. Defaults below are dev/test keys — override
+    # ALL THREE via env in production.
+    vapid_public_key: str = (
+        "BBM8Qbdy-SqWp_EAjXUWPtEVZJtHKJJ4Qds3wYyORAnrpnRXmCXv6cbTP_0WwA3pm9H8-TdfZhrWtrV3zK7tVcY"
+    )
+    vapid_private_key: str = "cUICg_JfUvPmMZXZ-XrRx180wsQvz2i4GSPBkKpwdJk"
+    vapid_subject: str = "mailto:support@visichek.app"
+
     @property
     def is_production(self) -> bool:
         return self.env.lower() == "production"
@@ -271,5 +292,15 @@ def get_settings() -> Settings:
         public_base_url=(os.getenv("PUBLIC_BASE_URL") or "").rstrip("/"),
         unsplash_access_key=os.getenv("UNSPLASH_ACCESS_KEY") or None,
         freeimage_api_key=os.getenv("FREEIMAGE_API_KEY") or None,
+        push_provider=os.getenv("PUSH_PROVIDER", "webpush").lower(),
+        push_ttl_seconds=int(os.getenv("PUSH_TTL_SECONDS", str(24 * 60 * 60))),
+        vapid_public_key=os.getenv(
+            "VAPID_PUBLIC_KEY",
+            "BBM8Qbdy-SqWp_EAjXUWPtEVZJtHKJJ4Qds3wYyORAnrpnRXmCXv6cbTP_0WwA3pm9H8-TdfZhrWtrV3zK7tVcY",
+        ),
+        vapid_private_key=os.getenv(
+            "VAPID_PRIVATE_KEY", "cUICg_JfUvPmMZXZ-XrRx180wsQvz2i4GSPBkKpwdJk"
+        ),
+        vapid_subject=os.getenv("VAPID_SUBJECT", "mailto:support@visichek.app"),
     )
     return settings

@@ -101,6 +101,21 @@ class NotificationPreferencesBase(BaseModel):
     email_on_new_user: bool = False
     email_on_support_case: bool = True
 
+    # Push channel. ``push_enabled`` is the master toggle; the per-event
+    # flags mirror the ``email_on_*`` set so a notification gates the same
+    # way on both channels. ``push_on_visitor_check_in`` defaults True
+    # (unlike email) because a real-time device alert is the whole point of
+    # push for front-desk staff. Notifications sent without a preference
+    # flag (operational alerts) are gated by ``push_enabled`` alone.
+    push_enabled: bool = True
+    push_on_incident: bool = True
+    push_on_visitor_check_in: bool = True
+    push_on_appointment_reminder: bool = True
+    push_on_dsr_received: bool = True
+    push_on_subscription_alert: bool = True
+    push_on_new_user: bool = False
+    push_on_support_case: bool = True
+
 
 class NotificationPreferencesCreate(NotificationPreferencesBase):
     """Internal creation schema."""
@@ -122,6 +137,14 @@ class NotificationPreferencesUpdate(BaseModel):
     email_on_subscription_alert: Optional[bool] = None
     email_on_new_user: Optional[bool] = None
     email_on_support_case: Optional[bool] = None
+    push_enabled: Optional[bool] = None
+    push_on_incident: Optional[bool] = None
+    push_on_visitor_check_in: Optional[bool] = None
+    push_on_appointment_reminder: Optional[bool] = None
+    push_on_dsr_received: Optional[bool] = None
+    push_on_subscription_alert: Optional[bool] = None
+    push_on_new_user: Optional[bool] = None
+    push_on_support_case: Optional[bool] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
