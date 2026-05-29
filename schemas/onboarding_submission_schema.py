@@ -20,6 +20,14 @@ MAX_FORM_VERSION_LENGTH = 64
 # so the validator backfills it to "no" rather than rejecting the submission.
 MARKETING_OPT_IN_KEY = "marketing_opt_in"
 
+# Auxiliary metadata keys the frontend may include in the payload WITHOUT
+# advertising them as their own labeled form fields. ``country_code`` is a
+# hidden companion to the visible ``country`` / ``phone_number`` inputs (e.g.
+# "NG"). When such a key is present in the payload but missing from
+# field_labels / field_order, the validator backfills both rather than 422-ing
+# on the key mismatch — the mirror of the marketing_opt_in carve-out above.
+AUXILIARY_PAYLOAD_KEYS: tuple[str, ...] = ("country_code",)
+
 # Best-effort key lists for the indexed columns.  Edit freely as field names
 # evolve — old rows still work because their original values live in
 # ``payload``.
@@ -64,6 +72,17 @@ class OnboardingSubmissionRequest(BaseModel):
             or MARKETING_OPT_IN_KEY in self.field_order
         ):
             self.payload[MARKETING_OPT_IN_KEY] = "no"
+
+        # Auxiliary keys (e.g. country_code) live in the payload but aren't
+        # advertised as visible form fields. Backfill a label + order entry so
+        # the key-equality checks below pass instead of rejecting the form.
+        for aux_key in AUXILIARY_PAYLOAD_KEYS:
+            if aux_key in self.payload:
+                self.field_labels.setdefault(
+                    aux_key, aux_key.replace("_", " ").title()
+                )
+                if aux_key not in self.field_order:
+                    self.field_order.append(aux_key)
 
         if len(self.payload) > MAX_PAYLOAD_KEYS:
             raise ValueError(f"payload has more than {MAX_PAYLOAD_KEYS} keys")
