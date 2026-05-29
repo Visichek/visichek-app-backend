@@ -1,19 +1,17 @@
 """Bulk writers for visitor session queue actions.
 
-Five bulk operations are exposed to the receptionist UI:
+Four bulk operations are exposed to the receptionist UI:
 
 * ``visitor.bulk_host_approve``  — host approves multiple pending sessions
 * ``visitor.bulk_deny``          — deny multiple pending sessions with one reason
-* ``visitor.bulk_confirm``       — confirm + issue badges
-* ``visitor.bulk_badges``        — re-fetch/regenerate badge URLs for active sessions
+* ``visitor.bulk_confirm``       — confirm + issue signed badge tokens
 * ``visitor.bulk_check_out``     — close out multiple checked-in sessions
 
 Per-id outputs land in ``queue_job_log.result`` as a
-``{succeeded[], failed[]}`` shape via ``run_bulk_handlers``. The writer
-NEVER returns raw PDF bytes — those would balloon the audit row and
-make replays expensive. Instead we return per-id object keys so the
-frontend can call the existing ``GET /v1/visitors/sessions/{id}/badge``
-endpoint or download via S3 presigned URLs separately.
+``{succeeded[], failed[]}`` shape via ``run_bulk_handlers``. The
+writers never carry PDF bytes — badge PDFs are rendered by the
+frontend from the signed token + session snapshots returned on the
+follow-up GET.
 """
 
 from __future__ import annotations
@@ -103,53 +101,15 @@ async def _visitor_bulk_confirm(
             tenant_id=tenant_scope,
             badge_format=badge_format,
         )
+        token = (
+            result.get("badge_qr_token") if isinstance(result, dict) else None
+        )
         out: dict[str, Any] = {"id": session_id}
-        # Surface badge object key (not bytes — see module docstring).
-        if isinstance(result, dict):
-            badge_key = result.get("badge_pdf_object_key")
-            if badge_key:
-                out["badgePdfObjectKey"] = badge_key
-        elif hasattr(result, "badge_pdf_object_key"):
-            badge_key = getattr(result, "badge_pdf_object_key", None)
-            if badge_key:
-                out["badgePdfObjectKey"] = badge_key
+        if token:
+            out["badgeQrToken"] = token
         return out
 
     return await run_bulk_handlers(ids, _handle, atomic=atomic)
-
-
-@write_handler("visitor.bulk_badges", invalidates=[])
-async def _visitor_bulk_badges(
-    resource_id: str, data: dict[str, Any]
-) -> dict[str, Any]:
-    """Return per-id badge object keys for active sessions.
-
-    Does not regenerate the PDF. The receptionist printer hits the
-    existing ``GET /v1/visitors/sessions/{id}/badge`` endpoint for each
-    id once it has the list (the bulk wrapper is mostly a UX shortcut
-    so the operator can click "print all" once).
-    """
-    from services.visit_session_service import retrieve_visit_session_by_id_with_summary
-
-    ids = list(data.get("ids", []))
-    extras = data.get("extras", {}) or {}
-    tenant_scope = str(extras.get("tenant_scope") or "")
-
-    async def _handle(session_id: str) -> dict[str, Any]:
-        session = await retrieve_visit_session_by_id_with_summary(
-            session_id=session_id, tenant_id=tenant_scope
-        )
-        if not session:
-            raise ValueError("Session not found")
-        key = getattr(session, "badge_pdf_object_key", None)
-        if not key:
-            raise ValueError("Badge has not been generated yet")
-        return {
-            "downloadPath": f"/v1/visitors/sessions/{session_id}/badge",
-            "badgePdfObjectKey": key,
-        }
-
-    return await run_bulk_handlers(ids, _handle, atomic=False)
 
 
 @write_handler("visitor.bulk_check_out", invalidates=_VISITOR_INVALIDATES)

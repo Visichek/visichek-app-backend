@@ -61,8 +61,9 @@ Returns:
 
 Endpoint:    POST /v1/appointments/{appointment_id}/check-in
 Auth:        system_user (super_admin, dept_admin, receptionist)
-Synchronous: returns 201 with { session, visitor_profile, badge_qr_token,
-             badge_pdf_base64 }
+Synchronous: returns 201 with { session, visitor_profile, badge_qr_token }
+             — badge PDF is rendered by the frontend from the signed
+             token + session snapshots, NOT returned by the backend.
 
 Body (AppointmentCheckInRequest — every field is OPTIONAL):
   {
@@ -148,11 +149,11 @@ complete.
 
 In that case:
   - The endpoint returns the visit_session (status=REGISTERED) and the visitor
-    profile, but NO badge_qr_token and NO badge_pdf_base64.
+    profile, but NO badge_qr_token (so the frontend can't render a badge yet).
   - The appointment STAYS in status=SCHEDULED — it does not move to CHECKED_IN.
   - When you're ready to issue the badge, call the regular confirm endpoint
-    POST /v1/visit-sessions/{session_id}/confirm which fires the badge and
-    transitions the appointment to CHECKED_IN.
+    POST /v1/visit-sessions/{session_id}/confirm which signs the badge token
+    and transitions the appointment to CHECKED_IN.
 
 --------------------------------------------------------------------------------
 5. ERROR CODES SUMMARY

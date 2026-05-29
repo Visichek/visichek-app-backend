@@ -118,16 +118,18 @@ I0.6  ENTERPRISE PLANS GET DEDICATED FASTAPI SUB-APPS.
 
        Layer 2 — Service-layer skip (defense in depth).
          Some endpoints have implicit paid side effects. The check-in
-         approval flow normally creates a Badge record + uploads a PDF
-         badge to storage — on Free, the service layer SKIPS that step
-         even though the flow itself is allowed:
+         approval flow normally creates a Badge record and signs a
+         badge token the frontend uses to render a printable PDF — on
+         Free, the service layer SKIPS that step even though the flow
+         itself is allowed:
 
            * services/checkin_service.py — review_checkin: returns
              { state: "approved", badge: null } on Free (the visitor
              is logged, no badge is created).
            * services/visit_session_service.py — confirm_check_in:
-             returns { session, badge_pdf_base64: null,
-                       badge_qr_token: null } on Free.
+             returns { session, badge_qr_token: null } on Free; the
+             frontend renders "approved, manual entry only" instead
+             of a printable badge.
            * services/appointment_service.py — add_appointment: raises
              403 with "Your plan does not include appointments." even
              if the call somehow reaches the service directly.

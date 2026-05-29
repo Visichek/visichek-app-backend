@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 from bson import ObjectId
@@ -66,7 +65,6 @@ from schemas.imports import (
 )
 from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import sign_badge_token, verify_badge_token
-from services.badge_service import generate_badge_pdf
 from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
 from services.plan_limits import enforce_entity_cap, get_month_bounds
 
@@ -451,7 +449,6 @@ async def check_in_from_appointment(
         "visitor_profile": register_result.get("visitor_profile"),
         "session": confirm_result.get("session"),
         "badge_qr_token": confirm_result.get("badge_qr_token"),
-        "badge_pdf_base64": confirm_result.get("badge_pdf_base64"),
     }
 
 
@@ -463,7 +460,12 @@ async def confirm_check_in(
     purpose: Optional[str] = None,
     host_id: Optional[str] = None,
 ) -> dict:
-    """Phase 1A: Confirm check-in — validate minimum fields, generate badge, transition to CHECKED_IN."""
+    """Phase 1A: Confirm check-in — validate minimum fields, sign badge token, transition to CHECKED_IN.
+
+    The badge PDF is rendered by the frontend from the session
+    snapshots + signed QR token returned here; the backend no longer
+    generates or stores a PDF.
+    """
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID format")
 
@@ -540,10 +542,12 @@ async def confirm_check_in(
     if not department:
         raise HTTPException(status_code=404, detail="Department not found")
 
-    # Plan gate — badge printing is denied on Free. Manual check-in
+    # Plan gate — badge issuance is denied on Free. Manual check-in
     # still completes (the session transitions to CHECKED_IN below)
-    # but we skip generating, uploading, and recording a badge so the
-    # Free tenant logs the visit without a paid-tier badge artifact.
+    # but we skip signing a badge token so the Free tenant logs the
+    # visit without a paid-tier badge artifact. The badge PDF itself
+    # is rendered by the frontend from the signed token + session
+    # snapshots — the backend's only responsibility is the token.
     from services.plan_limits import is_feature_enabled
 
     badge_printing_enabled = await is_feature_enabled(
@@ -552,67 +556,19 @@ async def confirm_check_in(
         method="POST",
     )
 
-    badge_pdf_bytes: Optional[bytes] = None
     badge_token: Optional[str] = None
-    badge_object_key: Optional[str] = None
-
     if badge_printing_enabled:
-        # Fetch visitor photo if available
-        visitor_photo_bytes = None
-        if profile and profile.photo_object_key:
-            try:
-                from core.storage.manager import DocumentStorageManager
-
-                storage_mgr = DocumentStorageManager.get_instance()
-                visitor_photo_bytes = await storage_mgr.provider.download_bytes(
-                    profile.photo_object_key
-                )
-            except Exception:
-                pass  # Photo is optional for badge
-
-        # Generate badge with signed QR token
         badge_token = sign_badge_token(session.id or "", expiry_hours=24)
-        now = datetime.now(timezone.utc)
-        badge_pdf_bytes = generate_badge_pdf(
-            visitor_name=session.visitor_name_snapshot,
-            company=session.company_snapshot,
-            host_department=(
-                f"{session.host_name_snapshot or 'N/A'} / {department.name}"
-            ),
-            date_str=now.strftime("%Y-%m-%d"),
-            time_in_str=now.strftime("%H:%M"),
-            qr_data=badge_token,
-            badge_format=badge_format,
-            visitor_photo_bytes=visitor_photo_bytes,
-        )
-
-        # Upload badge PDF to storage
-        try:
-            from core.storage.manager import DocumentStorageManager
-
-            storage = DocumentStorageManager.get_instance()
-            badge_object_key = f"badges/{tenant_id}/{session.id}.pdf"
-            storage.provider.upload_bytes(
-                object_key=badge_object_key,
-                payload=badge_pdf_bytes,
-                mime_type="application/pdf",
-            )
-        except Exception as e:
-            import logging
-
-            logging.getLogger(__name__).warning("Badge PDF storage failed: %s", e)
-            badge_object_key = None
 
     # Update session: set status to CHECKED_IN. On Free, the badge_*
-    # fields stay None so downstream code (badge fetch, badge expiry
-    # sweep, badge revocation) skips this session.
+    # fields stay None so downstream code (badge expiry sweep, badge
+    # revocation) skips this session.
     update_payload = VisitSessionUpdate(status=VisitStatus.CHECKED_IN)
     if badge_printing_enabled:
         update_payload.badge_qr_token = badge_token
         update_payload.badge_format = BadgeFormat(badge_format)
         update_payload.badge_generation_time = int(time.time())
         update_payload.badge_expiry = int(time.time()) + 86400
-        update_payload.badge_pdf_object_key = badge_object_key
     updated_session = await update_visit_session(
         {"_id": ObjectId(session.id)},
         update_payload,
@@ -631,26 +587,17 @@ async def confirm_check_in(
             target=AppointmentStatus.CHECKED_IN,
         )
 
-    # PHASE 1A: Return session + badge info.
+    # PHASE 1A: Return session + signed badge token.
     #
-    # Issue 7 fix: guard against base64-encoding ``None`` when badge
-    # generation was skipped by plan gating. The previous code called
-    # ``b64encode(badge_pdf_bytes)`` unconditionally — on Free where
-    # ``badge_pdf_bytes`` is None this raises ``TypeError: a bytes-like
-    # object is required, not 'NoneType'`` and the receptionist sees a
-    # 500 even though the manual check-in succeeded. Return ``None``
-    # explicitly so the frontend can render "approved, manual entry
-    # only" without faking an empty base64 string.
-    import base64
-
-    badge_pdf_base64: Optional[str] = None
-    if badge_pdf_bytes is not None:
-        badge_pdf_base64 = base64.b64encode(badge_pdf_bytes).decode("utf-8")
-
+    # Badge PDF rendering is a frontend concern — the FE composes the
+    # printable badge from the session snapshots (visitor / host /
+    # department / times) plus the signed QR token returned here.
+    # On Free, ``badge_token`` is None and the FE renders an
+    # "approved, manual entry only" state instead of a printable
+    # badge.
     await _nudge_live_dashboard(tenant_id)
     return {
         "session": updated_session,
-        "badge_pdf_base64": badge_pdf_base64,
         "badge_qr_token": badge_token,
     }
 
@@ -1551,30 +1498,6 @@ async def generate_tenant_registration_qr(
         "department_id": department_id,
         "branch_id": branch_id,
     }
-
-
-async def download_badge_pdf(session_id: str, tenant_id: str) -> bytes:
-    """Download badge PDF bytes from storage."""
-    if not ObjectId.is_valid(session_id):
-        raise HTTPException(status_code=400, detail="Invalid session ID format")
-    session = await get_visit_session(
-        {"_id": ObjectId(session_id), "tenant_id": tenant_id}
-    )
-    if not session:
-        raise HTTPException(status_code=404, detail="Visit session not found")
-    if not session.badge_pdf_object_key:
-        raise HTTPException(
-            status_code=404, detail="Badge PDF not available for this session"
-        )
-    try:
-        from core.storage.manager import DocumentStorageManager
-
-        storage = DocumentStorageManager.get_instance()
-        return await storage.provider.download_bytes(session.badge_pdf_object_key)
-    except Exception as e:
-        raise HTTPException(
-            status_code=503, detail=f"Failed to retrieve badge PDF: {str(e)}"
-        )
 
 
 async def resume_draft_registration(

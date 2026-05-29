@@ -74,7 +74,6 @@ def _make_visit_session_out(
         "badge_format": "pdf_qr",
         "badge_generation_time": 1712532010,
         "badge_expiry": 1712618400,
-        "badge_pdf_object_key": "badges/session-001.pdf",
         "check_in_time": 1712532000,
         "check_out_time": None,
         "date_created": 1712532000,

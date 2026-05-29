@@ -638,6 +638,37 @@ ADMIN_PERMISSIONS: list[Permission] = [
         "/v1/admins/invite",
         "Invite a new admin (blog-admin alias)",
     ),
+    # Application-admin DSR oversight (cross-tenant, read-only)
+    _p(
+        "admin_list_dsrs",
+        ["GET"],
+        "/v1/admins/dsr",
+        "List every DSR across all tenants (admin oversight)",
+    ),
+    _p(
+        "admin_dsrs_approaching_sla",
+        ["GET"],
+        "/v1/admins/dsr/approaching-sla",
+        "List DSRs nearing SLA deadline",
+    ),
+    _p(
+        "admin_dsrs_breached_sla",
+        ["GET"],
+        "/v1/admins/dsr/breached-sla",
+        "List DSRs past SLA deadline",
+    ),
+    _p(
+        "admin_dsr_stats",
+        ["GET"],
+        "/v1/admins/dsr/stats",
+        "Platform-wide DSR aggregate counts",
+    ),
+    _p(
+        "admin_get_dsr",
+        ["GET"],
+        "/v1/admins/dsr/{dsr_id}",
+        "Retrieve a specific DSR by id (admin)",
+    ),
 ]
 
 
@@ -1438,6 +1469,7 @@ ADMIN_SUPPORT_PERMISSIONS: list[Permission] = list(
         "/v1/admins/support-cases",
         "/v1/admins/dashboard/attention",
         "/v1/admins/dashboard/email-outbox",
+        "/v1/admins/dsr",
         "/v1/tenants/onboarding",
     )
 )

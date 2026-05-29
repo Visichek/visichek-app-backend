@@ -5,6 +5,10 @@ from typing import List, Optional
 from schemas.data_subject_request_schema import DSRCreate, DSRUpdate, DSROut
 
 
+async def count_dsrs(filter_dict: Optional[dict] = None) -> int:
+    return await db.data_subject_requests.count_documents(filter_dict or {})
+
+
 async def create_dsr(
     dsr_data: DSRCreate,
     *,

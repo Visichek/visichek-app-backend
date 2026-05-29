@@ -38,12 +38,13 @@ class VisitSessionBase(BaseModel):
     consent_captured_by_user_id: Optional[str] = None
     consent_withdrawal_at: Optional[int] = None
     lawful_basis_at_time: Optional[LawfulBasis] = None
-    # Badge fields
+    # Badge fields — only the signed token + metadata are persisted.
+    # The printable PDF is rendered by the frontend from these fields
+    # plus the session snapshots; the backend never stores a PDF.
     badge_qr_token: Optional[str] = None
     badge_format: Optional[BadgeFormat] = None
     badge_generation_time: Optional[int] = None
     badge_expiry: Optional[int] = None
-    badge_pdf_object_key: Optional[str] = None
     # Denial fields
     denial_reason: Optional[str] = None
     denied_by: Optional[str] = None
@@ -70,7 +71,6 @@ class VisitSessionUpdate(BaseModel):
     badge_format: Optional[BadgeFormat] = None
     badge_generation_time: Optional[int] = None
     badge_expiry: Optional[int] = None
-    badge_pdf_object_key: Optional[str] = None
     denial_reason: Optional[str] = None
     denied_by: Optional[str] = None
     # Fields for resuming draft registration

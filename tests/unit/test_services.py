@@ -826,7 +826,6 @@ class TestVisitSessionService:
         new_callable=AsyncMock,
         return_value=0,
     )
-    @patch("services.visit_session_service.generate_badge_pdf")
     @patch("services.visit_session_service.sign_badge_token")
     @patch("services.visit_session_service.get_or_create_visitor_profile")
     @patch("services.visit_session_service.update_visitor_profile")
@@ -847,7 +846,6 @@ class TestVisitSessionService:
         mock_update_profile,
         mock_get_profile,
         mock_sign_token,
-        mock_generate_pdf,
         mock_count_vs,
         mock_cap_vs,
         mock_inc_visits,
@@ -897,7 +895,6 @@ class TestVisitSessionService:
         mock_create_session.return_value = session
         mock_update_session.return_value = session
         mock_sign_token.return_value = "signed_token_xyz"
-        mock_generate_pdf.return_value = b"fake_pdf_bytes"
 
         request = CheckInRequest(
             phone="1234567890",

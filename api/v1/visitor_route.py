@@ -1,9 +1,7 @@
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, Query, Request, status
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-import io
 
 from core.bulk import enqueue_bulk_write
 from core.idempotency import actor_scope, check_idempotency, store_idempotency
@@ -34,7 +32,6 @@ from services.visit_session_service import (
     verify_id_with_ocr,
     apply_id_scan_verification,
     approve_visitor_by_host,
-    download_badge_pdf,
     resume_draft_registration,
     generate_tenant_registration_qr,
 )
@@ -135,7 +132,6 @@ async def generate_registration_qr_endpoint(
         "badge_format": "pdf_qr",
         "badge_generation_time": 1712532010,
         "badge_expiry": 1712618400,
-        "badge_pdf_object_key": "badges/visit_507f1f77bcf86cd799439011.pdf",
         "check_in_time": 1712532000,
         "check_out_time": None,
         "date_created": 1712532000,
@@ -216,7 +212,6 @@ async def check_in(
         "badge_format": "pdf_qr",
         "badge_generation_time": 1712532010,
         "badge_expiry": 1712618400,
-        "badge_pdf_object_key": "badges/visit_507f1f77bcf86cd799439011.pdf",
         "check_in_time": 1712532000,
         "check_out_time": 1712535600,
         "date_created": 1712532000,
@@ -282,7 +277,6 @@ async def check_out(
             "badge_format": "pdf_qr",
             "badge_generation_time": 1712532010,
             "badge_expiry": 1712618400,
-            "badge_pdf_object_key": "badges/visit_507f1f77bcf86cd799439011.pdf",
             "check_in_time": 1712532000,
             "check_out_time": None,
             "date_created": 1712532000,
@@ -385,7 +379,6 @@ async def list_visitors_awaiting_checkout(
             "badge_format": "pdf_qr",
             "badge_generation_time": 1712532010,
             "badge_expiry": 1712618400,
-            "badge_pdf_object_key": "badges/visit_507f1f77bcf86cd799439011.pdf",
             "check_in_time": 1712532000,
             "check_out_time": 1712535600,
             "date_created": 1712532000,
@@ -571,10 +564,12 @@ async def bulk_deny(
     message="Bulk confirm queued",
     status_code=status.HTTP_202_ACCEPTED,
     description=(
-        "Force-confirm pending visitors and issue their badges. "
-        "The job result includes a `bundleUrl` and per-id `badgePdfObjectKey`. "
-        "Pick `bundleUrl` for batch printing — the response never returns "
-        "raw PDF bytes inline (avoids ballooning the queue_job_log row)."
+        "Force-confirm pending visitors and sign each session's badge "
+        "QR token. The job result returns per-id `badgeQrToken` (or "
+        "omits it if the tenant is on a plan tier where badge issuance "
+        "is gated off). The frontend renders the printable badge PDF "
+        "locally from each session's snapshots + signed token — the "
+        "backend does not generate or store PDFs."
     ),
     summary="Bulk confirm pending visitors",
 )
@@ -618,65 +613,6 @@ async def bulk_confirm(
         key=idempotency_key,
         scope=scope,
         route="POST /v1/visitors/sessions/bulk/confirm",
-        body=payload,
-        response=response,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    return response
-
-
-@router.post("/sessions/bulk/badges")
-@document_response(
-    message="Bulk badge generation queued",
-    status_code=status.HTTP_202_ACCEPTED,
-    description=(
-        "Generate / re-fetch badges for the supplied sessions. The job "
-        "result includes a per-id `downloadUrl` for each PDF — clients "
-        "should stream them sequentially or use the `bundleUrl` if "
-        "present."
-    ),
-    summary="Bulk badge URLs",
-)
-async def bulk_badges(
-    request: Request,
-    payload: dict = Body(...),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    principal: AuthPrincipal = Depends(_checkin_roles),
-):
-    cached, actor_id, actor_role, tenant_id, scope = _visitor_bulk_invocation(
-        request=request,
-        payload=payload,
-        idempotency_key=idempotency_key,
-        principal=principal,
-        writer_key="visitor.bulk_badges",
-        route_label="POST /v1/visitors/sessions/bulk/badges",
-    )
-    if cached is not None:
-        return cached.response
-    badge_format = str(payload.get("badgeFormat") or "A7")
-    if badge_format not in ("A6", "A7"):
-        from core.errors import AppException, ErrorCode
-
-        raise AppException(
-            status_code=400,
-            code=ErrorCode.VALIDATION_FAILED,
-            message="badgeFormat must be 'A6' or 'A7'",
-        )
-    response = await enqueue_bulk_write(
-        writer_key="visitor.bulk_badges",
-        ids=payload.get("ids", []),
-        resource_type="visit_session",
-        extras={"tenant_scope": tenant_id, "badge_format": badge_format},
-        atomic=False,
-        tenant_id=tenant_id,
-        actor_id=actor_id,
-        actor_role=actor_role,
-        request_id=getattr(request.state, "request_id", None),
-    )
-    store_idempotency(
-        key=idempotency_key,
-        scope=scope,
-        route="POST /v1/visitors/sessions/bulk/badges",
         body=payload,
         response=response,
         status_code=status.HTTP_202_ACCEPTED,
@@ -774,7 +710,6 @@ async def bulk_check_out(
         "badge_format": "pdf_qr",
         "badge_generation_time": 1712532010,
         "badge_expiry": 1712618400,
-        "badge_pdf_object_key": "badges/visit_507f1f77bcf86cd799439011.pdf",
         "check_in_time": 1712532000,
         "check_out_time": 1712535600,
         "date_created": 1712532000,
@@ -811,8 +746,14 @@ async def get_visit_session_endpoint(
 @document_response(
     message="Visitor check-in confirmed successfully",
     status_code=status.HTTP_200_OK,
-    description="Confirm check-in for a registered visitor, generate badge, and transition to CHECKED_IN status.",
-    summary="Confirm visitor check-in and generate badge",
+    description=(
+        "Confirm check-in for a registered visitor, sign the badge "
+        "QR token, and transition to CHECKED_IN status. The badge PDF "
+        "is rendered by the frontend from the session snapshots + "
+        "signed token returned here — the backend does not generate "
+        "or store a PDF."
+    ),
+    summary="Confirm visitor check-in and issue badge token",
     success_example={
         "session": {
             "id": "507f1f77bcf86cd799439011",
@@ -846,13 +787,11 @@ async def get_visit_session_endpoint(
             "badge_format": "A7",
             "badge_generation_time": 1712532010,
             "badge_expiry": 1712618400,
-            "badge_pdf_object_key": "badges/visit_507f1f77bcf86cd799439011.pdf",
             "check_in_time": 1712532000,
             "check_out_time": None,
             "date_created": 1712532000,
             "visit_duration": None,
         },
-        "badge_pdf_base64": "JVBERi0xLjQKJeLj...",
         "badge_qr_token": "VIS_20240407_1234567890AB",
     },
     response_codes={
@@ -928,7 +867,6 @@ async def confirm_check_in_endpoint(
         "badge_format": None,
         "badge_generation_time": None,
         "badge_expiry": None,
-        "badge_pdf_object_key": None,
         "denial_reason": "Name not on approved list",
         "denied_by": "r12345",
         "check_in_time": 1712532000,
@@ -1035,7 +973,6 @@ async def verify_id_scan(
         "badge_format": None,
         "badge_generation_time": None,
         "badge_expiry": None,
-        "badge_pdf_object_key": None,
         "check_in_time": 1712532000,
         "check_out_time": None,
         "date_created": 1712532000,
@@ -1112,7 +1049,6 @@ async def apply_id_scan_endpoint(
         "badge_format": None,
         "badge_generation_time": None,
         "badge_expiry": None,
-        "badge_pdf_object_key": None,
         "check_in_time": 1712532000,
         "check_out_time": None,
         "date_created": 1712532000,
@@ -1185,7 +1121,6 @@ async def update_draft_session(
         "badge_format": None,
         "badge_generation_time": None,
         "badge_expiry": None,
-        "badge_pdf_object_key": None,
         "check_in_time": 1712532000,
         "check_out_time": None,
         "date_created": 1712532000,
@@ -1219,30 +1154,6 @@ async def host_approve_endpoint(
         session_id=session_id,
         host_id=principal.user_id,
         tenant_id=tenant_id,
-    )
-
-
-@router.get("/sessions/{session_id}/badge")
-@document_response(
-    message="Badge PDF retrieved",
-    description="Download the visitor badge PDF for a specific session.",
-    summary="Download visitor badge PDF",
-    response_codes={
-        404: "Session or badge not found",
-        503: "Storage service unavailable",
-    },
-)
-async def download_badge(
-    session_id: str,
-    principal: AuthPrincipal = Depends(verify_any_system_user_token),
-):
-    """Download badge PDF from storage."""
-    tenant_id = principal.tenant_id or ""
-    pdf_bytes = await download_badge_pdf(session_id, tenant_id)
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=badge_{session_id}.pdf"},
     )
 
 

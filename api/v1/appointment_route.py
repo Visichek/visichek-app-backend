@@ -362,7 +362,6 @@ async def update_appointment_endpoint(
             "full_name": "Edoka Issac",
         },
         "badge_qr_token": "VIS_20260515_1234567890AB",
-        "badge_pdf_base64": "JVBERi0xLjQK...",
     },
     response_codes={
         400: "Appointment is in a terminal state, or required visitor data is missing",

@@ -1504,14 +1504,12 @@ async def _send_visitor_badge_email_if_enabled(
     except Exception:
         pass
 
-    # Best-effort download URL. When DocumentStorageManager isn't
-    # configured (or this badge's PDF wasn't uploaded), fall back to
-    # an empty string — the template gracefully hides the button and
-    # leans on the QR code instead.
-    from services.storage_url_service import try_resolve_download_url
-
-    badge_pdf_object_key = getattr(badge, "badge_pdf_object_key", None)
-    badge_url = try_resolve_download_url(badge_pdf_object_key) or ""
+    # Badge PDFs are rendered by the frontend from the badge token +
+    # session snapshots — the backend no longer stores a PDF, so
+    # ``badge_url`` is always empty. The template hides the download
+    # button when empty and leans on the QR / printable-badge-page
+    # link instead.
+    badge_url = ""
 
     # Public printable-badge page URL — the frontend hosts
     # ``/badge/{token}`` and resolves the token via

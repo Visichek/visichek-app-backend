@@ -325,9 +325,11 @@ backend's enforcement surface helps frontend devs reason about edge cases.
 
        * ``checkin_service.review_checkin`` — Free skips badge creation,
          returns ``{ state: "approved", badge: null }``.
-       * ``visit_session_service.confirm_check_in`` — Free skips PDF
-         generation, returns ``{ session, badge_pdf_base64: null,
-         badge_qr_token: null }``.
+       * ``visit_session_service.confirm_check_in`` — Free skips badge
+         token signing, returns ``{ session, badge_qr_token: null }``.
+         Badge PDFs are rendered by the frontend from the signed token
+         + session snapshots; the backend no longer generates or
+         stores a PDF.
        * ``appointment_service.add_appointment`` — Free raises 403
          "Your plan does not include appointments." even before the
          monthly cap check.

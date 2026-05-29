@@ -770,6 +770,98 @@ async def notify_dsr_submitted(
         logger.warning("Failed to send DSR notification", exc_info=True)
 
 
+async def notify_dsr_submitted_tenant_dpos(
+    tenant_id: str,
+    dsr_id: str,
+) -> None:
+    """Fire-and-forget: notify every active DPO + super_admin in the tenant.
+
+    A DSR carries a legal SLA clock, so we fan out to every privacy-officer
+    seat the tenant has staffed (``dpo`` role) plus the tenant ``super_admin``
+    as a safety net. Best-effort — failures are logged and never raised.
+    """
+    try:
+        from repositories.system_user_repo import get_system_users
+        from schemas.imports import AccountStatus
+
+        recipients = await get_system_users(
+            {
+                "tenant_id": tenant_id,
+                "role": {"$in": ["dpo", "super_admin"]},
+                "account_status": AccountStatus.ACTIVE.value,
+            }
+        )
+        for user in recipients:
+            uid = user.id or ""
+            if not uid:
+                continue
+            try:
+                await notify_dsr_submitted(
+                    user_id=uid,
+                    user_type=UserType.SYSTEM_USER,
+                    dsr_id=dsr_id,
+                    tenant_id=tenant_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to notify tenant DPO %s about new DSR", uid, exc_info=True
+                )
+    except Exception:
+        logger.warning(
+            "Failed to dispatch DSR notifications to tenant DPOs", exc_info=True
+        )
+
+
+async def notify_dsr_submitted_to_platform_admins(
+    tenant_id: str,
+    dsr_id: str,
+    tenant_name: Optional[str] = None,
+) -> None:
+    """Fire-and-forget: notify every active application (platform) admin.
+
+    Platform admins need DSR visibility for cross-tenant compliance
+    oversight — the SaaS operator is jointly accountable for ensuring
+    tenants meet their privacy obligations. Mirrors the
+    ``notify_support_case_opened`` / ``notify_onboarding_submission_received``
+    pattern: in-app fan-out to every active admin, /admin/* shell URL.
+    """
+    try:
+        from repositories.admin_repo import get_admins
+        from schemas.imports import AccountStatus
+
+        admins = await get_admins(
+            {"account_status": AccountStatus.ACTIVE.value}, start=0, stop=200
+        )
+        org_label = tenant_name or f"tenant {tenant_id}"
+        for admin in admins:
+            try:
+                await send_notification(
+                    user_id=admin.id or "",
+                    user_type=UserType.ADMIN,
+                    title="New Data Subject Request",
+                    body=(
+                        f"{org_label} received a new DSR — review for SLA "
+                        f"compliance."
+                    ),
+                    type="info",
+                    link=f"/admin/dsr/{dsr_id}",
+                    tenant_id=tenant_id,
+                    resource_type="dsr",
+                    resource_id=dsr_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to notify admin %s about new DSR",
+                    admin.id,
+                    exc_info=True,
+                )
+    except Exception:
+        logger.warning(
+            "Failed to dispatch DSR notifications to platform admins",
+            exc_info=True,
+        )
+
+
 async def notify_subscription_alert(
     user_id: str,
     user_type: UserType,
@@ -1375,6 +1467,7 @@ _BUCKET_PATTERNS: list[tuple[str, list[str]]] = [
     ("visitors", ["/visitors", "/checkins"]),
     ("appointments", ["/appointments"]),
     ("incidents", ["/incidents"]),
+    ("dsr", ["/dsr"]),
     ("jobs", ["/jobs"]),
     ("plans", ["/plans"]),
     ("pricing", ["/pricing"]),

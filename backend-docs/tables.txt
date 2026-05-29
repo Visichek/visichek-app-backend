@@ -547,11 +547,9 @@ GET /v1/visitors/sessions/pending      (existing — accepts skip/limit; filter
     POST /v1/visitors/sessions/bulk/deny          { ids[], reason?: string }
     POST /v1/visitors/sessions/bulk/confirm
       body: { ids: string[], badgeFormat: "A6" | "A7" }
-      result: per-id `{ badgePdfObjectKey }`. Use the existing
-      `GET /v1/visitors/sessions/{id}/badge` to download the PDF for each
-      id, or wire S3 presigned URLs separately.
-      Backend never returns raw PDF bytes inline — the queue_job_log row
-      stores the result and inline blobs would balloon it.
+      result: per-id `{ badgeQrToken }`. The frontend renders each
+      printable badge PDF locally from the signed token + session
+      snapshots — the backend does not generate or store badge PDFs.
 
 3.2  Visitors — active sessions
 ────────────────────────────────
@@ -559,11 +557,14 @@ GET /v1/visitors/sessions      (existing — accepts skip/limit + departmentId;
                                 filter contract not yet rewritten — see Note)
 
   Bulk:
-    POST /v1/visitors/sessions/bulk/badges
-      body: { ids: string[], badgeFormat: "A6" | "A7" }
-      result: per-id `{ downloadPath, badgePdfObjectKey }`.
     POST /v1/visitors/sessions/bulk/check-out
       body: { ids: string[], method: "qr_scan" | "manual" }
+
+  Note (badge re-print): there is no bulk-badges endpoint and no
+  per-session badge download endpoint anymore. Badges are rendered by
+  the frontend from the session's `badgeQrToken` + snapshots (visitor
+  name, host, department, times). For "print all checked-in
+  visitors", iterate the active-sessions list client-side.
 
   Note (visitor sessions list):
     The list endpoints for /sessions and /sessions/pending still take
@@ -671,11 +672,11 @@ Differences worth flagging on the FE side:
      If you genuinely need a one-click ZIP, file a follow-up; the backend
      can stream from a dedicated archiver later.
 
-  3. Bulk visitor confirm returns per-id `badgePdfObjectKey`. The original
-     spec asked for either inline base64 or a single ZIP — neither is
-     suitable for the queued model (inline blobs explode the audit row).
-     FE downloads each badge via the existing `/sessions/{id}/badge`
-     endpoint. We can add a ZIP variant if printing N at once is awkward.
+  3. Bulk visitor confirm returns per-id `badgeQrToken`. The original
+     spec asked for either inline base64 or a single ZIP — both are
+     obsolete now that badge PDFs are rendered by the frontend. The
+     FE composes each printable badge locally from the session
+     snapshots + signed token; no backend download or ZIP is needed.
 
   4. Visitor session LISTING (§3.1, §3.2) still uses the legacy
      start/stop/department_id contract — only the BULK actions on

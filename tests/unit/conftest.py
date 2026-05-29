@@ -166,7 +166,6 @@ def visit_session_factory() -> Callable[..., VisitSessionCreate]:
             "badge_format": None,
             "badge_generation_time": None,
             "badge_expiry": None,
-            "badge_pdf_object_key": None,
         }
         defaults.update(kwargs)
         return VisitSessionCreate(**defaults)

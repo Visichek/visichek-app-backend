@@ -16,7 +16,7 @@ Both endpoints return through the standard middleware stack
 (CaseConversionMiddleware, RequestId, RateLimit). Field naming on the
 wire is camelCase; this spec uses snake_case for clarity — translate by
 swapping `_x` for `X` (e.g. `appointment_id` → `appointmentId`,
-`badge_pdf_base64` → `badgePdfBase64`).
+`badge_qr_token` → `badgeQrToken`).
 
 ================================================================================
 1. POST /v1/appointments/{appointment_id}/check-in
@@ -102,13 +102,16 @@ If a field has no override and no fallback, the endpoint returns
 4. If `issue_badge=true` (default), calls `confirm_check_in`:
        - Validates required snapshots (visitor_name, department, host or
          purpose).
-       - Generates the badge PDF + signed QR token, uploads to storage,
-         updates the session to status=`checked_in`.
+       - Signs a 24h badge QR token, stamps badge metadata on the
+         session, and updates the session to status=`checked_in`.
+         The badge PDF itself is rendered by the frontend from the
+         session snapshots + signed token — the backend does NOT
+         generate or store a PDF.
        - Transitions the appointment to status=`checked_in` via
          services.appointment_lifecycle_service.
-5. Returns the session, profile, badge token, and base64-encoded PDF.
+5. Returns the session, profile, and badge token.
 
-If `issue_badge=false`, the response omits the badge fields and the
+If `issue_badge=false`, the response omits the badge token and the
 appointment stays SCHEDULED until the badge is later issued via
 `POST /v1/visitors/check-in/{session_id}/confirm`.
 
@@ -140,8 +143,7 @@ appointment stays SCHEDULED until the badge is later issued via
             "badgeQrToken": "VIS_20260515_1234567890AB",
             "badgeFormat": "A7",
             "badgeGenerationTime": 1778952010,
-            "badgeExpiry": 1779038410,
-            "badgePdfObjectKey": "badges/{tenant}/{session}.pdf"
+            "badgeExpiry": 1779038410
         },
 
         "visitorProfile": {
@@ -154,8 +156,10 @@ appointment stays SCHEDULED until the badge is later issued via
             "lastVisitDate": 1778952010
         },
 
-        "badgeQrToken": "VIS_20260515_1234567890AB",
-        "badgePdfBase64": "JVBERi0xLjQKJ...."   // PDF, render or save
+        "badgeQrToken": "VIS_20260515_1234567890AB"
+        // FE renders the printable badge PDF from the session
+        // snapshots above + this signed token. The backend no longer
+        // returns PDF bytes.
     },
     "requestId": "..."
 }
@@ -167,7 +171,7 @@ When `issue_badge=false`:
     "data": {
         "session": { "status": "registered", ... no badge fields ... },
         "visitorProfile": { ... }
-        // no badgeQrToken / badgePdfBase64
+        // no badgeQrToken
     }
 }
 

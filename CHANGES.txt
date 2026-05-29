@@ -219,3 +219,227 @@ CDN content. No frontend change there.
 [ ] Kiosk: switch to the /intent + /confirm public paths; keep the same
     plan-gate token behaviour.
 ================================================================================
+
+
+================================================================================
+BACKEND CHANGES — Visitor badge PDF generation moved to the frontend
+Date: 2026-05-29
+================================================================================
+
+Scope:   Check-in / visit-session flow
+Compat:  BREAKING for any frontend that consumed the badge PDF off
+         the check-in response, the bulk-badges endpoint, or the
+         per-session badge download endpoint.
+
+================================================================================
+WHY
+================================================================================
+
+The backend was generating the visitor badge PDF on every check-in
+using reportlab, uploading the bytes to DocumentStorageManager, AND
+base64-encoding the same bytes into the check-in response. The PDF was
+a single-page A6/A7 layout (name, host/department, date, QR, optional
+photo) — pure presentation, no audit/compliance role. The rendering
+pulled the visitor photo bytes from storage inline on every confirm
+call, ballooned the JSON response, and duplicated work the frontend
+already has the context to do (branding config, photo URL, session
+snapshots).
+
+Decision: the backend's only badge responsibility is signing the QR
+token (security boundary — token is HMAC'd with the server secret).
+Everything visual is the frontend's job. The signed token + session
+snapshots are all the FE needs to render and print.
+
+================================================================================
+WHAT CHANGED ON THE WIRE
+================================================================================
+
+1. POST /v1/visitors/sessions/{session_id}/confirm
+   - Response no longer contains `badge_pdf_base64` / `badgePdfBase64`.
+   - Response shape:
+       {
+         "session": VisitSessionOut,
+         "badge_qr_token": "VIS_..."   // null on Free plan
+       }
+   - On Free / badge-gated tenants, `badge_qr_token` is null — the FE
+     renders "approved, manual entry only" instead of a printable
+     badge (same behaviour as before, just no fake empty PDF string).
+
+2. POST /v1/appointments/{appointment_id}/check-in
+   - Response no longer contains `badge_pdf_base64` / `badgePdfBase64`.
+   - Response shape:
+       {
+         "appointment_id": "...",
+         "visitor_profile": VisitorProfileOut,
+         "session": VisitSessionOut,
+         "badge_qr_token": "VIS_..."   // null when issue_badge=false
+       }
+
+3. GET /v1/visitors/sessions/{session_id}/badge   — REMOVED
+   - This endpoint streamed badge PDF bytes from storage. There is no
+     stored PDF anymore. Re-print is now a pure FE concern: read the
+     session, render the badge from its snapshots + `badgeQrToken`.
+
+4. POST /v1/visitors/sessions/bulk/badges          — REMOVED
+   - There is no per-id download path anymore. For "print all
+     checked-in visitors", the FE iterates the active-sessions list
+     and renders each badge locally.
+
+5. POST /v1/visitors/sessions/bulk/confirm
+   - Per-id result no longer carries `badgePdfObjectKey`. New shape:
+       { id: "<session_id>", badgeQrToken: "VIS_..." }   // token optional
+   - Same rendering rule: FE composes each printable badge locally
+     from the per-session GET + the returned token.
+
+6. VisitSessionOut / VisitSessionBase / VisitSessionUpdate
+   - `badge_pdf_object_key` / `badgePdfObjectKey` field REMOVED. Every
+     list/detail endpoint that returned visit sessions no longer
+     includes this key. Frontends that referenced it must stop reading
+     it (will be undefined; safe to drop).
+   - Retained badge fields: `badge_qr_token`, `badge_format`,
+     `badge_generation_time`, `badge_expiry`.
+
+================================================================================
+WHAT CHANGED IN THE CODE
+================================================================================
+
+services/visit_session_service.py
+  - Dropped `from services.badge_service import generate_badge_pdf`.
+  - Dropped `from datetime import datetime, timezone` (only used by
+    the removed PDF rendering).
+  - `confirm_check_in(...)`: no more visitor-photo download, no more
+    `generate_badge_pdf` call, no more `DocumentStorageManager` upload,
+    no more base64 encoding. Now: sign token → stamp badge metadata on
+    the session → return `{session, badge_qr_token}`. The plan gate
+    (`is_feature_enabled("/v1/badges", "POST")`) still applies; on
+    Free, `badge_token` stays None and no badge metadata is written.
+  - `check_in_from_appointment(...)`: dropped `badge_pdf_base64` from
+    the return dict.
+  - `download_badge_pdf(session_id, tenant_id)` — REMOVED. This was
+    the helper behind GET /sessions/{id}/badge; it no longer has a
+    backing artifact.
+
+services/badge_service.py
+  - `generate_badge_pdf(...)` — REMOVED. reportlab / qrcode / Pillow
+    are no longer imported by this module on the badge path. The
+    `validate_badge(qr_code_value)` helper is unchanged.
+  - reportlab is no longer used anywhere in the request path. It can
+    stay in requirements.txt for now (cheap on disk, easier rollback)
+    or be dropped in a follow-up if nothing else picks it up.
+
+schemas/visit_session_schema.py
+  - Removed `badge_pdf_object_key: Optional[str] = None` from
+    `VisitSessionBase` and `VisitSessionUpdate`. Existing Mongo
+    documents that still carry this field are tolerated by Pydantic
+    (extra-ignore) but the field is no longer surfaced.
+
+services/checkin_service.py
+  - `_send_visitor_badge_email(...)`: `badge_url` is now always `""`.
+    The `try_resolve_download_url(badge.badge_pdf_object_key)` call
+    was effectively dead code (Badge schema never had that field) —
+    replaced with a constant empty string. The host-approval email
+    template already hides the download button when `badge_url` is
+    empty and leans on the QR / public badge page.
+
+services/visitor_bulk_writer.py
+  - Module docstring updated (4 bulk ops, not 5).
+  - `_visitor_bulk_confirm`: per-id result is now
+    `{id, badgeQrToken?}` instead of `{id, badgePdfObjectKey?}`.
+  - `_visitor_bulk_badges` writer — REMOVED. No badge re-print queue
+    operation exists anymore; the FE composes badges directly from
+    the per-session GET.
+
+api/v1/visitor_route.py
+  - Dropped imports: `StreamingResponse`, `io`, `download_badge_pdf`.
+  - Removed routes: `GET /sessions/{session_id}/badge`,
+    `POST /sessions/bulk/badges`.
+  - Stripped `badge_pdf_base64` from the confirm endpoint's
+    `success_example`.
+  - Stripped `badge_pdf_object_key` from every `success_example` in
+    the file (8 occurrences across check-in / check-out / list /
+    detail / draft-resume / host-approve / id-scan).
+  - Updated docstring for `bulk_confirm` and `confirm_check_in_endpoint`
+    to describe the new "sign token, FE renders PDF" contract.
+
+api/v1/appointment_route.py
+  - Stripped `badge_pdf_base64` from the `check-in` endpoint's
+    `success_example`.
+
+config/role_permissions.py
+  - No changes required. The two removed routes were tenant-scoped
+    and not enumerated as explicit permission keys.
+
+================================================================================
+TESTS
+================================================================================
+
+tests/unit/conftest.py
+  - Dropped `badge_pdf_object_key: None` from the default
+    VisitSessionCreate factory body.
+
+tests/unit/test_verification.py
+tests/unit/test_staged_checkin.py
+tests/unit/test_ndpa_compliance.py
+tests/unit/test_dashboard_filters.py
+  - Dropped `badge_pdf_object_key: "badges/session-001.pdf"` from
+    each file's session fixture.
+
+tests/unit/test_services.py
+  - Dropped the `@patch("services.visit_session_service.generate_badge_pdf")`
+    decorator and the `mock_generate_pdf` parameter (+ its
+    `return_value` line) from `test_check_in_visitor_success`.
+
+================================================================================
+DOCS UPDATED
+================================================================================
+
+  - backend-docs/limitations.txt              (Free-plan side-effect note)
+  - backend-docs/plans-billing-frontend.txt   (Free-plan badge skip)
+  - backend-docs/appointment-checkin-flow.txt (response shape, issue_badge=false)
+  - backend-docs/appointment-checkin-and-audit-export-spec.txt
+                                              (response example, camelCase guide,
+                                               worker flow description)
+  - backend-docs/tables.txt                   (bulk/confirm shape; removal of
+                                               bulk/badges and per-session
+                                               badge download)
+
+================================================================================
+FRONTEND CHECKLIST
+================================================================================
+
+[ ] On confirm-check-in, render the badge from `session` (visitor
+    name, host_name_snapshot, department_name_snapshot, check_in_time,
+    badge_format) + the signed `badge_qr_token`. Use the public
+    `/v1/public/badge/{token}` page if you want a route-driven
+    printable view.
+
+[ ] Drop any code that reads `badgePdfBase64` from the confirm /
+    appointment-check-in response.
+
+[ ] Drop any code that reads `badgePdfObjectKey` from VisitSession
+    objects or from the bulk-confirm job result.
+
+[ ] Drop any GET to `/v1/visitors/sessions/{id}/badge` and any POST
+    to `/v1/visitors/sessions/bulk/badges` — both are 404 now.
+
+[ ] Bulk confirm: per-id result is `{id, badgeQrToken?}`. Iterate
+    and render. For "print all", call the active-sessions list and
+    render each badge from its own snapshots + token.
+
+[ ] On Free / badge-gated tenants the `badge_qr_token` will be null.
+    Render the existing "approved, manual entry only" state.
+
+================================================================================
+DATA / STORAGE
+================================================================================
+
+  - Existing `badges/{tenant_id}/{session_id}.pdf` objects in
+    DocumentStorageManager (S3 / local) are no longer referenced.
+    They are safe to leave in place; a follow-up GC sweep can prune
+    them. No background job currently does this.
+
+  - Existing `visit_sessions` documents that still carry a
+    `badge_pdf_object_key` field continue to deserialize cleanly
+    (Pydantic ignores extras). The field is not surfaced on any
+    response. No migration required.
+================================================================================
