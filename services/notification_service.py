@@ -913,8 +913,7 @@ async def notify_dsr_submitted_to_platform_admins(
                     user_type=UserType.ADMIN,
                     title="New Data Subject Request",
                     body=(
-                        f"{org_label} received a new DSR — review for SLA "
-                        f"compliance."
+                        f"{org_label} received a new DSR — review for SLA compliance."
                     ),
                     type="info",
                     link=f"/admin/dsr/{dsr_id}",

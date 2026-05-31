@@ -10,12 +10,17 @@ from schemas.visitor_profile_schema import VisitorProfileUpdate
 from security.auth import verify_any_system_user_token, verify_system_user_token
 from security.principal import AuthPrincipal
 from services.visitor_profile_service import (
+    retrieve_scheduled_for_deletion,
     retrieve_visitor_profile_by_id_with_summary,
     retrieve_visitor_profiles_with_summary,
     search_profiles,
 )
 
 router = APIRouter(prefix="/visitor-profiles", tags=["Visitor Profiles"])
+
+# DSR erasure surface is restricted to the data-protection roles: the
+# Data Protection Officer and the tenant Super Admin.
+_erasure_roles = verify_system_user_token("super_admin", "dpo")
 
 
 @router.get("/search")
@@ -80,6 +85,32 @@ async def _load_visitor_profiles_for_tenant(tenant_id: str) -> List[Any]:
     ]
 
 
+@router.get("/scheduled-deletions")
+@document_response(
+    message="Visitor profiles scheduled for deletion",
+    description=(
+        "Soft-deleted visitor profiles awaiting permanent deletion, soonest "
+        "first. These are erasures that can still be restored before their "
+        "grace window elapses. DPO / super admin only."
+    ),
+    summary="List visitor profiles scheduled for deletion",
+    include_meta=True,
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+    },
+)
+async def list_scheduled_deletions_endpoint(
+    start: Annotated[int, Query(ge=0)] = 0,
+    stop: Annotated[int, Query(gt=0)] = 100,
+    principal: AuthPrincipal = Depends(_erasure_roles),
+) -> Any:
+    tenant_id = principal.tenant_id or ""
+    return await retrieve_scheduled_for_deletion(
+        tenant_id=tenant_id, start=start, stop=stop
+    )
+
+
 @router.get("/{profile_id}")
 @document_response(
     message="Visitor profile fetched successfully",
@@ -141,4 +172,99 @@ async def update_visitor_profile_endpoint(
         actor_id=principal.user_id,
         actor_role=principal.role,
         request_id=getattr(request.state, "request_id", None),
+    )
+
+
+@router.delete("/{profile_id}")
+@document_response(
+    message="Visitor data erasure scheduled",
+    status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Fulfil a data-subject erasure request: soft-delete the visitor "
+        "profile now and schedule its permanent deletion after a 14-day "
+        "grace window. Reversible via the restore endpoint until then. "
+        "DPO / super admin only."
+    ),
+    summary="Erase visitor profile (soft-delete + scheduled purge)",
+    success_example={
+        "id": "507f1f77bcf86cd799439012",
+        "job_id": "b3d5f7a9-2345-4def-8abc-1234567890bc",
+        "status": "queued",
+    },
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        404: "Visitor profile not found or already scheduled for deletion",
+    },
+)
+async def erase_visitor_profile_endpoint(
+    profile_id: str,
+    request: Request,
+    reason: Annotated[str | None, Query(max_length=500)] = None,
+    principal: AuthPrincipal = Depends(_erasure_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    request_id = getattr(request.state, "request_id", None)
+    payload: dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "reason": reason,
+        "_actor_id": principal.user_id,
+        "_actor_role": principal.role,
+        "_request_id": request_id,
+    }
+    return await enqueue_write(
+        writer_key="visitor_profile.erase",
+        payload=payload,
+        resource_type="visitor_profile",
+        resource_id=profile_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=request_id,
+    )
+
+
+@router.post("/{profile_id}/restore")
+@document_response(
+    message="Visitor profile restore queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Reverse a scheduled erasure while still inside the grace window: "
+        "clears the soft-delete and cancels the pending permanent deletion. "
+        "DPO / super admin only."
+    ),
+    summary="Restore an erased visitor profile (async)",
+    success_example={
+        "id": "507f1f77bcf86cd799439012",
+        "job_id": "b3d5f7a9-2345-4def-8abc-1234567890bc",
+        "status": "queued",
+    },
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - insufficient permissions",
+        404: "No soft-deleted visitor profile found to restore",
+    },
+)
+async def restore_visitor_profile_endpoint(
+    profile_id: str,
+    request: Request,
+    principal: AuthPrincipal = Depends(_erasure_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    request_id = getattr(request.state, "request_id", None)
+    payload: dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "_actor_id": principal.user_id,
+        "_actor_role": principal.role,
+        "_request_id": request_id,
+    }
+    return await enqueue_write(
+        writer_key="visitor_profile.restore",
+        payload=payload,
+        resource_type="visitor_profile",
+        resource_id=profile_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=request_id,
     )

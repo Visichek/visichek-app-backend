@@ -2,6 +2,8 @@ from schemas.imports import *
 from pydantic import Field
 import time
 
+from schemas.summary_schema import VisitorProfileBriefSummary
+
 
 class DSRBase(BaseModel):
     tenant_id: str
@@ -27,6 +29,11 @@ class DSRUpdate(BaseModel):
     status: Optional[DSRStatus] = None
     identity_verified: Optional[bool] = None
     notes: Optional[str] = None
+    # Documented outcome of a terminal transition. The complete/reject
+    # endpoints (and bulk reject) send these; without declaring them here
+    # they were silently dropped and never persisted.
+    resolution: Optional[str] = None
+    rejection_reason: Optional[str] = None
     resolved_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
@@ -35,7 +42,13 @@ class DSROut(DSRBase):
     id: Optional[str] = Field(default=None, alias="_id")
     received_at: Optional[int] = None
     resolved_at: Optional[int] = None
+    resolution: Optional[str] = None
+    rejection_reason: Optional[str] = None
     date_created: Optional[int] = None
+    # Embedded snapshot of the subject this request concerns, so the DPO UI
+    # can show a name next to visitor_profile_id without a follow-up fetch
+    # (External ID Summary Fields rule). Resolved in the service layer.
+    visitor_profile_summary: Optional[VisitorProfileBriefSummary] = None
 
     @model_validator(mode="before")
     @classmethod

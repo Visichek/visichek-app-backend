@@ -1,3 +1,4 @@
+import asyncio
 from bson import ObjectId
 from fastapi import HTTPException
 from typing import Any, List, Optional
@@ -11,6 +12,16 @@ from repositories.data_subject_request_repo import (
     update_dsr,
 )
 from schemas.data_subject_request_schema import DSRCreate, DSRUpdate, DSROut
+
+
+async def _attach_visitor_summary(dsr: DSROut) -> DSROut:
+    """Embed the linked visitor's brief snapshot (best-effort, never raises)."""
+    from services.summary_resolver import resolve_visitor_profile_summary
+
+    dsr.visitor_profile_summary = await resolve_visitor_profile_summary(
+        dsr.visitor_profile_id
+    )
+    return dsr
 
 
 async def add_dsr(
@@ -30,16 +41,24 @@ async def retrieve_dsr_by_id(dsr_id: str, tenant_id: str) -> DSROut:
     result = await get_dsr({"_id": ObjectId(dsr_id), "tenant_id": tenant_id})
     if not result:
         raise HTTPException(status_code=404, detail="Data subject request not found")
-    return result
+    return await _attach_visitor_summary(result)
 
 
 async def retrieve_dsrs(tenant_id: str, start=0, stop=100) -> List[DSROut]:
-    return await get_dsrs(filter_dict={"tenant_id": tenant_id}, start=start, stop=stop)
+    dsrs = await get_dsrs(filter_dict={"tenant_id": tenant_id}, start=start, stop=stop)
+    if dsrs:
+        await asyncio.gather(*[_attach_visitor_summary(d) for d in dsrs])
+    return dsrs
 
 
 async def update_dsr_by_id(dsr_id: str, tenant_id: str, dsr_data: DSRUpdate) -> DSROut:
     if not ObjectId.is_valid(dsr_id):
         raise HTTPException(status_code=400, detail="Invalid DSR ID format")
+    # Stamp resolved_at when the request reaches a terminal state so the
+    # compliance trail records when it was closed out. Covers both the single
+    # complete/reject transitions and the bulk reject path (both land here).
+    if dsr_data.status in ("completed", "rejected") and dsr_data.resolved_at is None:
+        dsr_data.resolved_at = int(time.time())
     result = await update_dsr(
         {"_id": ObjectId(dsr_id), "tenant_id": tenant_id}, dsr_data
     )

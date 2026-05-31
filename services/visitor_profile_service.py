@@ -1,7 +1,12 @@
+from __future__ import annotations
+
+import logging
+import time
 from bson import ObjectId
 from fastapi import HTTPException
-from typing import List
+from typing import List, Optional
 
+from repositories.deletion_log_repo import create_deletion_log
 from repositories.visitor_profile_repo import (
     create_visitor_profile,
     get_visitor_profile,
@@ -9,16 +14,30 @@ from repositories.visitor_profile_repo import (
     get_visitor_profile_by_email,
     get_visitor_profile_by_id_number,
     get_visitor_profiles,
+    get_profiles_due_for_purge,
+    get_scheduled_for_deletion_profiles,
+    hard_delete_visitor_profile,
     update_visitor_profile,
     soft_delete_visitor_profile,
+    schedule_visitor_profile_purge,
+    restore_visitor_profile,
     search_visitor_profiles,
 )
+from schemas.deletion_log_schema import DeletionLogCreate
+from schemas.imports import DeletionAction
 from schemas.visitor_profile_schema import (
     VisitorProfileCreate,
     VisitorProfileUpdate,
     VisitorProfileOut,
     VisitorProfileWithSummaryOut,
 )
+
+logger = logging.getLogger(__name__)
+
+# Grace window between a DSR erasure (soft-delete) and permanent deletion.
+# Mirrors the statutory "cooling-off" period so an accidental or contested
+# erasure can be reversed before the data is irrecoverably purged.
+ERASURE_GRACE_SECONDS = 14 * 24 * 60 * 60  # 14 days
 
 
 async def get_or_create_visitor_profile(
@@ -164,3 +183,119 @@ async def soft_delete_profile(profile_id: str, tenant_id: str) -> VisitorProfile
     if not result:
         raise HTTPException(status_code=404, detail="Visitor profile not found")
     return result
+
+
+# ---------------------------------------------------------------------------
+# DSR erasure: soft-delete now + scheduled permanent deletion
+# ---------------------------------------------------------------------------
+
+
+async def schedule_profile_erasure(
+    profile_id: str,
+    tenant_id: str,
+    actor_id: str = "",
+    reason: Optional[str] = None,
+) -> VisitorProfileOut:
+    """Fulfil a data-subject erasure request.
+
+    Soft-deletes the visitor profile immediately and stamps
+    ``scheduled_purge_at`` 14 days out; the ``run_scheduled_erasure_purge``
+    sweep performs the irreversible hard delete once that window elapses.
+    A ``deletion_logs`` row records the scheduled erasure for compliance.
+    """
+    if not ObjectId.is_valid(profile_id):
+        raise HTTPException(status_code=400, detail="Invalid profile ID format")
+    now = int(time.time())
+    purge_at = now + ERASURE_GRACE_SECONDS
+    result = await schedule_visitor_profile_purge(
+        {"_id": ObjectId(profile_id), "tenant_id": tenant_id, "deleted_at": None},
+        deleted_at=now,
+        scheduled_purge_at=purge_at,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Visitor profile not found or already scheduled for deletion",
+        )
+    await create_deletion_log(
+        DeletionLogCreate(
+            tenant_id=tenant_id,
+            entity_type="visitor_profile",
+            entity_id=profile_id,
+            reason=reason or "dsr_erasure_request",
+            action=DeletionAction.SCHEDULED,
+            performed_by=actor_id or "system",
+        )
+    )
+    return result
+
+
+async def restore_profile_erasure(profile_id: str, tenant_id: str) -> VisitorProfileOut:
+    """Undo a scheduled erasure while still inside the grace window."""
+    if not ObjectId.is_valid(profile_id):
+        raise HTTPException(status_code=400, detail="Invalid profile ID format")
+    result = await restore_visitor_profile(
+        {
+            "_id": ObjectId(profile_id),
+            "tenant_id": tenant_id,
+            "deleted_at": {"$ne": None},
+        }
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No soft-deleted visitor profile found to restore",
+        )
+    return result
+
+
+async def retrieve_scheduled_for_deletion(
+    tenant_id: str, start: int = 0, stop: int = 100
+) -> List[VisitorProfileOut]:
+    """List this tenant's profiles awaiting permanent deletion."""
+    return await get_scheduled_for_deletion_profiles(
+        tenant_id=tenant_id, start=start, stop=stop
+    )
+
+
+async def run_scheduled_erasure_purge() -> None:
+    """APScheduler sweep: permanently delete profiles past their grace window.
+
+    The schedule for each erasure is the ``scheduled_purge_at`` timestamp
+    stamped at erasure time; this hourly sweep enforces it. It runs in the
+    web process (where the scheduler lives), mirroring
+    ``retention_service.run_retention_cleanup``. Restoring a profile clears
+    ``scheduled_purge_at``, so restored profiles are skipped here.
+    """
+    now = int(time.time())
+    due = await get_profiles_due_for_purge(now)
+    purged = 0
+    for profile in due:
+        if not profile.id:
+            continue
+        try:
+            deleted = await hard_delete_visitor_profile(
+                {"_id": ObjectId(profile.id), "tenant_id": profile.tenant_id}
+            )
+            if deleted:
+                await create_deletion_log(
+                    DeletionLogCreate(
+                        tenant_id=profile.tenant_id,
+                        entity_type="visitor_profile",
+                        entity_id=profile.id,
+                        reason="dsr_erasure_grace_expired",
+                        action=DeletionAction.DELETE,
+                        performed_by="system",
+                    )
+                )
+                purged += 1
+        except Exception:
+            logger.warning(
+                "scheduled_erasure_purge: failed to purge profile=%s",
+                profile.id,
+                exc_info=True,
+            )
+    if purged:
+        logger.info(
+            "scheduled_erasure_purge: permanently deleted %d profile(s)", purged
+        )

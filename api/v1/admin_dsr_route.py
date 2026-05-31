@@ -73,9 +73,7 @@ def _is_default_admin_dsr_listing(request: Request) -> bool:
         return False
     skip_raw = qp.get("skip", "0")
     limit_raw = qp.get("limit", str(ADMIN_DSR_LIST_SPEC.default_limit))
-    return skip_raw in ("0", "") and limit_raw == str(
-        ADMIN_DSR_LIST_SPEC.default_limit
-    )
+    return skip_raw in ("0", "") and limit_raw == str(ADMIN_DSR_LIST_SPEC.default_limit)
 
 
 def _map_dsr_doc(doc: dict[str, Any]) -> dict[str, Any]:

@@ -849,6 +849,25 @@ SUPER_ADMIN_PERMISSIONS: list[Permission] = [
         "/v1/visitor-profiles/{profile_id}",
         "Update visitor profile",
     ),
+    # DSR erasure (data subject right to be forgotten)
+    _p(
+        "list_scheduled_deletions",
+        ["GET"],
+        "/v1/visitor-profiles/scheduled-deletions",
+        "List visitor profiles scheduled for deletion",
+    ),
+    _p(
+        "erase_visitor_profile",
+        ["DELETE"],
+        "/v1/visitor-profiles/{profile_id}",
+        "Erase visitor profile (soft-delete + schedule permanent deletion)",
+    ),
+    _p(
+        "restore_visitor_profile",
+        ["POST"],
+        "/v1/visitor-profiles/{profile_id}/restore",
+        "Restore a soft-deleted visitor profile",
+    ),
     # Appointments
     _p("create_appointment", ["POST"], "/v1/appointments/", "Create appointment"),
     _p("list_appointments", ["GET"], "/v1/appointments/", "List appointments"),
@@ -1234,6 +1253,37 @@ DPO_PERMISSIONS: list[Permission] = [
     _p("list_dsr", ["GET"], "/v1/dsr/", "List data subject requests"),
     _p("get_dsr", ["GET"], "/v1/dsr/{dsr_id}", "View data subject request"),
     _p("update_dsr", ["PATCH"], "/v1/dsr/{dsr_id}", "Update data subject request"),
+    # Visitor profile erasure (fulfilling a deletion request)
+    _p(
+        "search_profiles",
+        ["GET"],
+        "/v1/visitor-profiles/search",
+        "Search visitor profiles",
+    ),
+    _p(
+        "get_profile",
+        ["GET"],
+        "/v1/visitor-profiles/{profile_id}",
+        "View visitor profile",
+    ),
+    _p(
+        "list_scheduled_deletions",
+        ["GET"],
+        "/v1/visitor-profiles/scheduled-deletions",
+        "List visitor profiles scheduled for deletion",
+    ),
+    _p(
+        "erase_visitor_profile",
+        ["DELETE"],
+        "/v1/visitor-profiles/{profile_id}",
+        "Erase visitor profile (soft-delete + schedule permanent deletion)",
+    ),
+    _p(
+        "restore_visitor_profile",
+        ["POST"],
+        "/v1/visitor-profiles/{profile_id}/restore",
+        "Restore a soft-deleted visitor profile",
+    ),
     # Privacy notices
     _p(
         "create_privacy_notice",

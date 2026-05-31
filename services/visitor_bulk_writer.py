@@ -101,9 +101,7 @@ async def _visitor_bulk_confirm(
             tenant_id=tenant_scope,
             badge_format=badge_format,
         )
-        token = (
-            result.get("badge_qr_token") if isinstance(result, dict) else None
-        )
+        token = result.get("badge_qr_token") if isinstance(result, dict) else None
         out: dict[str, Any] = {"id": session_id}
         if token:
             out["badgeQrToken"] = token

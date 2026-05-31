@@ -39,7 +39,11 @@ class VisitorProfileUpdate(BaseModel):
     verification_method: Optional[str] = None
     total_visits: Optional[int] = None
     last_visit_date: Optional[int] = None
-    deleted_at: Optional[int] = None
+    # NOTE: deleted_at / scheduled_purge_at are deliberately NOT settable via
+    # the generic PATCH. The soft-delete lifecycle is owned exclusively by the
+    # DPO-gated erasure path (DELETE / restore endpoints + their writers), which
+    # records a deletion log + audit event. Allowing a broader role to stamp
+    # deleted_at here would hide a profile with no compliance trail.
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
@@ -48,6 +52,9 @@ class VisitorProfileOut(VisitorProfileBase):
     date_created: Optional[int] = None
     last_updated: Optional[int] = None
     deleted_at: Optional[int] = None
+    # When set, the profile has been soft-deleted via a DSR erasure request
+    # and will be permanently purged once this timestamp elapses.
+    scheduled_purge_at: Optional[int] = None
     total_visits: Optional[int] = 0
     last_visit_date: Optional[int] = None
     verification_status: Optional[str] = None

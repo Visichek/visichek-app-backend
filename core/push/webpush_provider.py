@@ -35,7 +35,9 @@ class WebPushProvider:
     # ── client-facing config ────────────────────────────────────────
 
     def client_config(self) -> PushClientConfig:
-        return PushClientConfig(provider=self.provider_name, public_key=self._public_key)
+        return PushClientConfig(
+            provider=self.provider_name, public_key=self._public_key
+        )
 
     # ── VAPID signer (lazy) ──────────────────────────────────────────
 
@@ -63,8 +65,14 @@ class WebPushProvider:
 
         from pywebpush import WebPushException, webpush  # type: ignore[import-not-found]
 
-        if not subscription.endpoint or not subscription.p256dh or not subscription.auth:
-            return PushSendResult(ok=False, gone=False, detail="incomplete_subscription")
+        if (
+            not subscription.endpoint
+            or not subscription.p256dh
+            or not subscription.auth
+        ):
+            return PushSendResult(
+                ok=False, gone=False, detail="incomplete_subscription"
+            )
 
         subscription_info = {
             "endpoint": subscription.endpoint,

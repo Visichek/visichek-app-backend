@@ -137,6 +137,9 @@ class LawfulBasis(str, Enum):
 class DeletionAction(str, Enum):
     DELETE = "delete"
     ANONYMISE = "anonymise"
+    # Soft-delete now, permanent deletion scheduled after a grace window
+    # (used by the DSR erasure flow before the purge sweep hard-deletes).
+    SCHEDULED = "scheduled"
 
 
 class DSRType(str, Enum):

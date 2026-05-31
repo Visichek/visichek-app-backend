@@ -159,9 +159,7 @@ class Settings:
     # pushes; ``vapid_subject`` is the contact (``mailto:`` or URL) the
     # push service can reach. Defaults below are dev/test keys — override
     # ALL THREE via env in production.
-    vapid_public_key: str = (
-        "BBM8Qbdy-SqWp_EAjXUWPtEVZJtHKJJ4Qds3wYyORAnrpnRXmCXv6cbTP_0WwA3pm9H8-TdfZhrWtrV3zK7tVcY"
-    )
+    vapid_public_key: str = "BBM8Qbdy-SqWp_EAjXUWPtEVZJtHKJJ4Qds3wYyORAnrpnRXmCXv6cbTP_0WwA3pm9H8-TdfZhrWtrV3zK7tVcY"
     vapid_private_key: str = "cUICg_JfUvPmMZXZ-XrRx180wsQvz2i4GSPBkKpwdJk"
     vapid_subject: str = "mailto:support@visichek.app"
 

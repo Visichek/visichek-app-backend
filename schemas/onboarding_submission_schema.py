@@ -78,9 +78,7 @@ class OnboardingSubmissionRequest(BaseModel):
         # the key-equality checks below pass instead of rejecting the form.
         for aux_key in AUXILIARY_PAYLOAD_KEYS:
             if aux_key in self.payload:
-                self.field_labels.setdefault(
-                    aux_key, aux_key.replace("_", " ").title()
-                )
+                self.field_labels.setdefault(aux_key, aux_key.replace("_", " ").title())
                 if aux_key not in self.field_order:
                     self.field_order.append(aux_key)
 

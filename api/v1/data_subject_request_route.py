@@ -156,7 +156,11 @@ async def list_dsrs(
         return result
     query = parse_list_query(request, DSR_LIST_SPEC)
     result = await run_list(
-        collection=db.dsrs,
+        # Canonical collection — the rest of the system (repo, indexes,
+        # admin route, CSV export) uses ``data_subject_requests``; the old
+        # ``db.dsrs`` name read an empty collection, so every filtered /
+        # status-tab DSR query silently returned nothing.
+        collection=db.data_subject_requests,
         query=query,
         base_filter={"tenant_id": tenant_id},
         map_doc=_map_dsr_doc,

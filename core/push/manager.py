@@ -3,7 +3,12 @@ from __future__ import annotations
 from threading import Lock
 
 from core.push.provider import PushProvider
-from core.push.types import PushClientConfig, PushMessage, PushSendResult, PushSubscriptionInfo
+from core.push.types import (
+    PushClientConfig,
+    PushMessage,
+    PushSendResult,
+    PushSubscriptionInfo,
+)
 from core.settings import get_settings
 
 

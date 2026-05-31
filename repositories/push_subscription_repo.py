@@ -53,9 +53,7 @@ async def upsert_push_subscription(
 async def get_push_subscriptions_for_user(
     user_id: str, user_type: UserType
 ) -> List[PushSubscriptionOut]:
-    cursor = db[COLLECTION].find(
-        {"user_id": user_id, "user_type": user_type.value}
-    )
+    cursor = db[COLLECTION].find({"user_id": user_id, "user_type": user_type.value})
     items: List[PushSubscriptionOut] = []
     async for doc in cursor:
         items.append(PushSubscriptionOut(**doc))

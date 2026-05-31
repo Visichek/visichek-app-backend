@@ -402,6 +402,18 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Schedule DSR erasure purge sweep (hourly). Permanently deletes
+    # visitor profiles whose 14-day post-erasure grace window has elapsed
+    # (``scheduled_purge_at`` set by the DSR erasure flow). Textual
+    # reference per the MongoDB-jobstore pickling constraint.
+    scheduler.add_job(
+        "services.visitor_profile_service:run_scheduled_erasure_purge",
+        trigger=IntervalTrigger(hours=1),
+        id="scheduled_erasure_purge",
+        name="DSR Erasure Purge Sweep",
+        replace_existing=True,
+    )
+
     # Schedule expired discount cleanup (every 6 hours)
     scheduler.add_job(
         "services.discount_service:expire_stale_discounts",
