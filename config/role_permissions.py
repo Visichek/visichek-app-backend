@@ -912,6 +912,30 @@ SUPER_ADMIN_PERMISSIONS: list[Permission] = [
     _p("create_dsr", ["POST"], "/v1/dsr/", "Create data subject request"),
     _p("get_dsr", ["GET"], "/v1/dsr/{dsr_id}", "View data subject request"),
     _p("update_dsr", ["PATCH"], "/v1/dsr/{dsr_id}", "Update data subject request"),
+    _p(
+        "fulfil_access_dsr",
+        ["POST"],
+        "/v1/dsr/{dsr_id}/fulfil-access",
+        "Fulfil an access DSR (gather + email the subject's data)",
+    ),
+    _p(
+        "fulfil_consent_withdrawal_dsr",
+        ["POST"],
+        "/v1/dsr/{dsr_id}/fulfil-consent-withdrawal",
+        "Fulfil a consent-withdrawal DSR",
+    ),
+    _p(
+        "fulfil_correction_dsr",
+        ["POST"],
+        "/v1/dsr/{dsr_id}/fulfil-correction",
+        "Fulfil a correction DSR",
+    ),
+    _p(
+        "fulfil_deletion_dsr",
+        ["POST"],
+        "/v1/dsr/{dsr_id}/fulfil-deletion",
+        "Fulfil a deletion DSR (schedule erasure + close)",
+    ),
     _p("create_incident", ["POST"], "/v1/incidents/", "Create incident"),
     _p("list_incidents", ["GET"], "/v1/incidents/", "List incidents"),
     _p("get_incident", ["GET"], "/v1/incidents/{incident_id}", "View incident"),
@@ -1253,6 +1277,31 @@ DPO_PERMISSIONS: list[Permission] = [
     _p("list_dsr", ["GET"], "/v1/dsr/", "List data subject requests"),
     _p("get_dsr", ["GET"], "/v1/dsr/{dsr_id}", "View data subject request"),
     _p("update_dsr", ["PATCH"], "/v1/dsr/{dsr_id}", "Update data subject request"),
+    # DSR type-specific fulfilment
+    _p(
+        "fulfil_access_dsr",
+        ["POST"],
+        "/v1/dsr/{dsr_id}/fulfil-access",
+        "Fulfil an access DSR (gather + email the subject's data)",
+    ),
+    _p(
+        "fulfil_consent_withdrawal_dsr",
+        ["POST"],
+        "/v1/dsr/{dsr_id}/fulfil-consent-withdrawal",
+        "Fulfil a consent-withdrawal DSR",
+    ),
+    _p(
+        "fulfil_correction_dsr",
+        ["POST"],
+        "/v1/dsr/{dsr_id}/fulfil-correction",
+        "Fulfil a correction DSR",
+    ),
+    _p(
+        "fulfil_deletion_dsr",
+        ["POST"],
+        "/v1/dsr/{dsr_id}/fulfil-deletion",
+        "Fulfil a deletion DSR (schedule erasure + close)",
+    ),
     # Visitor profile erasure (fulfilling a deletion request)
     _p(
         "search_profiles",

@@ -23,6 +23,8 @@ class ConsentRecordBase(BaseModel):
     consent_granted: bool = False
     consent_method: Optional[str] = None
     consent_timestamp: Optional[int] = None
+    # Stamped when a DSR consent-withdrawal request revokes this consent.
+    consent_withdrawal_at: Optional[int] = None
     lawful_basis_at_time: Optional[LawfulBasis] = None
     client_ip: Optional[str] = None
     user_agent: Optional[str] = None

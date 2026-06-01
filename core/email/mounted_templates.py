@@ -3,6 +3,7 @@ from __future__ import annotations
 from core.email.types import MountedTemplate
 from email_templates import admin_invite as _admin_invite
 from email_templates import admin_otp_code as _admin_otp_code
+from email_templates import dsr_access_package as _dsr_access_package
 from email_templates import notification_templates as _notification_templates
 from email_templates import notification_test as _notification_test
 from email_templates import onboarding_accepted as _onboarding_accepted
@@ -58,6 +59,8 @@ def get_mounted_templates() -> list[MountedTemplate]:
         _mount(_onboarding_partial_accepted),
         # Visitor lifecycle (Issue 7 — badge email on approval)
         _mount(_visitor_badge_approved),
+        # DSR right-of-access: secure download link for the subject's data export.
+        _mount(_dsr_access_package),
         # Per-event notification fan-out (Issue 6 / Phase B2 —
         # incident deadline, visitor check-in, appointment reminder,
         # DSR submitted, subscription alert, new user added).

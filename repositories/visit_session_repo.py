@@ -121,6 +121,21 @@ async def count_visit_sessions(filter_dict: dict) -> int:
     return await db.visit_sessions.count_documents(filter_dict)
 
 
+async def mark_consent_withdrawn_for_visitor(
+    tenant_id: str, visitor_profile_id: str, withdrawn_at: int
+) -> int:
+    """Flag every visit session for a visitor as consent-withdrawn (DSR fulfilment).
+
+    Sets ``consent_granted=False`` and stamps ``consent_withdrawal_at``.
+    Returns the number of sessions updated.
+    """
+    result = await db.visit_sessions.update_many(
+        {"tenant_id": tenant_id, "visitor_profile_id": visitor_profile_id},
+        {"$set": {"consent_granted": False, "consent_withdrawal_at": withdrawn_at}},
+    )
+    return int(getattr(result, "modified_count", 0) or 0)
+
+
 async def get_visitor_session_stats(
     tenant_id: str, department_id: Optional[str] = None
 ) -> dict:

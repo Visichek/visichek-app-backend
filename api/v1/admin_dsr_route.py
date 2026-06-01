@@ -26,6 +26,7 @@ from security.account_status_check import (
 )
 from services.data_subject_request_service import (
     compute_admin_dsr_stats,
+    enrich_dsr_docs,
     retrieve_all_dsrs,
     retrieve_dsr_by_id_admin,
     retrieve_dsrs_approaching_sla,
@@ -155,6 +156,12 @@ async def admin_list_dsrs(
         map_doc=_map_dsr_doc,
         facet_runner=_admin_dsr_status_facet,
     )
+    # run_list maps docs synchronously; attach the external-id summaries in an
+    # async post-pass so filtered cross-tenant results aren't bare ids.
+    if isinstance(result, dict):
+        raw_items = result.get("items")
+        if isinstance(raw_items, list):
+            result["items"] = await enrich_dsr_docs(raw_items)
     _auto_read_admin_dsrs(admin, result)
     return result
 

@@ -41,3 +41,18 @@ async def get_consent_records(
 
 async def count_consent_records(filter_dict: Dict[str, Any] | None = None) -> int:
     return await db[COLLECTION].count_documents(filter_dict or {})
+
+
+async def mark_consent_withdrawn(
+    tenant_id: str, visitor_id: str, withdrawn_at: int
+) -> int:
+    """Flag every consent record for a visitor as withdrawn (DSR fulfilment).
+
+    Sets ``consent_granted=False`` and stamps ``consent_withdrawal_at``.
+    Returns the number of records updated.
+    """
+    result = await db[COLLECTION].update_many(
+        {"tenant_id": tenant_id, "visitor_id": visitor_id},
+        {"$set": {"consent_granted": False, "consent_withdrawal_at": withdrawn_at}},
+    )
+    return int(getattr(result, "modified_count", 0) or 0)

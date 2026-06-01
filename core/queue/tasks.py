@@ -109,6 +109,11 @@ _AUTO_AUDIT_SKIP: frozenset[str] = frozenset(
         # visitor_profile_writer self-audits the DSR erasure lifecycle
         "visitor_profile.erase",
         "visitor_profile.restore",
+        # dsr_writer self-audits the type-specific fulfilment handlers
+        "dsr.fulfil_access",
+        "dsr.fulfil_consent_withdrawal",
+        "dsr.fulfil_correction",
+        "dsr.fulfil_deletion",
         # system_user_service self-audits these specific operations
         "system_user.invite",
         "system_user.delete",

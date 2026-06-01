@@ -14,14 +14,60 @@ from repositories.data_subject_request_repo import (
 from schemas.data_subject_request_schema import DSRCreate, DSRUpdate, DSROut
 
 
-async def _attach_visitor_summary(dsr: DSROut) -> DSROut:
-    """Embed the linked visitor's brief snapshot (best-effort, never raises)."""
-    from services.summary_resolver import resolve_visitor_profile_summary
+async def _enrich_dsr(dsr: DSROut) -> DSROut:
+    """Embed the three external-id snapshots on a DSR concurrently.
 
-    dsr.visitor_profile_summary = await resolve_visitor_profile_summary(
-        dsr.visitor_profile_id
+    Resolves visitor_profile_id, admin_id, and visit_session_id in one
+    ``asyncio.gather`` so no read path serves a bare id (External ID Summary
+    Fields rule). Each resolver is best-effort and returns ``None`` rather than
+    raising, so enrichment never breaks the primary response.
+    """
+    from services.summary_resolver import (
+        resolve_user_summary,
+        resolve_visit_session_summary,
+        resolve_visitor_profile_summary,
     )
+
+    visitor, admin, session = await asyncio.gather(
+        resolve_visitor_profile_summary(dsr.visitor_profile_id),
+        resolve_user_summary(dsr.admin_id, None),
+        resolve_visit_session_summary(dsr.visit_session_id),
+    )
+    dsr.visitor_profile_summary = visitor
+    dsr.admin_summary = admin
+    dsr.visit_session_summary = session
     return dsr
+
+
+async def _enrich_dsrs(dsrs: List[DSROut]) -> List[DSROut]:
+    """Enrich a page of DSRs, fanning out the per-row resolution concurrently."""
+    if dsrs:
+        await asyncio.gather(*[_enrich_dsr(d) for d in dsrs])
+    return dsrs
+
+
+async def enrich_dsr_docs(items: List[dict[str, Any]]) -> List[dict[str, Any]]:
+    """Attach the three summaries to raw ``run_list`` dicts (filtered list path).
+
+    ``run_list`` maps Mongo docs synchronously via ``_map_dsr_doc``, which
+    cannot ``await`` a resolver — so status-tab / search / sort results would
+    otherwise come back as bare ids. This async post-pass re-parses each dict
+    into ``DSROut``, enriches it, and re-dumps it by alias so the filtered list
+    matches the precompute/default list shape. At 25 rows/page the per-row
+    fan-out is the same cost profile as ``retrieve_dsrs`` already pays.
+    """
+    if not items:
+        return items
+    enriched: List[dict[str, Any]] = []
+    for item in items:
+        try:
+            dsr = DSROut.model_validate(item)
+            await _enrich_dsr(dsr)
+            enriched.append(dsr.model_dump(mode="json", by_alias=True))
+        except Exception:
+            # Never let enrichment break the list — fall back to the raw doc.
+            enriched.append(item)
+    return enriched
 
 
 async def add_dsr(
@@ -41,14 +87,12 @@ async def retrieve_dsr_by_id(dsr_id: str, tenant_id: str) -> DSROut:
     result = await get_dsr({"_id": ObjectId(dsr_id), "tenant_id": tenant_id})
     if not result:
         raise HTTPException(status_code=404, detail="Data subject request not found")
-    return await _attach_visitor_summary(result)
+    return await _enrich_dsr(result)
 
 
 async def retrieve_dsrs(tenant_id: str, start=0, stop=100) -> List[DSROut]:
     dsrs = await get_dsrs(filter_dict={"tenant_id": tenant_id}, start=start, stop=stop)
-    if dsrs:
-        await asyncio.gather(*[_attach_visitor_summary(d) for d in dsrs])
-    return dsrs
+    return await _enrich_dsrs(dsrs)
 
 
 async def update_dsr_by_id(dsr_id: str, tenant_id: str, dsr_data: DSRUpdate) -> DSROut:
@@ -88,7 +132,8 @@ async def retrieve_all_dsrs(
         filter_dict["request_type"] = request_type
     if tenant_id:
         filter_dict["tenant_id"] = tenant_id
-    return await get_dsrs(filter_dict=filter_dict, start=start, stop=stop)
+    dsrs = await get_dsrs(filter_dict=filter_dict, start=start, stop=stop)
+    return await _enrich_dsrs(dsrs)
 
 
 async def retrieve_dsr_by_id_admin(dsr_id: str) -> DSROut:
@@ -98,7 +143,7 @@ async def retrieve_dsr_by_id_admin(dsr_id: str) -> DSROut:
     result = await get_dsr({"_id": ObjectId(dsr_id)})
     if not result:
         raise HTTPException(status_code=404, detail="Data subject request not found")
-    return result
+    return await _enrich_dsr(result)
 
 
 async def retrieve_dsrs_approaching_sla(

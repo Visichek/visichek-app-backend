@@ -10,12 +10,18 @@ from core.list_params import FilterDef, ListSpec, parse_list_query
 from core.list_runner import run_list
 from core.queue.entity_cache import get_or_compute_entity
 from core.queue.precompute import PrecomputeScope, get_or_compute
+from core.errors import AppException, ErrorCode
 from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
-from schemas.data_subject_request_schema import DSRCreate, DSRUpdate
+from schemas.data_subject_request_schema import (
+    DSRCorrectionRequest,
+    DSRCreate,
+    DSRUpdate,
+)
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal
 from services.data_subject_request_service import (
+    enrich_dsr_docs,
     retrieve_dsr_by_id,
     retrieve_dsrs,
 )
@@ -166,6 +172,12 @@ async def list_dsrs(
         map_doc=_map_dsr_doc,
         facet_runner=_dsr_status_facet,
     )
+    # run_list maps docs synchronously; attach the external-id summaries in an
+    # async post-pass so status-tab / search / sort results aren't bare ids.
+    if isinstance(result, dict):
+        raw_items = result.get("items")
+        if isinstance(raw_items, list):
+            result["items"] = await enrich_dsr_docs(raw_items)
     _auto_read_dsrs(principal, result)
     return result
 
@@ -438,6 +450,158 @@ async def reject_dsr_endpoint(
         payload=_dsr_transition_payload(
             tenant_id=tenant_id, new_status="rejected", extras=extras
         ),
+        resource_type="dsr",
+        resource_id=dsr_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+# ─── Type-specific fulfilment endpoints ───────────────────────────────
+
+
+def _fulfil_actor_payload(principal: AuthPrincipal, request: Request) -> dict[str, Any]:
+    """Base writer payload carrying tenant + actor metadata for self-audit."""
+    return {
+        "tenant_id": principal.tenant_id or "",
+        "_actor_id": principal.user_id,
+        "_actor_role": principal.role,
+        "_request_id": getattr(request.state, "request_id", None),
+    }
+
+
+@router.post("/{dsr_id}/fulfil-access")
+@document_response(
+    message="DSR access fulfilment queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Fulfil access DSR (async)",
+    description=(
+        "Gather the subject's data across all collections, package it as a ZIP "
+        "of CSVs, store it, and email the subject a secure 7-day download link. "
+        "Requires identity_verified=true on the DSR."
+    ),
+    response_codes={
+        401: "Unauthorized token",
+        403: "Insufficient permissions",
+        404: "DSR not found",
+        409: "Identity not verified",
+    },
+)
+async def fulfil_access_dsr_endpoint(
+    dsr_id: str,
+    request: Request,
+    principal: AuthPrincipal = Depends(_dpo_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    # Live read (not the entity cache) so a just-verified request isn't rejected
+    # by a stale identity_verified=false snapshot.
+    dsr = await retrieve_dsr_by_id(dsr_id=dsr_id, tenant_id=tenant_id)
+    if not dsr.identity_verified:
+        raise AppException(
+            status_code=409,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Identity must be verified before fulfilling an access request",
+            details={"code": "DSR_IDENTITY_NOT_VERIFIED"},
+        )
+    return await enqueue_write(
+        writer_key="dsr.fulfil_access",
+        payload=_fulfil_actor_payload(principal, request),
+        resource_type="dsr",
+        resource_id=dsr_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+@router.post("/{dsr_id}/fulfil-consent-withdrawal")
+@document_response(
+    message="DSR consent-withdrawal fulfilment queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Fulfil consent-withdrawal DSR (async)",
+    description=(
+        "Disable the visitor's profiling preference and mark every consent "
+        "record / visit session withdrawn, then complete the DSR."
+    ),
+    response_codes={401: "Unauthorized token", 403: "Insufficient permissions"},
+)
+async def fulfil_consent_withdrawal_dsr_endpoint(
+    dsr_id: str,
+    request: Request,
+    principal: AuthPrincipal = Depends(_dpo_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    return await enqueue_write(
+        writer_key="dsr.fulfil_consent_withdrawal",
+        payload=_fulfil_actor_payload(principal, request),
+        resource_type="dsr",
+        resource_id=dsr_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+@router.post("/{dsr_id}/fulfil-correction")
+@document_response(
+    message="DSR correction fulfilment queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Fulfil correction DSR (async)",
+    description=(
+        "Apply the supplied (allowlisted) visitor-profile corrections, record "
+        "the before/after diff, then complete the DSR."
+    ),
+    response_codes={
+        401: "Unauthorized token",
+        403: "Insufficient permissions",
+        422: "No correctable fields supplied",
+    },
+)
+async def fulfil_correction_dsr_endpoint(
+    dsr_id: str,
+    request: Request,
+    corrections: DSRCorrectionRequest,
+    principal: AuthPrincipal = Depends(_dpo_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    payload = _fulfil_actor_payload(principal, request)
+    payload["corrections"] = corrections.model_dump(exclude_none=True)
+    return await enqueue_write(
+        writer_key="dsr.fulfil_correction",
+        payload=payload,
+        resource_type="dsr",
+        resource_id=dsr_id,
+        tenant_id=tenant_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+@router.post("/{dsr_id}/fulfil-deletion")
+@document_response(
+    message="DSR deletion fulfilment queued",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Fulfil deletion DSR (async)",
+    description=(
+        "Schedule the visitor-profile erasure (soft-delete now + permanent "
+        "purge in 14 days) and complete the DSR in one job."
+    ),
+    response_codes={401: "Unauthorized token", 403: "Insufficient permissions"},
+)
+async def fulfil_deletion_dsr_endpoint(
+    dsr_id: str,
+    request: Request,
+    principal: AuthPrincipal = Depends(_dpo_roles),
+):
+    tenant_id = principal.tenant_id or ""
+    return await enqueue_write(
+        writer_key="dsr.fulfil_deletion",
+        payload=_fulfil_actor_payload(principal, request),
         resource_type="dsr",
         resource_id=dsr_id,
         tenant_id=tenant_id,

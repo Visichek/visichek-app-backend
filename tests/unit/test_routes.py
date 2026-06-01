@@ -1676,3 +1676,177 @@ class TestBootstrapRoute:
             )
 
         assert response.status_code in (401, 403)
+
+
+class TestDSRFulfilmentRoutes:
+    """Type-specific DSR fulfilment endpoints (access / consent / correction /
+    deletion). Each enqueues a queued write returning 202 + job id."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_fulfil_access_requires_identity_verified(
+        self, cleanup_dependency_overrides
+    ):
+        """fulfil-access must 409 (and NOT enqueue) when identity is unverified."""
+        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_DPO_PRINCIPAL
+
+        class _DSR:
+            identity_verified = False
+
+        with (
+            patch(
+                "api.v1.data_subject_request_route.retrieve_dsr_by_id",
+                new_callable=AsyncMock,
+            ) as mock_get,
+            patch(
+                "api.v1.data_subject_request_route.enqueue_write",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
+        ):
+            mock_get.return_value = _DSR()
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/dsr/507f1f77bcf86cd799439011/fulfil-access",
+                    headers={"Authorization": "Bearer token-111"},
+                )
+
+            assert response.status_code == 409
+            data = response.json()
+            assert data["data"]["details"]["code"] == "DSR_IDENTITY_NOT_VERIFIED"
+            mock_enqueue.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_fulfil_access_verified_enqueues(self, cleanup_dependency_overrides):
+        """fulfil-access enqueues dsr.fulfil_access when identity is verified."""
+        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_DPO_PRINCIPAL
+
+        class _DSR:
+            identity_verified = True
+
+        with (
+            patch(
+                "api.v1.data_subject_request_route.retrieve_dsr_by_id",
+                new_callable=AsyncMock,
+            ) as mock_get,
+            patch(
+                "api.v1.data_subject_request_route.enqueue_write",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
+        ):
+            mock_get.return_value = _DSR()
+            mock_enqueue.return_value = {
+                "id": "507f1f77bcf86cd799439011",
+                "job_id": "job-dsr-access",
+                "status": "queued",
+            }
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/dsr/507f1f77bcf86cd799439011/fulfil-access",
+                    headers={"Authorization": "Bearer token-111"},
+                )
+
+            assert response.status_code == 202
+            data = response.json()
+            assert data["data"]["jobId"] == "job-dsr-access"
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "dsr.fulfil_access"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_fulfil_consent_withdrawal_enqueues(
+        self, cleanup_dependency_overrides
+    ):
+        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_DPO_PRINCIPAL
+
+        with patch(
+            "api.v1.data_subject_request_route.enqueue_write",
+            new_callable=AsyncMock,
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
+                "id": "507f1f77bcf86cd799439011",
+                "job_id": "job-dsr-consent",
+                "status": "queued",
+            }
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/dsr/507f1f77bcf86cd799439011/fulfil-consent-withdrawal",
+                    headers={"Authorization": "Bearer token-111"},
+                )
+
+            assert response.status_code == 202
+            mock_enqueue.assert_awaited_once()
+            assert (
+                mock_enqueue.await_args.kwargs["writer_key"]
+                == "dsr.fulfil_consent_withdrawal"
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_fulfil_correction_enqueues_with_allowlisted_fields(
+        self, cleanup_dependency_overrides
+    ):
+        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_DPO_PRINCIPAL
+
+        with patch(
+            "api.v1.data_subject_request_route.enqueue_write",
+            new_callable=AsyncMock,
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
+                "id": "507f1f77bcf86cd799439011",
+                "job_id": "job-dsr-correction",
+                "status": "queued",
+            }
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/dsr/507f1f77bcf86cd799439011/fulfil-correction",
+                    json={"fullName": "Corrected Name", "company": "New Co"},
+                    headers={"Authorization": "Bearer token-111"},
+                )
+
+            assert response.status_code == 202
+            mock_enqueue.assert_awaited_once()
+            kwargs = mock_enqueue.await_args.kwargs
+            assert kwargs["writer_key"] == "dsr.fulfil_correction"
+            corrections = kwargs["payload"]["corrections"]
+            assert corrections["full_name"] == "Corrected Name"
+            assert corrections["company"] == "New Co"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_fulfil_deletion_enqueues(self, cleanup_dependency_overrides):
+        app.dependency_overrides[verify_system_user_token] = lambda: MOCK_DPO_PRINCIPAL
+
+        with patch(
+            "api.v1.data_subject_request_route.enqueue_write",
+            new_callable=AsyncMock,
+        ) as mock_enqueue:
+            mock_enqueue.return_value = {
+                "id": "507f1f77bcf86cd799439011",
+                "job_id": "job-dsr-deletion",
+                "status": "queued",
+            }
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/v1/dsr/507f1f77bcf86cd799439011/fulfil-deletion",
+                    headers={"Authorization": "Bearer token-111"},
+                )
+
+            assert response.status_code == 202
+            mock_enqueue.assert_awaited_once()
+            assert mock_enqueue.await_args.kwargs["writer_key"] == "dsr.fulfil_deletion"

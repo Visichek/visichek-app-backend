@@ -2,7 +2,11 @@ from schemas.imports import *
 from pydantic import Field
 import time
 
-from schemas.summary_schema import VisitorProfileBriefSummary
+from schemas.summary_schema import (
+    UserBriefSummary,
+    VisitorProfileBriefSummary,
+    VisitSessionBriefSummary,
+)
 
 
 class DSRBase(BaseModel):
@@ -35,6 +39,13 @@ class DSRUpdate(BaseModel):
     resolution: Optional[str] = None
     rejection_reason: Optional[str] = None
     resolved_at: Optional[int] = None
+    # Right-of-access fulfilment artifact. Stamped by the dsr.fulfil_access
+    # writer once the export ZIP is generated, stored, and emailed so the DSR
+    # carries a durable record of what was sent and where.
+    access_export_object_key: Optional[str] = None
+    access_export_expires_at: Optional[int] = None
+    access_export_emailed_to: Optional[str] = None
+    access_export_generated_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
@@ -45,10 +56,21 @@ class DSROut(DSRBase):
     resolution: Optional[str] = None
     rejection_reason: Optional[str] = None
     date_created: Optional[int] = None
-    # Embedded snapshot of the subject this request concerns, so the DPO UI
-    # can show a name next to visitor_profile_id without a follow-up fetch
-    # (External ID Summary Fields rule). Resolved in the service layer.
+    # Embedded snapshots so the DPO UI can render a name/status next to each
+    # foreign-key id without a follow-up fetch (External ID Summary Fields
+    # rule). Every *_id on this *Out carries a *_summary companion. Resolved
+    # concurrently in the service layer (see _enrich_dsr).
     visitor_profile_summary: Optional[VisitorProfileBriefSummary] = None
+    # admin_id is stamped from the DPO/super_admin actor (a system_user), so
+    # it resolves via resolve_user_summary (system_user-first), not the
+    # application-admin resolver.
+    admin_summary: Optional[UserBriefSummary] = None
+    visit_session_summary: Optional[VisitSessionBriefSummary] = None
+    # Right-of-access fulfilment artifact (see DSRUpdate).
+    access_export_object_key: Optional[str] = None
+    access_export_expires_at: Optional[int] = None
+    access_export_emailed_to: Optional[str] = None
+    access_export_generated_at: Optional[int] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -61,3 +83,17 @@ class DSROut(DSRBase):
         populate_by_name = True
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
+
+
+class DSRCorrectionRequest(BaseModel):
+    """Body for fulfilling a *correction* DSR.
+
+    Allowlists exactly the visitor-profile PII a data subject can have
+    corrected. Every field is optional; only the supplied (non-None) fields
+    are applied to the visitor profile.
+    """
+
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    email_address: Optional[EmailStr] = None
+    company: Optional[str] = None

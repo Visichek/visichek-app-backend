@@ -10,6 +10,7 @@ from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
 from schemas.data_subject_request_schema import DSRCreate, DSRUpdate
+from services.audit_service import record_audit_event
 from services.data_subject_request_service import (
     add_dsr,
     retrieve_dsrs,
@@ -17,6 +18,22 @@ from services.data_subject_request_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Lists invalidated when a fulfilment mutates the underlying visitor profile.
+_PROFILE_FULFIL_INVALIDATES = [
+    "dsr.list",
+    "visitor_profiles.list",
+    "dashboard.visitors_active",
+    "dashboard.visitors_page1",
+]
+
+
+def _pop_actor(data: dict[str, Any]) -> tuple[str, str, str | None]:
+    """Strip actor metadata the route threads in for the writer's audit call."""
+    actor_id = data.pop("_actor_id", "") or ""
+    actor_role = data.pop("_actor_role", "") or ""
+    request_id = data.pop("_request_id", None)
+    return actor_id, actor_role, request_id
 
 
 def _enqueue_list_refresh(tenant_id: str) -> None:
@@ -140,6 +157,114 @@ async def _dsr_bulk_reject(resource_id: str, data: dict[str, Any]) -> dict[str, 
     if tenant_scope:
         _enqueue_list_refresh(tenant_scope)
     return out
+
+
+# ─── Fulfilment writers (one per DSR type) ────────────────────────────
+
+
+@write_handler("dsr.fulfil_access", invalidates=["dsr.list"])
+async def _dsr_fulfil_access(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    actor_id, actor_role, request_id = _pop_actor(data)
+    tenant_id = data.get("tenant_id", "") or ""
+    from services.dsr_access_export_service import run_access_fulfilment
+
+    result = await run_access_fulfilment(resource_id, tenant_id)
+    _enqueue_list_refresh(tenant_id)
+    if actor_id:
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role or "system_user",
+            action="dsr.access_fulfilled",
+            resource_type="dsr",
+            resource_id=resource_id,
+            tenant_id=tenant_id,
+            details={
+                "object_key": result.get("object_key"),
+                "emailed_to": result.get("emailed_to"),
+            },
+            request_id=request_id,
+        )
+    return result
+
+
+@write_handler("dsr.fulfil_consent_withdrawal", invalidates=_PROFILE_FULFIL_INVALIDATES)
+async def _dsr_fulfil_consent_withdrawal(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    actor_id, actor_role, request_id = _pop_actor(data)
+    tenant_id = data.get("tenant_id", "") or ""
+    from services.dsr_fulfil_service import fulfil_consent_withdrawal
+
+    result = await fulfil_consent_withdrawal(resource_id, tenant_id)
+    _enqueue_list_refresh(tenant_id)
+    if actor_id:
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role or "system_user",
+            action="dsr.consent_withdrawal_fulfilled",
+            resource_type="dsr",
+            resource_id=resource_id,
+            tenant_id=tenant_id,
+            details={
+                "visitor_profile_id": result.get("visitor_profile_id"),
+                "consent_records_marked": result.get("consent_records_marked"),
+                "visit_sessions_marked": result.get("visit_sessions_marked"),
+            },
+            request_id=request_id,
+        )
+    return result
+
+
+@write_handler("dsr.fulfil_correction", invalidates=_PROFILE_FULFIL_INVALIDATES)
+async def _dsr_fulfil_correction(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    actor_id, actor_role, request_id = _pop_actor(data)
+    tenant_id = data.pop("tenant_id", "") or ""
+    corrections = data.get("corrections", {}) or {}
+    from services.dsr_fulfil_service import fulfil_correction
+
+    result = await fulfil_correction(resource_id, tenant_id, corrections)
+    _enqueue_list_refresh(tenant_id)
+    if actor_id:
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role or "system_user",
+            action="dsr.correction_fulfilled",
+            resource_type="dsr",
+            resource_id=resource_id,
+            tenant_id=tenant_id,
+            details={
+                "visitor_profile_id": result.get("visitor_profile_id"),
+                "changes": result.get("changes"),
+            },
+            request_id=request_id,
+        )
+    return result
+
+
+@write_handler("dsr.fulfil_deletion", invalidates=_PROFILE_FULFIL_INVALIDATES)
+async def _dsr_fulfil_deletion(
+    resource_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    actor_id, actor_role, request_id = _pop_actor(data)
+    tenant_id = data.get("tenant_id", "") or ""
+    from services.dsr_fulfil_service import fulfil_deletion
+
+    result = await fulfil_deletion(resource_id, tenant_id, actor_id=actor_id)
+    _enqueue_list_refresh(tenant_id)
+    if actor_id:
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role or "system_user",
+            action="dsr.deletion_fulfilled",
+            resource_type="dsr",
+            resource_id=resource_id,
+            tenant_id=tenant_id,
+            details={"visitor_profile_id": result.get("visitor_profile_id")},
+            request_id=request_id,
+        )
+    return result
 
 
 @register_precompute("dsr.list", scope=PrecomputeScope.TENANT)

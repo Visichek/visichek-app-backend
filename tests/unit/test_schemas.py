@@ -1097,6 +1097,49 @@ class TestDSRSchema:
         out = DSROut(**data)
         assert out.id == str(oid)
 
+    def test_dsr_out_carries_external_id_summaries(self):
+        """DSROut exposes admin_summary + visit_session_summary companions and
+        the access-export artifact fields (External ID Summary Fields rule)."""
+        out = DSROut(
+            _id=ObjectId(),
+            tenant_id="t",
+            visitor_profile_id="v",
+            request_type="access",
+            status="pending",
+        )
+        dumped = out.model_dump()
+        assert "visitor_profile_summary" in dumped
+        assert "admin_summary" in dumped
+        assert "visit_session_summary" in dumped
+        assert "access_export_object_key" in dumped
+        assert "access_export_emailed_to" in dumped
+
+    def test_dsr_update_accepts_access_export_fields(self):
+        """The writer stamps the access-export artifact via DSRUpdate."""
+        upd = DSRUpdate(
+            status="completed",
+            access_export_object_key="dsr-access-exports/t/d/abc.zip",
+            access_export_expires_at=123,
+            access_export_emailed_to="ada@example.com",
+            access_export_generated_at=100,
+        )
+        assert upd.access_export_emailed_to == "ada@example.com"
+        assert upd.access_export_object_key.endswith(".zip")
+
+    def test_dsr_correction_request_allowlist(self):
+        """DSRCorrectionRequest carries only the four correctable PII fields."""
+        from schemas.data_subject_request_schema import DSRCorrectionRequest
+
+        req = DSRCorrectionRequest(full_name="New Name", company="New Co")
+        dumped = req.model_dump(exclude_none=True)
+        assert dumped == {"full_name": "New Name", "company": "New Co"}
+        assert set(DSRCorrectionRequest.model_fields) == {
+            "full_name",
+            "phone",
+            "email_address",
+            "company",
+        }
+
     def test_dsr_enum_validation(self):
         """Test DSRCreate validates enum fields."""
         with pytest.raises(ValidationError):
