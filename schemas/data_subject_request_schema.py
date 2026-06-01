@@ -19,6 +19,13 @@ class DSRBase(BaseModel):
     identity_verified: bool = False
     sla_deadline: Optional[int] = None
     notes: Optional[str] = None
+    # Contact the data subject gave when the request was raised. The DSR has no
+    # identity of its own beyond the linked visitor profile, so these let us
+    # reach the requester directly — status notifications and the access export
+    # go to this address AND the linked visitor profile's email. Kept as plain
+    # str (not EmailStr) so an empty/blank submit never 422s the create.
+    requester_email: Optional[str] = None
+    requester_name: Optional[str] = None
 
 
 class DSRCreate(DSRBase):

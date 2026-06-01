@@ -14,6 +14,7 @@ Carries:
 
 from __future__ import annotations
 
+import html
 import time
 from typing import Any
 
@@ -38,9 +39,12 @@ def _format_expiry(context: dict[str, Any]) -> str:
 
 
 def render_html(context: dict[str, Any]) -> str:
-    visitor_name = _safe(context, "visitor_name", "there")
-    tenant_name = _safe(context, "tenant_name", "VisiChek")
-    download_url = _safe(context, "download_url")
+    # Escape interpolated values for the HTML body. visitor_name is the
+    # subject's self-entered name (untrusted); download_url is system-minted
+    # but escaped so its query string can't break out of the href attribute.
+    visitor_name = html.escape(_safe(context, "visitor_name", "there"))
+    tenant_name = html.escape(_safe(context, "tenant_name", "VisiChek"))
+    download_url = html.escape(_safe(context, "download_url"))
     expires_at = _format_expiry(context)
 
     primary_cta = ""

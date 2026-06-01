@@ -105,11 +105,29 @@ async def _dsr_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
 @write_handler("dsr.update", invalidates=["dsr.list"])
 async def _dsr_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
+    # Captured before the update so we only notify when the caller actually
+    # requested an in-progress / completed transition (a bare identity-verify
+    # PATCH carries no status and must NOT email anyone).
+    requested_status = data.get("status")
     upd = DSRUpdate(**data)
     result = await update_dsr_by_id(
         dsr_id=resource_id, tenant_id=tenant_id, dsr_data=upd
     )
     _enqueue_list_refresh(tenant_id)
+    # Notify the requester + linked visitor on the in-progress and completed
+    # shifts. Best-effort — a bounced email never fails the status change.
+    if requested_status in ("in_progress", "completed"):
+        try:
+            from services.dsr_notify_service import notify_dsr_status
+
+            await notify_dsr_status(result, str(requested_status))
+        except Exception:
+            logger.warning(
+                "dsr_writer: status notification failed dsr=%s status=%s",
+                resource_id,
+                requested_status,
+                exc_info=True,
+            )
     return {"id": result.id, "status": result.status}
 
 

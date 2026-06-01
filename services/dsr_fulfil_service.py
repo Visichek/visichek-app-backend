@@ -18,15 +18,36 @@ event. Profile mutations go through ``update_profile_by_id`` /
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Dict
 
-from schemas.data_subject_request_schema import DSRUpdate
+from schemas.data_subject_request_schema import DSROut, DSRUpdate
 from schemas.imports import DSRStatus, ProfilingPreference
 from schemas.visitor_profile_schema import VisitorProfileUpdate
 
+logger = logging.getLogger(__name__)
+
 # Fields a data subject can have corrected (mirror DSRCorrectionRequest).
 _CORRECTABLE_FIELDS = ("full_name", "phone", "email_address", "company")
+
+
+async def _notify_completed(dsr: DSROut) -> None:
+    """Notify the requester + linked visitor that the request is complete.
+
+    Best-effort. The access flow does NOT use this — its ``dsr_access_package``
+    email is its own completion notice.
+    """
+    try:
+        from services.dsr_notify_service import notify_dsr_status
+
+        await notify_dsr_status(dsr, "completed")
+    except Exception:
+        logger.warning(
+            "dsr fulfil: completed notification failed dsr=%s",
+            getattr(dsr, "id", None),
+            exc_info=True,
+        )
 
 
 async def fulfil_consent_withdrawal(dsr_id: str, tenant_id: str) -> Dict[str, Any]:
@@ -56,7 +77,7 @@ async def fulfil_consent_withdrawal(dsr_id: str, tenant_id: str) -> Dict[str, An
         tenant_id, visitor_profile_id, now
     )
 
-    await update_dsr_by_id(
+    updated = await update_dsr_by_id(
         dsr_id=dsr_id,
         tenant_id=tenant_id,
         dsr_data=DSRUpdate(
@@ -68,6 +89,7 @@ async def fulfil_consent_withdrawal(dsr_id: str, tenant_id: str) -> Dict[str, An
             ),
         ),
     )
+    await _notify_completed(updated)
     return {
         "id": dsr_id,
         "status": "completed",
@@ -130,7 +152,7 @@ async def fulfil_correction(
             changes[field] = {"from": old, "to": new}
 
     summary = ", ".join(changes.keys()) if changes else "no effective change"
-    await update_dsr_by_id(
+    updated = await update_dsr_by_id(
         dsr_id=dsr_id,
         tenant_id=tenant_id,
         dsr_data=DSRUpdate(
@@ -138,6 +160,7 @@ async def fulfil_correction(
             resolution=f"Profile corrected ({summary}).",
         ),
     )
+    await _notify_completed(updated)
     return {
         "id": dsr_id,
         "status": "completed",
@@ -166,7 +189,7 @@ async def fulfil_deletion(
         reason="dsr_deletion_request",
     )
 
-    await update_dsr_by_id(
+    updated = await update_dsr_by_id(
         dsr_id=dsr_id,
         tenant_id=tenant_id,
         dsr_data=DSRUpdate(
@@ -177,6 +200,7 @@ async def fulfil_deletion(
             ),
         ),
     )
+    await _notify_completed(updated)
     return {
         "id": dsr_id,
         "status": "completed",

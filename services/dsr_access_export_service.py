@@ -330,12 +330,21 @@ async def run_access_fulfilment(dsr_id: str, tenant_id: str) -> Dict[str, Any]:
             message="Visitor profile not found for this request",
             details={"code": "DSR_ACCESS_NO_PROFILE"},
         )
-    email = profile_rows[0].get("email_address")
-    if not email:
+    # Deliver to BOTH the requester email captured on the request and the
+    # linked visitor profile's email (deduplicated, requester-first). At least
+    # one valid address is required, otherwise there's nobody to send to.
+    profile_email = profile_rows[0].get("email_address")
+    recipients: List[str] = []
+    seen: set[str] = set()
+    for candidate in (dsr.requester_email, profile_email):
+        if candidate and "@" in candidate and candidate not in seen:
+            seen.add(candidate)
+            recipients.append(candidate)
+    if not recipients:
         raise AppException(
             status_code=422,
             code=ErrorCode.VALIDATION_FAILED,
-            message="The data subject has no email address on file; cannot deliver the export",
+            message="No email address on file for the data subject; cannot deliver the export",
             details={"code": "DSR_ACCESS_NO_EMAIL"},
         )
 
@@ -362,29 +371,32 @@ async def run_access_fulfilment(dsr_id: str, tenant_id: str) -> Dict[str, Any]:
 
     from core.email.manager import EmailManager
 
-    await EmailManager.get_instance().send_template(
-        EmailDispatchRequest(
-            to_email=str(email),
-            template_key="dsr_access_package",
-            context={
-                "visitor_name": visitor_name,
-                "tenant_name": tenant_name,
-                "download_url": download_url,
-                "expires_at": expires_at,
-            },
-            dispatch="auto",
+    manager = EmailManager.get_instance()
+    for recipient in recipients:
+        await manager.send_template(
+            EmailDispatchRequest(
+                to_email=recipient,
+                template_key="dsr_access_package",
+                context={
+                    "visitor_name": visitor_name,
+                    "tenant_name": tenant_name,
+                    "download_url": download_url,
+                    "expires_at": expires_at,
+                },
+                dispatch="auto",
+            )
         )
-    )
 
+    emailed_to = ", ".join(recipients)
     upd = DSRUpdate(
         status=DSRStatus.COMPLETED,
         resolution=(
-            f"Access request fulfilled — personal-data export emailed to {email}. "
+            f"Access request fulfilled — personal-data export emailed to {emailed_to}. "
             "Secure download link expires in 7 days."
         ),
         access_export_object_key=object_key,
         access_export_expires_at=expires_at,
-        access_export_emailed_to=str(email),
+        access_export_emailed_to=emailed_to,
         access_export_generated_at=generated_at,
     )
     await update_dsr_by_id(dsr_id=dsr_id, tenant_id=tenant_id, dsr_data=upd)
@@ -393,6 +405,6 @@ async def run_access_fulfilment(dsr_id: str, tenant_id: str) -> Dict[str, Any]:
         "id": dsr_id,
         "status": "completed",
         "object_key": object_key,
-        "emailed_to": str(email),
+        "emailed_to": emailed_to,
         "expires_at": expires_at,
     }
