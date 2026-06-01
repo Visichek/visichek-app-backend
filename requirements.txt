@@ -21,6 +21,11 @@ celery-aio-pool
 flower
 eventlet
 
+# Email — Resend HTTPS API transport (used when EMAIL_PROVIDER=resend). The SDK
+# is imported only when that provider is selected, so SMTP-only runtime never
+# touches it; it is installed by default so switching providers needs no redeploy.
+resend>=2.21.0
+
 # Storage & Payments
 boto3
 stripe

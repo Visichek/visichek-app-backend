@@ -2,17 +2,72 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from threading import Lock
 from typing import Any
 
-from core.email.transport import SMTPTransport, SmtpConfig
+from core.email.transport import (
+    ResendConfig,
+    ResendTransport,
+    SMTPTransport,
+    SmtpConfig,
+)
 from core.email.types import (
     EmailDispatchRequest,
     EmailMessage,
     EmailSendResult,
+    EmailTransport,
     MountedTemplate,
 )
 from core.settings import get_settings
+
+
+def build_email_transport(
+    *,
+    provider: str,
+    smtp_host: str | None,
+    smtp_port: int,
+    smtp_username: str | None,
+    smtp_password: str | None,
+    smtp_from_email: str | None,
+    resend_api_key: str | None,
+    resend_from_email: str | None,
+) -> EmailTransport | None:
+    """Pick the email transport from config.
+
+    ``provider`` selects the backend:
+
+    * ``"resend"`` — use the Resend HTTPS API (requires ``resend_api_key`` and
+      a deliverable ``from`` address).
+    * anything else (default ``"smtp"``) — use SMTP, exactly as before.
+
+    Returns ``None`` when the chosen provider isn't fully configured, which
+    leaves the manager transport-less (sends then raise a clear error) —
+    matching the prior SMTP-only behaviour.
+    """
+    if (provider or "smtp").strip().lower() == "resend":
+        if not resend_api_key:
+            return None
+        from_email = resend_from_email or smtp_from_email or smtp_username
+        if not from_email:
+            return None
+        return ResendTransport(
+            ResendConfig(api_key=resend_api_key, from_email=from_email)
+        )
+
+    # SMTP (default) — unchanged from the original behaviour.
+    if smtp_host and smtp_username and smtp_password:
+        from_email = smtp_from_email or smtp_username
+        return SMTPTransport(
+            SmtpConfig(
+                host=smtp_host,
+                port=smtp_port,
+                username=smtp_username,
+                password=smtp_password,
+                from_email=from_email,
+            )
+        )
+    return None
 
 
 class EmailManager:
@@ -22,13 +77,15 @@ class EmailManager:
     def __init__(
         self,
         *,
-        transport: SMTPTransport | None,
+        transport: EmailTransport | None,
         sender_display_name: str,
         retry_attempts: int,
         retry_backoff_seconds: float,
         queue_enabled: bool,
+        provider: str = "smtp",
     ) -> None:
         self._transport = transport
+        self._provider = (provider or "smtp").strip().lower()
         self._sender_display_name = sender_display_name
         self._retry_attempts = max(retry_attempts, 1)
         self._retry_backoff_seconds = max(retry_backoff_seconds, 0.0)
@@ -46,18 +103,16 @@ class EmailManager:
     def configure_from_settings(cls) -> "EmailManager":
         settings = get_settings()
 
-        transport: SMTPTransport | None = None
-        if settings.email_host and settings.email_username and settings.email_password:
-            from_email = settings.email_from_email or settings.email_username
-            transport = SMTPTransport(
-                SmtpConfig(
-                    host=settings.email_host,
-                    port=settings.email_port,
-                    username=settings.email_username,
-                    password=settings.email_password,
-                    from_email=from_email,
-                )
-            )
+        transport: EmailTransport | None = build_email_transport(
+            provider=settings.email_provider,
+            smtp_host=settings.email_host,
+            smtp_port=settings.email_port,
+            smtp_username=settings.email_username,
+            smtp_password=settings.email_password,
+            smtp_from_email=settings.email_from_email,
+            resend_api_key=settings.resend_api_key,
+            resend_from_email=settings.resend_from_email,
+        )
 
         manager = cls(
             transport=transport,
@@ -65,6 +120,7 @@ class EmailManager:
             retry_attempts=settings.email_retry_attempts,
             retry_backoff_seconds=settings.email_retry_backoff_seconds,
             queue_enabled=settings.email_queue_enabled,
+            provider=settings.email_provider,
         )
 
         try:
@@ -137,14 +193,31 @@ class EmailManager:
 
     async def send_message(self, message: EmailMessage) -> EmailSendResult:
         if self._transport is None:
+            if self._provider == "resend":
+                raise RuntimeError(
+                    "Email transport is not configured. EMAIL_PROVIDER=resend "
+                    "requires RESEND_API_KEY and a from address "
+                    "(RESEND_FROM_EMAIL, or EMAIL_FROM_EMAIL/EMAIL_USERNAME)."
+                )
             raise RuntimeError(
-                "Email transport is not configured. Set EMAIL_HOST, EMAIL_PORT, EMAIL_USERNAME, and EMAIL_PASSWORD."
+                "Email transport is not configured. Set EMAIL_HOST, EMAIL_PORT, "
+                "EMAIL_USERNAME, and EMAIL_PASSWORD (or set EMAIL_PROVIDER=resend "
+                "with RESEND_API_KEY)."
             )
+
+        # One key per logical send, reused across every retry attempt so a
+        # transport that honours it (Resend) treats retries as the same send
+        # and never delivers a duplicate. SMTP ignores it.
+        idempotency_key = f"visichek-email/{uuid.uuid4().hex}"
 
         last_error: Exception | None = None
         for attempt in range(1, self._retry_attempts + 1):
             try:
-                await asyncio.to_thread(self._transport.send_message, message)
+                await asyncio.to_thread(
+                    self._transport.send_message,
+                    message,
+                    idempotency_key=idempotency_key,
+                )
                 return EmailSendResult(status="sent", attempts=attempt)
             except Exception as exc:
                 last_error = exc

@@ -5,12 +5,16 @@ payload fields as missing or unsatisfactory. The newly-provisioned
 super_admin must fill those in via the self-completion endpoint before
 the tenant is considered fully onboarded.
 
-Mirrors ``onboarding_accepted.py`` and adds the pending-fields list.
+Mirrors ``onboarding_accepted.py`` and adds the pending-fields panel.
+Presentation is delegated to ``_shell`` — the brand layer that owns all
+colours, typography, and layout so this module stays pure content logic.
 """
 
 from __future__ import annotations
 
 from typing import Any, Iterable
+
+from email_templates import _shell as ui
 
 TEMPLATE_KEY = "onboarding_partial_accepted"
 SUBJECT = "Your {platform_name} workspace is ready — a few details to finish"
@@ -43,73 +47,57 @@ def render_html(context: dict[str, Any]) -> str:
     review_notes = _safe(context, "review_notes", "")
     pending = _pending_labels(context)
 
-    login_button = (
-        f"<a href='{login_url}' style='display:inline-block;background:#0F172A;"
-        "color:#FFFFFF;text-decoration:none;padding:12px 22px;border-radius:8px;"
-        f"font-weight:600;font-size:14px'>Sign in to {platform_name}</a>"
-        if login_url
-        else ""
-    )
-
     notes_block = (
-        "<div style='background:#FEF9C3;border:1px solid #FDE68A;border-radius:10px;"
-        "padding:14px 18px;margin:0 0 18px;color:#713F12;font-size:13px;line-height:1.55'>"
-        f"<strong>Note from our team:</strong><br>{review_notes}</div>"
+        ui.panel(
+            f"<strong>Note from our team:</strong><br>{review_notes}",
+            variant="warning",
+        )
         if review_notes
         else ""
     )
 
-    creds_block = (
-        "<div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;"
-        "padding:16px 20px;margin:18px 0'>"
-        "<p style='margin:0 0 6px;font-size:13px;color:#475569'>Sign-in email</p>"
-        f"<p style='margin:0 0 14px;font-weight:600'>{email}</p>"
-        "<p style='margin:0 0 6px;font-size:13px;color:#475569'>Temporary password</p>"
-        f"<p style='margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
-        f"font-size:15px;font-weight:600'>{temp_password}</p>"
-        "</div>"
-        if temp_password
+    creds_rows = [("Sign-in email", email, False)]
+    if temp_password:
+        creds_rows.append(("Temporary password", temp_password, True))
+    creds_block = ui.cred_card(creds_rows) if temp_password else ""
+
+    pending_block = (
+        ui.panel(
+            ui.bullet_list(pending),
+            title="Details we still need from you",
+        )
+        if pending
         else ""
     )
 
-    pending_block = ""
-    if pending:
-        items = "".join(
-            f"<li style='margin-bottom:4px'>{label}</li>" for label in pending
+    content = (
+        ui.eyebrow("Workspace ready")
+        + ui.heading(f"Welcome to {platform_name}, {full_name}.")
+        + ui.paragraph(
+            f"Your application to set up <strong>{organization_name}</strong> on "
+            f"{platform_name} has been approved, with a short list of details to "
+            "finish before your workspace is complete."
         )
-        pending_block = (
-            "<div style='border:1px solid #E2E8F0;border-radius:10px;"
-            "padding:14px 18px;margin:0 0 18px'>"
-            "<p style='margin:0 0 8px;font-weight:600;font-size:14px'>"
-            "Details we still need from you:</p>"
-            f"<ul style='margin:0;padding-left:20px;font-size:14px'>{items}</ul>"
-            "</div>"
+        + notes_block
+        + creds_block
+        + pending_block
+        + ui.paragraph("For your first sign-in:")
+        + ui.ordered_steps([
+            "Use the temporary password above.",
+            "Change your password from <em>Settings &rarr; Account</em>.",
+            "Open the onboarding card on your dashboard to complete the remaining fields.",
+        ])
+        + ui.button(f"Sign in to {platform_name}", login_url)
+        + ui.fallback_link(login_url)
+        + ui.muted(
+            "You are currently on the Free plan — every workspace starts there. "
+            "You can upgrade to a paid plan from <em>Settings &rarr; Billing</em> at any time."
         )
+    )
 
-    return (
-        "<div style='font-family:system-ui,Helvetica,Arial,sans-serif;"
-        "max-width:560px;color:#0F172A;line-height:1.55'>"
-        f"<h2 style='margin:0 0 16px;font-size:20px'>Welcome to {platform_name}, {full_name}.</h2>"
-        f"<p style='margin:0 0 14px'>Your application to set up "
-        f"<strong>{organization_name}</strong> on {platform_name} has been approved, "
-        "with a short list of details to finish before your workspace is complete.</p>"
-        f"{notes_block}"
-        f"{creds_block}"
-        f"{pending_block}"
-        "<p style='margin:0 0 14px'>For your first sign-in:</p>"
-        "<ol style='padding-left:20px;margin:0 0 18px'>"
-        "<li style='margin-bottom:6px'>Use the temporary password above.</li>"
-        "<li style='margin-bottom:6px'>Change your password from "
-        "<em>Settings → Account</em>.</li>"
-        "<li>Open the onboarding card on your dashboard to complete the "
-        "remaining fields.</li>"
-        "</ol>"
-        f"<p style='margin:0 0 22px'>{login_button}</p>"
-        "<p style='margin:0;color:#64748B;font-size:12px'>"
-        "You are currently on the Free plan — every workspace starts there. "
-        "You can upgrade to a paid plan from <em>Settings → Billing</em> at any time."
-        "</p>"
-        "</div>"
+    return ui.page(
+        content,
+        preheader="Your VisiChek workspace is ready — a few details to finish",
     )
 
 
@@ -150,7 +138,7 @@ def render_text(context: dict[str, Any]) -> str:
             "",
             "First sign-in:",
             "  1. Use the temporary password above.",
-            "  2. Change your password from Settings → Account.",
+            "  2. Change your password from Settings -> Account.",
             "  3. Open the onboarding card on your dashboard to complete the remaining fields.",
         ]
     )
@@ -160,7 +148,8 @@ def render_text(context: dict[str, Any]) -> str:
         [
             "",
             "You are currently on the Free plan — every workspace starts there. "
-            "You can upgrade to a paid plan from Settings → Billing at any time.",
+            "You can upgrade to a paid plan from Settings -> Billing at any time.",
         ]
     )
+    lines.extend(ui.text_signoff())
     return "\n".join(lines)

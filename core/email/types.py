@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 TemplateRenderer = Callable[[dict[str, Any]], str]
 
@@ -37,3 +37,17 @@ class EmailSendResult:
     status: Literal["sent", "queued"]
     attempts: int
     task_id: str | None = None
+
+
+class EmailTransport(Protocol):
+    """Structural contract every email transport satisfies.
+
+    ``SMTPTransport`` and ``ResendTransport`` both implement this, so
+    ``EmailManager`` can hold either behind one type. ``idempotency_key``
+    lets a transport that supports it (Resend) de-duplicate retry attempts of
+    the *same* logical send; transports that don't (SMTP) accept and ignore it.
+    """
+
+    def send_message(
+        self, message: EmailMessage, *, idempotency_key: str | None = None
+    ) -> None: ...

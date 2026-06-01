@@ -3,16 +3,15 @@
 Sent by ``services/admin_service.add_admin`` whenever an existing
 application admin invites a new platform operator. Carries the
 sign-in URL, the temporary password the inviter chose, and a clear
-nudge that 2FA is mandatory on first login.
-
-Keep the HTML self-contained (inline styles only) so it renders the
-same in Gmail / Outlook / Apple Mail / mobile clients. No external
-CSS, no remote images.
+nudge that 2FA is mandatory on first login. Presentation is
+delegated entirely to the shared ``_shell`` brand layer.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from email_templates import _shell as ui
 
 TEMPLATE_KEY = "admin_invite"
 SUBJECT = "You're invited to manage {platform_name}"
@@ -34,43 +33,35 @@ def render_html(context: dict[str, Any]) -> str:
     access_label = _safe(context, "access_label", "platform admin")
     login_url = _safe(context, "login_url", "")
 
-    login_button = (
-        f"<a href='{login_url}' style='display:inline-block;background:#0F172A;"
-        "color:#FFFFFF;text-decoration:none;padding:12px 22px;border-radius:8px;"
-        f"font-weight:600;font-size:14px'>Sign in to {platform_name}</a>"
-        if login_url
-        else ""
+    content = (
+        ui.eyebrow("Platform access")
+        + ui.heading(f"Welcome to {platform_name}, {invitee_name}.")
+        + ui.paragraph(
+            f"{inviter_name} has invited you to help administer the "
+            f"{platform_name} platform with the <strong>{access_label}</strong> role."
+        )
+        + ui.cred_card([
+            ("Sign-in email", email, False),
+            ("Temporary password", temp_password, True),
+        ])
+        + ui.paragraph("For your first sign-in:")
+        + ui.ordered_steps([
+            "Use the temporary password above.",
+            "You will be asked for a 6-digit verification code sent to this inbox "
+            "— that is two-factor authentication, and it is required on every login.",
+            "Change your password from <em>Settings → Account</em> right after you land.",
+        ])
+        + ui.button(f"Sign in to {platform_name}", login_url)
+        + ui.fallback_link(login_url)
+        + ui.muted(
+            "If you weren't expecting this invitation, you can ignore the email — "
+            "the account is unusable until someone signs in with the temporary password."
+        )
     )
 
-    return (
-        "<div style='font-family:system-ui,Helvetica,Arial,sans-serif;"
-        "max-width:560px;color:#0F172A;line-height:1.55'>"
-        f"<h2 style='margin:0 0 16px;font-size:20px'>Welcome to {platform_name}, {invitee_name}.</h2>"
-        f"<p style='margin:0 0 14px'>{inviter_name} has invited you to help "
-        f"administer the {platform_name} platform with the "
-        f"<strong>{access_label}</strong> role.</p>"
-        "<div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;"
-        "padding:16px 20px;margin:18px 0'>"
-        "<p style='margin:0 0 6px;font-size:13px;color:#475569'>Sign-in email</p>"
-        f"<p style='margin:0 0 14px;font-weight:600'>{email}</p>"
-        "<p style='margin:0 0 6px;font-size:13px;color:#475569'>Temporary password</p>"
-        f"<p style='margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
-        f"font-size:15px;font-weight:600'>{temp_password}</p>"
-        "</div>"
-        "<p style='margin:0 0 14px'>For your first sign-in:</p>"
-        "<ol style='padding-left:20px;margin:0 0 18px'>"
-        "<li style='margin-bottom:6px'>Use the temporary password above.</li>"
-        "<li style='margin-bottom:6px'>You will be asked for a 6-digit verification code "
-        "sent to this inbox — that is two-factor authentication, and it is required "
-        "on every login.</li>"
-        "<li>Change your password from <em>Settings → Account</em> right after you land.</li>"
-        "</ol>"
-        f"<p style='margin:0 0 22px'>{login_button}</p>"
-        "<p style='margin:0;color:#64748B;font-size:12px'>"
-        "If you weren't expecting this invitation, you can ignore the email — "
-        "the account is unusable until someone signs in with the temporary password."
-        "</p>"
-        "</div>"
+    return ui.page(
+        content,
+        preheader="You've been invited to manage VisiChek",
     )
 
 
@@ -96,7 +87,7 @@ def render_text(context: dict[str, Any]) -> str:
         "  1. Use the temporary password above.",
         "  2. You'll be asked for a 6-digit code sent to this inbox — that is "
         "two-factor authentication and is required on every login.",
-        "  3. Change your password from Settings → Account right after you land.",
+        "  3. Change your password from Settings -> Account right after you land.",
     ]
     if login_url:
         lines.extend(["", f"Sign in: {login_url}"])
@@ -107,5 +98,8 @@ def render_text(context: dict[str, Any]) -> str:
             "the account is unusable until someone signs in with the temporary "
             "password.",
         ]
+    )
+    lines.extend(
+        ui.text_signoff()
     )
     return "\n".join(lines)

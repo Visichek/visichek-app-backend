@@ -163,6 +163,19 @@ class Settings:
     vapid_private_key: str = "cUICg_JfUvPmMZXZ-XrRx180wsQvz2i4GSPBkKpwdJk"
     vapid_subject: str = "mailto:support@visichek.app"
 
+    # ------------------------------------------------------------------
+    # Email provider selection + Resend (HTTPS API) transport.
+    # ``email_provider`` chooses the transport WITHOUT touching the SMTP
+    # path: "smtp" (default, unchanged behaviour) or "resend". When set to
+    # "resend", outgoing mail goes through the Resend API using
+    # ``resend_api_key`` and ``resend_from_email`` (a verified-domain
+    # sender). Leaving ``resend_from_email`` unset falls back to
+    # ``email_from_email`` / ``email_username``.
+    # ------------------------------------------------------------------
+    email_provider: str = "smtp"
+    resend_api_key: str | None = None
+    resend_from_email: str | None = None
+
     @property
     def is_production(self) -> bool:
         return self.env.lower() == "production"
@@ -300,5 +313,8 @@ def get_settings() -> Settings:
             "VAPID_PRIVATE_KEY", "cUICg_JfUvPmMZXZ-XrRx180wsQvz2i4GSPBkKpwdJk"
         ),
         vapid_subject=os.getenv("VAPID_SUBJECT", "mailto:support@visichek.app"),
+        email_provider=os.getenv("EMAIL_PROVIDER", "smtp").strip().lower(),
+        resend_api_key=os.getenv("RESEND_API_KEY") or None,
+        resend_from_email=os.getenv("RESEND_FROM_EMAIL") or None,
     )
     return settings

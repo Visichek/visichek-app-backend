@@ -3,12 +3,17 @@
 Mounted at key ``dsr_in_progress``. Sent to the requester + linked visitor
 when a DPO acknowledges a data subject request (status → in_progress), so the
 person who raised it knows it's been picked up and is on the clock.
+
+Presentation is delegated to ``_shell``; this module owns only data extraction,
+escaping, and content composition.
 """
 
 from __future__ import annotations
 
 import html
 from typing import Any
+
+from email_templates import _shell as ui
 
 TEMPLATE_KEY = "dsr_in_progress"
 SUBJECT = "{tenant_name}: we're processing your data request"
@@ -28,18 +33,24 @@ def render_html(context: dict[str, Any]) -> str:
     tenant_name = html.escape(_safe(context, "tenant_name", "VisiChek"))
     request_type = html.escape(_safe(context, "request_type", "data"))
 
-    return (
-        "<div style='font-family:system-ui,Helvetica,Arial,sans-serif;max-width:560px'>"
-        f"<h2 style='margin:0 0 8px'>We're on it, {name}.</h2>"
-        f"<p>{tenant_name} has received your <strong>{request_type}</strong> "
-        "request and a data protection officer is now processing it. You'll "
-        "get another email once it's complete.</p>"
-        "<p style='color:#666;font-size:13px'>You're receiving this because a "
-        "data subject request was raised in your name. If that wasn't you, "
-        f"reply to let {tenant_name} know.</p>"
-        "<hr style='border:none;border-top:1px solid #e5e7eb;margin:20px 0' />"
-        f"<p style='color:#888;font-size:12px'>Sent by {tenant_name} via VisiChek.</p>"
-        "</div>"
+    content = (
+        ui.eyebrow("Data request")
+        + ui.heading(f"We're on it, {name}.")
+        + ui.paragraph(
+            f"{tenant_name} has received your <strong>{request_type}</strong> "
+            "request and a data protection officer is now processing it. You'll "
+            "get another email once it's complete."
+        )
+        + ui.muted(
+            "You're receiving this because a data subject request was raised in "
+            f"your name. If that wasn't you, reply to let {tenant_name} know."
+        )
+    )
+
+    return ui.page(
+        content,
+        preheader="We're processing your data request",
+        footer_note_html=f"Sent by {tenant_name} via VisiChek.",
     )
 
 
@@ -58,6 +69,6 @@ def render_text(context: dict[str, Any]) -> str:
             "",
             "If this wasn't you, reply to let us know.",
             "",
-            f"Sent by {tenant_name} via VisiChek.",
+            *ui.text_signoff(sender_label=f"Sent by {tenant_name} via VisiChek."),
         ]
     )

@@ -1,6 +1,14 @@
+"""VisiChek admin notification: a new support case has been opened.
+
+Sent to VisiChek staff whenever a tenant submits a support case. Includes
+the company name, support tier, subject, priority badge, category, a preview
+of the opening message, a direct link to the admin console, and the case ID.
+"""
 from __future__ import annotations
 
 from typing import Any
+
+from email_templates import _shell as ui
 
 TEMPLATE_KEY = "support_case.opened.admin"
 SUBJECT = "[Support] New case from {tenant_company_name}: {case_subject}"
@@ -21,28 +29,40 @@ def _common(context: dict[str, Any]) -> dict[str, Any]:
 
 def render_html(context: dict[str, Any]) -> str:
     c = _common(context)
-    return (
-        f"<h2>New support case opened</h2>"
-        f"<p><strong>{c['company_name']}</strong> opened a support case "
-        f"(tier: {c['support_tier']}).</p>"
-        f"<ul>"
-        f"<li>Subject: {c['case_subject']}</li>"
-        f"<li>Priority: {c['case_priority']}</li>"
-        f"<li>Category: {c['case_category']}</li>"
-        f"</ul>"
-        f"<blockquote>{c['preview']}</blockquote>"
-        f"<p><a href='{c['link']}'>Open case in admin console</a></p>"
-        f"<p>Case ID: <code>{c['case_id']}</code></p>"
+
+    priority_badge = ui.badge(c["case_priority"], variant="neutral")
+
+    content = (
+        ui.eyebrow("New support case")
+        + ui.heading("New support case opened")
+        + ui.paragraph(
+            f"<strong>{c['company_name']}</strong> opened a support case "
+            f"(tier: {c['support_tier']})."
+        )
+        + ui.meta_rows([
+            ("Subject", c["case_subject"]),
+            ("Priority", priority_badge),
+            ("Category", c["case_category"]),
+        ])
+        + ui.quote(c["preview"])
+        + ui.button("Open in admin console", c["link"])
+        + ui.muted("Case ID: " + ui.code_chip(c["case_id"]))
     )
+
+    return ui.page(content, preheader="New support case opened")
 
 
 def render_text(context: dict[str, Any]) -> str:
     c = _common(context)
-    return (
-        f"{c['company_name']} opened a support case (tier: {c['support_tier']}).\n"
+    lines = [
+        f"{c['company_name']} opened a support case (tier: {c['support_tier']}).",
         f"Subject: {c['case_subject']} | Priority: {c['case_priority']} | "
-        f"Category: {c['case_category']}\n\n"
-        f"Preview: {c['preview']}\n\n"
-        f"Admin console: {c['link']}\n"
-        f"Case ID: {c['case_id']}"
-    )
+        f"Category: {c['case_category']}",
+        "",
+        f"Preview: {c['preview']}",
+        "",
+        f"Admin console: {c['link']}",
+        f"Case ID: {c['case_id']}",
+    ]
+    lines += ui.text_signoff()
+    return "\n".join(lines)

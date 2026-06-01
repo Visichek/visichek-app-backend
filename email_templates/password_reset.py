@@ -9,11 +9,16 @@ shown to the user as a value to copy: it only ever rides inside the
 link. If ``APP_BASE_URL`` is unset the email degrades to showing the
 bare URL (which is still empty in that misconfiguration) — operators
 must set ``APP_BASE_URL`` for this flow to work end to end.
+
+Presentation is delegated entirely to ``email_templates._shell``; this
+module owns only logic and data extraction.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from email_templates import _shell as ui
 
 TEMPLATE_KEY = "password_reset"
 SUBJECT = "Reset your {platform_name} password"
@@ -34,60 +39,44 @@ def render_html(context: dict[str, Any]) -> str:
     requesting_ip = _safe(context, "requesting_ip", "")
     tenant_label = _safe(context, "tenant_label", "")
 
-    button_block = (
-        f"<p style='margin:0 0 18px'>"
-        f"<a href='{reset_url}' style='display:inline-block;background:#0F172A;"
-        "color:#FFFFFF;text-decoration:none;padding:12px 22px;border-radius:8px;"
-        "font-weight:600;font-size:14px'>Reset password</a>"
-        "</p>"
-        if reset_url
-        else ""
-    )
-
-    fallback_link_block = (
-        "<p style='margin:0 0 14px;color:#475569;font-size:13px'>"
-        "If the button doesn't work, paste this URL into your browser:</p>"
-        f"<p style='margin:0 0 18px;word-break:break-all;font-family:"
-        f"ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;"
-        f"color:#0F172A'>{reset_url}</p>"
-        if reset_url
-        else ""
-    )
-
     tenant_block = (
-        f"<p style='margin:0 0 14px;color:#475569;font-size:13px'>"
-        f"This reset applies to your account in <strong>{tenant_label}</strong>.</p>"
+        ui.muted(
+            f"This reset applies to your account in <strong>{tenant_label}</strong>."
+        )
         if tenant_label
         else ""
     )
 
-    ip_block = (
-        f"<p style='margin:0;color:#64748B;font-size:12px'>"
-        f"Request came from <strong>{requesting_ip}</strong>. "
-        "If that wasn't you, ignore this email — your password will not change."
-        "</p>"
-        if requesting_ip
-        else (
-            "<p style='margin:0;color:#64748B;font-size:12px'>"
+    if requesting_ip:
+        ip_block = ui.muted(
+            f"Request came from <strong>{requesting_ip}</strong>. "
+            "If that wasn't you, ignore this email — your password will not change."
+        )
+    else:
+        ip_block = ui.muted(
             "If you didn't request this reset, ignore the email — your "
             "password will not change."
-            "</p>"
         )
+
+    content = (
+        ui.eyebrow("Password reset")
+        + ui.heading(f"Hello {recipient_name},")
+        + ui.paragraph(
+            f"We received a request to reset your <strong>{platform_name}</strong> password."
+        )
+        + tenant_block
+        + ui.button("Reset password", reset_url)
+        + ui.fallback_link(reset_url)
+        + ui.paragraph(
+            f"The link expires in <strong>{ttl_minutes} minute(s)</strong> "
+            "and can only be used once."
+        )
+        + ip_block
     )
 
-    return (
-        "<div style='font-family:system-ui,Helvetica,Arial,sans-serif;"
-        "max-width:560px;color:#0F172A;line-height:1.55'>"
-        f"<h2 style='margin:0 0 14px;font-size:20px'>Hello {recipient_name},</h2>"
-        f"<p style='margin:0 0 18px'>We received a request to reset your "
-        f"<strong>{platform_name}</strong> password.</p>"
-        f"{tenant_block}"
-        f"{button_block}"
-        f"{fallback_link_block}"
-        f"<p style='margin:0 0 14px'>The link expires in <strong>{ttl_minutes}"
-        " minute(s)</strong> and can only be used once.</p>"
-        f"{ip_block}"
-        "</div>"
+    return ui.page(
+        content,
+        preheader="Reset your VisiChek password",
     )
 
 
@@ -135,4 +124,6 @@ def render_text(context: dict[str, Any]) -> str:
                 "your password will not change.",
             ]
         )
+
+    lines.extend(ui.text_signoff())
     return "\n".join(lines)

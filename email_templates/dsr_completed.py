@@ -4,13 +4,15 @@ Mounted at key ``dsr_completed``. Sent to the requester + linked visitor when
 a data subject request is completed (status → completed). Carries the
 documented resolution when one was recorded. For an *access* request the
 separate ``dsr_access_package`` email delivers the actual data download link;
-this message is the workflow confirmation.
+this message is the workflow confirmation that the request has been actioned.
 """
 
 from __future__ import annotations
 
 import html
 from typing import Any
+
+from email_templates import _shell as ui
 
 TEMPLATE_KEY = "dsr_completed"
 SUBJECT = "{tenant_name}: your data request is complete"
@@ -31,22 +33,27 @@ def render_html(context: dict[str, Any]) -> str:
     request_type = html.escape(_safe(context, "request_type", "data"))
     resolution = html.escape(_safe(context, "resolution"))
 
-    resolution_block = (
-        f"<p style='color:#444;font-size:14px'>{resolution}</p>" if resolution else ""
+    resolution_block = ui.paragraph(resolution) if resolution else ""
+
+    content = (
+        ui.eyebrow("Data request")
+        + ui.heading(f"All done, {name}.")
+        + ui.paragraph(
+            f"Your <strong>{request_type}</strong> request to {tenant_name} has "
+            "been completed."
+        )
+        + resolution_block
+        + ui.muted(
+            "If you expected a data download and didn't receive a separate email "
+            "with a secure link, reply and "
+            f"{tenant_name} will resend it."
+        )
     )
 
-    return (
-        "<div style='font-family:system-ui,Helvetica,Arial,sans-serif;max-width:560px'>"
-        f"<h2 style='margin:0 0 8px'>All done, {name}.</h2>"
-        f"<p>Your <strong>{request_type}</strong> request to {tenant_name} has "
-        "been completed.</p>"
-        f"{resolution_block}"
-        "<p style='color:#666;font-size:13px'>If you expected a data download "
-        "and didn't receive a separate email with a secure link, reply and "
-        f"{tenant_name} will resend it.</p>"
-        "<hr style='border:none;border-top:1px solid #e5e7eb;margin:20px 0' />"
-        f"<p style='color:#888;font-size:12px'>Sent by {tenant_name} via VisiChek.</p>"
-        "</div>"
+    return ui.page(
+        content,
+        preheader="Your data request is complete",
+        footer_note_html=f"Sent by {tenant_name} via VisiChek.",
     )
 
 
@@ -69,7 +76,9 @@ def render_text(context: dict[str, Any]) -> str:
             "If you expected a data download and didn't get a separate email "
             "with a secure link, reply and we'll resend it.",
             "",
-            f"Sent by {tenant_name} via VisiChek.",
         ]
+    )
+    lines.extend(
+        ui.text_signoff(sender_label=f"Sent by {tenant_name} via VisiChek.")
     )
     return "\n".join(lines)

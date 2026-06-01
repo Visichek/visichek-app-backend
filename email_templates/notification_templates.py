@@ -32,6 +32,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from email_templates import _shell as ui
+
 
 def _safe(context: dict[str, Any], key: str, fallback: str = "") -> str:
     value = context.get(key)
@@ -41,24 +43,20 @@ def _safe(context: dict[str, Any], key: str, fallback: str = "") -> str:
 
 
 def _wrap_html(*, title_line: str, intro: str, body: str, link: str | None) -> str:
-    cta = ""
-    if link:
-        cta = (
-            f"<p style='margin:20px 0'><a href='{link}' "
-            "style='display:inline-block;padding:10px 16px;background:#0f172a;"
-            "color:#fff;border-radius:6px;text-decoration:none;font-weight:600'>"
-            "Open in VisiChek</a></p>"
-        )
-    return (
-        "<div style='font-family:system-ui,Helvetica,Arial,sans-serif;max-width:560px'>"
-        f"<h2 style='margin:0 0 12px'>{title_line}</h2>"
-        f"<p style='color:#444'>{intro}</p>"
-        f"<p style='color:#444'>{body}</p>"
-        f"{cta}"
-        "<hr style='border:none;border-top:1px solid #e5e7eb;margin:20px 0' />"
-        "<p style='color:#888;font-size:12px'>You're receiving this because "
-        "the matching email toggle is on in your VisiChek notification settings.</p>"
-        "</div>"
+    content = (
+        ui.eyebrow("Notification")
+        + ui.heading(title_line)
+        + ui.paragraph(intro)
+        + ui.paragraph(body)
+        + ui.button("Open in VisiChek", link or "")
+    )
+    return ui.page(
+        content,
+        preheader=title_line,
+        footer_note_html=(
+            "You&#x2019;re receiving this because the matching email toggle is on "
+            "in your VisiChek notification settings."
+        ),
     )
 
 
@@ -69,11 +67,11 @@ def _wrap_text(*, title_line: str, intro: str, body: str, link: str | None) -> s
     parts.extend(
         [
             "",
-            "—",
             "You're receiving this because the matching email toggle is on in "
             "your VisiChek notification settings.",
         ]
     )
+    parts.extend(ui.text_signoff(sender_label=None))
     return "\n".join(parts)
 
 

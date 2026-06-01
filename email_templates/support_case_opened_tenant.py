@@ -1,6 +1,16 @@
+"""Notification to a tenant when their support case has been successfully opened.
+
+Sent immediately after case creation so the company knows VisiChek has
+received their request, what priority level was assigned, and where to
+track progress.
+"""
+
 from __future__ import annotations
 
+import html
 from typing import Any
+
+from email_templates import _shell as ui
 
 TEMPLATE_KEY = "support_case.opened.tenant"
 SUBJECT = "We received your support case: {case_subject}"
@@ -17,26 +27,59 @@ def _common(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _priority_variant(priority: str) -> str:
+    """Map a priority string to a badge variant."""
+    p = priority.lower()
+    if p in ("critical", "urgent"):
+        return "danger"
+    if p in ("high",):
+        return "warning"
+    if p in ("low",):
+        return "neutral"
+    return "brand"
+
+
 def render_html(context: dict[str, Any]) -> str:
     c = _common(context)
-    return (
-        f"<h2>We've received your support case</h2>"
-        f"<p>Hi {c['company_name']},</p>"
-        f"<p>Thanks for reaching out. Our team has received your support case "
-        f'<strong>"{c["case_subject"]}"</strong> (priority: {c["case_priority"]}).</p>'
-        f"<p>Here's a preview of what you sent:</p>"
-        f"<blockquote>{c['preview']}</blockquote>"
-        f"<p>You can follow progress here: <a href='{c['link']}'>{c['link']}</a></p>"
-        f"<p>Case ID: <code>{c['case_id']}</code></p>"
+
+    priority_badge = ui.badge(c["case_priority"], variant=_priority_variant(c["case_priority"]))
+    preview_block = ui.quote(html.escape(c["preview"])) if c["preview"] else ""
+    cta = ui.button("Track this case", c["link"] if c["link"] != "#" else "")
+    case_id_note = ui.muted("Case ID: " + ui.code_chip(html.escape(c["case_id"]))) if c["case_id"] else ""
+
+    content = (
+        ui.eyebrow("Support")
+        + ui.heading("We’ve received your case")
+        + ui.paragraph(f"Hi {html.escape(c['company_name'])},")
+        + ui.paragraph(
+            f"Thanks for reaching out. Our team has received your support case "
+            f"<strong>{html.escape(c['case_subject'])}</strong> with priority "
+            + priority_badge + "."
+        )
+        + (ui.paragraph("Here’s a preview of what you sent:") if preview_block else "")
+        + preview_block
+        + cta
+        + case_id_note
+    )
+
+    return ui.page(
+        content,
+        preheader="We received your support case",
     )
 
 
 def render_text(context: dict[str, Any]) -> str:
     c = _common(context)
-    return (
+    lines = [
         f'We\'ve received your support case "{c["case_subject"]}" '
-        f"(priority: {c['case_priority']}).\n\n"
-        f"Preview: {c['preview']}\n\n"
-        f"Follow progress: {c['link']}\n"
-        f"Case ID: {c['case_id']}"
-    )
+        f"(priority: {c['case_priority']}).",
+        "",
+    ]
+    if c["preview"]:
+        lines += [f"Preview: {c['preview']}", ""]
+    if c["link"] and c["link"] != "#":
+        lines.append(f"Follow progress: {c['link']}")
+    if c["case_id"]:
+        lines.append(f"Case ID: {c['case_id']}")
+    lines += ui.text_signoff()
+    return "\n".join(lines)
