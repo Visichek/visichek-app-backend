@@ -63,11 +63,19 @@ _SUPPORT_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
 
 
 SUPPORT_CASES_TENANT_LIST_SPEC = ListSpec(
+    # NOTE: the persisted SLA field is `sla_due_at` (set by support_case_service
+    # / SupportCaseCreate), NOT `sla_deadline`. The old `sla_deadline` entry was
+    # a phantom: it passed the allowlist but Mongo sorted by a missing field
+    # (garbage order), while a client asking for the real `sla_due_at` got a 400.
     sortable_fields=frozenset(
-        {"date_created", "sla_deadline", "priority", "status", "last_updated"}
+        {"date_created", "sla_due_at", "priority", "status", "last_updated"}
     ),
     default_sort=(("date_created", -1),),
-    search_fields=("title", "summary", "case_number"),
+    # NOTE: search_fields was ("title","summary","case_number") — none of which
+    # exist on a support_case doc, so q-search silently matched nothing. The
+    # real text columns are subject + description. Mirrors the admin spec fix in
+    # admin_support_case_route.py.
+    search_fields=("subject", "description"),
     filters={
         "status": FilterDef(
             name="status", multi=True, allowed_values=_SUPPORT_STATUSES

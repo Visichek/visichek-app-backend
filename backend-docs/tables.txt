@@ -321,8 +321,8 @@ GET /v1/tenants/onboarding
 GET /v1/admins/support-cases
   Auth:               admin
   Default sort:       -date_created
-  Sortable fields:    date_created, sla_deadline, priority, status, last_updated
-  Search (`q=`):      title, summary, case_number
+  Sortable fields:    date_created, sla_due_at, priority, status, last_updated
+  Search (`q=`):      subject, description
   Filters:
     status            open | acknowledged | in_progress | awaiting_tenant | resolved | closed | reopened
     priority          low | medium | high | critical
@@ -525,8 +525,8 @@ GET /v1/incidents
 GET /v1/support-cases
   Auth:               any tenant role (auto-scoped to token tenant_id)
   Default sort:       -date_created
-  Sortable fields:    date_created, sla_deadline, priority, status, last_updated
-  Search (`q=`):      title, summary, case_number
+  Sortable fields:    date_created, sla_due_at, priority, status, last_updated
+  Search (`q=`):      subject, description
   Filters:            status, priority, category, slaState
   Facets:             status
 
