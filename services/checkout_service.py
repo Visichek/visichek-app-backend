@@ -792,9 +792,7 @@ _POLL_INTERVAL_SECONDS = 50
 _PAYSTACK_TERMINAL_FAILURE = {"failed", "abandoned", "reversed"}
 
 
-async def _fail_pending_checkout(
-    session: CheckoutSessionOut, *, reason: str
-) -> None:
+async def _fail_pending_checkout(session: CheckoutSessionOut, *, reason: str) -> None:
     """Mark a PENDING session FAILED and release any reserved trial code."""
     assert session.id is not None
     now = int(time.time())

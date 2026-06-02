@@ -469,7 +469,9 @@ async def test_reconcile_completes_session_on_paystack_success() -> None:
     manager.has_provider = lambda name: name == "paystack"
     provider = MagicMock()
     provider.fetch_transaction = MagicMock(
-        return_value=MagicMock(raw={"data": {"status": "success", "reference": "chk_poll"}})
+        return_value=MagicMock(
+            raw={"data": {"status": "success", "reference": "chk_poll"}}
+        )
     )
     manager.get_provider = lambda name: provider
     handle = AsyncMock()
@@ -486,9 +488,7 @@ async def test_reconcile_completes_session_on_paystack_success() -> None:
             checkout_service, "get_checkout_by_id", new=AsyncMock(return_value=session)
         ),
         patch.object(checkout_service, "update_checkout", new=AsyncMock()),
-        patch(
-            "services.paystack_webhook_service._handle_charge_success", new=handle
-        ),
+        patch("services.paystack_webhook_service._handle_charge_success", new=handle),
     ):
         result = await checkout_service.reconcile_pending_paystack_checkouts()
 
@@ -561,9 +561,7 @@ async def test_reconcile_fails_session_and_releases_trial_code() -> None:
             new=AsyncMock(return_value=[session]),
         ),
         patch.object(checkout_service, "update_checkout", new=update_mock),
-        patch.object(
-            checkout_service, "mark_trial_code_cancelled", new=release_mock
-        ),
+        patch.object(checkout_service, "mark_trial_code_cancelled", new=release_mock),
     ):
         result = await checkout_service.reconcile_pending_paystack_checkouts()
 
