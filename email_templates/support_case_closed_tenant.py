@@ -28,7 +28,7 @@ def render_html(context: dict[str, Any]) -> str:
         ui.eyebrow("Support")
         + ui.heading("Your support case is now closed")
         + ui.paragraph(
-            f'The case <strong>&#8220;{c["case_subject"]}&#8221;</strong> has been '
+            f"The case <strong>&#8220;{c['case_subject']}&#8221;</strong> has been "
             f"closed. If something similar comes up, you can always open a new case."
         )
         + ui.button("View case history", c["link"])

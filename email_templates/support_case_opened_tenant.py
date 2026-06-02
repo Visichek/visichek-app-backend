@@ -42,10 +42,16 @@ def _priority_variant(priority: str) -> str:
 def render_html(context: dict[str, Any]) -> str:
     c = _common(context)
 
-    priority_badge = ui.badge(c["case_priority"], variant=_priority_variant(c["case_priority"]))
+    priority_badge = ui.badge(
+        c["case_priority"], variant=_priority_variant(c["case_priority"])
+    )
     preview_block = ui.quote(html.escape(c["preview"])) if c["preview"] else ""
     cta = ui.button("Track this case", c["link"] if c["link"] != "#" else "")
-    case_id_note = ui.muted("Case ID: " + ui.code_chip(html.escape(c["case_id"]))) if c["case_id"] else ""
+    case_id_note = (
+        ui.muted("Case ID: " + ui.code_chip(html.escape(c["case_id"])))
+        if c["case_id"]
+        else ""
+    )
 
     content = (
         ui.eyebrow("Support")
@@ -54,7 +60,8 @@ def render_html(context: dict[str, Any]) -> str:
         + ui.paragraph(
             f"Thanks for reaching out. Our team has received your support case "
             f"<strong>{html.escape(c['case_subject'])}</strong> with priority "
-            + priority_badge + "."
+            + priority_badge
+            + "."
         )
         + (ui.paragraph("Here’s a preview of what you sent:") if preview_block else "")
         + preview_block

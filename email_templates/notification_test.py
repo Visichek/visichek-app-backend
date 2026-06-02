@@ -33,23 +33,13 @@ def render_html(context: dict[str, Any]) -> str:
     triggered_at = _safe(context, "triggered_at", "")
     from_address = _safe(context, "from_address", "")
 
-    triggered_block = (
-        ui.muted(f"Triggered at {triggered_at}.")
-        if triggered_at
-        else ""
-    )
-    from_block = (
-        ui.muted(f"Sent from {from_address}.")
-        if from_address
-        else ""
-    )
+    triggered_block = ui.muted(f"Triggered at {triggered_at}.") if triggered_at else ""
+    from_block = ui.muted(f"Sent from {from_address}.") if from_address else ""
 
     content = (
         ui.eyebrow("Email diagnostics")
         + ui.heading(f"Hello {recipient_name},")
-        + ui.paragraph(
-            f"This is a test email from <strong>{platform_name}</strong>."
-        )
+        + ui.paragraph(f"This is a test email from <strong>{platform_name}</strong>.")
         + ui.paragraph(
             "You’re seeing it because someone (probably you) clicked "
             "<em>Send test email</em> in the notification settings page. "

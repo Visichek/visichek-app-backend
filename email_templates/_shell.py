@@ -370,9 +370,7 @@ def code_box(code: str, *, label: str = "Verification code") -> str:
 
 def _list(items: Iterable[str], *, ordered: bool) -> str:
     tag = "ol" if ordered else "ul"
-    lis = "".join(
-        f"<li style='margin:0 0 7px;'>{item}</li>" for item in items
-    )
+    lis = "".join(f"<li style='margin:0 0 7px;'>{item}</li>" for item in items)
     return (
         f"<{tag} style='margin:0 0 18px;padding-left:20px;font-family:{FONT_SANS};"
         f"font-size:15px;line-height:1.6;color:{INK_SOFT};'>{lis}</{tag}>"
@@ -389,7 +387,9 @@ def bullet_list(items: Iterable[str]) -> str:
     return _list(items, ordered=False)
 
 
-def panel(inner_html: str, *, variant: str = "default", title: str | None = None) -> str:
+def panel(
+    inner_html: str, *, variant: str = "default", title: str | None = None
+) -> str:
     """Soft callout card. Variants: default / brand / warning / danger."""
     bg, border, ink = _PANEL_VARIANTS.get(variant, _PANEL_VARIANTS["default"])
     title_html = ""

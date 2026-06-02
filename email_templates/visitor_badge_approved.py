@@ -51,9 +51,7 @@ def render_html(context: dict[str, Any]) -> str:
 
     download_block = ""
     if badge_url:
-        download_block = ui.paragraph(
-            f"<a href='{badge_url}'>Or download the PDF</a>"
-        )
+        download_block = ui.paragraph(f"<a href='{badge_url}'>Or download the PDF</a>")
 
     qr_block = ""
     if badge_qr_token:

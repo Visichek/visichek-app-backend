@@ -82,11 +82,13 @@ def render_html(context: dict[str, Any]) -> str:
         + creds_block
         + pending_block
         + ui.paragraph("For your first sign-in:")
-        + ui.ordered_steps([
-            "Use the temporary password above.",
-            "Change your password from <em>Settings &rarr; Account</em>.",
-            "Open the onboarding card on your dashboard to complete the remaining fields.",
-        ])
+        + ui.ordered_steps(
+            [
+                "Use the temporary password above.",
+                "Change your password from <em>Settings &rarr; Account</em>.",
+                "Open the onboarding card on your dashboard to complete the remaining fields.",
+            ]
+        )
         + ui.button(f"Sign in to {platform_name}", login_url)
         + ui.fallback_link(login_url)
         + ui.muted(

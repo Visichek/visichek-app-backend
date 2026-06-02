@@ -28,21 +28,23 @@ def render_html(context: dict[str, Any]) -> str:
     c = _common(context)
 
     case_id_note = (
-        ui.muted("Case ID: " + ui.code_chip(c["case_id"]))
-        if c["case_id"]
-        else ""
+        ui.muted("Case ID: " + ui.code_chip(c["case_id"])) if c["case_id"] else ""
     )
 
     content = (
         ui.eyebrow("SLA breach", variant="danger")
         + ui.heading("SLA breach on a support case")
-        + ui.paragraph("The SLA deadline has elapsed on the following case. Immediate attention is required.")
+        + ui.paragraph(
+            "The SLA deadline has elapsed on the following case. Immediate attention is required."
+        )
         + ui.panel(
-            ui.meta_rows([
-                ("Tenant", c["company_name"]),
-                ("Subject", c["case_subject"]),
-                ("Priority", ui.badge(c["case_priority"], variant="danger")),
-            ]),
+            ui.meta_rows(
+                [
+                    ("Tenant", c["company_name"]),
+                    ("Subject", c["case_subject"]),
+                    ("Priority", ui.badge(c["case_priority"], variant="danger")),
+                ]
+            ),
             variant="danger",
         )
         + ui.button("Open case now", c["link"])

@@ -40,17 +40,21 @@ def render_html(context: dict[str, Any]) -> str:
             f"{inviter_name} has invited you to help administer the "
             f"{platform_name} platform with the <strong>{access_label}</strong> role."
         )
-        + ui.cred_card([
-            ("Sign-in email", email, False),
-            ("Temporary password", temp_password, True),
-        ])
+        + ui.cred_card(
+            [
+                ("Sign-in email", email, False),
+                ("Temporary password", temp_password, True),
+            ]
+        )
         + ui.paragraph("For your first sign-in:")
-        + ui.ordered_steps([
-            "Use the temporary password above.",
-            "You will be asked for a 6-digit verification code sent to this inbox "
-            "— that is two-factor authentication, and it is required on every login.",
-            "Change your password from <em>Settings → Account</em> right after you land.",
-        ])
+        + ui.ordered_steps(
+            [
+                "Use the temporary password above.",
+                "You will be asked for a 6-digit verification code sent to this inbox "
+                "— that is two-factor authentication, and it is required on every login.",
+                "Change your password from <em>Settings → Account</em> right after you land.",
+            ]
+        )
         + ui.button(f"Sign in to {platform_name}", login_url)
         + ui.fallback_link(login_url)
         + ui.muted(
@@ -99,7 +103,5 @@ def render_text(context: dict[str, Any]) -> str:
             "password.",
         ]
     )
-    lines.extend(
-        ui.text_signoff()
-    )
+    lines.extend(ui.text_signoff())
     return "\n".join(lines)

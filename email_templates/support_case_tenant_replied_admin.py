@@ -4,6 +4,7 @@ Sent to VisiChek admins/ops staff whenever a tenant replies to an open support
 case, so the team can respond promptly. Includes a preview of the reply and a
 direct link to the case.
 """
+
 from __future__ import annotations
 
 from typing import Any

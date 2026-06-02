@@ -61,13 +61,15 @@ def render_html(context: dict[str, Any]) -> str:
         )
         + ui.cred_card(cred_rows)
         + ui.paragraph("What to do next:")
-        + ui.ordered_steps([
-            "Sign in with the temporary password above.",
-            "You will land directly on the <em>Change password</em> screen "
-            "— set a new password you choose.",
-            "The temporary value above stops working as soon as your "
-            "new password is saved.",
-        ])
+        + ui.ordered_steps(
+            [
+                "Sign in with the temporary password above.",
+                "You will land directly on the <em>Change password</em> screen "
+                "— set a new password you choose.",
+                "The temporary value above stops working as soon as your "
+                "new password is saved.",
+            ]
+        )
         + ui.button(f"Sign in to {platform_name}", login_url)
         + ui.fallback_link(login_url)
         + ui.muted(

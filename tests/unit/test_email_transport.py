@@ -134,9 +134,7 @@ def test_resend_transport_maps_fields_and_passes_options_idempotency() -> None:
     # is a dict carrying ``idempotency_key``.
     captured: dict[str, Any] = {}
 
-    def _send(
-        params: dict[str, Any], options: dict[str, Any] | None = None
-    ) -> dict:
+    def _send(params: dict[str, Any], options: dict[str, Any] | None = None) -> dict:
         captured["params"] = params
         captured["options"] = options
         return {"id": "re_abc123"}
@@ -210,7 +208,9 @@ def test_resend_transport_raises_clear_error_when_sdk_missing() -> None:
     # startup (when the transport is built) rather than on the first send.
     with patch(
         "core.email.transport._import_resend",
-        side_effect=RuntimeError("EMAIL_PROVIDER=resend requires the 'resend' package."),
+        side_effect=RuntimeError(
+            "EMAIL_PROVIDER=resend requires the 'resend' package."
+        ),
     ):
         with pytest.raises(RuntimeError, match="resend"):
             ResendTransport(

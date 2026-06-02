@@ -3,6 +3,7 @@
 Sent when a support agent (or the system) closes a case on behalf of the
 tenant organisation. The recipient can confirm the fix or reopen within 7 days.
 """
+
 from __future__ import annotations
 
 from typing import Any

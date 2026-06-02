@@ -4,6 +4,7 @@ Sent to VisiChek staff whenever a tenant submits a support case. Includes
 the company name, support tier, subject, priority badge, category, a preview
 of the opening message, a direct link to the admin console, and the case ID.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -39,11 +40,13 @@ def render_html(context: dict[str, Any]) -> str:
             f"<strong>{c['company_name']}</strong> opened a support case "
             f"(tier: {c['support_tier']})."
         )
-        + ui.meta_rows([
-            ("Subject", c["case_subject"]),
-            ("Priority", priority_badge),
-            ("Category", c["case_category"]),
-        ])
+        + ui.meta_rows(
+            [
+                ("Subject", c["case_subject"]),
+                ("Priority", priority_badge),
+                ("Category", c["case_category"]),
+            ]
+        )
         + ui.quote(c["preview"])
         + ui.button("Open in admin console", c["link"])
         + ui.muted("Case ID: " + ui.code_chip(c["case_id"]))

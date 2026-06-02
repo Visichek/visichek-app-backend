@@ -144,9 +144,7 @@ class ResendTransport:
         self._resend.api_key = self._config.api_key
 
         params: dict[str, Any] = {
-            "from": formataddr(
-                (message.sender_display_name, self._config.from_email)
-            ),
+            "from": formataddr((message.sender_display_name, self._config.from_email)),
             "to": [message.to_email],
             "subject": message.subject,
             "html": message.html_body,
@@ -160,9 +158,7 @@ class ResendTransport:
                 params, {"idempotency_key": idempotency_key}
             )
         elif idempotency_key and self._idemp_style == self._IDEMP_KWARG:
-            result = self._resend.Emails.send(
-                params, idempotency_key=idempotency_key
-            )
+            result = self._resend.Emails.send(params, idempotency_key=idempotency_key)
         else:
             result = self._resend.Emails.send(params)
 

@@ -78,7 +78,5 @@ def render_text(context: dict[str, Any]) -> str:
             "",
         ]
     )
-    lines.extend(
-        ui.text_signoff(sender_label=f"Sent by {tenant_name} via VisiChek.")
-    )
+    lines.extend(ui.text_signoff(sender_label=f"Sent by {tenant_name} via VisiChek."))
     return "\n".join(lines)

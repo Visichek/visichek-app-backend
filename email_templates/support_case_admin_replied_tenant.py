@@ -47,7 +47,7 @@ def render_text(context: dict[str, Any]) -> str:
         "",
     ]
     if c["preview"]:
-        lines += [f'Preview: {c["preview"]}', ""]
+        lines += [f"Preview: {c['preview']}", ""]
     lines.append(f"Open the thread: {c['link']}")
     lines += ui.text_signoff()
     return "\n".join(lines)

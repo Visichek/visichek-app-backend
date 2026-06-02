@@ -4,6 +4,7 @@ Sent whenever the VisiChek platform routes (or manually assigns) a tenant
 support case to an admin user, giving them an immediate link to the case
 queue and the key metadata they need to triage.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -38,11 +39,13 @@ def render_html(context: dict[str, Any]) -> str:
     content = (
         ui.eyebrow("Case assigned")
         + ui.heading("A support case has been assigned to you")
-        + ui.meta_rows([
-            ("Tenant", c["company_name"]),
-            ("Subject", c["case_subject"]),
-            ("Priority", ui.badge(c["case_priority"], variant=_priority_variant)),
-        ])
+        + ui.meta_rows(
+            [
+                ("Tenant", c["company_name"]),
+                ("Subject", c["case_subject"]),
+                ("Priority", ui.badge(c["case_priority"], variant=_priority_variant)),
+            ]
+        )
         + ui.button("Open case", c["link"])
         + ui.muted("Case ID: " + ui.code_chip(c["case_id"]) if c["case_id"] else "")
     )
