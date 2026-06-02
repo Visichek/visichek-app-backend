@@ -31,6 +31,7 @@ from services.checkout_service import (
     cancel_checkout,
     create_checkout_session,
     get_tenant_checkout,
+    get_tenant_checkout_by_reference,
     list_tenant_checkouts,
     resolve_full_checkout_url,
     with_full_checkout_url,
@@ -157,6 +158,29 @@ async def list_checkout_sessions_endpoint(
         "items": [with_full_checkout_url(item, request) for item in items],
         "meta": {"total": total, "skip": skip, "limit": limit},
     }
+
+
+@router.get("/sessions/by-reference/{reference}")
+@document_response(
+    message="Checkout session fetched",
+    description=(
+        "Resolve a checkout session by its provider reference — the value "
+        "providers append to the post-payment callback URL "
+        "(?reference=...&trxref=...). Used by the frontend payment-return page. "
+        "Tenant super_admin only."
+    ),
+    summary="Get checkout session by provider reference",
+)
+async def get_checkout_by_reference_endpoint(
+    reference: str,
+    request: Request,
+    principal: AuthPrincipal = Depends(verify_super_admin_token),
+):
+    tenant_id = _require_tenant_scope(principal)
+    session = await get_tenant_checkout_by_reference(
+        tenant_id=tenant_id, reference=reference
+    )
+    return with_full_checkout_url(session, request)
 
 
 @router.get("/sessions/{checkout_id}")

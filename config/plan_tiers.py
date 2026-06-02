@@ -115,6 +115,9 @@ FREE_DENIED_FEATURES: List[FeatureRule] = [
     # No appointments — manual reception flow only
     _deny("/v1/appointments*", "Appointments require Premium or Enterprise"),
     _deny("/v1/appointments/*", "Appointments require Premium or Enterprise"),
+    # No host roster — hosts are part of the appointments/Premium surface
+    _deny("/v1/hosts*", "Host management requires Premium or Enterprise"),
+    _deny("/v1/hosts/*", "Host management requires Premium or Enterprise"),
     # No branding (logos, badge styling)
     _deny("/v1/branding*", "Custom branding requires Premium or Enterprise"),
     _deny("/v1/branding/*", "Custom branding requires Premium or Enterprise"),
@@ -261,10 +264,13 @@ FREE_DENIED_FEATURES: List[FeatureRule] = [
 
 # Starter: same as Free but unlocks badge printing and QR check-in
 # (which lives under /v1/checkin* — already permitted by default).
-# Still no appointments, branding, KYC, multi-location, CSV export, host email.
+# Still no appointments, host roster, branding, KYC, multi-location, CSV
+# export, host email.
 STARTER_DENIED_FEATURES: List[FeatureRule] = [
     _deny("/v1/appointments*", "Appointments require Premium or Enterprise"),
     _deny("/v1/appointments/*", "Appointments require Premium or Enterprise"),
+    _deny("/v1/hosts*", "Host management requires Premium or Enterprise"),
+    _deny("/v1/hosts/*", "Host management requires Premium or Enterprise"),
     _deny("/v1/branding*", "Custom branding requires Premium or Enterprise"),
     _deny("/v1/branding/*", "Custom branding requires Premium or Enterprise"),
     _deny("/v1/kyc*", "ID verification requires Premium or Enterprise"),

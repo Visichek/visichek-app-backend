@@ -335,6 +335,16 @@ async def create_checkout_session(
         ),
         **(metadata or {}),
     }
+
+    # ``redirect_url`` is the provider's post-payment browser "callback": where
+    # the customer lands AFTER paying on the hosted page. The provider appends
+    # ?reference=...&trxref=... to it. A caller-supplied metadata.redirect_url
+    # wins; otherwise fall back to the configured PAYMENT_CALLBACK_URL so the
+    # provider never bounces the user to the bare webhook endpoint.
+    if not intent_metadata.get("redirect_url"):
+        default_callback = (get_settings().payment_callback_url or "").strip()
+        if default_callback:
+            intent_metadata["redirect_url"] = default_callback
     # For Stripe, ensure a customer and save the card off-session on this first
     # payment so the renewal scheduler can charge it later. The provider's
     # create_intent reads ``stripe_customer_id`` from metadata. Best-effort:
@@ -437,6 +447,21 @@ async def get_tenant_checkout(tenant_id: str, checkout_id: str) -> CheckoutSessi
     if session.tenant_id != tenant_id:
         # Do not leak existence to other tenants.
         raise resource_not_found(resource="CheckoutSession", resource_id=checkout_id)
+    return session
+
+
+async def get_tenant_checkout_by_reference(
+    tenant_id: str, reference: str
+) -> CheckoutSessionOut:
+    """Resolve a checkout session by its provider reference.
+
+    This is the value providers append to the post-payment callback URL as
+    ``?reference=...&trxref=...``, so the frontend return page can map it back
+    to the session. Tenant-scoped: never leaks another tenant's session.
+    """
+    session = await get_checkout_by_reference(reference)
+    if not session or session.tenant_id != tenant_id:
+        raise resource_not_found(resource="CheckoutSession", resource_id=reference)
     return session
 
 

@@ -91,6 +91,13 @@ class Settings:
     app_base_url: str = ""
     # Default TTL (seconds) for a checkout session before it expires
     checkout_session_ttl_seconds: int = 24 * 60 * 60
+    # Where hosted-checkout providers (Paystack / Flutterwave) redirect the
+    # customer's browser AFTER payment — the "callback URL". Point this at a
+    # FRONTEND page, NOT the webhook endpoint. The provider appends
+    # ?reference=...&trxref=... so the page can resolve + display the result.
+    # When unset, the provider falls back to the Callback URL configured in its
+    # own dashboard. A per-checkout ``metadata.redirect_url`` overrides this.
+    payment_callback_url: str = ""
     # Cloudflare Turnstile secret key for verifying self-onboarding submissions.
     # When unset, Turnstile verification is skipped (development convenience).
     turnstile_secret_key: str | None = None
@@ -285,6 +292,7 @@ def get_settings() -> Settings:
         checkout_session_ttl_seconds=int(
             os.getenv("CHECKOUT_SESSION_TTL_SECONDS", str(24 * 60 * 60))
         ),
+        payment_callback_url=os.getenv("PAYMENT_CALLBACK_URL", "").strip(),
         turnstile_secret_key=os.getenv("TURNSTILE_SECRET_KEY") or None,
         turnstile_verify_url=os.getenv(
             "TURNSTILE_VERIFY_URL",

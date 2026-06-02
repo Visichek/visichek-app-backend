@@ -7,6 +7,7 @@ from typing import Optional
 
 from bson import ObjectId
 from pydantic import BaseModel, Field, model_validator
+from pymongo import ReturnDocument
 
 from core.database import db
 from schemas.imports import *
@@ -181,7 +182,7 @@ async def mark_webhook_processed(
     result = await db[COLLECTION].find_one_and_update(
         {"event_id": event_id, "provider": provider},
         {"$set": update_dict},
-        return_document=1,  # ReturnDocument.AFTER
+        return_document=ReturnDocument.AFTER,
     )
 
     if result is None:

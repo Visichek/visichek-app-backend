@@ -455,6 +455,73 @@ async def test_complete_trial_tokenization_refunds_subscribes_and_reconciles() -
     assert redeem_args.kwargs["code"] == "TRIAL-X"
 
 
+async def test_checkout_sets_redirect_callback_from_setting() -> None:
+    """create_checkout_session passes PAYMENT_CALLBACK_URL as the provider
+    redirect_url so Paystack returns the customer to a frontend page (with the
+    reference) instead of the bare webhook URL."""
+    from types import SimpleNamespace
+
+    from services import checkout_service
+
+    manager = MagicMock()
+    manager.has_provider = lambda name: name == "paystack"
+    captured: dict = {}
+
+    def _create_intent(req):
+        captured["req"] = req
+        return PaymentIntentResponse(
+            provider=PaymentProviderName.PAYSTACK,
+            reference=req.reference,
+            status=PaymentStatus.PENDING,
+            checkout_url="https://checkout.paystack.com/x",
+            provider_payload={},
+        )
+
+    provider = MagicMock()
+    provider.create_intent = MagicMock(side_effect=_create_intent)
+    manager.get_provider = lambda name: provider
+
+    fake_settings = SimpleNamespace(
+        payment_callback_url="https://client.visichek.app/app/billing/return",
+        checkout_session_ttl_seconds=86400,
+        app_base_url="",
+    )
+
+    with (
+        patch.object(
+            checkout_service.PaymentManager, "get_instance", return_value=manager
+        ),
+        patch.object(checkout_service, "get_plan", new=AsyncMock(return_value=_plan())),
+        patch.object(
+            checkout_service,
+            "_validate_and_collect_discounts",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch.object(checkout_service, "get_settings", return_value=fake_settings),
+        patch.object(
+            checkout_service,
+            "create_checkout",
+            new=AsyncMock(
+                side_effect=lambda data: _session_stub(
+                    provider=CheckoutProvider(data.provider.value)
+                )
+            ),
+        ),
+        patch.object(checkout_service, "record_audit_event", new=AsyncMock()),
+    ):
+        await checkout_service.create_checkout_session(
+            tenant_id="tenant_1",
+            created_by_user_id="user_1",
+            plan_id="507f1f77bcf86cd799439011",
+            billing_cycle=BillingCycle.MONTHLY,
+        )
+
+    assert (
+        captured["req"].metadata["redirect_url"]
+        == "https://client.visichek.app/app/billing/return"
+    )
+
+
 async def test_reconcile_completes_session_on_paystack_success() -> None:
     """Poll fallback: a still-PENDING Paystack session that verifies as
     'success' is completed via the same webhook completion path."""
@@ -570,6 +637,44 @@ async def test_reconcile_fails_session_and_releases_trial_code() -> None:
     assert update_args is not None
     assert update_args.args[1].status == CheckoutStatus.FAILED
     release_mock.assert_awaited_once()
+
+
+async def test_get_checkout_by_reference_returns_session_for_owner() -> None:
+    """The payment-return lookup resolves a session by provider reference."""
+    from services import checkout_service
+
+    mine = _session_stub(tenant_id="tenant_1", provider_reference="chk_ref")
+
+    with patch.object(
+        checkout_service,
+        "get_checkout_by_reference",
+        new=AsyncMock(return_value=mine),
+    ):
+        result = await checkout_service.get_tenant_checkout_by_reference(
+            tenant_id="tenant_1", reference="chk_ref"
+        )
+
+    assert result.provider_reference == "chk_ref"
+
+
+async def test_get_checkout_by_reference_does_not_leak_across_tenants() -> None:
+    """A reference belonging to another tenant must 404, not leak."""
+    from core.errors import AppException
+    from services import checkout_service
+
+    other = _session_stub(tenant_id="other_tenant", provider_reference="chk_ref")
+
+    with patch.object(
+        checkout_service,
+        "get_checkout_by_reference",
+        new=AsyncMock(return_value=other),
+    ):
+        with pytest.raises(AppException) as err:
+            await checkout_service.get_tenant_checkout_by_reference(
+                tenant_id="tenant_1", reference="chk_ref"
+            )
+
+    assert err.value.status_code == 404
 
 
 async def test_get_tenant_checkout_does_not_leak_across_tenants() -> None:

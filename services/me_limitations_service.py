@@ -32,7 +32,7 @@ Shape (camelCase via the global case-conversion middleware):
         ...
       ],
       "deniedFeatures": [
-        "appointments", "badges", "branding", "kyc",
+        "appointments", "hosts", "badges", "branding", "kyc",
         "csv_export", "host_email_notifications", "multi_location"
       ],
       "lockedEntities": {
@@ -80,6 +80,8 @@ logger = logging.getLogger(__name__)
 _ENDPOINT_TO_FEATURE_KEY: Dict[str, str] = {
     "/v1/appointments*": "appointments",
     "/v1/appointments/*": "appointments",
+    "/v1/hosts*": "hosts",
+    "/v1/hosts/*": "hosts",
     "/v1/branding*": "branding",
     "/v1/branding/*": "branding",
     "/v1/badges*": "badges",
