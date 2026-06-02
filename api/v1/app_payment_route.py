@@ -30,15 +30,17 @@ router = APIRouter(prefix="/payments/app-checkout", tags=["App Payment Simulator
 
 
 def _guard_app_mode() -> None:
-    """Refuse the simulator in production unless break-glass is enabled.
+    """Allow the simulator only on a local dev machine (or via break-glass).
 
     The simulator confirms payments with a button click, so leaving it
-    reachable in production would let a payer mark their own checkout
-    succeeded. We return 404 (not 403) so the routes are indistinguishable
-    from "not mounted" to an external scanner.
+    reachable anywhere real would let a payer mark their own checkout
+    succeeded. It runs only when ENV=local or PAYMENT_APP_MODE_ENABLED is
+    set; every other environment (development, staging, production) 404s.
+    We return 404 (not 403) so the routes are indistinguishable from
+    "not mounted" to an external scanner.
     """
     settings = get_settings()
-    if settings.is_production and not settings.payment_app_mode_enabled:
+    if not settings.is_local and not settings.payment_app_mode_enabled:
         raise HTTPException(status_code=404, detail="Not found")
 
 

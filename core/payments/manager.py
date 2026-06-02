@@ -68,19 +68,20 @@ class PaymentManager:
 
         # The ``app`` provider is a SIMULATOR — it confirms payments with a
         # button click and proves nothing about settlement. It is registered
-        # automatically outside production so local/dev/test can issue a
-        # checkout without external keys. In production it is registered ONLY
-        # when PAYMENT_APP_MODE_ENABLED is explicitly set (an audited
-        # break-glass), so a real deployment can never silently fall back to
-        # "click to mark paid".
-        if (not settings.is_production) or settings.payment_app_mode_enabled:
+        # ONLY on a developer's machine (``ENV=local``) or when
+        # PAYMENT_APP_MODE_ENABLED is explicitly set (an audited break-glass).
+        # Every other environment (development, staging, production) behaves
+        # like production: no simulator, so checkout requires a real provider
+        # and can never silently fall back to "click to mark paid".
+        if settings.is_local or settings.payment_app_mode_enabled:
             providers["app"] = AppCheckoutPaymentProvider(
                 base_url=(getattr(settings, "app_base_url", "") or "").strip()
             )
-        elif settings.is_production:
-            logger.warning(
-                "App checkout simulator is disabled in production "
-                "(set PAYMENT_APP_MODE_ENABLED=true to force-enable)."
+        else:
+            logger.info(
+                "App checkout simulator is disabled (ENV=%s). Set ENV=local or "
+                "PAYMENT_APP_MODE_ENABLED=true to enable it.",
+                settings.env,
             )
 
         default_provider = settings.payment_default_provider

@@ -230,11 +230,60 @@ async def complete_trial_tokenization(payload: dict) -> dict:
         billing_cycle=billing_cycle,
         trial_days=trial_days,
     )
+    subscription_id = getattr(subscription, "id", None)
     logger.info(
         "Started trial subscription %s for tenant %s after card capture",
-        getattr(subscription, "id", None),
+        subscription_id,
         tenant_id,
     )
+
+    # When the trial was started through ``create_checkout_session`` (the normal
+    # frontend path), a PENDING checkout session exists and a trial code was
+    # reserved. Mark the session SUCCEEDED so the UI's poll resolves, and redeem
+    # the code. Both are no-ops for the standalone /checkout/trial-card-capture
+    # entry point, which creates no session and carries no trial_code.
+    if reference:
+        try:
+            from repositories.checkout_repo import (
+                get_checkout_by_reference,
+                update_checkout,
+            )
+            from schemas.checkout_schema import CheckoutSessionUpdate, CheckoutStatus
+
+            sess = await get_checkout_by_reference(reference)
+            if sess and sess.id and sess.status == CheckoutStatus.PENDING:
+                await update_checkout(
+                    sess.id,
+                    CheckoutSessionUpdate(
+                        status=CheckoutStatus.SUCCEEDED,
+                        completed_at=int(time.time()),
+                        subscription_id=subscription_id,
+                    ),
+                )
+        except Exception:
+            logger.warning(
+                "Failed to reconcile checkout session for trial reference %s",
+                reference,
+                exc_info=True,
+            )
+
+    trial_code = metadata.get("trial_code")
+    if trial_code and subscription_id:
+        try:
+            from services.trial_code_service import mark_trial_code_used
+
+            await mark_trial_code_used(
+                code=str(trial_code),
+                subscription_id=subscription_id,
+                tenant_id=tenant_id,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to mark trial code USED after tokenization %s",
+                reference,
+                exc_info=True,
+            )
+
     return {
         "handled": True,
         "action": "trial_started",

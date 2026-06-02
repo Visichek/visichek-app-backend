@@ -271,6 +271,172 @@ async def test_complete_checkout_is_idempotent_for_terminal_state() -> None:
     subscribe.assert_not_called()
 
 
+async def test_trial_checkout_uses_paystack_tokenization_charge() -> None:
+    """A trial via /checkout/sessions must charge the Paystack tokenization
+    amount (₦50 for NGN) with the trial-tokenization marker — NOT a ₦0 intent —
+    so a reusable card is captured for the trial-end auto-charge. The session
+    still displays ₦0 (free trial)."""
+    from services import checkout_service
+
+    manager = MagicMock()
+    manager.has_provider = lambda name: name == "paystack"
+
+    captured: dict = {}
+
+    def _create_intent(req):
+        captured["req"] = req
+        return PaymentIntentResponse(
+            provider=PaymentProviderName.PAYSTACK,
+            reference=req.reference,
+            status=PaymentStatus.PENDING,
+            checkout_url="https://checkout.paystack.com/abc",
+            provider_payload={},
+        )
+
+    provider = MagicMock()
+    provider.create_intent = MagicMock(side_effect=_create_intent)
+    manager.get_provider = lambda name: provider
+
+    trial = MagicMock(trial_days_snapshot=14, code="TRIAL-X")
+
+    with (
+        patch.object(
+            checkout_service.PaymentManager, "get_instance", return_value=manager
+        ),
+        patch.object(checkout_service, "get_plan", new=AsyncMock(return_value=_plan())),
+        patch.object(
+            checkout_service,
+            "validate_trial_code_for_checkout",
+            new=AsyncMock(return_value=trial),
+        ),
+        patch.object(
+            checkout_service,
+            "create_checkout",
+            new=AsyncMock(
+                side_effect=lambda data: _session_stub(
+                    provider=CheckoutProvider(data.provider.value),
+                    amount_minor=data.amount_minor,
+                )
+            ),
+        ),
+        patch.object(checkout_service, "record_audit_event", new=AsyncMock()),
+    ):
+        session = await checkout_service.create_checkout_session(
+            tenant_id="tenant_1",
+            created_by_user_id="user_1",
+            plan_id="507f1f77bcf86cd799439011",
+            billing_cycle=BillingCycle.MONTHLY,
+            trial_code="TRIAL-X",
+            customer_email="a@b.com",
+        )
+
+    # Provider was charged the NGN tokenization minimum, flagged as a trial.
+    assert captured["req"].amount_minor == 5000
+    assert captured["req"].metadata["purpose"] == "trial_tokenization"
+    assert captured["req"].metadata["trial_days"] == 14
+    # The session itself shows the free-trial price (₦0) on a real gateway.
+    assert session.provider == CheckoutProvider.PAYSTACK
+    assert session.amount_minor == 0
+
+
+async def test_trial_checkout_rejected_on_non_paystack_provider() -> None:
+    """Auto-charging trials are Paystack-only; a trial that would land on
+    another real gateway is refused, not started un-billable."""
+    from core.errors import AppException
+    from services import checkout_service
+
+    manager = MagicMock()
+    manager.has_provider = lambda name: name == "flutterwave"
+    manager.get_provider = lambda name: MagicMock()
+
+    trial = MagicMock(trial_days_snapshot=14, code="TRIAL-X")
+
+    with (
+        patch.object(
+            checkout_service.PaymentManager, "get_instance", return_value=manager
+        ),
+        patch.object(checkout_service, "get_plan", new=AsyncMock(return_value=_plan())),
+        patch.object(
+            checkout_service,
+            "validate_trial_code_for_checkout",
+            new=AsyncMock(return_value=trial),
+        ),
+        patch.object(checkout_service, "create_checkout", new=AsyncMock()),
+        patch.object(checkout_service, "record_audit_event", new=AsyncMock()),
+    ):
+        with pytest.raises(AppException) as err:
+            await checkout_service.create_checkout_session(
+                tenant_id="tenant_1",
+                created_by_user_id="user_1",
+                plan_id="507f1f77bcf86cd799439011",
+                billing_cycle=BillingCycle.MONTHLY,
+                trial_code="TRIAL-X",
+            )
+
+    assert err.value.status_code == 400
+
+
+async def test_complete_trial_tokenization_refunds_subscribes_and_reconciles() -> None:
+    """The webhook completion refunds the ₦50, starts the trial, marks the
+    checkout session SUCCEEDED, and redeems the trial code."""
+    from services import paystack_billing_service as pbs
+
+    provider = MagicMock()
+    provider.refund = MagicMock()
+    manager = MagicMock()
+    manager.get_provider = lambda name: provider
+
+    pending = _session_stub(status=CheckoutStatus.PENDING)
+    sub = MagicMock(id="sub_1")
+
+    payload = {
+        "data": {
+            "reference": "trialcap_abc",
+            "customer": {"email": "a@b.com"},
+            "authorization": {"authorization_code": "AUTH_x", "reusable": True},
+            "metadata": {
+                "tenant_id": "507f1f77bcf86cd799439011",
+                "plan_id": "507f1f77bcf86cd799439011",
+                "billing_cycle": "monthly",
+                "trial_days": 14,
+                "trial_code": "TRIAL-X",
+            },
+        }
+    }
+
+    with (
+        patch.object(pbs.PaymentManager, "get_instance", return_value=manager),
+        patch(
+            "services.subscription_service.subscribe_tenant",
+            new=AsyncMock(return_value=sub),
+        ),
+        patch(
+            "repositories.checkout_repo.get_checkout_by_reference",
+            new=AsyncMock(return_value=pending),
+        ),
+        patch(
+            "repositories.checkout_repo.update_checkout", new=AsyncMock()
+        ) as update_mock,
+        patch(
+            "services.trial_code_service.mark_trial_code_used", new=AsyncMock()
+        ) as redeem_mock,
+    ):
+        result = await pbs.complete_trial_tokenization(payload)
+
+    assert result["handled"] is True
+    provider.refund.assert_called_once()
+    assert provider.refund.call_args.kwargs["reference"] == "trialcap_abc"
+    # Session reconciled to SUCCEEDED with the new subscription id.
+    update_args = update_mock.await_args
+    assert update_args is not None
+    assert update_args.args[1].status == CheckoutStatus.SUCCEEDED
+    assert update_args.args[1].subscription_id == "sub_1"
+    # Trial code redeemed.
+    redeem_args = redeem_mock.await_args
+    assert redeem_args is not None
+    assert redeem_args.kwargs["code"] == "TRIAL-X"
+
+
 async def test_get_tenant_checkout_does_not_leak_across_tenants() -> None:
     from core.errors import AppException
     from services import checkout_service

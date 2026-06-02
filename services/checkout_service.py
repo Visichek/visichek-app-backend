@@ -51,6 +51,10 @@ from services.subscription_service import (
     retrieve_tenant_active_subscription,
     subscribe_tenant,
 )
+from services.paystack_billing_service import (
+    TRIAL_TOKENIZATION_PURPOSE,
+    min_tokenization_amount,
+)
 from services.trial_code_service import (
     mark_trial_code_cancelled,
     mark_trial_code_used,
@@ -285,11 +289,41 @@ async def create_checkout_session(
 
     chosen = _select_provider(preferred_provider)
 
+    # ── Auto-charging trial (card capture) ─────────────────────────────
+    # A trial that should auto-charge when it ends needs a reusable card on
+    # file. Paystack can't authorize a ₦0 charge, so on a real gateway we charge
+    # the small tokenization amount (refunded by the webhook once the card is
+    # captured) instead of a ₦0 intent — the trial subscription is then created
+    # by the webhook, never here, so an abandoned card form starts no trial.
+    # In local/app mode there is no real gateway, so the trial stays a ₦0
+    # simulator checkout for dev. Auto-charging trials are Paystack-only today
+    # (Flutterwave has no tokenized recurring charge), so a trial on any other
+    # real gateway is refused rather than started and never billable.
+    intent_amount_minor = breakdown.amount_minor
+    is_tokenization_trial = False
+    if resolved_trial_code and chosen != PaymentProviderName.APP.value:
+        if chosen != PaymentProviderName.PAYSTACK.value:
+            raise AppException(
+                status_code=400,
+                code=ErrorCode.PAYMENT_PROVIDER_ERROR,
+                message=(
+                    "Free trials with auto-charge are currently supported only "
+                    "via Paystack."
+                ),
+            )
+        is_tokenization_trial = True
+        intent_amount_minor = min_tokenization_amount(breakdown.currency)
+
     intent_metadata: dict = {
         "tenant_id": tenant_id,
         "plan_id": plan_id,
         "billing_cycle": billing_cycle.value,
         **({"trial_code": resolved_trial_code} if resolved_trial_code else {}),
+        **(
+            {"purpose": TRIAL_TOKENIZATION_PURPOSE, "trial_days": trial_days}
+            if is_tokenization_trial
+            else {}
+        ),
         **(metadata or {}),
     }
     # For Stripe, ensure a customer and save the card off-session on this first
@@ -317,7 +351,7 @@ async def create_checkout_session(
     provider_name, intent = _create_intent_with_fallback(
         chosen,
         PaymentIntentRequest(
-            amount_minor=breakdown.amount_minor,
+            amount_minor=intent_amount_minor,
             currency=breakdown.currency,
             reference=reference,
             customer_email=customer_email,

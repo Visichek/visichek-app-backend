@@ -180,6 +180,13 @@ class Settings:
     def is_production(self) -> bool:
         return self.env.lower() == "production"
 
+    @property
+    def is_local(self) -> bool:
+        """A developer's machine — the only place the app-checkout SIMULATOR
+        runs by default. ``ENV=local`` (case-insensitive). Every other value
+        (development, staging, production) behaves like production."""
+        return self.env.strip().lower() == "local"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
