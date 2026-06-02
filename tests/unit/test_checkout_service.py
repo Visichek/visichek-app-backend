@@ -482,7 +482,7 @@ async def test_checkout_sets_redirect_callback_from_setting() -> None:
     manager.get_provider = lambda name: provider
 
     fake_settings = SimpleNamespace(
-        payment_callback_url="https://client.visichek.app/app/billing/return",
+        payment_callback_url="https://client.visichek.app/app/billing/checkout/return",
         checkout_session_ttl_seconds=86400,
         app_base_url="",
     )
@@ -518,7 +518,7 @@ async def test_checkout_sets_redirect_callback_from_setting() -> None:
 
     assert (
         captured["req"].metadata["redirect_url"]
-        == "https://client.visichek.app/app/billing/return"
+        == "https://client.visichek.app/app/billing/checkout/return"
     )
 
 
