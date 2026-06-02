@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from bson import ObjectId
 from fastapi import HTTPException, Request, status
@@ -94,9 +94,17 @@ def resolve_full_checkout_url(
 
 
 def with_full_checkout_url(
-    session: CheckoutSessionOut, request: Optional[Request] = None
+    session: CheckoutSessionOut | dict[str, Any], request: Optional[Request] = None
 ) -> CheckoutSessionOut:
-    """Return a copy of ``session`` with ``checkout_url`` made absolute."""
+    """Return a copy of ``session`` with ``checkout_url`` made absolute.
+
+    Accepts either a ``CheckoutSessionOut`` or the plain dict that the
+    single-entity read cache (``get_or_compute_entity``) returns on a cache hit
+    — on a miss it returns the model, on a hit a JSON dict — so route handlers
+    can pass the cache result straight through without coercing it themselves.
+    """
+    if isinstance(session, dict):
+        session = CheckoutSessionOut(**session)
     if not session.checkout_url:
         return session
     resolved = resolve_full_checkout_url(session.checkout_url, request)

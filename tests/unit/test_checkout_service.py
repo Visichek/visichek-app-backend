@@ -271,6 +271,24 @@ async def test_complete_checkout_is_idempotent_for_terminal_state() -> None:
     subscribe.assert_not_called()
 
 
+async def test_with_full_checkout_url_accepts_cached_dict() -> None:
+    """Regression: the single-entity GET cache returns a dict on a hit, so the
+    GET /checkout/sessions/{id} poll 500'd with
+    "'dict' object has no attribute 'checkout_url'". with_full_checkout_url must
+    coerce the dict (the same shape entity_cache stores) into the model."""
+    from services import checkout_service
+
+    model = _session_stub(checkout_url="https://checkout.paystack.com/abc")
+    # Mirror exactly what core/queue/entity_cache stores + returns on a hit.
+    cached = model.model_dump(mode="json", by_alias=True)
+    assert isinstance(cached, dict)
+
+    result = checkout_service.with_full_checkout_url(cached)
+
+    assert isinstance(result, CheckoutSessionOut)
+    assert result.checkout_url == "https://checkout.paystack.com/abc"
+
+
 async def test_trial_checkout_uses_paystack_tokenization_charge() -> None:
     """A trial via /checkout/sessions must charge the Paystack tokenization
     amount (₦50 for NGN) with the trial-tokenization marker — NOT a ₦0 intent —
