@@ -514,6 +514,21 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Pending-checkout poll reconciler (every 50s). Fallback for missed or slow
+    # Paystack webhooks: verifies still-PENDING Paystack checkout sessions
+    # against Paystack's /transaction/verify and drives each to a terminal
+    # state. A session is polled at most 4 times (~50s apart); once it reaches
+    # a terminal state (via webhook OR an earlier poll) it is no longer PENDING,
+    # so polling self-cancels. See
+    # services/checkout_service.py:reconcile_pending_paystack_checkouts.
+    scheduler.add_job(
+        "services.checkout_service:reconcile_pending_paystack_checkouts",
+        trigger=IntervalTrigger(seconds=50),
+        id="checkout_poll_reconcile",
+        name="Pending Checkout Poll Reconcile",
+        replace_existing=True,
+    )
+
     # Support-case auto-close: RESOLVED → CLOSED after 7 days of inactivity.
     scheduler.add_job(
         "services.support_case_service:auto_close_resolved_cases",

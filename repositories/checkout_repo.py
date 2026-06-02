@@ -43,6 +43,37 @@ async def get_checkout_by_reference(reference: str) -> Optional[CheckoutSessionO
     return await get_checkout({"provider_reference": reference})
 
 
+async def list_pending_checkouts_for_poll(
+    *,
+    provider: str,
+    max_attempts: int,
+    min_age_seconds: int,
+    now: int,
+    limit: int = 50,
+) -> List[CheckoutSessionOut]:
+    """PENDING sessions on ``provider`` that are due for a reconciliation poll.
+
+    Eligible when the session is still PENDING, at least ``min_age_seconds`` old
+    (give the webhook first crack), has been polled fewer than ``max_attempts``
+    times, and was not polled within the last ``min_age_seconds`` (so polls are
+    spaced ~one interval apart). ``last_polled_at: None`` also matches docs that
+    have never been polled (Mongo treats a missing field as null).
+    """
+    cutoff = now - min_age_seconds
+    filter_dict: dict = {
+        "status": CheckoutStatus.PENDING.value,
+        "provider": provider,
+        "poll_attempts": {"$lt": max_attempts},
+        "date_created": {"$lte": cutoff},
+        "$or": [
+            {"last_polled_at": None},
+            {"last_polled_at": {"$lte": cutoff}},
+        ],
+    }
+    cursor = db[COLLECTION].find(filter_dict).sort("date_created", 1).limit(limit)
+    return [CheckoutSessionOut(**doc) async for doc in cursor]
+
+
 async def list_checkouts_for_tenant(
     tenant_id: str,
     status: Optional[CheckoutStatus] = None,

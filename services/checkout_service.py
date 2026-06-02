@@ -11,6 +11,7 @@ Owns:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -775,3 +776,150 @@ async def maybe_complete_checkout_from_reference(
                 exc_info=True,
             )
     return None
+
+
+# ---------------------------------------------------------------------------
+# Webhook-fallback poll reconciler (APScheduler, every ~50s)
+# ---------------------------------------------------------------------------
+
+# Paystack is the only provider with a server-side verify + completion path
+# wired today. Each PENDING session is polled at most _POLL_MAX_ATTEMPTS times,
+# ~_POLL_INTERVAL_SECONDS apart.
+_POLL_PROVIDER = PaymentProviderName.PAYSTACK.value
+_POLL_MAX_ATTEMPTS = 4
+_POLL_INTERVAL_SECONDS = 50
+# Paystack transaction.status values that mean "this will never succeed".
+_PAYSTACK_TERMINAL_FAILURE = {"failed", "abandoned", "reversed"}
+
+
+async def _fail_pending_checkout(
+    session: CheckoutSessionOut, *, reason: str
+) -> None:
+    """Mark a PENDING session FAILED and release any reserved trial code."""
+    assert session.id is not None
+    now = int(time.time())
+    await update_checkout(
+        session.id,
+        CheckoutSessionUpdate(
+            status=CheckoutStatus.FAILED,
+            completed_at=now,
+            failure_reason=reason,
+        ),
+    )
+    if session.trial_code:
+        try:
+            await mark_trial_code_cancelled(
+                code=session.trial_code, tenant_id=session.tenant_id
+            )
+        except Exception:
+            logger.warning(
+                "Poll: failed to release trial code for checkout %s",
+                session.id,
+                exc_info=True,
+            )
+
+
+async def reconcile_pending_paystack_checkouts() -> dict:
+    """Fallback for missed/slow webhooks: verify PENDING Paystack checkouts
+    against Paystack and drive them to a terminal state.
+
+    APScheduler runs this every ~50s. For each eligible session
+    (``repositories.checkout_repo.list_pending_checkouts_for_poll``) it calls
+    Paystack ``/transaction/verify`` and:
+
+    * ``success`` → runs the SAME completion the webhook does (capture card,
+      refund tokenization / provision subscription, mark the session SUCCEEDED).
+    * ``failed`` / ``abandoned`` / ``reversed`` → marks the session FAILED and
+      releases any reserved trial code.
+    * still pending → records the attempt; after ``_POLL_MAX_ATTEMPTS`` the
+      session drops out of the query and is left for its TTL/expiry.
+
+    A session that already reached a terminal state — via the webhook OR an
+    earlier poll — is no longer PENDING, so it is never re-selected: polling
+    self-cancels the moment the state is terminal.
+    """
+    from repositories.checkout_repo import list_pending_checkouts_for_poll
+
+    now = int(time.time())
+    manager = PaymentManager.get_instance()
+    if not manager.has_provider(_POLL_PROVIDER):
+        return {"polled": 0, "completed": 0, "failed": 0, "skipped": "no_provider"}
+    provider = manager.get_provider(_POLL_PROVIDER)
+
+    sessions = await list_pending_checkouts_for_poll(
+        provider=_POLL_PROVIDER,
+        max_attempts=_POLL_MAX_ATTEMPTS,
+        min_age_seconds=_POLL_INTERVAL_SECONDS,
+        now=now,
+        limit=50,
+    )
+
+    polled = completed = failed = 0
+    for session in sessions:
+        if session.id is None:
+            continue
+        polled += 1
+
+        # Expired before we could confirm — close it out (frees a reserved
+        # trial code too).
+        if session.expires_at and now > session.expires_at:
+            await _fail_pending_checkout(
+                session, reason="Session expired before payment confirmation"
+            )
+            await update_checkout(
+                session.id,
+                CheckoutSessionUpdate(status=CheckoutStatus.EXPIRED),
+            )
+            continue
+
+        try:
+            tx = await asyncio.to_thread(
+                provider.fetch_transaction, reference=session.provider_reference
+            )
+            raw = tx.raw if isinstance(tx.raw, dict) else {}
+            status = str((raw.get("data") or {}).get("status", "")).lower()
+        except Exception:
+            logger.warning(
+                "Poll: Paystack verify failed for reference=%s",
+                session.provider_reference,
+                exc_info=True,
+            )
+            await update_checkout(
+                session.id,
+                CheckoutSessionUpdate(
+                    poll_attempts=session.poll_attempts + 1, last_polled_at=now
+                ),
+            )
+            continue
+
+        if status == "success":
+            # Re-read so we don't double-process a session a webhook just
+            # completed in the gap between the query and now.
+            fresh = await get_checkout_by_id(session.id)
+            if fresh and fresh.status == CheckoutStatus.PENDING:
+                from services.paystack_webhook_service import _handle_charge_success
+
+                await _handle_charge_success(raw)
+                completed += 1
+        elif status in _PAYSTACK_TERMINAL_FAILURE:
+            await _fail_pending_checkout(
+                session, reason=f"Paystack reported transaction '{status}'"
+            )
+            failed += 1
+        else:
+            # Still pending/ongoing on Paystack — record the attempt and wait.
+            await update_checkout(
+                session.id,
+                CheckoutSessionUpdate(
+                    poll_attempts=session.poll_attempts + 1, last_polled_at=now
+                ),
+            )
+
+    if polled:
+        logger.info(
+            "Checkout poll reconcile: polled=%s completed=%s failed=%s",
+            polled,
+            completed,
+            failed,
+        )
+    return {"polled": polled, "completed": completed, "failed": failed}

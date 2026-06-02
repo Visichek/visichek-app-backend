@@ -455,6 +455,125 @@ async def test_complete_trial_tokenization_refunds_subscribes_and_reconciles() -
     assert redeem_args.kwargs["code"] == "TRIAL-X"
 
 
+async def test_reconcile_completes_session_on_paystack_success() -> None:
+    """Poll fallback: a still-PENDING Paystack session that verifies as
+    'success' is completed via the same webhook completion path."""
+    from services import checkout_service
+
+    session = _session_stub(
+        provider=CheckoutProvider.PAYSTACK,
+        provider_reference="chk_poll",
+        trial_code="TRIAL-X",
+    )
+    manager = MagicMock()
+    manager.has_provider = lambda name: name == "paystack"
+    provider = MagicMock()
+    provider.fetch_transaction = MagicMock(
+        return_value=MagicMock(raw={"data": {"status": "success", "reference": "chk_poll"}})
+    )
+    manager.get_provider = lambda name: provider
+    handle = AsyncMock()
+
+    with (
+        patch.object(
+            checkout_service.PaymentManager, "get_instance", return_value=manager
+        ),
+        patch(
+            "repositories.checkout_repo.list_pending_checkouts_for_poll",
+            new=AsyncMock(return_value=[session]),
+        ),
+        patch.object(
+            checkout_service, "get_checkout_by_id", new=AsyncMock(return_value=session)
+        ),
+        patch.object(checkout_service, "update_checkout", new=AsyncMock()),
+        patch(
+            "services.paystack_webhook_service._handle_charge_success", new=handle
+        ),
+    ):
+        result = await checkout_service.reconcile_pending_paystack_checkouts()
+
+    assert result["completed"] == 1
+    handle.assert_awaited_once()
+
+
+async def test_reconcile_records_attempt_when_still_pending() -> None:
+    """A session that is still 'ongoing' on Paystack just records the attempt."""
+    from services import checkout_service
+
+    session = _session_stub(
+        provider=CheckoutProvider.PAYSTACK,
+        provider_reference="chk_poll",
+        poll_attempts=1,
+    )
+    manager = MagicMock()
+    manager.has_provider = lambda name: name == "paystack"
+    provider = MagicMock()
+    provider.fetch_transaction = MagicMock(
+        return_value=MagicMock(raw={"data": {"status": "ongoing"}})
+    )
+    manager.get_provider = lambda name: provider
+    update_mock = AsyncMock()
+
+    with (
+        patch.object(
+            checkout_service.PaymentManager, "get_instance", return_value=manager
+        ),
+        patch(
+            "repositories.checkout_repo.list_pending_checkouts_for_poll",
+            new=AsyncMock(return_value=[session]),
+        ),
+        patch.object(checkout_service, "update_checkout", new=update_mock),
+    ):
+        result = await checkout_service.reconcile_pending_paystack_checkouts()
+
+    assert result["completed"] == 0
+    update_args = update_mock.await_args
+    assert update_args is not None
+    assert update_args.args[1].poll_attempts == 2  # 1 + 1
+
+
+async def test_reconcile_fails_session_and_releases_trial_code() -> None:
+    """A terminal Paystack failure marks the session FAILED and frees the
+    reserved trial code so the tenant can retry."""
+    from services import checkout_service
+
+    session = _session_stub(
+        provider=CheckoutProvider.PAYSTACK,
+        provider_reference="chk_poll",
+        trial_code="TRIAL-X",
+    )
+    manager = MagicMock()
+    manager.has_provider = lambda name: name == "paystack"
+    provider = MagicMock()
+    provider.fetch_transaction = MagicMock(
+        return_value=MagicMock(raw={"data": {"status": "failed"}})
+    )
+    manager.get_provider = lambda name: provider
+    update_mock = AsyncMock()
+    release_mock = AsyncMock()
+
+    with (
+        patch.object(
+            checkout_service.PaymentManager, "get_instance", return_value=manager
+        ),
+        patch(
+            "repositories.checkout_repo.list_pending_checkouts_for_poll",
+            new=AsyncMock(return_value=[session]),
+        ),
+        patch.object(checkout_service, "update_checkout", new=update_mock),
+        patch.object(
+            checkout_service, "mark_trial_code_cancelled", new=release_mock
+        ),
+    ):
+        result = await checkout_service.reconcile_pending_paystack_checkouts()
+
+    assert result["failed"] == 1
+    update_args = update_mock.await_args
+    assert update_args is not None
+    assert update_args.args[1].status == CheckoutStatus.FAILED
+    release_mock.assert_awaited_once()
+
+
 async def test_get_tenant_checkout_does_not_leak_across_tenants() -> None:
     from core.errors import AppException
     from services import checkout_service

@@ -206,26 +206,36 @@ async def _handle_charge_success(payload: dict) -> dict:
             logger.info(
                 f"Updated payment transaction: reference={reference}, status=succeeded"
             )
-            # Bridge to checkout sessions: activate the subscription if this
-            # reference corresponds to a pending checkout.
-            try:
-                from services.checkout_service import (
-                    maybe_complete_checkout_from_reference,
-                )
+        else:
+            # Checkout sessions created via create_checkout_session do NOT
+            # create a payment_transaction row, so there's nothing to update —
+            # this is expected, not an error. We still bridge to the checkout
+            # below (previously this returned early and left the session stuck
+            # PENDING).
+            logger.info(
+                f"No payment_transaction for reference={reference} "
+                "(checkout-session charge); completing checkout directly"
+            )
 
-                await maybe_complete_checkout_from_reference(reference, "success")
-            except Exception:
-                logger.exception(
-                    "Failed to complete checkout session from Paystack webhook"
-                )
-            return {
-                "handled": True,
-                "action": "payment_updated",
-                "reference": reference,
-                "status": "succeeded",
-            }
-        logger.warning(f"Payment transaction not found: reference={reference}")
-        return {"handled": False, "reason": "payment_not_found"}
+        # Bridge to checkout sessions regardless of whether a payment_transaction
+        # row exists: activate / complete the session this reference belongs to.
+        try:
+            from services.checkout_service import (
+                maybe_complete_checkout_from_reference,
+            )
+
+            await maybe_complete_checkout_from_reference(reference, "success")
+        except Exception:
+            logger.exception(
+                "Failed to complete checkout session from Paystack webhook"
+            )
+
+        return {
+            "handled": True,
+            "action": "payment_updated",
+            "reference": reference,
+            "status": "succeeded",
+        }
     except Exception as e:
         logger.error(f"Failed to update payment transaction: {str(e)}", exc_info=True)
         raise

@@ -200,6 +200,30 @@ async def complete_trial_tokenization(payload: dict) -> dict:
         logger.warning("Trial tokenization missing tenant_id/plan_id metadata")
         return {"handled": False, "reason": "missing_metadata"}
 
+    # Idempotency: if a checkout session for this reference already reached a
+    # terminal state, this charge was already handled — don't subscribe again.
+    # Guards the webhook-vs-poll race (both could observe a success). The
+    # standalone /checkout/trial-card-capture entry point has no session, so
+    # this is a no-op there (only the webhook ever drives it).
+    if reference:
+        try:
+            from repositories.checkout_repo import get_checkout_by_reference
+            from schemas.checkout_schema import CheckoutStatus
+
+            existing = await get_checkout_by_reference(reference)
+            if existing and existing.status != CheckoutStatus.PENDING:
+                return {
+                    "handled": True,
+                    "action": "already_processed",
+                    "reference": reference,
+                }
+        except Exception:
+            logger.warning(
+                "Trial tokenization idempotency check failed for %s",
+                reference,
+                exc_info=True,
+            )
+
     # Refund the tokenization charge — best-effort, must not block the trial.
     if reference:
         try:

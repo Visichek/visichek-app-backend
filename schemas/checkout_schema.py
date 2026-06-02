@@ -141,6 +141,12 @@ class CheckoutSessionBase(BaseModel):
     # the literal code value (not the row id) so the completion path can
     # look up + mark it USED without an extra round trip.
     trial_code: Optional[str] = None
+    # Fallback-poll bookkeeping. When a webhook is missed or slow, a scheduled
+    # reconciler verifies still-PENDING provider checkouts against the provider.
+    # ``poll_attempts`` caps the work (stops at the configured max); a session
+    # that reached a terminal state is no longer PENDING, so polling self-stops.
+    poll_attempts: int = 0
+    last_polled_at: Optional[int] = None
 
 
 class CheckoutSessionCreate(CheckoutSessionBase):
@@ -154,6 +160,8 @@ class CheckoutSessionUpdate(BaseModel):
     subscription_id: Optional[str] = None
     failure_reason: Optional[str] = None
     provider_payload: Optional[dict] = None
+    poll_attempts: Optional[int] = None
+    last_polled_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
