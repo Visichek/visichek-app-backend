@@ -108,6 +108,61 @@ def _wordmark() -> str:
     )
 
 
+def _brand_header(brand: dict | None) -> str:
+    """Header logo. Renders a tenant logo image when ``brand['logo_url']`` is
+    present (with the tenant name as alt text), otherwise the bulletproof
+    VisiChek wordmark. Customer-facing emails pass a tenant brand; internal
+    auth/admin emails pass ``None`` and stay VisiChek-branded.
+
+    The logo is a remote ``<img>`` — unlike the SVG logomark, a raster logo
+    URL (presigned S3) loads in Gmail/Apple Mail. Image-blocking clients fall
+    back to the ``alt`` text, so the tenant name still shows.
+    """
+    logo_url = (brand or {}).get("logo_url")
+    name = (brand or {}).get("name") or "VisiChek"
+    if logo_url:
+        return (
+            "<table role='presentation' cellpadding='0' cellspacing='0' "
+            "border='0'><tr><td valign='middle'>"
+            f"<img src='{logo_url}' alt='{name}' height='34' "
+            "style='height:34px;max-height:42px;width:auto;display:block;"
+            "border:0;outline:none;'/>"
+            "</td></tr></table>"
+        )
+    return _wordmark()
+
+
+def build_email_brand(context: dict) -> dict | None:
+    """Extract a tenant brand from an email context, or ``None`` when the
+    context carries no branding (so the email keeps the default VisiChek look).
+
+    Recognised context keys (all optional, snake_ or camelCase):
+      * ``tenant_logo_url`` — a publicly reachable logo URL (presigned S3 ok).
+      * ``tenant_name`` — display name; used for the logo alt + "Sent by …".
+      * ``tenant_brand_color`` — hex accent for the accent bar + CTA button.
+
+    The sending service is responsible for resolving these from
+    ``branding_service`` and adding them to the context for CUSTOMER-FACING
+    emails only (visitor / DSR / tenant support-case). Internal auth/admin
+    emails omit them and stay VisiChek-branded.
+    """
+    if not isinstance(context, dict):
+        return None
+    logo_url = context.get("tenant_logo_url") or context.get("tenantLogoUrl")
+    name = context.get("tenant_name") or context.get("tenantName")
+    accent = context.get("tenant_brand_color") or context.get("tenantBrandColor")
+    if not (logo_url or name or accent):
+        return None
+    brand: dict = {}
+    if logo_url:
+        brand["logo_url"] = logo_url
+    if name:
+        brand["name"] = name
+    if isinstance(accent, str) and accent.startswith("#"):
+        brand["accent"] = accent
+    return brand or None
+
+
 def _footer() -> str:
     """Brand sign-off — tagline, copyright, NDPR line, and site links."""
     link = f"color:{INK_MUTED};text-decoration:none;"
@@ -164,6 +219,7 @@ def page(
     *,
     preheader: str = "",
     footer_note_html: str = "",
+    brand: dict | None = None,
 ) -> str:
     """Wrap rendered ``content_html`` in the full VisiChek email chrome.
 
@@ -173,7 +229,24 @@ def page(
         footer_note_html: optional per-email footer line (e.g.
             "Sent by Acme Corp via VisiChek.") rendered just above the
             standing brand sign-off.
+        brand: optional tenant brand (see ``build_email_brand``). When set,
+            the header shows the tenant logo, the accent bar takes the tenant
+            colour, and a "Sent by {name} via VisiChek." footer note is added
+            automatically (unless ``footer_note_html`` is given explicitly).
+            ``None`` → default VisiChek branding (internal/auth emails).
     """
+    # Resolve brand-driven chrome. A tenant accent recolours the top bar; a
+    # tenant name seeds the "sent by" footer note when one wasn't passed.
+    accent = (brand or {}).get("accent")
+    bar_color = accent or GREEN
+    bar_bg = (
+        accent
+        if accent
+        else f"linear-gradient(90deg,{GREEN} 0%,{GREEN_BRIGHT} 50%,{GREEN} 100%)"
+    )
+    if not footer_note_html and brand and brand.get("name"):
+        footer_note_html = f"Sent by {brand['name']} via VisiChek."
+
     preheader_block = ""
     if preheader:
         preheader_block = (
@@ -206,14 +279,13 @@ def page(
         "cellpadding='0' cellspacing='0' border='0' "
         f"style='width:600px;max-width:600px;background:{CARD_BG};"
         f"border:1px solid {BORDER};border-radius:20px;overflow:hidden;'>"
-        # ── Accent bar (green gradient; solid-green fallback via bgcolor) ──
-        f"<tr><td height='4' bgcolor='{GREEN}' "
+        # ── Accent bar (tenant accent when branded, else green gradient) ──
+        f"<tr><td height='4' bgcolor='{bar_color}' "
         f"style='height:4px;line-height:4px;font-size:0;"
-        f"background:linear-gradient(90deg,{GREEN} 0%,{GREEN_BRIGHT} 50%,"
-        f"{GREEN} 100%);'>&nbsp;</td></tr>"
-        # ── Header ──
+        f"background:{bar_bg};'>&nbsp;</td></tr>"
+        # ── Header (tenant logo when branded, else VisiChek wordmark) ──
         "<tr><td class='vc-pad' style='padding:30px 36px 6px;'>"
-        + _wordmark()
+        + _brand_header(brand)
         + "</td></tr>"
         # ── Body ──
         "<tr><td class='vc-pad' style='padding:14px 36px 28px;'>"
@@ -274,31 +346,45 @@ def muted(inner_html: str) -> str:
     )
 
 
-def button(label: str, href: str) -> str:
-    """Bulletproof green pill CTA. Returns ``""`` when ``href`` is empty."""
+def button(label: str, href: str, *, accent: str | None = None) -> str:
+    """Bulletproof pill CTA. Returns ``""`` when ``href`` is empty.
+
+    The label is forced white via an inner ``<span>`` *and* the anchor —
+    Gmail and several mobile clients override a bare ``<a>`` colour with
+    their default link colour, which on a green theme washes the label out
+    to an unreadable green-on-green (the "trashy button" in the wild). The
+    span with an explicit colour is what guarantees a crisp white label.
+
+    Pass ``accent`` (a hex) to tint the button to a tenant's brand colour;
+    it defaults to VisiChek green.
+    """
     if not href:
         return ""
+    solid = accent or GREEN
+    grad_top = accent or GREEN_TOP
+    grad_bottom = accent or GREEN_DARK
     return (
         "<table role='presentation' cellpadding='0' cellspacing='0' border='0' "
-        "style='margin:8px 0 20px;'><tr>"
-        f"<td align='center' bgcolor='{GREEN}' "
+        "style='margin:10px 0 22px;'><tr>"
+        f"<td align='center' bgcolor='{solid}' "
         f"style='border-radius:9999px;"
-        f"background:linear-gradient(180deg,{GREEN_TOP} 0%,{GREEN_DARK} 100%);'>"
+        f"background:linear-gradient(180deg,{grad_top} 0%,{grad_bottom} 100%);"
+        f"box-shadow:0 2px 4px rgba(26,26,26,0.16);'>"
         "<!--[if mso]>"
         "<v:roundrect xmlns:v='urn:schemas-microsoft-com:vml' "
         "xmlns:w='urn:schemas-microsoft-com:office:word' "
-        f"href='{href}' style='height:48px;v-text-anchor:middle;width:260px;' "
-        f"arcsize='50%' strokecolor='{GREEN_DARK}' fillcolor='{GREEN}'>"
+        f"href='{href}' style='height:50px;v-text-anchor:middle;width:280px;' "
+        f"arcsize='50%' strokecolor='{grad_bottom}' fillcolor='{solid}'>"
         "<w:anchorlock/>"
         "<center style='color:#FFFFFF;font-family:sans-serif;font-size:15px;"
         f"font-weight:bold;'>{label}</center>"
         "</v:roundrect>"
         "<![endif]-->"
         "<!--[if !mso]><!-->"
-        f"<a href='{href}' style='display:inline-block;padding:14px 32px;"
-        f"font-family:{FONT_SANS};font-size:15px;font-weight:600;color:#FFFFFF;"
+        f"<a href='{href}' style='display:inline-block;padding:15px 40px;"
+        f"font-family:{FONT_SANS};font-size:15px;font-weight:700;color:#FFFFFF;"
         "text-decoration:none;border-radius:9999px;'>"
-        f"{label}</a>"
+        f"<span style='color:#FFFFFF;text-decoration:none;'>{label}</span></a>"
         "<!--<![endif]-->"
         "</td></tr></table>"
     )
