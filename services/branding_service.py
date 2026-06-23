@@ -165,6 +165,33 @@ async def retrieve_branding_by_tenant(tenant_id: str) -> BrandingOut:
     return await _resolve_logo_urls(branding)
 
 
+async def get_email_branding_context(tenant_id: str | None) -> dict:
+    """Best-effort tenant branding fields for CUSTOMER-FACING email contexts.
+
+    Returns ``{"tenant_logo_url": <presigned url>, "tenant_brand_color": <hex>}``
+    with only the keys that resolve. **Never raises** — transactional email is
+    fire-and-forget, so a branding/S3 hiccup must never block a send.
+
+    The email shell's ``build_email_brand`` (email_templates/_shell.py) reads
+    exactly these keys to render the tenant logo + accent. Internal auth/admin
+    emails do NOT call this and stay VisiChek-branded.
+    """
+    out: dict = {}
+    if not tenant_id:
+        return out
+    try:
+        branding = await retrieve_branding_by_tenant(tenant_id)
+    except Exception:
+        return out
+    logo_url = getattr(branding, "logo_url", None)
+    color = getattr(branding, "primary_color", None)
+    if logo_url:
+        out["tenant_logo_url"] = logo_url
+    if isinstance(color, str) and color.startswith("#"):
+        out["tenant_brand_color"] = color
+    return out
+
+
 async def remove_branding(tenant_id: str) -> None:
     """Delete branding config for a tenant (reset to defaults)."""
     if not ObjectId.is_valid(tenant_id):

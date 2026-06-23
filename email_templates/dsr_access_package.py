@@ -76,6 +76,7 @@ def render_html(context: dict[str, Any]) -> str:
         content,
         preheader="Your personal data export is ready",
         footer_note_html=f"Sent by {tenant_name} via VisiChek in response to your data subject access request.",
+        brand=ui.build_email_brand(context),
     )
 
 

@@ -1543,6 +1543,11 @@ async def _send_visitor_badge_email_if_enabled(
 
     from core.email.manager import EmailManager
     from core.email.types import EmailDispatchRequest
+    from services.branding_service import get_email_branding_context
+
+    # Visitor-facing email → carry the tenant's brand (logo + accent) so the
+    # badge notice looks like it came from the host org, not VisiChek.
+    email_brand = await get_email_branding_context(tenant_id)
 
     manager = EmailManager.get_instance()
     await manager.send_template(
@@ -1559,6 +1564,7 @@ async def _send_visitor_badge_email_if_enabled(
                 "badge_qr_token": badge_qr_token,
                 "expires_at_formatted": expires_at_iso,
                 "checkin_id": checkin_id,
+                **email_brand,
             },
             dispatch="auto",
         )

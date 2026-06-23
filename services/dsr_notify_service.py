@@ -81,11 +81,15 @@ async def notify_dsr_status(dsr: DSROut, kind: str) -> None:
         tenant_name = await _resolve_tenant_name(dsr.tenant_id)
         name = visitor_name or dsr.requester_name or "there"
         template = "dsr_in_progress" if kind == "in_progress" else "dsr_completed"
+        from services.branding_service import get_email_branding_context
+
         context = {
             "recipient_name": name,
             "tenant_name": tenant_name,
             "request_type": _request_type_label(dsr),
             "resolution": dsr.resolution or "",
+            # Data-subject-facing email → carry the tenant's brand.
+            **(await get_email_branding_context(dsr.tenant_id)),
         }
 
         from core.email.manager import EmailManager

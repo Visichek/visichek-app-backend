@@ -84,6 +84,7 @@ def render_html(context: dict[str, Any]) -> str:
         content,
         preheader="Your visitor badge is ready",
         footer_note_html=f"Sent by {tenant_name} via VisiChek.",
+        brand=ui.build_email_brand(context),
     )
 
 

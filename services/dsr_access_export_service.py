@@ -370,6 +370,10 @@ async def run_access_fulfilment(dsr_id: str, tenant_id: str) -> Dict[str, Any]:
     visitor_name = profile_rows[0].get("full_name") or "there"
 
     from core.email.manager import EmailManager
+    from services.branding_service import get_email_branding_context
+
+    # Data-subject-facing email → carry the tenant's brand (logo + accent).
+    email_brand = await get_email_branding_context(tenant_id)
 
     manager = EmailManager.get_instance()
     for recipient in recipients:
@@ -382,6 +386,7 @@ async def run_access_fulfilment(dsr_id: str, tenant_id: str) -> Dict[str, Any]:
                     "tenant_name": tenant_name,
                     "download_url": download_url,
                     "expires_at": expires_at,
+                    **email_brand,
                 },
                 dispatch="auto",
             )
