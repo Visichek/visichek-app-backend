@@ -3,10 +3,14 @@ from __future__ import annotations
 import time
 from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Depends, Query
+from bson import ObjectId
+from fastapi import APIRouter, Depends, Query, Request
 
 from core.csv_export import csv_response
+from core.database import db
 from core.errors import AppException, ErrorCode
+from core.list_params import FilterDef, ListSpec, coerce_bool, parse_list_query
+from core.list_runner import run_list
 from core.queue.precompute import PrecomputeScope, get_or_compute
 from core.response_envelope import document_response
 from schemas.admin_schema import AdminOut
@@ -118,6 +122,134 @@ async def _load_admin_stats() -> Any:
         if hasattr(result, "model_dump")
         else result
     )
+
+
+# ─── Cross-tenant incidents oversight ─────────────────────────────────
+#
+# The tenant incident routes (api/v1/incident_route.py) are tenant-scoped.
+# Platform admins need to see incidents across EVERY tenant to oversee NDPC
+# compliance, so this mirrors the tenant list spec but drops the tenant
+# filter (admins see all) and adds an optional tenant_id filter + an embedded
+# tenant summary per row.
+
+_ADMIN_INC_STATUSES = frozenset(
+    {"open", "investigating", "contained", "reported_to_ndpc", "closed"}
+)
+_ADMIN_INC_TYPES = frozenset(
+    {
+        "data_breach",
+        "unauthorized_access",
+        "data_export_exposure",
+        "device_loss",
+        "misconfiguration",
+        "third_party",
+    }
+)
+_ADMIN_RISK_LEVELS = frozenset({"low", "medium", "high", "critical"})
+
+ADMIN_INCIDENTS_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset(
+        {"date_created", "notification_deadline", "risk_level", "status"}
+    ),
+    default_sort=(("date_created", -1),),
+    search_fields=("description", "summary"),
+    filters={
+        "status": FilterDef(
+            name="status", multi=True, allowed_values=_ADMIN_INC_STATUSES
+        ),
+        "incidentType": FilterDef(
+            name="incidentType",
+            mongo_field="incident_type",
+            allowed_values=_ADMIN_INC_TYPES,
+        ),
+        "riskLevel": FilterDef(
+            name="riskLevel",
+            mongo_field="risk_level",
+            allowed_values=_ADMIN_RISK_LEVELS,
+        ),
+        "ndpcNotified": FilterDef(
+            name="ndpcNotified", mongo_field="ndpc_notified", coerce=coerce_bool
+        ),
+        "tenantId": FilterDef(name="tenantId", mongo_field="tenant_id"),
+    },
+    range_filters={"dateCreated": "date_created"},
+    facet_fields=frozenset({"status"}),
+)
+
+
+def _map_admin_inc_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def _admin_inc_status_facet(
+    collection: Any, filter_doc: dict[str, Any], field: str
+) -> dict[str, int]:
+    if field != "status":
+        return {}
+    base = {k: v for k, v in filter_doc.items() if k != "status"}
+    out: dict[str, int] = {}
+    for v in _ADMIN_INC_STATUSES:
+        out[v] = await collection.count_documents({**base, "status": v})
+    out["all"] = sum(out.values())
+    return out
+
+
+async def _attach_admin_inc_tenant_summaries(result: Any) -> None:
+    """Embed a ``{id, name}`` tenant summary on each incident row so the
+    admin table can show which tenant each incident belongs to without an
+    extra round-trip per row. One ``$in`` query for the whole page."""
+    items = result.get("items") if isinstance(result, dict) else None
+    if not items:
+        return
+    oids: list[ObjectId] = []
+    for it in items:
+        tid = it.get("tenant_id")
+        if tid and ObjectId.is_valid(str(tid)):
+            oids.append(ObjectId(str(tid)))
+    name_map: dict[str, Any] = {}
+    if oids:
+        cursor = db.tenants.find(
+            {"_id": {"$in": list(set(oids))}}, projection={"company_name": 1}
+        )
+        async for t in cursor:
+            name_map[str(t["_id"])] = t.get("company_name")
+    for it in items:
+        tid = str(it.get("tenant_id") or "")
+        it["tenant_summary"] = {"id": tid, "name": name_map.get(tid)}
+
+
+@router.get("/incidents")
+@document_response(
+    message="Incidents fetched successfully",
+    description=(
+        "Cross-tenant incident list for platform-admin oversight. Filter by "
+        "status, incidentType, riskLevel, ndpcNotified, tenantId, and a "
+        "dateCreated range; free-text search over description/summary. Each "
+        "row carries a tenant summary so the table can show the owning tenant."
+    ),
+    summary="List incidents across all tenants",
+    include_meta=True,
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - not an application admin",
+    },
+)
+async def list_admin_incidents(
+    request: Request,
+    admin: AdminOut = Depends(check_admin_account_status_and_permissions),
+) -> Any:
+    query = parse_list_query(request, ADMIN_INCIDENTS_LIST_SPEC)
+    result = await run_list(
+        collection=db.incident_logs,
+        query=query,
+        base_filter={},
+        map_doc=_map_admin_inc_doc,
+        facet_runner=_admin_inc_status_facet,
+    )
+    await _attach_admin_inc_tenant_summaries(result)
+    return result
 
 
 # ─── Range-aware, tabbed admin insights ───────────────────────────────
