@@ -405,6 +405,16 @@ async def send_reset_for_selection(
     return {"sent": sent}
 
 
+def _status_is_active(raw: object) -> bool:
+    """True when a stored ``account_status`` value represents an active
+    account. A missing field is treated as active (legacy rows). Accepts
+    both the raw string and an enum member."""
+    if raw is None:
+        return True
+    value = getattr(raw, "value", raw)
+    return str(value).upper() == "ACTIVE"
+
+
 async def reset_password_with_token(
     *,
     token: str,
@@ -413,9 +423,12 @@ async def reset_password_with_token(
 ) -> dict:
     """Stage 2: consume the token and set the new password.
 
-    Returns ``{"user_type": "admin" | "system_user", "user_id": ...,
-    "tenant_id": ... | None}`` so the route can echo a minimal payload
-    to the FE without exposing more than the caller already knew.
+    Returns ``{"user_type", "user_id", "tenant_id", "auto_login",
+    "login_result"}``. ``login_result`` is the standard login continuation
+    (a ``SystemUserOut`` with freshly-minted tokens, or an ``otp_required``
+    dict when MFA is on) for a sign-in-eligible system user, else ``None`` —
+    the route uses it to set httpOnly cookies so the user lands signed in
+    instead of being bounced back to the login screen.
     """
     import time
 
@@ -467,6 +480,8 @@ async def reset_password_with_token(
 
     hashed = hash_password(new_password)
 
+    system_user_signin_eligible = False
+
     if user_type == "admin":
         if not ObjectId.is_valid(user_id):
             raise HTTPException(status_code=400, detail="Malformed reset record")
@@ -491,11 +506,29 @@ async def reset_password_with_token(
         sys_doc = await db.system_users.find_one({"_id": ObjectId(user_id)})
         if not sys_doc:
             raise HTTPException(status_code=404, detail="Account not found")
+        set_fields: dict = {"password_hash": hashed}
+        # First-login / temp-password users (must_change_password=True) have
+        # now chosen their own password: clear the gate so they aren't
+        # bounced into the change-password screen, and — only for these
+        # provisioned-but-never-activated rows — ensure the account is
+        # ACTIVE. Deliberately scoped to must_change_password so an account
+        # an admin DEACTIVATED (must_change_password=False) can NEVER
+        # reactivate itself through the self-service reset flow.
+        if bool(sys_doc.get("must_change_password", False)):
+            set_fields["must_change_password"] = False
+            if not _status_is_active(sys_doc.get("account_status")):
+                set_fields["account_status"] = "ACTIVE"
         await db.system_users.update_one(
             {"_id": ObjectId(user_id)},
-            {"$set": {"password_hash": hashed}},
+            {"$set": set_fields},
         )
         await delete_all_tokens_with_user_id(userId=user_id)
+        # Sign-in eligibility: the account must be ACTIVE after the update.
+        # A deactivated row (not must_change, still inactive) stays barred —
+        # the reset succeeds but no session is issued.
+        system_user_signin_eligible = _status_is_active(
+            set_fields.get("account_status") or sys_doc.get("account_status")
+        )
 
     await record_password_in_history(
         user_id,
@@ -540,4 +573,28 @@ async def reset_password_with_token(
     except Exception:
         pass
 
-    return {"user_type": user_type, "user_id": user_id, "tenant_id": tenant_id}
+    # Auto-sign-in: for an eligible system user, mint a fresh session via
+    # the exact post-credential login path (which also handles MFA →
+    # otp_required). Done last, after every prior token was revoked above,
+    # so the freshly-minted tokens survive. Best-effort: any failure falls
+    # back to the unauthenticated reset result and the FE shows manual
+    # sign-in — never block the password reset itself.
+    login_result = None
+    if user_type == "system_user" and system_user_signin_eligible:
+        try:
+            from repositories.system_user_repo import get_system_user
+            from services.system_user_service import _continue_login_for_user
+
+            fresh_user = await get_system_user({"_id": ObjectId(user_id)})
+            if fresh_user:
+                login_result = await _continue_login_for_user(fresh_user)
+        except Exception:
+            login_result = None
+
+    return {
+        "user_type": user_type,
+        "user_id": user_id,
+        "tenant_id": tenant_id,
+        "auto_login": login_result is not None,
+        "login_result": login_result,
+    }

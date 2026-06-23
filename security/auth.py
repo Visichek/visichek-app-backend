@@ -38,6 +38,16 @@ _PASSWORD_CHANGE_ALLOWED_PATHS: Final[frozenset[str]] = frozenset(
         "/v1/auth/change-password",
         "/v1/system-users/change-password",
         "/v1/admins/change-password",
+        # Identity probes the SPA bootstrap needs even while the user is
+        # still gated into the change-password flow. Returning identity
+        # (id, role, tenant, must_change_password flag) lets the frontend
+        # route the user to the change-password screen instead of
+        # hard-bouncing them to login on every refresh — the source of the
+        # first-login redirect loop. These expose no operational data, and
+        # login (which is ungated) already returns the same profile to a
+        # must-change user. The account-status (inactive) gate still applies.
+        "/v1/system-users/me",
+        "/v1/admins/profile",
     }
 )
 

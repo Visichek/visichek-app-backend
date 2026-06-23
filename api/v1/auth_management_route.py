@@ -110,17 +110,50 @@ async def _get_email(principal: AuthPrincipal) -> str:
 )
 async def change_password(
     data: ChangePasswordRequest,
+    request: Request,
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
-    """Change password for the authenticated user."""
+    """Change password for the authenticated user.
+
+    A password change revokes every prior token for the account — including
+    the one on THIS device — so other devices are cut off immediately. To
+    avoid bouncing the user back to the login screen the instant they set
+    their first real password, we re-issue a fresh session (new httpOnly
+    cookies) for the current device on success. The revoke-all still stands
+    for every other device.
+    """
     if _user_type(principal) == UserType.ADMIN:
         await change_admin_password(
             principal.user_id, data.current_password, data.new_password
         )
-    else:
-        await change_system_user_password(
-            principal.user_id, data.current_password, data.new_password
-        )
+        return {"changed": True}
+
+    await change_system_user_password(
+        principal.user_id, data.current_password, data.new_password
+    )
+    # Re-issue this device's session via the exact post-credential login
+    # path (handles MFA → otp_required, in which case the user completes a
+    # normal MFA sign-in). Best-effort: any failure falls back to the plain
+    # response and the user signs in again.
+    try:
+        from bson import ObjectId
+        from repositories.system_user_repo import get_system_user
+        from services.system_user_service import _continue_login_for_user
+
+        fresh = await get_system_user({"_id": ObjectId(principal.user_id)})
+        if fresh:
+            login_result = await _continue_login_for_user(fresh)
+            if not (
+                isinstance(login_result, dict) and login_result.get("otp_required")
+            ):
+                return build_auth_response(
+                    request=request,
+                    payload=login_result,
+                    message="Password changed successfully",
+                )
+    except Exception:
+        pass
+
     return {"changed": True}
 
 
@@ -245,11 +278,33 @@ async def reset_password(
     data: ResetPasswordWithTokenRequest,
     request: Request,
 ):
-    """Consume a reset token and set a new password."""
-    await reset_password_with_token(
+    """Consume a reset token and set a new password.
+
+    For a sign-in-eligible system user the response also installs httpOnly
+    auth cookies (auto sign-in) so the frontend can bootstrap straight to
+    the dashboard instead of bouncing the user back to the login screen.
+    The payload is the standard login profile (tokens scrubbed from the
+    body); the cookies carry the session. MFA-protected accounts fall back
+    to manual sign-in.
+    """
+    result = await reset_password_with_token(
         token=data.token, new_password=data.new_password, request=request
     )
-    return {"reset": True}
+    login_result = result.get("login_result")
+
+    # A full session payload (SystemUserOut carrying tokens) → set cookies.
+    # An ``otp_required`` dict (MFA on) has no tokens to install, so let the
+    # user complete a normal MFA sign-in instead.
+    if login_result is not None and not (
+        isinstance(login_result, dict) and login_result.get("otp_required")
+    ):
+        return build_auth_response(
+            request=request,
+            payload=login_result,
+            message="Password reset successfully",
+        )
+
+    return {"reset": True, "auto_login": False}
 
 
 # ═══════════════════════════════════════════════════════════════════
