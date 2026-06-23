@@ -33,7 +33,13 @@ explicit import, so nothing here is ever registered or sent on its own.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
+from html import escape
+
+# Tenant brand colours must be a bare hex literal before they're dropped into
+# inline CSS — anything else (e.g. ``#'};body{...``) is a CSS-injection vector.
+_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{3,8}$")
 
 # ── Brand palette (visichek.app) ─────────────────────────────────────
 INK = "#1A1A1A"  # headings — deepest charcoal
@@ -153,12 +159,21 @@ def build_email_brand(context: dict) -> dict | None:
     accent = context.get("tenant_brand_color") or context.get("tenantBrandColor")
     if not (logo_url or name or accent):
         return None
+    # These are TENANT-EDITABLE values rendered into HTML/CSS in emails sent to
+    # third parties (visitors / data subjects), so they are untrusted. Sanitise
+    # at this single choke point — the shell interpolates the returned dict
+    # raw — so consumers can never inject markup, attribute breakouts, or CSS.
     brand: dict = {}
-    if logo_url:
-        brand["logo_url"] = logo_url
+    if (
+        isinstance(logo_url, str)
+        and logo_url.lower().startswith(("https://", "http://"))
+    ):
+        # escape() turns `&` → `&amp;` (also the correct HTML form for the
+        # `&`-laden presigned S3 URL) and neutralises any quote breakout.
+        brand["logo_url"] = escape(logo_url, quote=True)
     if name:
-        brand["name"] = name
-    if isinstance(accent, str) and accent.startswith("#"):
+        brand["name"] = escape(str(name), quote=True)
+    if isinstance(accent, str) and _HEX_COLOR_RE.match(accent):
         brand["accent"] = accent
     return brand or None
 
