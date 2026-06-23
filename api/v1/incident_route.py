@@ -15,7 +15,7 @@ from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.incident_log_schema import IncidentLogCreateRequest, IncidentLogUpdate
 from security.auth import verify_system_user_token
-from security.principal import AuthPrincipal
+from security.principal import AuthPrincipal, TENANT_USER_ROLES
 from services.incident_service import (
     retrieve_incident_by_id,
     retrieve_incidents,
@@ -27,7 +27,14 @@ from services.notification_service import (
 )
 
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
-_security_roles = verify_system_user_token("super_admin", "security_officer")
+
+# Reporting (file) and reading the incident log are open to EVERY tenant role
+# — any staff member can raise an incident and see what's on record. Triage
+# (status transitions + NDPC-notified marking) stays restricted to the
+# security / compliance roles so the regulatory trail can't be altered by
+# arbitrary staff.
+_report_roles = verify_system_user_token(*TENANT_USER_ROLES)
+_triage_roles = verify_system_user_token("super_admin", "security_officer", "dpo")
 
 
 _INCIDENT_STATUSES = frozenset(
@@ -137,7 +144,7 @@ async def _inc_status_facet(
 async def create_incident(
     log_data: IncidentLogCreateRequest,
     request: Request,
-    principal: AuthPrincipal = Depends(_security_roles),
+    principal: AuthPrincipal = Depends(_report_roles),
 ):
     payload = log_data.model_dump(exclude_none=True)
     payload["tenant_id"] = principal.tenant_id or ""
@@ -166,7 +173,7 @@ async def create_incident(
 )
 async def list_incidents(
     request: Request,
-    principal: AuthPrincipal = Depends(_security_roles),
+    principal: AuthPrincipal = Depends(_report_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     if not tenant_id:
@@ -233,7 +240,7 @@ async def _load_incidents_for_tenant(tenant_id: str) -> List[Any]:
 )
 async def get_approaching_deadline_incidents(
     request: Request,
-    principal: AuthPrincipal = Depends(_security_roles),
+    principal: AuthPrincipal = Depends(_report_roles),
 ) -> Any:
     tenant_id = principal.tenant_id or ""
     qp = request.query_params
@@ -273,7 +280,7 @@ async def _load_approaching_deadline(tenant_id: str) -> List[Any]:
     },
 )
 async def get_incident(
-    incident_id: str, principal: AuthPrincipal = Depends(_security_roles)
+    incident_id: str, principal: AuthPrincipal = Depends(_report_roles)
 ):
     tenant_id = principal.tenant_id or ""
     result = await get_or_compute_entity(
@@ -313,7 +320,7 @@ async def update_incident(
     incident_id: str,
     log_data: IncidentLogUpdate,
     request: Request,
-    principal: AuthPrincipal = Depends(_security_roles),
+    principal: AuthPrincipal = Depends(_triage_roles),
 ):
     tenant_id = principal.tenant_id or ""
     payload = log_data.model_dump(exclude_none=True)
@@ -343,7 +350,7 @@ async def bulk_mark_notified(
     request: Request,
     payload: dict = Body(...),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    principal: AuthPrincipal = Depends(_security_roles),
+    principal: AuthPrincipal = Depends(_triage_roles),
 ):
     tenant_id = principal.tenant_id or ""
     scope = actor_scope(principal.user_id, principal.role)
@@ -391,7 +398,7 @@ async def bulk_incident_status(
     request: Request,
     payload: dict = Body(...),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    principal: AuthPrincipal = Depends(_security_roles),
+    principal: AuthPrincipal = Depends(_triage_roles),
 ):
     tenant_id = principal.tenant_id or ""
     scope = actor_scope(principal.user_id, principal.role)

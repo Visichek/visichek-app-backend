@@ -1013,6 +1013,12 @@ SUPER_ADMIN_PERMISSIONS: list[Permission] = [
 
 DEPT_ADMIN_PERMISSIONS: list[Permission] = [
     _p("get_my_profile", ["GET"], "/v1/system-users/me", "View own profile"),
+    # Incident reporting — every tenant role can FILE and read incidents.
+    # Triage (status transitions, NDPC-notified) stays with the security /
+    # compliance roles, enforced by the route's _triage_roles gate.
+    _p("create_incident", ["POST"], "/v1/incidents/", "Create incident"),
+    _p("list_incidents", ["GET"], "/v1/incidents/", "List incidents"),
+    _p("get_incident", ["GET"], "/v1/incidents/{incident_id}", "View incident"),
     # Branding (read-only)
     _p(
         "get_branding",
@@ -1156,6 +1162,11 @@ DEPT_ADMIN_PERMISSIONS: list[Permission] = [
 
 RECEPTIONIST_PERMISSIONS: list[Permission] = [
     _p("get_my_profile", ["GET"], "/v1/system-users/me", "View own profile"),
+    # Incident reporting — a receptionist can raise a security concern at the
+    # desk and see the incident log. Triage stays restricted (route gate).
+    _p("create_incident", ["POST"], "/v1/incidents/", "Create incident"),
+    _p("list_incidents", ["GET"], "/v1/incidents/", "List incidents"),
+    _p("get_incident", ["GET"], "/v1/incidents/{incident_id}", "View incident"),
     # Branding (read-only — needed for badge generation UI)
     _p(
         "get_branding",
@@ -1229,6 +1240,11 @@ RECEPTIONIST_PERMISSIONS: list[Permission] = [
 AUDITOR_PERMISSIONS: list[Permission] = [
     _p("get_my_profile", ["GET"], "/v1/system-users/me", "View own profile"),
     _p("list_audit_logs", ["GET"], "/v1/audit-logs/", "View audit logs"),
+    # Incident reporting — every tenant role can FILE and read incidents;
+    # triage stays restricted (route gate).
+    _p("create_incident", ["POST"], "/v1/incidents/", "Create incident"),
+    _p("list_incidents", ["GET"], "/v1/incidents/", "List incidents"),
+    _p("get_incident", ["GET"], "/v1/incidents/{incident_id}", "View incident"),
     _p("list_visit_sessions", ["GET"], "/v1/visitors/sessions", "List visit sessions"),
     _p(
         "get_visit_session",
@@ -1272,6 +1288,11 @@ SECURITY_OFFICER_PERMISSIONS: list[Permission] = [
 
 DPO_PERMISSIONS: list[Permission] = [
     _p("get_my_profile", ["GET"], "/v1/system-users/me", "View own profile"),
+    # Incident reporting + triage — the DPO files, reads, and (per the route
+    # gate) can also transition incident status for NDPC compliance.
+    _p("create_incident", ["POST"], "/v1/incidents/", "Create incident"),
+    _p("list_incidents", ["GET"], "/v1/incidents/", "List incidents"),
+    _p("get_incident", ["GET"], "/v1/incidents/{incident_id}", "View incident"),
     # Data subject requests
     _p("create_dsr", ["POST"], "/v1/dsr/", "Create data subject request"),
     _p("list_dsr", ["GET"], "/v1/dsr/", "List data subject requests"),
