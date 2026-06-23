@@ -76,20 +76,26 @@ _PROVIDER_PREFERENCE: Tuple[str, ...] = ("stripe", "flutterwave", "paystack", "a
 def resolve_full_checkout_url(
     url: Optional[str], request: Optional[Request] = None
 ) -> str:
-    """Return an absolute URL the frontend can open directly.
+    """Return an absolute checkout URL the caller can open directly.
 
     Provider-hosted URLs (Stripe / Flutterwave / Paystack) are already
-    absolute and pass through unchanged. The app-mode simulator stores a
-    relative path when ``APP_BASE_URL`` is unset; in that case we prepend
-    the configured base — or fall back to the incoming request's host so
-    the response is never a bare path.
+    absolute and pass through unchanged. The ONLY relative ``checkout_url`` is
+    the app-mode simulator page (``/payments/app-checkout/{ref}``), which is an
+    HTML page served by THIS backend (api/v1/app_payment_route.py). So a
+    relative path is resolved against the API's OWN origin
+    (``request.base_url``) — never the frontend ``APP_BASE_URL``.
+
+    Issue #30: the simulator URL was previously built against the frontend
+    base (``https://<app>/payments/app-checkout/...``), a host that doesn't
+    serve the simulator, so the redirect 404'd. Resolving against the request
+    origin makes the backend the single source of a correct, absolute URL.
     """
     if not url or url.startswith(("http://", "https://")):
         return url or ""
-    base = (get_settings().app_base_url or "").rstrip("/")
-    if not base and request is not None:
-        base = str(request.base_url).rstrip("/")
+    base = str(request.base_url).rstrip("/") if request is not None else ""
     if not base:
+        # No request context (e.g. a background resolve) — return the path and
+        # let the caller resolve it against the API origin.
         return url
     return f"{base}/{url.lstrip('/')}"
 

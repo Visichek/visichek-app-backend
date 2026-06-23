@@ -74,9 +74,13 @@ class PaymentManager:
         # like production: no simulator, so checkout requires a real provider
         # and can never silently fall back to "click to mark paid".
         if settings.is_local or settings.payment_app_mode_enabled:
-            providers["app"] = AppCheckoutPaymentProvider(
-                base_url=(getattr(settings, "app_base_url", "") or "").strip()
-            )
+            # base_url="" → the provider emits a RELATIVE simulator path
+            # (/payments/app-checkout/{ref}); checkout_service.resolve_full_
+            # checkout_url makes it absolute against the API origin at response
+            # time. Passing app_base_url here pointed the checkout link at the
+            # FRONTEND host, which does not serve the simulator page — the
+            # broken redirect in issue #30.
+            providers["app"] = AppCheckoutPaymentProvider(base_url="")
         else:
             logger.info(
                 "App checkout simulator is disabled (ENV=%s). Set ENV=local or "
