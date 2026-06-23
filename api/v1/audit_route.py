@@ -20,13 +20,17 @@ from security.account_status_check import (
     check_admin_account_status_and_permissions,
 )
 from security.auth import verify_system_user_token
-from security.principal import AuthPrincipal
+from security.principal import AuthPrincipal, TENANT_USER_ROLES
 from schemas.audit_log_schema import AuditLogOut
 from services.audit_service import enrich_audit_logs, retrieve_audit_logs_with_summary
 from services.export_service import export_audit_logs_xlsx
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 _audit_roles = verify_system_user_token("super_admin", "auditor", "dpo")
+# The FULL tenant audit trail stays restricted to the roles above. Every
+# tenant role, though, may review THEIR OWN activity via GET /audit-logs/me —
+# transparency without exposing one user's actions to another.
+_self_roles = verify_system_user_token(*TENANT_USER_ROLES)
 
 
 _AUDIT_OPERATIONS = frozenset({"create", "read", "update", "delete"})
@@ -43,6 +47,25 @@ AUDIT_LOG_LIST_SPEC = ListSpec(
         "resourceType": FilterDef(name="resourceType", mongo_field="resource_type"),
         "resourceId": FilterDef(name="resourceId", mongo_field="resource_id"),
         "tenantId": FilterDef(name="tenantId", mongo_field="tenant_id"),
+        "action": FilterDef(name="action"),
+    },
+    range_filters={"timestamp": "timestamp"},
+    facet_fields=frozenset(),
+    default_limit=50,
+)
+
+
+# Spec for the self-scoped "my activity" feed. Deliberately a SUBSET of the
+# full spec: it omits every actor/tenant filter (actorUserId, actorRole,
+# tenantId, resourceId) so a caller can never widen the feed past their own
+# actions — the forced actor_id base filter is the only actor predicate.
+MY_AUDIT_LOG_LIST_SPEC = ListSpec(
+    sortable_fields=frozenset({"timestamp"}),
+    default_sort=(("timestamp", -1),),
+    search_fields=("action", "details_summary"),
+    filters={
+        "operation": FilterDef(name="operation", allowed_values=_AUDIT_OPERATIONS),
+        "resourceType": FilterDef(name="resourceType", mongo_field="resource_type"),
         "action": FilterDef(name="action"),
     },
     range_filters={"timestamp": "timestamp"},
@@ -228,6 +251,45 @@ async def list_audit_logs(
     base_filter: dict[str, Any] = {}
     if tenant_id:
         base_filter["tenant_id"] = tenant_id
+    result = await run_list(
+        collection=db.audit_trail,
+        query=query,
+        base_filter=base_filter,
+        map_doc=_map_audit_doc,
+    )
+    result["items"] = await _enrich_list_items(result["items"])
+    return result
+
+
+@router.get("/me")
+@document_response(
+    message="Your activity fetched successfully",
+    description=(
+        "Self-scoped audit feed — every action YOU performed in this tenant. "
+        "Open to all tenant roles. The actor is forced to the caller and the "
+        "spec exposes no actor/tenant filter, so this endpoint can never be "
+        "widened to another user's actions. Same enriched row shape as the "
+        "full audit list; filter by operation, resourceType, action, and a "
+        "timestamp range."
+    ),
+    summary="List my own audit activity",
+    include_meta=True,
+    response_codes={
+        200: "Your activity fetched successfully",
+        401: "Unauthorized - invalid or missing token",
+    },
+)
+async def list_my_audit_logs(
+    request: Request,
+    principal: AuthPrincipal = Depends(_self_roles),
+):
+    query = parse_list_query(request, MY_AUDIT_LOG_LIST_SPEC)
+    # actor_id is forced here and cannot be overridden: MY_AUDIT_LOG_LIST_SPEC
+    # omits the actorUserId / tenantId filters, so the parsed query never
+    # carries an actor or tenant key to merge over this base.
+    base_filter: dict[str, Any] = {"actor_id": principal.user_id}
+    if principal.tenant_id:
+        base_filter["tenant_id"] = principal.tenant_id
     result = await run_list(
         collection=db.audit_trail,
         query=query,
