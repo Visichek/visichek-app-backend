@@ -30,6 +30,15 @@ class KYCVerificationBase(BaseModel):
     failure_reason: Optional[str] = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
+    # Reconciliation of the identity the visitor TYPED against the identity the
+    # provider RETURNED. A provider "success" only proves the document is real;
+    # these fields record whether it is actually *this visitor's* document.
+    # ``identity_match_passed=False`` on an otherwise-successful verification is
+    # the impostor signal — a valid ID belonging to someone else.
+    identity_match_passed: Optional[bool] = None
+    identity_name_score: Optional[float] = None
+    identity_mismatch_reason: Optional[str] = None
+
 
 class KYCVerificationCreate(KYCVerificationBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
@@ -48,6 +57,9 @@ class KYCVerificationUpdate(BaseModel):
     id_image_url: Optional[str] = None
     failure_reason: Optional[str] = None
     raw_payload: Optional[dict[str, Any]] = None
+    identity_match_passed: Optional[bool] = None
+    identity_name_score: Optional[float] = None
+    identity_mismatch_reason: Optional[str] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

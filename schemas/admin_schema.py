@@ -46,6 +46,11 @@ class AdminBase(BaseModel):
     # the flag is cleared by a successful self-change.
     must_change_password: bool = False
 
+    # When the temporary password was issued. Bounds its life — see
+    # ``security/temp_password.py``. None on legacy rows (grandfathered) and on
+    # accounts that aren't on a temp password at all.
+    must_change_password_at: Optional[int] = None
+
 
 class AdminLogin(BaseModel):
     email: EmailStr

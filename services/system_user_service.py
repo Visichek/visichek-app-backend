@@ -5,6 +5,12 @@ from bson import ObjectId
 from fastapi import HTTPException
 from typing import Any, List
 
+from security.temp_password import (
+    is_temp_password_expired,
+    issued_at_now as temp_password_issued_at,
+    raise_temp_password_expired,
+)
+
 from repositories.system_user_repo import (
     count_system_users,
     create_system_user,
@@ -301,6 +307,7 @@ async def add_super_admin_to_tenant(
         password_hash=raw_password,
         is_main_super_admin=True,
         must_change_password=True,
+        must_change_password_at=temp_password_issued_at(),
     )
     new_super = await add_system_user(create_data)
 
@@ -523,6 +530,7 @@ async def replace_super_admin_for_tenant(
         password_hash=raw_password,
         is_main_super_admin=True,
         must_change_password=True,
+        must_change_password_at=temp_password_issued_at(),
     )
     new_super = await add_system_user(create_data)
 
@@ -769,6 +777,15 @@ async def authenticate_system_user(
 
     if not active_users:
         raise HTTPException(status_code=403, detail="Account is not active")
+
+    # An admin-issued temporary password is only valid for a bounded window.
+    # Drop any record whose temp password has aged out; if that leaves nothing,
+    # the credential was right but is no longer a key, and we say so plainly
+    # rather than returning a misleading "invalid credentials".
+    live_users = [u for u in active_users if not is_temp_password_expired(u)]
+    if not live_users:
+        raise_temp_password_expired()
+    active_users = live_users
 
     await clear_failed_logins(login_data.email)
 

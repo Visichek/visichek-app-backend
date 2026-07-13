@@ -235,10 +235,13 @@ async def _enforce_account_gates(request: Request, principal: AuthPrincipal) -> 
         return
 
     if principal.role == "admin":
-        if change_password_path:
-            return
         flags = await _fetch_account_flags(principal.user_id, collection="admins")
-        if flags.get("must_change_password"):
+        # Status is checked BEFORE the change-password exemption, exactly as
+        # in the tenant branch above — a deactivated admin must not be able to
+        # keep their account alive by rotating its password.
+        if not _is_active_account(flags.get("account_status")):
+            _raise_account_inactive()
+        if not change_password_path and flags.get("must_change_password"):
             _raise_password_change_required()
         return
 
@@ -561,7 +564,14 @@ async def verify_optional_kiosk_token(
     # service layer decide whether anonymous is allowed.
     if credentials is None and not request.cookies.get(ACCESS_TOKEN_COOKIE):
         return None
-    return await _resolve_principal(request, credentials, allow_expired=False)
+    principal = await _resolve_principal(request, credentials, allow_expired=False)
+    # A presented token is a real session and must clear the same gates as
+    # any other authenticated request. Without this, a deactivated staffer —
+    # or one who has never changed their temporary password — could keep
+    # driving the kiosk with a token the rest of the API already refuses.
+    # Anonymous kiosk use (principal is None above) is untouched.
+    await _enforce_account_gates(request, principal)
+    return principal
 
 
 async def verify_receptionist_token(

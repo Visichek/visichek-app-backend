@@ -20,9 +20,12 @@ from __future__ import annotations
 import json
 import logging
 import base64
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from bson import ObjectId
+
+if TYPE_CHECKING:
+    from services.identity_match import IdentityMatchResult
 
 from core.errors import AppException, ErrorCode, resource_not_found
 from core.kyc import KYCManager
@@ -657,6 +660,11 @@ async def finalize_kyc(
         return record
 
     new_status = _status_from_details(details)
+
+    # Reconcile the typed identity against the returned identity. Dojah tells
+    # us the document is genuine; only this tells us it is the visitor's own.
+    match = await _evaluate_identity_match(record, details, new_status)
+
     updated = await update_kyc_verification(
         {"checkin_id": record.checkin_id},
         KYCVerificationUpdate(
@@ -671,6 +679,9 @@ async def finalize_kyc(
             id_image_url=details.id_image_url,
             failure_reason=details.failure_reason,
             raw_payload=details.data,
+            identity_match_passed=(match.passed if match else None),
+            identity_name_score=(match.name_score if match else None),
+            identity_mismatch_reason=(match.reason_text if match else None),
         ),
     )
     if updated is None:
@@ -679,6 +690,55 @@ async def finalize_kyc(
     if record.checkin_id:
         await _apply_to_checkin(updated)
     return updated
+
+
+async def _evaluate_identity_match(
+    record: KYCVerificationOut,
+    details: KYCVerificationDetails,
+    new_status: KYCStatus,
+) -> "IdentityMatchResult | None":
+    """Reconcile the visitor's submitted identity with the provider's.
+
+    Only meaningful on a successful verification — a failed/ongoing check has
+    no confirmed identity to compare against, so we return ``None`` rather than
+    manufacture a verdict.
+    """
+    if new_status != KYCStatus.SUCCESS:
+        return None
+
+    from services.identity_match import match_identity
+
+    checkin = await get_checkin({"_id": record.checkin_id})
+    if checkin is None:
+        return None
+
+    from repositories.visitor_repo import get_visitor
+
+    visitor = await get_visitor({"_id": checkin.visitor_id})
+    if visitor is None:
+        return None
+
+    bio = getattr(visitor, "bio_data", None) or {}
+    submitted_dob = bio.get("dob") or bio.get("date_of_birth")
+    submitted_id_number = bio.get("id_number") or bio.get("nin")
+
+    match = match_identity(
+        submitted_name=visitor.full_name,
+        extracted_name=details.extracted_full_name,
+        submitted_dob=submitted_dob,
+        extracted_dob=details.extracted_dob,
+        submitted_id_number=submitted_id_number,
+        extracted_id_number=details.extracted_id_number,
+    )
+    if not match.passed:
+        logger.warning(
+            "kyc.identity_mismatch checkin=%s tenant=%s name_score=%s reasons=%s",
+            record.checkin_id,
+            record.tenant_id,
+            match.name_score,
+            match.reason_text,
+        )
+    return match
 
 
 def _status_from_details(details: KYCVerificationDetails) -> KYCStatus:
@@ -698,17 +758,35 @@ async def _apply_to_checkin(record: KYCVerificationOut) -> None:
         return
 
     if record.status == KYCStatus.SUCCESS:
+        # A genuine document belonging to SOMEONE ELSE is not a verified
+        # visitor. When the submitted identity doesn't reconcile with the one
+        # the provider returned, the check-in still reaches the receptionist —
+        # stranding a visitor at the door on an automated judgement would be
+        # worse — but it arrives as UNVERIFIED, with the mismatch recorded, so
+        # a human decides. Only a clean match auto-verifies.
+        identity_ok = record.identity_match_passed is not False
+
         # Move to PENDING_APPROVAL only if we're still parked. If a
         # receptionist already approved (rare, but theoretically possible
         # for tenants where KYC isn't required), don't unwind.
         if checkin.state == CheckinState.PENDING_VERIFICATION:
             await repo_update_checkin(
                 record.checkin_id,
-                CheckinUpdate(state=CheckinState.PENDING_APPROVAL, verified=True),
+                CheckinUpdate(
+                    state=CheckinState.PENDING_APPROVAL, verified=identity_ok
+                ),
             )
-            await _emit_pending_notification(checkin, verified=True)
+            await _emit_pending_notification(checkin, verified=identity_ok)
         else:
-            await repo_update_checkin(record.checkin_id, CheckinUpdate(verified=True))
+            await repo_update_checkin(
+                record.checkin_id, CheckinUpdate(verified=identity_ok)
+            )
+
+        if not identity_ok:
+            # Do NOT propagate a mismatched identity onto the durable visitor
+            # profile — that is what would let the impostor sail through on
+            # their next visit as a "known verified" returning visitor.
+            return
 
         # Update the visitor profile's verification metadata.
         try:

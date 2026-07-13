@@ -151,6 +151,34 @@ from schemas.summary_schema import (  # noqa: E402
 )
 
 
+class IdentityCheckSummary(BaseModel):
+    """Why this visitor is (or isn't) verified — always populated.
+
+    The receptionist decides who walks through the door, so "Not verified" on
+    its own is not enough: it reads identically whether the visitor skipped the
+    ID step, the check never ran, or the ID they presented **belongs to someone
+    else**. Those demand very different responses, so every check-in carries an
+    explicit reason rather than leaving the receptionist to infer one.
+
+    ``reason`` is required — there is no code path that surfaces a verification
+    state without saying why.
+    """
+
+    verified: bool
+    # KYC status, or "not_started" / "manual" when no provider check applies.
+    status: str
+    # Short label for the badge, e.g. "ID mismatch".
+    headline: str
+    # The full explanation shown to the receptionist. Always present.
+    reason: str
+    # True only for the dangerous case: a genuine ID that belongs to a
+    # different person than the one who filled in the form.
+    mismatch: bool = False
+    # What the ID actually said, when it disagreed with what was typed.
+    extracted_name: Optional[str] = None
+    name_score: Optional[float] = None
+
+
 class PendingApprovalItem(BaseModel):
     """Unified row for the pending-approvals UI.
 
@@ -192,6 +220,8 @@ class PendingApprovalItem(BaseModel):
     # When source_type=="checkin", carries the checkin record id (same as
     # ``id``); kept for symmetry with appointment_id.
     checkin_id: Optional[str] = None
+    # Why this row is (or isn't) verified. Never None for checkin rows.
+    identity_check: Optional["IdentityCheckSummary"] = None
 
 
 class CheckinWithVisitorOut(CheckinOut):
@@ -205,3 +235,5 @@ class CheckinWithVisitorOut(CheckinOut):
 
     visitor: Optional[VisitorBriefSummary] = None
     branch_summary: Optional[BranchBriefSummary] = None
+    # Why this check-in is (or isn't) verified — see ``IdentityCheckSummary``.
+    identity_check: Optional[IdentityCheckSummary] = None

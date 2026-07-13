@@ -42,6 +42,7 @@ from schemas.onboarding_submission_schema import (
     OnboardingSubmissionUpdate,
 )
 from schemas.tenant_schema import TenantCreate
+from security.temp_password import issued_at_now as _temp_password_issued_at
 from services.audit_service import record_audit_event
 
 logger = logging.getLogger(__name__)
@@ -568,6 +569,7 @@ async def _accept_internal(
                 password_hash=admin_password,
                 is_main_super_admin=True,
                 must_change_password=True,
+                must_change_password_at=_temp_password_issued_at(),
             )
         )
     except Exception:

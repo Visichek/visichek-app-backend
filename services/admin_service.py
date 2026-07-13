@@ -128,6 +128,7 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
       the cleartext value via the ``admin_invite`` template
     """
     from security.password_policy import generate_secure_temp_password
+    from security.temp_password import issued_at_now as _issued_at_now
 
     normalized = normalize_email(signup_data.email)
 
@@ -177,6 +178,7 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
         # silently weaken the security posture for invited admins.
         mfa_enabled=True,
         must_change_password=True,
+        must_change_password_at=_issued_at_now(),
         invited_by=invited_by,
     )
 
@@ -234,6 +236,17 @@ async def authenticate_admin(admin_data: AdminLogin) -> AdminOut:
 
     if admin is not None:
         if check_password(password=admin_data.password, hashed=admin.password):  # type: ignore
+            from security.temp_password import (
+                is_temp_password_expired,
+                raise_temp_password_expired,
+            )
+
+            # The credential is correct, but an admin-issued temporary password
+            # is only good for a bounded window. Past it, the emailed cleartext
+            # stops being a key — an administrator must issue a fresh one.
+            if is_temp_password_expired(admin):
+                raise_temp_password_expired()
+
             await clear_failed_logins(admin_data.email)
             admin.password = ""
 

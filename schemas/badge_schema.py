@@ -40,6 +40,11 @@ class BadgeOut(BadgeBase):
 class BadgePayload(BaseModel):
     badge_id: str
     qr_code_value: str
+    # Canonical name for the QR string across the rest of the API
+    # (visit sessions, awaiting-checkout, appointment check-in all emit
+    # ``badge_qr_token``). Kept in sync with ``qr_code_value`` by the
+    # validator below so every badge-bearing response has one field name.
+    badge_qr_token: str = ""
     visitor_name: str
     verified: bool
     portrait_url: Optional[str] = None
@@ -47,6 +52,12 @@ class BadgePayload(BaseModel):
     purpose: str
     issued_at: int
     expires_at: int
+
+    @model_validator(mode="after")
+    def mirror_qr_value(self) -> "BadgePayload":
+        if not self.badge_qr_token:
+            self.badge_qr_token = self.qr_code_value
+        return self
 
 
 class BadgeValidationResponse(BaseModel):

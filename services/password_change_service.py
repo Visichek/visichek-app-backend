@@ -66,16 +66,31 @@ async def _enforce_new_password_policy(
     user_id: str,
     new_password: str,
     role: str,
+    current_hash: bytes | str | None = None,
 ) -> bytes:
     """Validate and hash a new password against the platform security policy.
 
-    Raises 422 with the policy's error list when validation fails, and 422
-    when the password matches one of the user's last N hashes.
+    Raises 422 with the policy's error list when validation fails, 422 when
+    the new password is the one currently on the row, and 422 when it matches
+    one of the user's last N hashes.
+
+    The ``current_hash`` check is what closes the first-login hole: an
+    admin-issued temporary password is never written to ``password_history``
+    at account creation, so the history check alone would happily accept
+    ``new_password == temp_password``. That would clear
+    ``must_change_password`` while leaving the emailed cleartext valid
+    forever — a forced password change that changes nothing.
     """
     policy = await get_security_policy()
     result = validate_password_strength(new_password, policy=policy)
     if not result.is_valid:
         raise HTTPException(status_code=422, detail="; ".join(result.errors))
+
+    if current_hash and check_password(new_password, current_hash):
+        raise HTTPException(
+            status_code=422,
+            detail="New password must be different from your current password",
+        )
 
     safe = await check_password_history(
         user_id,
@@ -108,14 +123,22 @@ async def change_admin_password(
     if not check_password(current_password, admin["password"]):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
 
-    hashed = await _enforce_new_password_policy(admin_id, new_password, role="admin")
+    hashed = await _enforce_new_password_policy(
+        admin_id, new_password, role="admin", current_hash=admin["password"]
+    )
 
     # Also clear ``must_change_password`` — set by the admin invite
     # flow and any future authority-driven admin reset. Clearing it
     # here lifts the gate-side block in security/auth.py.
     await db.admins.update_one(
         {"_id": ObjectId(admin_id)},
-        {"$set": {"password": hashed, "must_change_password": False}},
+        {
+            "$set": {
+                "password": hashed,
+                "must_change_password": False,
+                "must_change_password_at": None,
+            }
+        },
     )
 
     policy = await get_security_policy()
@@ -154,7 +177,10 @@ async def change_system_user_password(
         raise HTTPException(status_code=401, detail="Current password is incorrect")
 
     hashed = await _enforce_new_password_policy(
-        user_id, new_password, role="system_user"
+        user_id,
+        new_password,
+        role="system_user",
+        current_hash=user["password_hash"],
     )
 
     # Also clear the ``must_change_password`` flag. The flag is set by the
@@ -164,7 +190,13 @@ async def change_system_user_password(
     # using the rest of the API.
     await db.system_users.update_one(
         {"_id": ObjectId(user_id)},
-        {"$set": {"password_hash": hashed, "must_change_password": False}},
+        {
+            "$set": {
+                "password_hash": hashed,
+                "must_change_password": False,
+                "must_change_password_at": None,
+            }
+        },
     )
 
     policy = await get_security_policy()
@@ -255,9 +287,19 @@ async def reset_system_user_password_by_authority(
     # they can hit the rest of the API. See the
     # ``must_change_password`` docstring on ``SystemUserBase`` for the
     # full lifecycle.
+    from security.temp_password import issued_at_now as _temp_password_issued_at
+
     await db.system_users.update_one(
         filter_doc,
-        {"$set": {"password_hash": hashed, "must_change_password": True}},
+        {
+            "$set": {
+                "password_hash": hashed,
+                "must_change_password": True,
+                # Starts the temp password's expiry clock. Without this the
+                # reset value would live in the recipient's inbox forever.
+                "must_change_password_at": _temp_password_issued_at(),
+            }
+        },
     )
 
     policy = await get_security_policy()

@@ -45,6 +45,26 @@ async def get_kyc_by_checkin(
     return await get_kyc_verification({"checkin_id": checkin_id})
 
 
+async def get_kyc_by_checkin_ids(
+    checkin_ids: list[str],
+) -> dict[str, KYCVerificationOut]:
+    """Batched ``checkin_id -> verification`` map for list views.
+
+    The approvals queue renders up to 200 rows; looking each one up
+    individually would turn one query into 200. Returns only the ids that
+    actually have a verification row.
+    """
+    if not checkin_ids:
+        return {}
+    cursor = db[VERIFICATION_COLLECTION].find({"checkin_id": {"$in": checkin_ids}})
+    out: dict[str, KYCVerificationOut] = {}
+    async for doc in cursor:
+        record = KYCVerificationOut(**doc)
+        if record.checkin_id:
+            out[record.checkin_id] = record
+    return out
+
+
 async def get_kyc_by_reference(
     reference_id: str,
 ) -> Optional[KYCVerificationOut]:

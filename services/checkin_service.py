@@ -27,8 +27,9 @@ from schemas.checkin_schema import (
     CheckinSubmitRequest,
     CheckinUpdate,
     CheckinWithVisitorOut,
+    IdentityCheckSummary,
 )
-from schemas.imports import IDType, VerificationMethod
+from schemas.imports import IDType, KYCStatus, VerificationMethod
 from schemas.summary_schema import ManualVerificationInfo, VisitorBriefSummary
 from services.consent_service import (
     enforce_consent_if_required,
@@ -126,6 +127,156 @@ async def _enforce_tenant_geofence(
     )
 
 
+def _build_identity_check(checkin: Any, kyc: Any) -> IdentityCheckSummary:
+    """Explain a check-in's verification state to the receptionist.
+
+    Every branch returns a reason. "Not verified" alone is ambiguous — it looks
+    the same whether nobody ran a check, the visitor skipped it, or the ID they
+    presented belongs to someone else — and the receptionist needs to tell those
+    apart before deciding who to let in.
+    """
+    verified = bool(getattr(checkin, "verified", False))
+    state = getattr(checkin, "state", None)
+    state_value = getattr(state, "value", state)
+
+    # No provider record: either a human vouched, or no check ever ran.
+    if kyc is None:
+        manual = getattr(checkin, "manual_verification", None)
+        if verified and manual is not None:
+            by = getattr(manual, "verified_by_name", None) or "a staff member"
+            return IdentityCheckSummary(
+                verified=True,
+                status="manual",
+                headline="Verified by staff",
+                reason=f"{by} checked this visitor's physical ID in person.",
+            )
+        if verified:
+            return IdentityCheckSummary(
+                verified=True,
+                status="manual",
+                headline="Verified",
+                reason="This visitor was marked verified without an automated ID check.",
+            )
+        if state_value == CheckinState.PENDING_VERIFICATION.value:
+            return IdentityCheckSummary(
+                verified=False,
+                status="ongoing",
+                headline="ID check in progress",
+                reason="Waiting for the visitor to finish the ID check on the kiosk.",
+            )
+        return IdentityCheckSummary(
+            verified=False,
+            status="not_started",
+            headline="No ID check",
+            reason=(
+                "No automated ID check ran for this visitor. Check their physical "
+                "ID before approving."
+            ),
+        )
+
+    status = getattr(kyc.status, "value", kyc.status)
+
+    if status == KYCStatus.SUCCESS.value:
+        # The dangerous case: the document is real, but it is not theirs.
+        if kyc.identity_match_passed is False:
+            detail = (
+                kyc.identity_mismatch_reason
+                or "The verified ID does not match the details this visitor entered"
+            ).rstrip(" .")
+            return IdentityCheckSummary(
+                verified=False,
+                status=status,
+                headline="ID mismatch",
+                reason=(
+                    f"{detail}. Do not approve without checking their physical ID."
+                ),
+                mismatch=True,
+                extracted_name=kyc.extracted_full_name,
+                name_score=kyc.identity_name_score,
+            )
+        return IdentityCheckSummary(
+            verified=True,
+            status=status,
+            headline="ID verified",
+            reason=(
+                "The visitor's ID was verified and matches the details they entered."
+            ),
+            extracted_name=kyc.extracted_full_name,
+            name_score=kyc.identity_name_score,
+        )
+
+    if status == KYCStatus.FAILED.value:
+        return IdentityCheckSummary(
+            verified=False,
+            status=status,
+            headline="ID check failed",
+            reason=(
+                kyc.failure_reason
+                or "The ID check failed. The visitor could not prove their identity."
+            ),
+        )
+
+    if status == KYCStatus.SKIPPED.value:
+        return IdentityCheckSummary(
+            verified=False,
+            status=status,
+            headline="ID check skipped",
+            reason=(
+                "The visitor skipped the ID check"
+                + (f" ({kyc.failure_reason})" if kyc.failure_reason else "")
+                + ". Check their physical ID before approving."
+            ),
+        )
+
+    if status == KYCStatus.EXPIRED.value:
+        return IdentityCheckSummary(
+            verified=False,
+            status=status,
+            headline="ID check expired",
+            reason="The ID check expired before the visitor completed it.",
+        )
+
+    return IdentityCheckSummary(
+        verified=verified,
+        status=status,
+        headline="ID check in progress",
+        reason="The visitor's ID check has not finished yet.",
+    )
+
+
+async def _kyc_reference_is_verified(*, tenant_id: str, reference_id: str) -> bool:
+    """True only when a kiosk-supplied KYC reference is backed by real evidence.
+
+    Requires the reference to resolve to a verification row that (a) exists,
+    (b) belongs to this tenant — otherwise one tenant's reference could verify
+    a visitor at another, (c) the provider marked SUCCESS, and (d) passed the
+    submitted-vs-extracted identity reconciliation.
+
+    Fails closed: any lookup error returns False, because "we could not confirm
+    this identity" must never render as "this identity is confirmed."
+    """
+    try:
+        from repositories.kyc_repo import get_kyc_by_reference
+        from schemas.imports import KYCStatus
+
+        record = await get_kyc_by_reference(reference_id)
+        if record is None:
+            return False
+        if record.tenant_id and record.tenant_id != tenant_id:
+            return False
+        if record.status != KYCStatus.SUCCESS:
+            return False
+        return record.identity_match_passed is not False
+    except Exception:
+        logger.warning(
+            "checkin submit: kyc reference validation failed tenant=%s ref=%s",
+            tenant_id,
+            reference_id,
+            exc_info=True,
+        )
+        return False
+
+
 def _visitor_to_brief(visitor: Any) -> VisitorBriefSummary:
     bio = visitor.bio_data or {}
     manual = getattr(visitor, "manual_verification", None)
@@ -184,6 +335,12 @@ async def _enrich_checkins_with_visitors(
     )
     branch_by_id = dict(zip(branch_ids, branch_summaries))
 
+    # One batched KYC lookup for the whole page, so every row can explain WHY
+    # it is (or isn't) verified without turning the queue into N+1 queries.
+    from repositories.kyc_repo import get_kyc_by_checkin_ids
+
+    kyc_by_checkin = await get_kyc_by_checkin_ids([c.id for c in checkins if c.id])
+
     enriched: list[CheckinWithVisitorOut] = []
     for c in checkins:
         visitor = by_id.get(c.visitor_id)
@@ -192,6 +349,9 @@ async def _enrich_checkins_with_visitors(
                 **c.model_dump(by_alias=True),
                 visitor=_visitor_to_brief(visitor) if visitor is not None else None,
                 branch_summary=branch_by_id.get(c.branch_id) if c.branch_id else None,
+                identity_check=_build_identity_check(
+                    c, kyc_by_checkin.get(c.id or "")
+                ),
             )
         )
     return enriched
@@ -970,8 +1130,26 @@ async def _submit_verified_checkin_core(
     )
     visitor_verified = visitor.verified
     if kyc_reference_id:
+        # ``kyc_reference_id`` arrives as an unauthenticated form field on the
+        # public kiosk endpoint, so it is a CLAIM, not evidence. Trusting it
+        # outright meant anyone could post an arbitrary string and be stamped
+        # verified without Dojah ever being involved. We now only honour a
+        # reference that resolves to a real, successful, identity-matched
+        # verification row belonging to THIS tenant. Anything else falls back
+        # to the normal unverified route to the receptionist — the webhook can
+        # still upgrade it later once it genuinely lands.
         initial_state = CheckinState.PENDING_APPROVAL
-        visitor_verified = True
+        visitor_verified = await _kyc_reference_is_verified(
+            tenant_id=tenant_id, reference_id=kyc_reference_id
+        )
+        if not visitor_verified:
+            logger.warning(
+                "checkin submit: unverified kyc_reference_id claimed tenant=%s "
+                "visitor=%s ref=%s — routing as UNVERIFIED",
+                tenant_id,
+                visitor_id,
+                kyc_reference_id,
+            )
     elif kyc_available:
         initial_state = CheckinState.PENDING_VERIFICATION
     else:
@@ -1323,6 +1501,9 @@ async def list_pending_approvals_for_tenant(
                 visitor=visitor_summary,
                 appointment_id=None,
                 checkin_id=c.id,
+                # Carries the WHY behind ``verified`` — built in
+                # ``_enrich_checkins_with_visitors``, never None for checkin rows.
+                identity_check=c.identity_check,
             )
         )
 
@@ -1417,6 +1598,18 @@ async def list_pending_approvals_for_tenant(
                     visitor=visitor_summary,
                     appointment_id=a.id,
                     checkin_id=None,
+                    # Appointment rows are trusted because a host vetted the
+                    # visitor ahead of time — say that, rather than showing a
+                    # bare "Verified" the receptionist can't account for.
+                    identity_check=IdentityCheckSummary(
+                        verified=True,
+                        status="host_approved",
+                        headline="Host-approved",
+                        reason=(
+                            "This visitor was pre-approved by their host when the "
+                            "appointment was booked — no ID check was run."
+                        ),
+                    ),
                 )
             )
 

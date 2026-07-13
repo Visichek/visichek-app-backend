@@ -46,6 +46,11 @@ class SystemUserBase(BaseModel):
     # straight into the change-password screen.
     must_change_password: bool = False
 
+    # When the temporary password was issued. Bounds its life — see
+    # ``security/temp_password.py``. None on legacy rows (grandfathered) and on
+    # accounts that aren't on a temp password at all.
+    must_change_password_at: Optional[int] = None
+
 
 class SystemUserSignupRequest(BaseModel):
     """Public-facing invite request. No account_status or permission_list —
@@ -109,6 +114,7 @@ class SystemUserUpdate(BaseModel):
     mfa_enabled: Optional[bool] = None
     mfa_locked_by_admin: Optional[bool] = None
     must_change_password: Optional[bool] = None
+    must_change_password_at: Optional[int] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
