@@ -441,11 +441,31 @@ async def process_webhook_event(
             },
         )
 
-    # Reject events that don't carry the body-bound signature when
-    # required. ``signature_valid`` is true for either v1 or v2 in
-    # ``DojahKYCProvider``; if the operator wants strict v1, they set
-    # the env var and we re-validate here.
-    if settings.dojah_require_v1_signature:
+    # Reject events that don't carry the body-bound signature.
+    #
+    # ``signature_valid`` is true for either v1 or v2 in ``DojahKYCProvider``,
+    # but the two are not equivalent. v1 is an HMAC over the request BODY; v2
+    # is derived from the shared secret ALONE, so it is byte-identical for
+    # every payload Dojah ever sends. A v2 digest therefore proves only that
+    # someone once saw the secret — it authenticates nothing about *this*
+    # event. Anyone who learns that one static string could POST a forged
+    # ``success`` for any checkin_id and walk a visitor straight past KYC.
+    #
+    # So v1 is MANDATORY in production, regardless of the env flag: an
+    # operator must not be able to disable body-bound signing on a live
+    # deployment by fat-fingering one variable. The flag remains honoured
+    # outside production, where it exists so the Dojah sandbox (which does not
+    # always send v1) can still be worked against.
+    require_v1 = settings.dojah_require_v1_signature or settings.is_production
+    if settings.is_production and not settings.dojah_require_v1_signature:
+        logger.error(
+            "dojah webhook: DOJAH_REQUIRE_V1_SIGNATURE is disabled in "
+            "production — ignoring it and requiring the body-bound v1 "
+            "signature anyway. A v2-only signature is body-independent and "
+            "cannot authenticate an event."
+        )
+
+    if require_v1:
         v1 = headers.get("x-dojah-signature") or headers.get("X-Dojah-Signature")
         if not v1 or not event.signature_valid:
             await record_webhook_event(
@@ -682,6 +702,7 @@ async def finalize_kyc(
             identity_match_passed=(match.passed if match else None),
             identity_name_score=(match.name_score if match else None),
             identity_mismatch_reason=(match.reason_text if match else None),
+            identity_face_match=(match.face_match if match else None),
         ),
     )
     if updated is None:
@@ -722,6 +743,8 @@ async def _evaluate_identity_match(
     submitted_dob = bio.get("dob") or bio.get("date_of_birth")
     submitted_id_number = bio.get("id_number") or bio.get("nin")
 
+    from core.settings import get_settings
+
     match = match_identity(
         submitted_name=visitor.full_name,
         extracted_name=details.extracted_full_name,
@@ -729,6 +752,9 @@ async def _evaluate_identity_match(
         extracted_dob=details.extracted_dob,
         submitted_id_number=submitted_id_number,
         extracted_id_number=details.extracted_id_number,
+        selfie_match=details.selfie_match,
+        selfie_confidence=details.confidence,
+        min_selfie_confidence=get_settings().dojah_min_selfie_confidence,
     )
     if not match.passed:
         logger.warning(

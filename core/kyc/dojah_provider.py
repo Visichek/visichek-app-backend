@@ -490,6 +490,11 @@ def _entity_to_details(
         status=status,
         confidence=_safe_float(selfie.get("confidence_value"))
         or _safe_float(entity.get("confidence")),
+        selfie_match=_first_bool(
+            selfie.get("match"),
+            selfie.get("selfie_match"),
+            entity.get("selfie_match"),
+        ),
         extracted_full_name=_first_truthy(
             gov.get("full_name"),
             gov.get("first_name")
@@ -558,6 +563,25 @@ def _first_truthy(*values: Any) -> Optional[str]:
     for v in values:
         if v:
             return str(v)
+    return None
+
+
+def _first_bool(*values: Any) -> Optional[bool]:
+    """First value that is a real boolean signal, preserving ``False``.
+
+    Deliberately NOT ``_first_truthy``: a ``False`` face-match verdict is the
+    single most important thing Dojah can tell us, and a truthiness scan would
+    skip right over it and report "no verdict" instead of "did not match".
+    """
+    for v in values:
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            lowered = v.strip().lower()
+            if lowered in {"true", "yes", "match", "matched", "1"}:
+                return True
+            if lowered in {"false", "no", "no_match", "not_match", "0"}:
+                return False
     return None
 
 

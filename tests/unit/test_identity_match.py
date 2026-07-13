@@ -102,3 +102,79 @@ class TestDobFormatsReconcile:
 def test_name_score_is_reported():
     assert compare_names("Ada Okafor", "Ada Okafor") == 1.0
     assert compare_names("John Doe", "Adebayo Ogunlesi") == 0.0
+
+
+class TestFaceMatch:
+    """The face check is the ONLY thing that catches the hardest impostor:
+    someone holding a genuine ID who also types its real owner's details.
+    Every name/DOB/ID-number check passes for them."""
+
+    def test_perfect_impostor_is_caught_by_the_face(self):
+        result = match_identity(
+            # Everything the impostor typed matches the stolen ID exactly.
+            submitted_name="Adebayo Ogunlesi",
+            extracted_name="Adebayo Ogunlesi",
+            submitted_dob="1990-04-07",
+            extracted_dob="1990-04-07",
+            submitted_id_number="12345678901",
+            extracted_id_number="12345678901",
+            # But their face is not the face on the document.
+            selfie_match=False,
+            min_selfie_confidence=70.0,
+        )
+        assert not result.passed
+        assert result.face_match is False
+        assert "does not match the photo on the ID" in result.reason_text
+
+    def test_low_confidence_selfie_fails(self):
+        result = match_identity(
+            submitted_name="Ada Okafor",
+            extracted_name="Ada Okafor",
+            selfie_confidence=41.0,
+            min_selfie_confidence=70.0,
+        )
+        assert not result.passed
+        assert "41% confidence" in result.reason_text
+
+    def test_high_confidence_selfie_passes(self):
+        result = match_identity(
+            submitted_name="Ada Okafor",
+            extracted_name="Ada Okafor",
+            selfie_confidence=93.0,
+            min_selfie_confidence=70.0,
+        )
+        assert result.passed
+        assert result.face_match is True
+
+    def test_absent_selfie_is_unknown_not_a_failure(self):
+        """Many tenant widget flows return no selfie block. Hard-failing them
+        would strand real visitors at the door."""
+        result = match_identity(
+            submitted_name="Ada Okafor",
+            extracted_name="Ada Okafor",
+            selfie_match=None,
+            selfie_confidence=None,
+            min_selfie_confidence=70.0,
+        )
+        assert result.passed
+        assert result.face_match is None
+
+    def test_threshold_of_zero_disables_the_confidence_check(self):
+        result = match_identity(
+            submitted_name="Ada Okafor",
+            extracted_name="Ada Okafor",
+            selfie_confidence=10.0,
+            min_selfie_confidence=0.0,
+        )
+        assert result.passed
+
+    def test_explicit_false_still_fails_even_when_threshold_disabled(self):
+        """A provider saying 'these are different people' is not overridable
+        by turning the confidence threshold off."""
+        result = match_identity(
+            submitted_name="Ada Okafor",
+            extracted_name="Ada Okafor",
+            selfie_match=False,
+            min_selfie_confidence=0.0,
+        )
+        assert not result.passed

@@ -174,6 +174,47 @@ def compare_id_numbers(submitted: str | None, extracted: str | None) -> bool | N
     return left == right
 
 
+def evaluate_face_match(
+    *,
+    selfie_match: bool | None,
+    confidence: float | None,
+    min_confidence: float,
+) -> tuple[bool | None, str | None]:
+    """Does the face on the selfie belong to the face on the ID?
+
+    This is the only check that ties the document to the person physically
+    standing there. Name/DOB/ID reconciliation catches an impostor who types
+    their OWN name against someone else's ID — but an impostor who also types
+    the ID owner's name defeats every one of those checks. The selfie is what
+    stops them.
+
+    Dojah already computes this and we already store it; nothing read it.
+
+    Returns ``(verdict, reason)`` where verdict is None when the provider gave
+    us nothing to judge. A missing selfie is reported as unknown rather than a
+    failure: many tenants' widget flows legitimately return no selfie block,
+    and hard-failing them would strand real visitors at the door.
+    """
+    if selfie_match is False:
+        return False, (
+            "the face on the selfie does not match the photo on the ID — the "
+            "document may belong to someone else"
+        )
+
+    if confidence is not None and min_confidence > 0:
+        if confidence < min_confidence:
+            return False, (
+                f"the selfie only matched the photo on the ID with "
+                f"{confidence:.0f}% confidence (minimum {min_confidence:.0f}%)"
+            )
+        return True, None
+
+    if selfie_match is True:
+        return True, None
+
+    return None, None
+
+
 @dataclass
 class IdentityMatchResult:
     """Verdict on whether the typed identity and the returned identity agree."""
@@ -182,6 +223,7 @@ class IdentityMatchResult:
     name_score: float
     dob_match: bool | None = None
     id_number_match: bool | None = None
+    face_match: bool | None = None
     reasons: list[str] = field(default_factory=list)
 
     @property
@@ -197,6 +239,9 @@ def match_identity(
     extracted_dob: str | None = None,
     submitted_id_number: str | None = None,
     extracted_id_number: str | None = None,
+    selfie_match: bool | None = None,
+    selfie_confidence: float | None = None,
+    min_selfie_confidence: float = 0.0,
 ) -> IdentityMatchResult:
     """Reconcile a submitted identity against a provider-extracted one.
 
@@ -229,10 +274,21 @@ def match_identity(
             "verified document"
         )
 
+    # The face check. Catches the impostor the field checks CANNOT: someone
+    # presenting a genuine ID and typing the real owner's details.
+    face_match, face_reason = evaluate_face_match(
+        selfie_match=selfie_match,
+        confidence=selfie_confidence,
+        min_confidence=min_selfie_confidence,
+    )
+    if face_reason:
+        reasons.append(face_reason)
+
     return IdentityMatchResult(
         passed=not reasons,
         name_score=round(name_score, 3),
         dob_match=dob_match,
         id_number_match=id_number_match,
+        face_match=face_match,
         reasons=reasons,
     )

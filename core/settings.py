@@ -11,6 +11,21 @@ def _split_csv(value: str | None) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
+def _safe_float_env(name: str, default: float) -> float:
+    """Read a float env var, falling back to the default on garbage.
+
+    A malformed threshold must not crash boot, and it must not silently
+    become 0 (which would disable the check it exists to enforce).
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def _parse_int_list(value: str | None) -> tuple[int, ...]:
     if not value:
         return (0, 3, 7, 14, 21)
@@ -125,6 +140,12 @@ class Settings:
     # in dev when working against the Dojah sandbox without webhook
     # configuration.
     dojah_require_v1_signature: bool = True
+    # Minimum Dojah selfie confidence (0-100) for the face on the selfie to
+    # count as the face on the ID. Dojah already computes this and we already
+    # store it — until now nothing ever read it, so a valid ID held up by a
+    # different person passed the face step silently. Set to 0 to disable the
+    # threshold (not recommended outside local development).
+    dojah_min_selfie_confidence: float = 70.0
     # Extremely verbose webhook diagnostics. When enabled, Dojah webhook
     # logs include full request headers, signatures, and body bytes.
     # Use only during active debugging because KYC payloads contain PII.
@@ -307,6 +328,9 @@ def get_settings() -> Settings:
             "DOJAH_REQUIRE_V1_SIGNATURE", "true"
         ).lower()
         in {"1", "true", "yes"},
+        dojah_min_selfie_confidence=_safe_float_env(
+            "DOJAH_MIN_SELFIE_CONFIDENCE", 70.0
+        ),
         dojah_debug_log_full_payload=os.getenv(
             "DOJAH_DEBUG_LOG_FULL_PAYLOAD", "false"
         ).lower()

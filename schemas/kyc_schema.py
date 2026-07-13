@@ -38,6 +38,10 @@ class KYCVerificationBase(BaseModel):
     identity_match_passed: Optional[bool] = None
     identity_name_score: Optional[float] = None
     identity_mismatch_reason: Optional[str] = None
+    # Did the face on the selfie match the photo on the ID? None when the
+    # provider gave us nothing to judge. This is the only signal that catches
+    # an impostor who presents a genuine ID AND types its owner's details.
+    identity_face_match: Optional[bool] = None
 
 
 class KYCVerificationCreate(KYCVerificationBase):
@@ -60,6 +64,7 @@ class KYCVerificationUpdate(BaseModel):
     identity_match_passed: Optional[bool] = None
     identity_name_score: Optional[float] = None
     identity_mismatch_reason: Optional[str] = None
+    identity_face_match: Optional[bool] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

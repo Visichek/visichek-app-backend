@@ -60,7 +60,13 @@ class KYCVerificationDetails:
 
     reference_id: str
     status: str
+    # Dojah's face-match score (0-100) between the selfie and the photo on the
+    # government ID. This is the ONLY signal that ties the document to the
+    # person physically present — a stolen-but-genuine ID passes every other
+    # check. Thresholded in ``services/identity_match``.
     confidence: Optional[float] = None
+    # Dojah's own boolean verdict on the selfie, when it sends one.
+    selfie_match: Optional[bool] = None
     extracted_full_name: Optional[str] = None
     extracted_dob: Optional[str] = None
     extracted_id_number: Optional[str] = None
