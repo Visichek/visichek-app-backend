@@ -152,9 +152,16 @@ async def search_admins(query: str, start: int = 0, stop: int = 50) -> List[Admi
 
 
 async def update_admin(filter_dict: dict, admin_data: AdminUpdate) -> AdminOut:
+    # ``exclude_none`` is load-bearing, not tidiness. ``AdminUpdate.password``
+    # defaults to None, so a partial update — notably ``AdminUpdate()``, used
+    # as a bare last_updated bump when changing an admin's access preset —
+    # dumps ``{"password": None}`` and a plain $set writes that None straight
+    # over the stored bcrypt hash. The admin is then silently locked out:
+    # AdminOut.password is Optional, so nothing errors, and the account simply
+    # stops accepting its own password. Persist only what the caller supplied.
     result = await db.admins.find_one_and_update(
         filter_dict,
-        {"$set": admin_data.model_dump()},
+        {"$set": admin_data.model_dump(exclude_none=True)},
         return_document=ReturnDocument.AFTER,
     )
     returnable_result = AdminOut(**result)
