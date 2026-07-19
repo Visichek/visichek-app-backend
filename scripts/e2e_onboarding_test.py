@@ -142,6 +142,11 @@ class Api:
             )
             if response.status_code != 429 or attempt >= max_attempts:
                 return response
+            # Quota-cap rejections also come back 429 but retrying can
+            # never succeed — only back off for actual rate limiting.
+            body_text = response.text[:500].lower()
+            if "limit reached" in body_text or "quota" in body_text:
+                return response
             wait = float(response.headers.get("Retry-After", "0") or 0) or min(
                 60.0, 5.0 * attempt
             )
@@ -301,6 +306,77 @@ def build_submission(owner_email: str, org_name: str, owner_name: str) -> dict:
     }
 
 
+def upgrade_tenant_plan(admin: Api, tenant_id: Optional[str]) -> None:
+    """Move the freshly provisioned tenant off the Free plan.
+
+    Free caps system users at 1 and gates multi-location, which would
+    block the invite/branch steps below. Preference order: a plan named
+    "premium", then enterprise tier, then professional, then any active
+    non-free plan. Tries change-plan first (the tenant already has an
+    auto-provisioned Free subscription); falls back to creating a
+    trialing subscription.
+    """
+    if not tenant_id:
+        return
+    response = admin.request("GET", "/v1/plans", params={"status": "active"})
+    data = admin.envelope(response)
+    plans = data if isinstance(data, list) else (pick(data, "items") or [])
+    if response.status_code != 200 or not plans:
+        REPORT.record(
+            "upgrade tenant plan",
+            False,
+            f"GET /v1/plans -> HTTP {response.status_code}, {len(plans)} plans",
+        )
+        return
+
+    def score(plan: dict) -> int:
+        name = f"{pick(plan, 'name', '')} {pick(plan, 'display_name', '')}".lower()
+        tier = str(pick(plan, "tier", "")).lower()
+        if tier == "free" or "free" in name:
+            return -1
+        if "premium" in name:
+            return 4
+        return {"enterprise": 3, "professional": 2, "starter": 1}.get(tier, 0)
+
+    best = max(plans, key=score)
+    if score(best) < 0:
+        REPORT.record("upgrade tenant plan", False, "no non-free plan available")
+        return
+    plan_id = pick(best, "id")
+    label = pick(best, "name") or pick(best, "display_name")
+
+    response = admin.request(
+        "POST",
+        "/v1/subscriptions/change-plan",
+        json_body={"tenant_id": tenant_id, "new_plan_id": plan_id},
+    )
+    ok = response.status_code in (200, 201, 202)
+    how = "change-plan"
+    if not ok:
+        response = admin.request(
+            "POST",
+            "/v1/subscriptions",
+            json_body={
+                "tenant_id": tenant_id,
+                "plan_id": plan_id,
+                "trial_days": 30,
+            },
+        )
+        ok = response.status_code in (200, 201, 202)
+        how = "create-trialing"
+    if ok and response.status_code == 202:
+        data = admin.envelope(response) or {}
+        job_id = pick(data, "job_id")
+        if job_id:
+            job = admin.poll_job(job_id)
+            ok = pick(job, "status") == "succeeded"
+    REPORT.record(
+        "upgrade tenant plan",
+        ok,
+        f"{how} -> {label} (HTTP {response.status_code}) {response.text[:150] if response.status_code >= 400 else ''}",
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     run_id = uuid.uuid4().hex[:8]
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -383,6 +459,10 @@ def run(args: argparse.Namespace) -> int:
             f"HTTP {response.status_code} tenant_id={tenant_id} {response.text[:200] if response.status_code >= 400 else ''}",
         ):
             return finish()
+
+        # -- 4b. upgrade the tenant off Free so invites/branches are
+        # testable (Free caps system users at 1 and gates multi-location).
+        upgrade_tenant_plan(admin, tenant_id)
 
         # -- 5. super_admin first login / password gate ------------------
         ok, payload, detail = login_with_otp(
@@ -513,7 +593,9 @@ def run(args: argparse.Namespace) -> int:
         # -- 8. authority password reset on the receptionist -------------
         if receptionist_id:
             response = owner.request(
-                "POST", f"/v1/system-users/{receptionist_id}/reset-password"
+                "POST",
+                f"/v1/system-users/{receptionist_id}/reset-password",
+                json_body={},
             )
             reset_accepted = response.status_code in (200, 202)
             if response.status_code == 202:
@@ -604,7 +686,8 @@ def run(args: argparse.Namespace) -> int:
             "/v1/tenant-settings",
             "/v1/notifications",
             "/v1/notifications/unread-count",
-            "/v1/visitors",
+            "/v1/visitors/active",
+            "/v1/visitors/sessions",
             "/v1/appointments",
         ):
             response = owner.request("GET", path)

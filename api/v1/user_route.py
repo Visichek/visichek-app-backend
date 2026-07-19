@@ -49,7 +49,15 @@ async def login_with_google_account(request: Request):
 
 @router.get("/auth/callback")
 async def auth_callback_user(request: Request):
-    token = await oauth.google.authorize_access_token(request)
+    try:
+        token = await oauth.google.authorize_access_token(request)
+    except Exception:
+        # Hit without valid OAuth query params (missing/mismatched
+        # code/state) — a client error, not a server fault.
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or missing OAuth callback parameters",
+        )
     user_info = token.get("userinfo")
 
     if user_info:
