@@ -102,8 +102,16 @@ async def _dsr_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_DSR_STATUS_ACTIONS = {
+    "in_progress": "dsr.acknowledged",
+    "completed": "dsr.completed",
+    "rejected": "dsr.rejected",
+}
+
+
 @write_handler("dsr.update", invalidates=["dsr.list"])
 async def _dsr_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    actor_id, actor_role, request_id = _pop_actor(data)
     tenant_id = data.pop("tenant_id", "") or ""
     # Captured before the update so we only notify when the caller actually
     # requested an in-progress / completed transition (a bare identity-verify
@@ -128,6 +136,29 @@ async def _dsr_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
                 requested_status,
                 exc_info=True,
             )
+    if actor_id:
+        # Self-audit (dsr.update is in _AUTO_AUDIT_SKIP) — include the
+        # DPO's reason/resolution so the audit trail carries the note.
+        details: dict[str, Any] = {
+            k: v
+            for k, v in {
+                "status": requested_status,
+                "rejection_reason": data.get("rejection_reason"),
+                "resolution": data.get("resolution"),
+            }.items()
+            if v
+        }
+        details["changed_fields"] = sorted(data.keys())
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role or "system_user",
+            action=_DSR_STATUS_ACTIONS.get(str(requested_status), "dsr.updated"),
+            resource_type="dsr",
+            resource_id=resource_id,
+            tenant_id=tenant_id,
+            details=details,
+            request_id=request_id,
+        )
     return {"id": result.id, "status": result.status}
 
 
@@ -160,6 +191,9 @@ async def _dsr_bulk_reject(resource_id: str, data: dict[str, Any]) -> dict[str, 
     extras = data.get("extras", {}) or {}
     tenant_scope = str(extras.get("tenant_scope") or "")
     reason = str(extras.get("reason") or "")[:2000]
+    actor_id = str(extras.get("_actor_id") or "")
+    actor_role = str(extras.get("_actor_role") or "")
+    request_id = extras.get("_request_id")
 
     async def _handle(dsr_id: str) -> dict[str, Any]:
         upd_payload: dict[str, Any] = {"status": "rejected"}
@@ -169,6 +203,17 @@ async def _dsr_bulk_reject(resource_id: str, data: dict[str, Any]) -> dict[str, 
         result = await update_dsr_by_id(
             dsr_id=dsr_id, tenant_id=tenant_scope, dsr_data=upd
         )
+        if actor_id:
+            await record_audit_event(
+                actor_id=actor_id,
+                actor_role=actor_role or "system_user",
+                action="dsr.rejected",
+                resource_type="dsr",
+                resource_id=dsr_id,
+                tenant_id=tenant_scope,
+                details={"rejection_reason": reason} if reason else {"bulk": True},
+                request_id=request_id,
+            )
         return {"id": result.id if result else dsr_id, "status": "rejected"}
 
     out = await run_bulk_handlers(ids, _handle, atomic=atomic)

@@ -138,6 +138,13 @@ _AUTO_AUDIT_SKIP: frozenset[str] = frozenset(
         "support_case.attachment.add",
         # tenant_settings_service self-audits
         "tenant_settings.update",
+        # checkin bulk writers delegate to confirm_checkin, which now
+        # records a per-id checkin.approved / checkin.rejected event
+        "checkin.bulk_approve",
+        "checkin.bulk_reject",
+        # dsr_writer now self-audits status updates (reason/resolution in details)
+        "dsr.update",
+        "dsr.bulk_reject",
     }
 )
 

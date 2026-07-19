@@ -253,6 +253,9 @@ async def update_dsr_endpoint(
     tenant_id = principal.tenant_id or ""
     payload = dsr_data.model_dump(exclude_none=True)
     payload["tenant_id"] = tenant_id
+    payload["_actor_id"] = principal.user_id
+    payload["_actor_role"] = principal.role
+    payload["_request_id"] = getattr(request.state, "request_id", None)
     return await enqueue_write(
         writer_key="dsr.update",
         payload=payload,
@@ -273,10 +276,18 @@ def _dsr_transition_payload(
     tenant_id: str,
     new_status: str,
     extras: Optional[dict[str, Any]] = None,
+    principal: Optional[AuthPrincipal] = None,
+    request: Optional[Request] = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {"tenant_id": tenant_id, "status": new_status}
     if extras:
         body.update(extras)
+    # Actor metadata for the writer's self-audit (popped before DSRUpdate).
+    if principal is not None:
+        body["_actor_id"] = principal.user_id
+        body["_actor_role"] = principal.role
+    if request is not None:
+        body["_request_id"] = getattr(request.state, "request_id", None)
     return body
 
 
@@ -352,6 +363,9 @@ async def bulk_reject_dsr(
     extras = {
         "tenant_scope": tenant_id,
         "reason": str(payload.get("reason") or "")[:2000],
+        "_actor_id": principal.user_id,
+        "_actor_role": principal.role,
+        "_request_id": getattr(request.state, "request_id", None),
     }
     response = await enqueue_bulk_write(
         writer_key="dsr.bulk_reject",
@@ -389,7 +403,12 @@ async def acknowledge_dsr_endpoint(
     tenant_id = principal.tenant_id or ""
     return await enqueue_write(
         writer_key="dsr.update",
-        payload=_dsr_transition_payload(tenant_id=tenant_id, new_status="in_progress"),
+        payload=_dsr_transition_payload(
+            tenant_id=tenant_id,
+            new_status="in_progress",
+            principal=principal,
+            request=request,
+        ),
         resource_type="dsr",
         resource_id=dsr_id,
         tenant_id=tenant_id,
@@ -418,7 +437,11 @@ async def complete_dsr_endpoint(
     return await enqueue_write(
         writer_key="dsr.update",
         payload=_dsr_transition_payload(
-            tenant_id=tenant_id, new_status="completed", extras=extras
+            tenant_id=tenant_id,
+            new_status="completed",
+            extras=extras,
+            principal=principal,
+            request=request,
         ),
         resource_type="dsr",
         resource_id=dsr_id,
@@ -448,7 +471,11 @@ async def reject_dsr_endpoint(
     return await enqueue_write(
         writer_key="dsr.update",
         payload=_dsr_transition_payload(
-            tenant_id=tenant_id, new_status="rejected", extras=extras
+            tenant_id=tenant_id,
+            new_status="rejected",
+            extras=extras,
+            principal=principal,
+            request=request,
         ),
         resource_type="dsr",
         resource_id=dsr_id,

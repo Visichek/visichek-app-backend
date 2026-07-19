@@ -65,6 +65,9 @@ class CheckinBase(BaseModel):
     manual_verification: Optional[ManualVerificationInfo] = None
     approved_by_user_id: Optional[str] = None
     approved_at: Optional[int] = None
+    # Internal note supplied by the approving staff member; surfaced in the
+    # check-in detail view and echoed into the approval audit event.
+    approval_notes: Optional[str] = None
     rejection_reason: Optional[str] = None
     checked_out_at: Optional[int] = None
 
@@ -83,6 +86,7 @@ class CheckinUpdate(BaseModel):
     manual_verification: Optional[ManualVerificationInfo] = None
     approved_by_user_id: Optional[str] = None
     approved_at: Optional[int] = None
+    approval_notes: Optional[str] = None
     rejection_reason: Optional[str] = None
     tenant_specific_data: Optional[dict] = None
     checked_out_at: Optional[int] = None

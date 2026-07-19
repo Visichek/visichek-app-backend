@@ -98,26 +98,50 @@ async def mark_failed(task_id: str, error: str) -> None:
 
 
 async def list_job_logs_for_tenant(
-    tenant_id: str, start: int = 0, stop: int = 100
+    tenant_id: str,
+    start: int = 0,
+    stop: int = 100,
+    extra_filter: Optional[dict] = None,
 ) -> list[QueueJobLogOut]:
+    query = {"tenant_id": tenant_id, **(extra_filter or {})}
     cursor = (
         db[COLLECTION]
-        .find({"tenant_id": tenant_id})
+        .find(query)
         .sort("date_created", -1)
         .skip(start)
         .limit(stop - start)
     )
     return [QueueJobLogOut(**doc) async for doc in cursor]
+
+
+async def count_job_logs_for_tenant(
+    tenant_id: str, extra_filter: Optional[dict] = None
+) -> int:
+    return await db[COLLECTION].count_documents(
+        {"tenant_id": tenant_id, **(extra_filter or {})}
+    )
 
 
 async def list_job_logs_for_actor(
-    actor_id: str, start: int = 0, stop: int = 100
+    actor_id: str,
+    start: int = 0,
+    stop: int = 100,
+    extra_filter: Optional[dict] = None,
 ) -> list[QueueJobLogOut]:
+    query = {"actor_id": actor_id, **(extra_filter or {})}
     cursor = (
         db[COLLECTION]
-        .find({"actor_id": actor_id})
+        .find(query)
         .sort("date_created", -1)
         .skip(start)
         .limit(stop - start)
     )
     return [QueueJobLogOut(**doc) async for doc in cursor]
+
+
+async def count_job_logs_for_actor(
+    actor_id: str, extra_filter: Optional[dict] = None
+) -> int:
+    return await db[COLLECTION].count_documents(
+        {"actor_id": actor_id, **(extra_filter or {})}
+    )

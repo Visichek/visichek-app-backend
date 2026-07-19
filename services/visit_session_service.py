@@ -642,6 +642,19 @@ async def deny_visitor(
     )
     invalidate_tenant_dashboard_cache(tenant_id)
 
+    # Sync path — record the denial (and its reason) in the audit trail.
+    from services.audit_service import record_audit_event
+
+    await record_audit_event(
+        actor_id=denied_by,
+        actor_role="system_user",
+        action="visit_session.denied",
+        resource_type="visit_session",
+        resource_id=session_id,
+        tenant_id=tenant_id,
+        details={"reason": reason or "No reason provided"},
+    )
+
     # Cancel the linked appointment so the host doesn't see it sitting in
     # SCHEDULED forever after the visitor was turned away at reception.
     if updated.appointment_id:

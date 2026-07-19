@@ -1809,16 +1809,35 @@ async def confirm_checkin(
             )
             badge = await create_badge(badge_create)
 
-        # Update checkin
+        # Update checkin — persist the approver's internal note so it can
+        # be shown on the check-in detail view and in the audit trail.
+        clean_notes = (req.notes or "").strip()[:500] or None
         await update_checkin(
             checkin_id,
             CheckinUpdate(
                 state=CheckinState.APPROVED,
                 approved_by_user_id=principal.user_id,
                 approved_at=now,
+                approval_notes=clean_notes,
             ),
         )
         invalidate_tenant_dashboard_cache(tenant_id)
+
+        # Sync path (bypasses the queued-write auto-audit) — record directly.
+        from services.audit_service import record_audit_event
+
+        await record_audit_event(
+            actor_id=principal.user_id,
+            actor_role=principal.role,
+            action="checkin.approved",
+            resource_type="checkin",
+            resource_id=checkin_id,
+            tenant_id=tenant_id,
+            details={
+                "visitor_name": visitor.full_name,
+                **({"notes": clean_notes} if clean_notes else {}),
+            },
+        )
 
         # Fire notification
         try:
@@ -1888,6 +1907,19 @@ async def confirm_checkin(
             ),
         )
         invalidate_tenant_dashboard_cache(tenant_id)
+
+        # Sync path (bypasses the queued-write auto-audit) — record directly.
+        from services.audit_service import record_audit_event
+
+        await record_audit_event(
+            actor_id=principal.user_id,
+            actor_role=principal.role,
+            action="checkin.rejected",
+            resource_type="checkin",
+            resource_id=checkin_id,
+            tenant_id=tenant_id,
+            details={"reason": req.notes or "No reason provided"},
+        )
 
         # Fire notification
         try:

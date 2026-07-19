@@ -12,13 +12,16 @@ Auth: any token; the server restricts visibility by matching the job's
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any, Awaitable, Callable, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from core.errors import AppException, ErrorCode
 from core.response_envelope import document_response
 from repositories.queue_job_log_repo import (
+    count_job_logs_for_actor,
+    count_job_logs_for_tenant,
     get_job_log_by_id,
     get_job_log_by_task_id,
     list_job_logs_for_actor,
@@ -275,15 +278,55 @@ async def get_job_status(
 async def list_recent_jobs(
     start: int = 0,
     stop: int = 50,
+    skip: Optional[int] = Query(None, ge=0),
+    limit: Optional[int] = Query(None, ge=1, le=200),
+    job_status: Optional[str] = Query(None, alias="status"),
+    task_key: Optional[str] = Query(None, alias="taskKey"),
+    resource_type: Optional[str] = Query(None, alias="resourceType"),
+    q: Optional[str] = Query(None, min_length=1, max_length=200),
+    date_from: Optional[int] = Query(None, alias="dateFrom"),
+    date_to: Optional[int] = Query(None, alias="dateTo"),
     principal: AuthPrincipal = Depends(verify_any_token),
 ):
+    # New-style pagination (skip/limit) wins over legacy start/stop.
+    if skip is not None or limit is not None:
+        start = skip or 0
+        stop = start + (limit or 50)
+
+    extra: dict[str, Any] = {}
+    if job_status:
+        extra["status"] = job_status
+    if task_key:
+        extra["task_key"] = {"$regex": re.escape(task_key), "$options": "i"}
+    if resource_type:
+        extra["resource_type"] = resource_type
+    if q:
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        extra["$or"] = [
+            {"task_key": rx},
+            {"resource_type": rx},
+            {"resource_id": rx},
+        ]
+    created: dict[str, int] = {}
+    if date_from is not None:
+        created["$gte"] = date_from
+    if date_to is not None:
+        created["$lte"] = date_to
+    if created:
+        extra["date_created"] = created
+
     # Tenant users: scoped to their tenant. Application admins / users have
     # no tenant_id, so fall back to jobs they personally enqueued — otherwise
     # admin callers always see an empty list even when they have queued work.
     if principal.tenant_id:
         logs = await list_job_logs_for_tenant(
-            principal.tenant_id, start=start, stop=stop
+            principal.tenant_id, start=start, stop=stop, extra_filter=extra
         )
+        total = await count_job_logs_for_tenant(principal.tenant_id, extra_filter=extra)
     else:
-        logs = await list_job_logs_for_actor(principal.user_id, start=start, stop=stop)
-    return list(await asyncio.gather(*[_enrich_log(log) for log in logs]))
+        logs = await list_job_logs_for_actor(
+            principal.user_id, start=start, stop=stop, extra_filter=extra
+        )
+        total = await count_job_logs_for_actor(principal.user_id, extra_filter=extra)
+    items = list(await asyncio.gather(*[_enrich_log(log) for log in logs]))
+    return {"items": items, "total": total, "skip": start, "limit": stop - start}
