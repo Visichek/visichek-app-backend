@@ -5,7 +5,7 @@ non-production test-email bypass (core/test_mode.py):
 
   1.  Health probes.
   2.  Public marketing-form submission (POST /v1/onboarding/submissions)
-      with a ``@visichek.test`` work email — Turnstile is skipped for
+      with a ``@e2e.visichek.app`` work email — Turnstile is skipped for
       test emails outside production.
   3.  Application-admin login (+ static dev OTP) and verification that
       the submission landed in the database.
@@ -33,7 +33,7 @@ Usage:
 
     Environment fallbacks: VISICHEK_API_BASE, VISICHEK_ADMIN_EMAIL,
     VISICHEK_ADMIN_PASSWORD, VISICHEK_OTP_CODE (default 123456),
-    VISICHEK_TEST_DOMAIN (default visichek.test),
+    VISICHEK_TEST_DOMAIN (default e2e.visichek.app),
     VISICHEK_TEST_TEMP_PASSWORD (default VisiChekT3st!Pass).
 
 The script is intentionally dependency-light: httpx + stdlib only.
@@ -331,7 +331,7 @@ def run(args: argparse.Namespace) -> int:
             json_body=build_submission(owner_email, org_name, owner_name),
         )
         data = public.envelope(response) or {}
-        submission_id = pick(data, "id")
+        submission_id = pick(data, "submission_id") or pick(data, "id")
         if not REPORT.record(
             "public onboarding submission",
             response.status_code in (200, 201) and bool(submission_id),
@@ -668,11 +668,38 @@ def finish() -> int:
     return 0 if not REPORT.failed else 1
 
 
+def load_env_file(path: str) -> dict[str, str]:
+    """Minimal .env reader (no dependency): KEY=VALUE lines, # comments."""
+    values: dict[str, str] = {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                # Strip trailing inline comments and surrounding quotes.
+                value = value.split("  #")[0].split("\t#")[0].strip().strip("'\"")
+                values[key.strip()] = value
+    except OSError:
+        pass
+    return values
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--base-url",
         default=os.getenv("VISICHEK_API_BASE", "http://localhost:8000"),
+    )
+    parser.add_argument(
+        "--env-file",
+        default="",
+        help=(
+            "Read admin credentials from a .env file "
+            "(SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD) instead of "
+            "passing them on the command line."
+        ),
     )
     parser.add_argument(
         "--admin-email", default=os.getenv("VISICHEK_ADMIN_EMAIL", "")
@@ -684,7 +711,7 @@ def main() -> int:
         "--otp-code", default=os.getenv("VISICHEK_OTP_CODE", "123456")
     )
     parser.add_argument(
-        "--test-domain", default=os.getenv("VISICHEK_TEST_DOMAIN", "visichek.test")
+        "--test-domain", default=os.getenv("VISICHEK_TEST_DOMAIN", "e2e.visichek.app")
     )
     parser.add_argument(
         "--test-temp-password",
@@ -703,6 +730,15 @@ def main() -> int:
         help="Offboard the created tenant at the end (cleanup).",
     )
     args = parser.parse_args()
+
+    if args.env_file:
+        env_values = load_env_file(args.env_file)
+        args.admin_email = args.admin_email or env_values.get(
+            "SUPER_ADMIN_EMAIL", ""
+        )
+        args.admin_password = args.admin_password or env_values.get(
+            "SUPER_ADMIN_PASSWORD", ""
+        )
 
     if not args.admin_email or not args.admin_password:
         print(

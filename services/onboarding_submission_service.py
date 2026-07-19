@@ -521,6 +521,27 @@ async def _accept_internal(
             details={"missing": missing},
         )
 
+    # The submission payload stores the email as a plain string, but the
+    # system-user schema uses EmailStr — validate here so a bad address
+    # (typo'd form value, reserved TLD, …) is a clear 400 instead of an
+    # unhandled 500 halfway through provisioning.
+    from pydantic import EmailStr as _EmailStr
+    from pydantic import TypeAdapter as _TypeAdapter
+    from pydantic import ValidationError as _ValidationError
+
+    try:
+        _TypeAdapter(_EmailStr).validate_python(admin_email)
+    except _ValidationError as exc:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.VALIDATION_FAILED,
+            message="admin_email is not a valid email address",
+            details={
+                "admin_email": admin_email,
+                "errors": [err.get("msg") for err in exc.errors()],
+            },
+        )
+
     # Auto-generate a policy-compliant temporary password. The reviewing
     # admin no longer chooses it — we keep the raw value here only to
     # render the welcome email, which is the only channel that ever

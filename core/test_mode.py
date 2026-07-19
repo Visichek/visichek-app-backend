@@ -1,9 +1,12 @@
 """Test-email bypass helpers (NON-PRODUCTION ONLY).
 
 An email address whose domain matches ``settings.test_email_domains``
-(default ``visichek.test`` — an RFC 2606 reserved TLD that can never
-receive real mail) identifies a *test account* used by automated E2E
-runs. For these accounts, and only when ``ENV`` is not ``production``:
+(default ``e2e.visichek.app`` — company-controlled, no MX records, and
+mail to it is suppressed below anyway) identifies a *test account* used
+by automated E2E runs. Reserved TLDs like ``.test`` cannot be used here:
+Pydantic's ``EmailStr`` rejects special-use domains, so such addresses
+would 500 inside account-creation schemas. For test accounts, and only
+when ``ENV`` is not ``production``:
 
 * outbound email is suppressed (``EmailManager`` logs and skips),
 * Turnstile verification on the public onboarding form is skipped,

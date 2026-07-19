@@ -108,8 +108,12 @@ class Settings:
     # on the public onboarding form, and the fixed temp password below
     # instead of a random one. ``is_test_email`` hard-returns False in
     # production, so these values are inert there.
+    # NOTE: must be a real-looking domain — Pydantic's EmailStr rejects
+    # reserved TLDs (.test/.invalid/...), so those can never round-trip
+    # through account-creation schemas. e2e.visichek.app is company-
+    # controlled, has no MX, and email to it is suppressed anyway.
     # ------------------------------------------------------------------
-    test_email_domains: tuple[str, ...] = ("visichek.test",)
+    test_email_domains: tuple[str, ...] = ("e2e.visichek.app",)
     test_temp_password: str = "VisiChekT3st!Pass"
     # Public base URL used to build absolute checkout links (app-mode fallback)
     app_base_url: str = ""
@@ -321,7 +325,7 @@ def get_settings() -> Settings:
         otp_dev_code=os.getenv("OTP_DEV_CODE", "123456"),
         test_email_domains=tuple(
             domain.strip().lower()
-            for domain in os.getenv("TEST_EMAIL_DOMAINS", "visichek.test").split(",")
+            for domain in os.getenv("TEST_EMAIL_DOMAINS", "e2e.visichek.app").split(",")
             if domain.strip()
         ),
         test_temp_password=os.getenv("TEST_TEMP_PASSWORD", "VisiChekT3st!Pass"),

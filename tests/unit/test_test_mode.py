@@ -1,7 +1,7 @@
 """Tests for the non-production test-email bypass (core/test_mode.py).
 
 The bypass must:
-* match only the configured test domains (default ``visichek.test``),
+* match only the configured test domains (default ``e2e.visichek.app``),
 * be a hard no-op when ``ENV=production``,
 * hand test accounts the fixed ``test_temp_password`` (which must itself
   satisfy the password policy) while everyone else still gets a random
@@ -20,22 +20,22 @@ from core.settings import get_settings
 from core.test_mode import is_test_email, issue_temp_password
 
 
-def _settings(env: str = "testing", domains: tuple[str, ...] = ("visichek.test",)):
+def _settings(env: str = "testing", domains: tuple[str, ...] = ("e2e.visichek.app",)):
     return replace(get_settings(), env=env, test_email_domains=domains)
 
 
 class TestIsTestEmail:
     def test_matches_test_domain_outside_production(self):
         with patch("core.test_mode.get_settings", return_value=_settings()):
-            assert is_test_email("owner@visichek.test") is True
+            assert is_test_email("owner@e2e.visichek.app") is True
 
     def test_matches_subdomain_of_test_domain(self):
         with patch("core.test_mode.get_settings", return_value=_settings()):
-            assert is_test_email("invitee@tenant-a.visichek.test") is True
+            assert is_test_email("invitee@tenant-a.e2e.visichek.app") is True
 
     def test_is_case_insensitive(self):
         with patch("core.test_mode.get_settings", return_value=_settings()):
-            assert is_test_email("Owner@VisiChek.TEST") is True
+            assert is_test_email("Owner@E2E.VisiChek.APP") is True
 
     def test_rejects_normal_domains(self):
         with patch("core.test_mode.get_settings", return_value=_settings()):
@@ -43,8 +43,8 @@ class TestIsTestEmail:
 
     def test_rejects_lookalike_suffix_without_dot_boundary(self):
         with patch("core.test_mode.get_settings", return_value=_settings()):
-            assert is_test_email("x@evilvisichek.test.com") is False
-            assert is_test_email("x@notvisichek.test") is False
+            assert is_test_email("x@evile2e.visichek.app.com") is False
+            assert is_test_email("x@not-e2e.visichek.app.evil.com") is False
 
     def test_rejects_empty_and_malformed(self):
         with patch("core.test_mode.get_settings", return_value=_settings()):
@@ -57,7 +57,7 @@ class TestIsTestEmail:
             "core.test_mode.get_settings",
             return_value=_settings(env="production"),
         ):
-            assert is_test_email("owner@visichek.test") is False
+            assert is_test_email("owner@e2e.visichek.app") is False
 
     def test_custom_domains_from_settings(self):
         with patch(
@@ -65,14 +65,14 @@ class TestIsTestEmail:
             return_value=_settings(domains=("qa.example",)),
         ):
             assert is_test_email("a@qa.example") is True
-            assert is_test_email("a@visichek.test") is False
+            assert is_test_email("a@e2e.visichek.app") is False
 
 
 class TestIssueTempPassword:
     def test_test_account_gets_fixed_password(self):
         settings = _settings()
         with patch("core.test_mode.get_settings", return_value=settings):
-            assert issue_temp_password("owner@visichek.test") == (
+            assert issue_temp_password("owner@e2e.visichek.app") == (
                 settings.test_temp_password
             )
 
@@ -87,7 +87,7 @@ class TestIssueTempPassword:
     def test_production_never_gets_fixed_password(self):
         settings = _settings(env="production")
         with patch("core.test_mode.get_settings", return_value=settings):
-            assert issue_temp_password("owner@visichek.test") != (
+            assert issue_temp_password("owner@e2e.visichek.app") != (
                 settings.test_temp_password
             )
 
@@ -114,7 +114,7 @@ class TestEmailSuppression:
         with patch("core.email.manager.is_test_email", return_value=True):
             result = await manager.send_template(
                 EmailDispatchRequest(
-                    to_email="owner@visichek.test",
+                    to_email="owner@e2e.visichek.app",
                     template_key="onboarding_accepted",
                 )
             )
@@ -137,7 +137,7 @@ class TestEmailSuppression:
         with patch("core.email.manager.is_test_email", return_value=True):
             result = await manager.send_message(
                 EmailMessage(
-                    to_email="owner@visichek.test",
+                    to_email="owner@e2e.visichek.app",
                     subject="s",
                     html_body="<p>h</p>",
                     text_body="t",
