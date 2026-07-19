@@ -40,7 +40,10 @@ def _p(name: str, methods: list[str], path: str, description: str = "") -> Permi
 
 ADMIN_PERMISSIONS: list[Permission] = [
     # Tenant management
-    _p("list_admins", ["GET"], "/v1/admins/", "List all application admins"),
+    # NOTE: no trailing slash — the gate compares keys built by
+    # make_permission_key() from the FastAPI route path ("/v1/admins"),
+    # and matching is exact. "GET:/v1/admins/" would never match.
+    _p("list_admins", ["GET"], "/v1/admins", "List all application admins"),
     _p("get_admin_profile", ["GET"], "/v1/admins/profile", "View own admin profile"),
     _p("create_admin", ["POST"], "/v1/admins/signup", "Invite a new application admin"),
     _p("delete_admin", ["DELETE"], "/v1/admins/account", "Delete own admin account"),
@@ -283,6 +286,12 @@ ADMIN_PERMISSIONS: list[Permission] = [
         ["GET"],
         "/v1/admins/dashboard/billing/discrepancies",
         "View billing discrepancies",
+    ),
+    _p(
+        "dashboard_incidents_oversight",
+        ["GET"],
+        "/v1/admins/dashboard/incidents",
+        "Cross-tenant incidents oversight (NDPC compliance)",
     ),
     # Application admin support cases
     _p(
