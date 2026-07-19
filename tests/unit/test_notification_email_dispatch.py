@@ -86,8 +86,12 @@ def _prefs_all_on() -> SimpleNamespace:
     )
 
 
-@patch("services.notification_service._record_email_outbox_send", new_callable=AsyncMock)
-@patch("services.notification_service._record_email_outbox_skip", new_callable=AsyncMock)
+@patch(
+    "services.notification_service._record_email_outbox_send", new_callable=AsyncMock
+)
+@patch(
+    "services.notification_service._record_email_outbox_skip", new_callable=AsyncMock
+)
 @patch("core.email.manager.EmailManager.get_instance")
 @patch(
     "services.notification_service.retrieve_or_create_notification_preferences",
@@ -122,8 +126,12 @@ async def test_no_transport_records_skip_not_smtp_reason(
     mock_send_row.assert_not_awaited()
 
 
-@patch("services.notification_service._record_email_outbox_send", new_callable=AsyncMock)
-@patch("services.notification_service._record_email_outbox_skip", new_callable=AsyncMock)
+@patch(
+    "services.notification_service._record_email_outbox_send", new_callable=AsyncMock
+)
+@patch(
+    "services.notification_service._record_email_outbox_skip", new_callable=AsyncMock
+)
 @patch("core.email.manager.EmailManager.get_instance")
 @patch(
     "services.notification_service.retrieve_or_create_notification_preferences",

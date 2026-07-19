@@ -115,16 +115,19 @@ async def test_onboarding_status_email_links_to_tenant_login(
     manager = _manager()
     mock_get_instance.return_value = manager
 
-    submission = cast(Any, SimpleNamespace(
-        id="sub1",
-        email="founder@acme.test",
-        full_name="Fran Founder",
-        organization_name="Acme Corp",
-        review_notes="",
-        pending_field_keys=[],
-        pending_field_labels={},
-        tenant_id="t1",
-    ))
+    submission = cast(
+        Any,
+        SimpleNamespace(
+            id="sub1",
+            email="founder@acme.test",
+            full_name="Fran Founder",
+            organization_name="Acme Corp",
+            review_notes="",
+            pending_field_keys=[],
+            pending_field_labels={},
+            tenant_id="t1",
+        ),
+    )
     await _queue_status_email(submission, template_key="onboarding_completed")
 
     ctx = _sent_context(manager)

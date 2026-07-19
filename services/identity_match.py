@@ -97,9 +97,7 @@ def _tokens(value: str) -> list[str]:
     against "ngozi" would only add noise.
     """
     return [
-        t
-        for t in _normalise(value).split()
-        if len(t) > 1 and t not in _NOISE_TOKENS
+        t for t in _normalise(value).split() if len(t) > 1 and t not in _NOISE_TOKENS
     ]
 
 

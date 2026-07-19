@@ -236,8 +236,7 @@ async def _send_dedicated_host_reminder(
                 "recipient_name": host_name or host_email,
                 "title": "Upcoming Appointment",
                 "body": (
-                    f"You have an appointment with {visitor_name} "
-                    "in about 30 minutes."
+                    f"You have an appointment with {visitor_name} in about 30 minutes."
                 ),
                 "link": "",
                 "visitor_name": visitor_name,
@@ -306,9 +305,7 @@ async def send_due_appointment_reminders() -> dict:
         host_id = str(doc.get("host_id") or "")
 
         try:
-            recipient_user_id, host_contact = await _resolve_reminder_recipient(
-                host_id
-            )
+            recipient_user_id, host_contact = await _resolve_reminder_recipient(host_id)
             if recipient_user_id:
                 from schemas.imports import UserType
                 from services.notification_service import notify_appointment_reminder

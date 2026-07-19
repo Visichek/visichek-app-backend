@@ -209,7 +209,11 @@ def login_with_otp(
         "POST", login_path, json_body={"email": email, "password": password}
     )
     if response.status_code != 200:
-        return False, {}, f"{login_path} -> HTTP {response.status_code}: {response.text[:300]}"
+        return (
+            False,
+            {},
+            f"{login_path} -> HTTP {response.status_code}: {response.text[:300]}",
+        )
     data = api.envelope(response) or {}
 
     if pick(data, "tenant_selection_required"):
@@ -233,7 +237,11 @@ def login_with_otp(
             json_body={"otp_challenge_id": challenge_id, "otp_code": otp_code},
         )
         if response.status_code != 200:
-            return False, {}, f"{verify_path} -> HTTP {response.status_code}: {response.text[:300]}"
+            return (
+                False,
+                {},
+                f"{verify_path} -> HTTP {response.status_code}: {response.text[:300]}",
+            )
         data = api.envelope(response) or {}
 
     if not api.adopt_tokens(data):
@@ -303,7 +311,9 @@ def run(args: argparse.Namespace) -> int:
     owner_password = f"Owner!Chg9.{run_id}Aa"
     invite_password = f"Invite!Chg7.{run_id}Bb"
 
-    print(f"== VisiChek onboarding E2E ==\n   base={args.base_url}\n   owner={owner_email}\n   org={org_name}\n")
+    print(
+        f"== VisiChek onboarding E2E ==\n   base={args.base_url}\n   owner={owner_email}\n   org={org_name}\n"
+    )
 
     public = Api(args.base_url, "public")
     admin = Api(args.base_url, "admin")
@@ -388,7 +398,11 @@ def run(args: argparse.Namespace) -> int:
         ):
             return finish()
 
-        user_obj = pick(payload, "user") if isinstance(pick(payload, "user"), dict) else payload
+        user_obj = (
+            pick(payload, "user")
+            if isinstance(pick(payload, "user"), dict)
+            else payload
+        )
         REPORT.record(
             "must_change_password=true on first login",
             bool(pick(user_obj, "must_change_password")),
@@ -432,8 +446,7 @@ def run(args: argparse.Namespace) -> int:
         me = owner.envelope(response) or {}
         REPORT.record(
             "GET /v1/system-users/me after password change",
-            response.status_code == 200
-            and not pick(me, "must_change_password", False),
+            response.status_code == 200 and not pick(me, "must_change_password", False),
             f"HTTP {response.status_code} must_change_password={pick(me, 'must_change_password')}",
         )
 
@@ -476,9 +489,7 @@ def run(args: argparse.Namespace) -> int:
                 )
                 ok = pick(job, "status") == "succeeded"
             else:
-                created_id = pick(data, "id") or pick(
-                    pick(data, "user") or {}, "id"
-                )
+                created_id = pick(data, "id") or pick(pick(data, "user") or {}, "id")
                 ok = response.status_code in (200, 201)
             if created_id:
                 invite_ids[role] = str(created_id)
@@ -509,7 +520,9 @@ def run(args: argparse.Namespace) -> int:
                 data = owner.envelope(response) or {}
                 job_id = pick(data, "job_id")
                 if job_id:
-                    reset_accepted = pick(owner.poll_job(job_id), "status") == "succeeded"
+                    reset_accepted = (
+                        pick(owner.poll_job(job_id), "status") == "succeeded"
+                    )
             REPORT.record(
                 "authority password reset (receptionist)",
                 reset_accepted,
@@ -557,7 +570,9 @@ def run(args: argparse.Namespace) -> int:
         data = owner.envelope(response) or {}
         dept_ok = response.status_code in (200, 201)
         if response.status_code == 202 and pick(data, "job_id"):
-            dept_ok = pick(owner.poll_job(pick(data, "job_id")), "status") == "succeeded"
+            dept_ok = (
+                pick(owner.poll_job(pick(data, "job_id")), "status") == "succeeded"
+            )
         REPORT.record(
             "create department (queued write + job poll)",
             dept_ok,
@@ -632,14 +647,14 @@ def sweep(public: Api, admin: Api, owner: Api, args: argparse.Namespace) -> None
     """
     response = public.request("GET", "/openapi.json")
     if response.status_code != 200:
-        REPORT.record("openapi sweep", False, f"/openapi.json -> {response.status_code}")
+        REPORT.record(
+            "openapi sweep", False, f"/openapi.json -> {response.status_code}"
+        )
         return
     spec = response.json()
     paths = spec.get("paths", {})
     get_paths = sorted(
-        path
-        for path, ops in paths.items()
-        if "get" in ops and "{" not in path
+        path for path, ops in paths.items() if "get" in ops and "{" not in path
     )
     print(f"\n-- OpenAPI GET sweep: {len(get_paths)} parameterless GET endpoints --")
     failures: list[str] = []
@@ -701,15 +716,11 @@ def main() -> int:
             "passing them on the command line."
         ),
     )
-    parser.add_argument(
-        "--admin-email", default=os.getenv("VISICHEK_ADMIN_EMAIL", "")
-    )
+    parser.add_argument("--admin-email", default=os.getenv("VISICHEK_ADMIN_EMAIL", ""))
     parser.add_argument(
         "--admin-password", default=os.getenv("VISICHEK_ADMIN_PASSWORD", "")
     )
-    parser.add_argument(
-        "--otp-code", default=os.getenv("VISICHEK_OTP_CODE", "123456")
-    )
+    parser.add_argument("--otp-code", default=os.getenv("VISICHEK_OTP_CODE", "123456"))
     parser.add_argument(
         "--test-domain", default=os.getenv("VISICHEK_TEST_DOMAIN", "e2e.visichek.app")
     )
@@ -733,9 +744,7 @@ def main() -> int:
 
     if args.env_file:
         env_values = load_env_file(args.env_file)
-        args.admin_email = args.admin_email or env_values.get(
-            "SUPER_ADMIN_EMAIL", ""
-        )
+        args.admin_email = args.admin_email or env_values.get("SUPER_ADMIN_EMAIL", "")
         args.admin_password = args.admin_password or env_values.get(
             "SUPER_ADMIN_PASSWORD", ""
         )

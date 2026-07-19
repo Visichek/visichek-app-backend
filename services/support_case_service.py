@@ -180,9 +180,7 @@ async def _list_admin_recipients() -> List[tuple[str, str]]:
             {"account_status": AccountStatus.ACTIVE.value}, start=0, stop=200
         )
         return [
-            (str(a.id or ""), str(a.email))
-            for a in admins
-            if getattr(a, "email", None)
+            (str(a.id or ""), str(a.email)) for a in admins if getattr(a, "email", None)
         ]
     except Exception:
         logger.debug("list admin emails failed", exc_info=True)

@@ -381,9 +381,7 @@ async def _queue_dunning_email(
     """
     settings = get_settings()
     max_attempts = settings.max_dunning_attempts
-    stage, subject_line, title, body = _dunning_stage_copy(
-        attempt_number, max_attempts
-    )
+    stage, subject_line, title, body = _dunning_stage_copy(attempt_number, max_attempts)
 
     recipient_email, recipient_name = await _resolve_billing_recipient(
         subscription.tenant_id
@@ -432,9 +430,7 @@ async def _queue_dunning_email(
                 dispatch="auto",
             )
         )
-        logger.info(
-            "Queued %s email for subscription %s", stage, subscription.id
-        )
+        logger.info("Queued %s email for subscription %s", stage, subscription.id)
     except Exception as e:
         logger.error(f"Failed to queue dunning email: {str(e)}", exc_info=True)
 

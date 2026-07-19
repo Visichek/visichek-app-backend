@@ -164,9 +164,8 @@ def build_email_brand(context: dict) -> dict | None:
     # at this single choke point — the shell interpolates the returned dict
     # raw — so consumers can never inject markup, attribute breakouts, or CSS.
     brand: dict = {}
-    if (
-        isinstance(logo_url, str)
-        and logo_url.lower().startswith(("https://", "http://"))
+    if isinstance(logo_url, str) and logo_url.lower().startswith(
+        ("https://", "http://")
     ):
         # escape() turns `&` → `&amp;` (also the correct HTML form for the
         # `&`-laden presigned S3 URL) and neutralises any quote breakout.

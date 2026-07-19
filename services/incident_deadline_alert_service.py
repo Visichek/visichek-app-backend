@@ -128,8 +128,7 @@ async def alert_approaching_incident_deadlines() -> dict:
                 delivered_any = True
             except Exception:
                 logger.warning(
-                    "incident deadline alerts: notify failed for user %s "
-                    "(incident %s)",
+                    "incident deadline alerts: notify failed for user %s (incident %s)",
                     user.id,
                     incident_id,
                     exc_info=True,
@@ -140,7 +139,5 @@ async def alert_approaching_incident_deadlines() -> dict:
             skipped += 1
 
     if alerted or skipped:
-        logger.info(
-            "incident deadline alerts: alerted=%s skipped=%s", alerted, skipped
-        )
+        logger.info("incident deadline alerts: alerted=%s skipped=%s", alerted, skipped)
     return {"alerted": alerted, "skipped": skipped}

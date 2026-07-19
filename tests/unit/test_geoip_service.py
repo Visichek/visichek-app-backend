@@ -28,8 +28,19 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize(
     "ip",
-    [None, "", "not-an-ip", "192.168.1.10", "10.0.0.5", "172.16.3.1",
-     "127.0.0.1", "169.254.1.1", "0.0.0.0", "::1", "fe80::1"],
+    [
+        None,
+        "",
+        "not-an-ip",
+        "192.168.1.10",
+        "10.0.0.5",
+        "172.16.3.1",
+        "127.0.0.1",
+        "169.254.1.1",
+        "0.0.0.0",
+        "::1",
+        "fe80::1",
+    ],
 )
 def test_non_lookupable_ips(ip) -> None:
     assert _is_lookupable_ip(ip) is False

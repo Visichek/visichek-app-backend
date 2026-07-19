@@ -349,9 +349,7 @@ async def _enrich_checkins_with_visitors(
                 **c.model_dump(by_alias=True),
                 visitor=_visitor_to_brief(visitor) if visitor is not None else None,
                 branch_summary=branch_by_id.get(c.branch_id) if c.branch_id else None,
-                identity_check=_build_identity_check(
-                    c, kyc_by_checkin.get(c.id or "")
-                ),
+                identity_check=_build_identity_check(c, kyc_by_checkin.get(c.id or "")),
             )
         )
     return enriched
