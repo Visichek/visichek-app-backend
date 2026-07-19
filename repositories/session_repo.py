@@ -46,14 +46,16 @@ async def rotate_session_access_token(
     new_access_token_id: str,
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
+    location: Optional[str] = None,
 ) -> Optional[SessionOut]:
     """Re-point an existing session row at a freshly minted access token.
 
     Called on token refresh: the device keeps the same session, only its
     backing access-token id rotates. Bumps ``last_active_at`` and refreshes
-    ip/user-agent in the same write. Returns the updated row, or ``None``
-    when no session matches ``old_access_token_id`` (caller then inserts a
-    new row — e.g. sessions issued before this rotation logic landed).
+    ip/user-agent (and geo location, when resolved) in the same write.
+    Returns the updated row, or ``None`` when no session matches
+    ``old_access_token_id`` (caller then inserts a new row — e.g. sessions
+    issued before this rotation logic landed).
     """
     import time
 
@@ -65,6 +67,8 @@ async def rotate_session_access_token(
         set_fields["ip_address"] = ip_address
     if user_agent is not None:
         set_fields["user_agent"] = user_agent
+    if location is not None:
+        set_fields["location"] = location
 
     doc = await db[COLLECTION].find_one_and_update(
         {"access_token_id": old_access_token_id},

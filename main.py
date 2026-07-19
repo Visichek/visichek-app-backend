@@ -563,6 +563,26 @@ async def lifespan(app: FastAPI):
         name="Appointment No-Show Sweeper",
         replace_existing=True,
     )
+    # Remind hosts ~30 minutes before a scheduled appointment. In-app
+    # always; email per the host's email_on_appointment_reminder
+    # preference. Dedup via the reminder_sent_at claim on each row.
+    scheduler.add_job(
+        "services.appointment_lifecycle_service:send_due_appointment_reminders",
+        trigger=IntervalTrigger(minutes=5),
+        id="appointment_reminder_sweep",
+        name="Appointment Reminder Sweeper",
+        replace_existing=True,
+    )
+    # NDPC 72-hour reporting deadline watchdog: page the tenant's dpo /
+    # security_officer / super_admin once an unreported incident enters
+    # the final 24 hours. Dedup via the deadline_alert_sent_at claim.
+    scheduler.add_job(
+        "services.incident_deadline_alert_service:alert_approaching_incident_deadlines",
+        trigger=IntervalTrigger(hours=1),
+        id="incident_deadline_alerts",
+        name="Incident NDPC Deadline Alerts",
+        replace_existing=True,
+    )
     # Trial integrity watchdog: detect any tenant that ended up with more
     # than one redeemed ("used") trial (legacy data / races) and raise a
     # support case. The tenant_used_trial_unique DB index prevents new

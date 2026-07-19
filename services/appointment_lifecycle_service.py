@@ -157,3 +157,197 @@ async def mark_no_shows() -> int:
     if count:
         logger.info("appointment.no_show_sweep marked %s appointments", count)
     return count
+
+
+# How far ahead of the scheduled time the reminder fires. The sweeper
+# runs every 5 minutes via APScheduler, so a host is reminded roughly
+# 25-30 minutes before the visit.
+REMINDER_WINDOW_SECONDS = 30 * 60
+REMINDER_BATCH_LIMIT = 200
+
+
+async def _resolve_reminder_recipient(host_id: str) -> tuple[Optional[str], dict]:
+    """Resolve who should receive the reminder for ``host_id``.
+
+    Returns ``(system_user_id, host_contact)``:
+
+    * hosts backed by a tenant system_user (``source_system_user_id``) →
+      that user id, so the notification path applies their preferences;
+    * dedicated hosts (host record only) → ``(None, {name, email})`` so
+      the caller can email the host record's address directly;
+    * legacy appointments whose ``host_id`` predates the hosts collection
+      and points straight at a system_user → that user id.
+    """
+    if not ObjectId.is_valid(host_id):
+        return None, {}
+
+    try:
+        from repositories.host_repo import get_host
+
+        host = await get_host({"_id": ObjectId(host_id)})
+        if host is not None:
+            if host.source_system_user_id:
+                return host.source_system_user_id, {}
+            return None, {
+                "name": getattr(host, "name", None) or "",
+                "email": getattr(host, "email", None) or "",
+            }
+    except Exception:
+        logger.debug("reminder: host lookup failed for %s", host_id, exc_info=True)
+
+    try:
+        from repositories.system_user_repo import get_system_user
+
+        user = await get_system_user({"_id": ObjectId(host_id)})
+        if user is not None and user.id:
+            return user.id, {}
+    except Exception:
+        logger.debug(
+            "reminder: legacy system_user lookup failed for %s",
+            host_id,
+            exc_info=True,
+        )
+    return None, {}
+
+
+async def _send_dedicated_host_reminder(
+    *,
+    host_email: str,
+    host_name: str,
+    visitor_name: str,
+    appointment_id: str,
+) -> None:
+    """Email a reminder to a dedicated host (no system_user account).
+
+    Dedicated hosts have no notification-preferences row, so the email
+    goes out unconditionally — it's the only channel that can reach them.
+    """
+    from core.email.manager import EmailManager
+    from core.email.types import EmailDispatchRequest
+
+    manager = EmailManager.get_instance()
+    if not manager.has_transport():
+        return
+    await manager.send_template(
+        EmailDispatchRequest(
+            to_email=host_email,
+            template_key="notif_appointment_reminder",
+            context={
+                "recipient_name": host_name or host_email,
+                "title": "Upcoming Appointment",
+                "body": (
+                    f"You have an appointment with {visitor_name} "
+                    "in about 30 minutes."
+                ),
+                "link": "",
+                "visitor_name": visitor_name,
+                "appointment_id": appointment_id,
+            },
+            dispatch="auto",
+        )
+    )
+
+
+async def send_due_appointment_reminders() -> dict:
+    """Remind hosts about appointments starting within the next 30 minutes.
+
+    Runs every 5 minutes via APScheduler. Each appointment is claimed
+    atomically (``reminder_sent_at`` flips from absent/None to now) so a
+    concurrent run or web/worker overlap can never double-send. Rows are
+    never retried after a claim — a failed notification is logged, not
+    re-queued, because a late duplicate reminder is worse than a missed
+    one this close to the visit.
+    """
+    now = int(time.time())
+    window_end = now + REMINDER_WINDOW_SECONDS
+    sent = 0
+    skipped = 0
+
+    try:
+        cursor = (
+            db.expected_appointments.find(
+                {
+                    "status": AppointmentStatus.SCHEDULED.value,
+                    "scheduled_datetime": {"$gte": now, "$lte": window_end},
+                    "reminder_sent_at": None,
+                }
+            )
+            .sort("scheduled_datetime", 1)
+            .limit(REMINDER_BATCH_LIMIT)
+        )
+        due = [doc async for doc in cursor]
+    except Exception:
+        logger.warning("appointment reminders: query failed", exc_info=True)
+        return {"sent": 0, "skipped": 0}
+
+    for doc in due:
+        appointment_id = str(doc.get("_id"))
+        # Atomic claim — only one sweep instance wins this row.
+        try:
+            claimed = await db.expected_appointments.find_one_and_update(
+                {"_id": doc["_id"], "reminder_sent_at": None},
+                {"$set": {"reminder_sent_at": now}},
+            )
+        except Exception:
+            logger.warning(
+                "appointment reminders: claim failed for %s",
+                appointment_id,
+                exc_info=True,
+            )
+            continue
+        if claimed is None:
+            skipped += 1
+            continue
+
+        visitor_name = (
+            str(doc.get("visitor_name_snapshot") or "").strip() or "a visitor"
+        )
+        tenant_id = str(doc.get("tenant_id") or "")
+        host_id = str(doc.get("host_id") or "")
+
+        try:
+            recipient_user_id, host_contact = await _resolve_reminder_recipient(
+                host_id
+            )
+            if recipient_user_id:
+                from schemas.imports import UserType
+                from services.notification_service import notify_appointment_reminder
+
+                await notify_appointment_reminder(
+                    user_id=recipient_user_id,
+                    user_type=UserType.SYSTEM_USER,
+                    appointment_id=appointment_id,
+                    visitor_name=visitor_name,
+                    tenant_id=tenant_id,
+                )
+                sent += 1
+            elif host_contact.get("email"):
+                await _send_dedicated_host_reminder(
+                    host_email=host_contact["email"],
+                    host_name=host_contact.get("name", ""),
+                    visitor_name=visitor_name,
+                    appointment_id=appointment_id,
+                )
+                sent += 1
+            else:
+                skipped += 1
+                logger.info(
+                    "appointment reminders: no reachable host for %s (host_id=%s)",
+                    appointment_id,
+                    host_id,
+                )
+        except Exception:
+            logger.warning(
+                "appointment reminders: notify failed for %s",
+                appointment_id,
+                exc_info=True,
+            )
+
+    if sent or skipped:
+        logger.info(
+            "appointment reminders: sent=%s skipped=%s window=%ss",
+            sent,
+            skipped,
+            REMINDER_WINDOW_SECONDS,
+        )
+    return {"sent": sent, "skipped": skipped}

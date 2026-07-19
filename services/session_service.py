@@ -91,13 +91,22 @@ async def record_session(
     to the new value instead of inserting a duplicate. If no row matches
     the expired id (e.g. the session predates rotation, or was revoked) we
     fall back to inserting a new row so the device still shows up.
+
+    ``location`` is resolved best-effort from the IP (Redis-cached geoip
+    lookup) — callers already run us fire-and-forget, so the few ms of a
+    cached lookup (or the one-off provider call) never blocks auth.
     """
+    from services.geoip_service import lookup_ip_location
+
+    location = await lookup_ip_location(ip_address)
+
     if previous_access_token_id:
         rotated = await rotate_session_access_token(
             old_access_token_id=previous_access_token_id,
             new_access_token_id=access_token_id,
             ip_address=ip_address,
             user_agent=user_agent,
+            location=location,
         )
         if rotated is not None:
             return rotated
@@ -112,6 +121,7 @@ async def record_session(
         user_agent=user_agent,
         device_type=device_type,
         device=device_label,
+        location=location,
     )
     return await create_session(data)
 

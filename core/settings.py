@@ -104,6 +104,9 @@ class Settings:
     otp_max_attempts: int = 5
     # Public base URL used to build absolute checkout links (app-mode fallback)
     app_base_url: str = ""
+    # Best-effort IP → location lookups for the sessions table (ipwho.is).
+    # Disable to keep the backend fully offline-capable.
+    geoip_enabled: bool = True
     # Default TTL (seconds) for a checkout session before it expires
     checkout_session_ttl_seconds: int = 24 * 60 * 60
     # Where hosted-checkout providers (Paystack / Flutterwave) redirect the
@@ -310,6 +313,8 @@ def get_settings() -> Settings:
         otp_ttl_seconds=int(os.getenv("OTP_TTL_SECONDS", "300")),
         otp_max_attempts=int(os.getenv("OTP_MAX_ATTEMPTS", "5")),
         app_base_url=os.getenv("APP_BASE_URL", "").strip(),
+        geoip_enabled=os.getenv("GEOIP_ENABLED", "true").lower()
+        in {"1", "true", "yes"},
         checkout_session_ttl_seconds=int(
             os.getenv("CHECKOUT_SESSION_TTL_SECONDS", str(24 * 60 * 60))
         ),
