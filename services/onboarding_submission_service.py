@@ -10,6 +10,7 @@ from bson import ObjectId
 from core.email_utils import normalize_email
 from core.errors import AppException, ErrorCode
 from core.settings import get_settings
+from core.test_mode import is_test_email, issue_temp_password
 from repositories.onboarding_submission_repo import (
     count_submissions,
     create_submission,
@@ -68,9 +69,19 @@ async def submit_onboarding(
         error code.
     """
     await _ensure_self_onboarding_enabled()
-    await _verify_turnstile_token(request.turnstile_token, client_ip=client_ip)
 
     extracted = _extract_indexed_fields(request.payload)
+
+    # Test accounts (non-production only) skip the Turnstile round-trip so
+    # automated E2E runs can drive this endpoint without a real browser
+    # challenge. is_test_email() is a hard False in production.
+    if is_test_email(extracted.get("email")):
+        logger.info(
+            "Test-email onboarding submission (%s); skipping Turnstile",
+            extracted.get("email"),
+        )
+    else:
+        await _verify_turnstile_token(request.turnstile_token, client_ip=client_ip)
 
     create_data = OnboardingSubmissionCreate(
         form_version=request.form_version,
@@ -476,7 +487,6 @@ async def _accept_internal(
 ) -> OnboardingAcceptOut:
     from repositories.system_user_repo import get_system_user
     from schemas.system_user_schema import SystemUserCreate
-    from security.password_policy import generate_secure_temp_password
     from services.system_user_service import add_system_user
     from services.tenant_service import add_tenant
 
@@ -517,8 +527,9 @@ async def _accept_internal(
     # sees the cleartext. The new super_admin row is marked
     # ``must_change_password=True`` so the gate dep refuses every
     # endpoint except ``POST /v1/auth/change-password`` until the user
-    # picks their own.
-    admin_password = generate_secure_temp_password()
+    # picks their own. Test-domain accounts (non-production) get the
+    # fixed test temp password instead — see core/test_mode.py.
+    admin_password = issue_temp_password(admin_email)
 
     pending_field_labels: Dict[str, str] = {}
     if pending_field_keys:

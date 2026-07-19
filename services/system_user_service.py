@@ -292,9 +292,9 @@ async def add_super_admin_to_tenant(
     because at this point we have just verified zero existing
     super_admins.
     """
+    from core.test_mode import issue_temp_password
     from schemas.imports import AccountStatus as _AccountStatus
     from schemas.imports import SystemUserRole as _SystemUserRole
-    from security.password_policy import generate_secure_temp_password
     from services.tenant_service import retrieve_tenant_by_id
     from repositories.system_user_repo import count_active_super_admins
 
@@ -326,7 +326,7 @@ async def add_super_admin_to_tenant(
             },
         )
 
-    raw_password = generate_secure_temp_password()
+    raw_password = issue_temp_password(email)
     create_data = SystemUserCreate(
         tenant_id=tenant_id,
         branch_ids=list(branch_ids) if branch_ids else [],
@@ -450,10 +450,10 @@ async def replace_super_admin_for_tenant(
         update_system_user,
     )
     from repositories.tokens_repo import delete_all_tokens_with_user_id
+    from core.test_mode import issue_temp_password
     from schemas.imports import AccountStatus as _AccountStatus
     from schemas.imports import SystemUserRole as _SystemUserRole
     from schemas.system_user_schema import SystemUserUpdate
-    from security.password_policy import generate_secure_temp_password
     from services.audit_service import record_audit_event
     from services.tenant_service import retrieve_tenant_by_id
 
@@ -502,7 +502,7 @@ async def replace_super_admin_for_tenant(
             },
         )
 
-    raw_password = generate_secure_temp_password()
+    raw_password = issue_temp_password(email)
 
     # 1. Drop the main flag from the old row first so the partial-unique
     # index on (tenant_id, is_main_super_admin=True) does not reject

@@ -129,7 +129,7 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
       flips ``must_change_password=True`` on the new row, and emails
       the cleartext value via the ``admin_invite`` template
     """
-    from security.password_policy import generate_secure_temp_password
+    from core.test_mode import issue_temp_password
     from security.temp_password import issued_at_now as _issued_at_now
 
     normalized = normalize_email(signup_data.email)
@@ -164,7 +164,7 @@ async def add_admin(signup_data: AdminSignupRequest, invited_by: str) -> AdminOu
     # The inviter doesn't (and cannot) choose the password — generate
     # a policy-compliant value here and email it. The cleartext is
     # never returned in the API response.
-    temp_password = generate_secure_temp_password()
+    temp_password = issue_temp_password(signup_data.email)
 
     admin_data = AdminCreate(
         full_name=signup_data.full_name,

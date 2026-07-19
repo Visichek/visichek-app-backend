@@ -274,9 +274,9 @@ async def reset_system_user_password_by_authority(
             ),
         )
 
-    from security.password_policy import generate_secure_temp_password
+    from core.test_mode import issue_temp_password
 
-    new_password = generate_secure_temp_password()
+    new_password = issue_temp_password(user.get("email"))
     hashed = await _enforce_new_password_policy(
         target_user_id, new_password, role="system_user"
     )

@@ -34,7 +34,9 @@ class EmailMessage:
 
 @dataclass(frozen=True)
 class EmailSendResult:
-    status: Literal["sent", "queued"]
+    # ``skipped`` = recipient is a test-domain address (non-production
+    # only) and the send was suppressed — see core/test_mode.py.
+    status: Literal["sent", "queued", "skipped"]
     attempts: int
     task_id: str | None = None
 

@@ -20,6 +20,7 @@ from core.email.types import (
     MountedTemplate,
 )
 from core.settings import get_settings
+from core.test_mode import is_test_email
 
 
 def build_email_transport(
@@ -167,6 +168,15 @@ class EmailManager:
         if mode not in {"auto", "sync", "queued"}:
             raise ValueError(f"Unsupported dispatch mode '{mode}'")
 
+        if is_test_email(request.to_email):
+            self._logger.info(
+                "Suppressing '%s' email to test address %s (non-production "
+                "test-mode bypass)",
+                request.template_key,
+                request.to_email,
+            )
+            return EmailSendResult(status="skipped", attempts=0)
+
         should_queue = mode == "queued" or (mode == "auto" and self._queue_enabled)
         if should_queue:
             try:
@@ -202,6 +212,16 @@ class EmailManager:
         )
 
     async def send_message(self, message: EmailMessage) -> EmailSendResult:
+        # Belt-and-braces with the send_template gate: also covers the
+        # queued worker path and any direct send_message caller.
+        if is_test_email(message.to_email):
+            self._logger.info(
+                "Suppressing email to test address %s (non-production "
+                "test-mode bypass)",
+                message.to_email,
+            )
+            return EmailSendResult(status="skipped", attempts=0)
+
         if self._transport is None:
             if self._provider == "resend":
                 raise RuntimeError(

@@ -102,6 +102,15 @@ class Settings:
     otp_dev_code: str = "123456"
     otp_ttl_seconds: int = 300
     otp_max_attempts: int = 5
+    # ------------------------------------------------------------------
+    # Test-email bypass (NON-PRODUCTION ONLY — see core/test_mode.py).
+    # Accounts on these domains get suppressed email, skipped Turnstile
+    # on the public onboarding form, and the fixed temp password below
+    # instead of a random one. ``is_test_email`` hard-returns False in
+    # production, so these values are inert there.
+    # ------------------------------------------------------------------
+    test_email_domains: tuple[str, ...] = ("visichek.test",)
+    test_temp_password: str = "VisiChekT3st!Pass"
     # Public base URL used to build absolute checkout links (app-mode fallback)
     app_base_url: str = ""
     # Best-effort IP → location lookups for the sessions table (ipwho.is).
@@ -310,6 +319,12 @@ def get_settings() -> Settings:
             os.getenv("SESSION_INACTIVITY_TIMEOUT_MINUTES", "15")
         ),
         otp_dev_code=os.getenv("OTP_DEV_CODE", "123456"),
+        test_email_domains=tuple(
+            domain.strip().lower()
+            for domain in os.getenv("TEST_EMAIL_DOMAINS", "visichek.test").split(",")
+            if domain.strip()
+        ),
+        test_temp_password=os.getenv("TEST_TEMP_PASSWORD", "VisiChekT3st!Pass"),
         otp_ttl_seconds=int(os.getenv("OTP_TTL_SECONDS", "300")),
         otp_max_attempts=int(os.getenv("OTP_MAX_ATTEMPTS", "5")),
         app_base_url=os.getenv("APP_BASE_URL", "").strip(),
