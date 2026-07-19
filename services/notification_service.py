@@ -34,6 +34,18 @@ from schemas.imports import UserType
 logger = logging.getLogger(__name__)
 
 
+def _get_platform_name() -> str:
+    """Platform display name for email templates.
+
+    Lives in config/platform_config.py, NOT core.settings — the old
+    ``getattr(settings, "platform_name", "VisiChek")`` always hit the
+    fallback because Settings has no such field.
+    """
+    from config.platform_config import get_platform_config
+
+    return get_platform_config().platform_name
+
+
 # --- Notification CRUD ---
 
 
@@ -326,34 +338,36 @@ async def _dispatch_email_for_notification(
         )
         return
 
-    # ── SMTP configuration check ──────────────────────────────────
-    from core.settings import get_settings
+    # ── Transport configuration check ─────────────────────────────
+    # Must be provider-agnostic: a Resend deployment has no EMAIL_HOST,
+    # so probing settings.email_host here used to skip every
+    # notification email under EMAIL_PROVIDER=resend.
+    from core.email.manager import EmailManager
+    from core.email.types import EmailDispatchRequest
 
-    settings = get_settings()
-    if not getattr(settings, "email_host", None):
+    manager = EmailManager.get_instance()
+    if not manager.has_transport():
         await _record_email_outbox_skip(
             notification=notification,
             template_key=email_template_key,
             recipient_email=recipient_email,
-            reason="smtp_not_configured",
+            reason="email_transport_not_configured",
         )
         return
 
     # ── Dispatch ─────────────────────────────────────────────────
-    from core.email.manager import EmailManager
-    from core.email.types import EmailDispatchRequest
+    from config.platform_config import get_platform_config
 
     context = {
         "recipient_name": recipient_name or recipient_email,
         "title": fallback_title,
         "body": fallback_body,
         "link": link or "",
-        "tenant_name": getattr(settings, "platform_name", "VisiChek"),
+        "tenant_name": get_platform_config().platform_name,
         **email_context,
     }
 
     try:
-        manager = EmailManager.get_instance()
         result = await manager.send_template(
             EmailDispatchRequest(
                 to_email=recipient_email,
@@ -398,7 +412,7 @@ async def _record_email_outbox_skip(
     Reason values are human-readable but stable so the admin diagnostics
     page can group / count them: ``master_email_disabled``,
     ``channel_disabled``, ``event_disabled:<flag>``,
-    ``missing_recipient_email``, ``smtp_not_configured``.
+    ``missing_recipient_email``, ``email_transport_not_configured``.
     """
     try:
         from repositories.email_outbox_repo import insert_email_outbox_row
@@ -1124,6 +1138,12 @@ async def notify_checkin_pending_approval(
                     tenant_id=tenant_id,
                     resource_type="checkin",
                     resource_id=checkin_id,
+                    # Email is opt-in (email_on_visitor_check_in defaults
+                    # False) — without these keys the preference toggle in
+                    # the UI was inert.
+                    email_template_key="notif_visitor_check_in",
+                    email_context={"visitor_name": visitor_name},
+                    preference_flag="email_on_visitor_check_in",
                 )
             except Exception:
                 logger.warning(f"Failed to notify approver {user.id}", exc_info=True)
@@ -1167,6 +1187,9 @@ async def notify_checkin_approved(
                     tenant_id=tenant_id,
                     resource_type="checkin",
                     resource_id=checkin_id,
+                    email_template_key="notif_visitor_check_in",
+                    email_context={"visitor_name": visitor_name},
+                    preference_flag="email_on_visitor_check_in",
                 )
             except Exception:
                 logger.warning(f"Failed to notify approver {user.id}", exc_info=True)
@@ -1200,6 +1223,9 @@ async def notify_checkin_rejected(
                     tenant_id=tenant_id,
                     resource_type="checkin",
                     resource_id=checkin_id,
+                    email_template_key="notif_visitor_check_in",
+                    email_context={"visitor_name": visitor_name},
+                    preference_flag="email_on_visitor_check_in",
                 )
             except Exception:
                 logger.warning(f"Failed to notify approver {user.id}", exc_info=True)
@@ -1653,8 +1679,9 @@ async def send_test_notification(
 
           - ``email_disabled_in_preferences`` — user toggled the
             master switch off.
-          - ``smtp_not_configured`` — platform SMTP isn't wired up
-            (``EMAIL_HOST``/etc. missing in settings).
+          - ``email_transport_not_configured`` — no email transport is
+            wired up (neither SMTP ``EMAIL_HOST``/etc. nor
+            ``EMAIL_PROVIDER=resend`` with ``RESEND_API_KEY``).
           - ``missing_recipient_email`` — no email on file for this
             account (defensive guard; shouldn't happen in practice).
 
@@ -1749,11 +1776,13 @@ async def send_test_notification(
         }
 
     settings = get_settings()
-    smtp_host = getattr(settings, "email_host", None)
-    if not smtp_host:
+    # Provider-agnostic transport check — a Resend deployment has no
+    # EMAIL_HOST, so the old settings.email_host probe broke the
+    # "Send test" button under EMAIL_PROVIDER=resend.
+    if not EmailManager.get_instance().has_transport():
         return {
             "delivered": False,
-            "skipped_reason": "smtp_not_configured",
+            "skipped_reason": "email_transport_not_configured",
             "message": None,
         }
 
@@ -1771,7 +1800,7 @@ async def send_test_notification(
                 template_key="notification_test",
                 context={
                     "recipient_name": recipient_name or recipient_email,
-                    "platform_name": getattr(settings, "platform_name", "VisiChek"),
+                    "platform_name": _get_platform_name(),
                     "triggered_at": datetime.now(timezone.utc)
                     .replace(microsecond=0)
                     .isoformat()

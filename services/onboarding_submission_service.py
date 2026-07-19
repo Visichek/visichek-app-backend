@@ -722,7 +722,8 @@ async def _queue_status_email(
         platform_name = settings.email_sender_name or "VisiChek"
         login_url = (settings.app_base_url or "").rstrip("/")
         if login_url:
-            login_url = f"{login_url}/login"
+            # New tenant super_admins sign in at the tenant portal.
+            login_url = f"{login_url}/app/login"
 
         context: Dict[str, Any] = {
             "full_name": submission.full_name or "",

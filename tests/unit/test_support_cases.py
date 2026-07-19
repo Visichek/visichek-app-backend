@@ -193,7 +193,7 @@ class TestEmailTierDispatch:
         """Returns the number of admin emails queued for the given tier."""
         queued: list[str] = []
 
-        async def fake_queue(to_email, template_key, context):
+        async def fake_queue(to_email, template_key, context, **kwargs):
             queued.append(template_key)
 
         with (
@@ -222,9 +222,9 @@ class TestEmailTierDispatch:
                 return_value="opener@example.com",
             ),
             patch(
-                "services.support_case_service._list_admin_emails",
+                "services.support_case_service._list_admin_recipients",
                 new_callable=AsyncMock,
-                return_value=["a1@x.com", "a2@x.com"],
+                return_value=[("id1", "a1@x.com"), ("id2", "a2@x.com")],
             ),
             patch(
                 "services.support_case_service._queue_email",

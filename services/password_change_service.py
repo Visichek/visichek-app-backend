@@ -381,7 +381,8 @@ async def _send_temp_password_reset_email(
         platform_name = settings.email_sender_name or "VisiChek"
         login_url = (settings.app_base_url or "").rstrip("/")
         if login_url:
-            login_url = f"{login_url}/login"
+            # Authority resets only target system_users → tenant portal.
+            login_url = f"{login_url}/app/login"
 
         await EmailManager.get_instance().send_template(
             EmailDispatchRequest(

@@ -141,6 +141,16 @@ class EmailManager:
             return cls.configure_from_settings()
         return cls._instance
 
+    def has_transport(self) -> bool:
+        """True when a send-capable transport (SMTP or Resend) is configured.
+
+        Callers that want to skip email work when no provider is set up
+        should use this instead of probing ``settings.email_host`` — that
+        check wrongly reports "not configured" for Resend deployments,
+        which have no SMTP host at all.
+        """
+        return self._transport is not None
+
     def mount_template(self, template: MountedTemplate) -> None:
         key = template.key.strip().lower()
         if not key:

@@ -166,8 +166,12 @@ async def _resolve_tenant_opener_email(case: SupportCaseOut) -> Optional[str]:
     return None
 
 
-async def _list_admin_emails() -> List[str]:
-    """Return the email of every active application admin."""
+async def _list_admin_recipients() -> List[tuple[str, str]]:
+    """Return ``(id, email)`` of every active application admin.
+
+    The id rides along so email dispatch can honor each admin's own
+    notification preferences.
+    """
     try:
         from repositories.admin_repo import get_admins
         from schemas.imports import AccountStatus
@@ -175,7 +179,11 @@ async def _list_admin_emails() -> List[str]:
         admins = await get_admins(
             {"account_status": AccountStatus.ACTIVE.value}, start=0, stop=200
         )
-        return [str(a.email) for a in admins if getattr(a, "email", None)]
+        return [
+            (str(a.id or ""), str(a.email))
+            for a in admins
+            if getattr(a, "email", None)
+        ]
     except Exception:
         logger.debug("list admin emails failed", exc_info=True)
         return []
@@ -250,12 +258,67 @@ def _throttle_admin_reply_email(case_id: str) -> bool:
         return True  # when Redis is flaky, err towards delivery
 
 
+async def _email_pref_allows(user_id: str, user_type: "UserType") -> bool:
+    """Whether the recipient's preferences allow a support-case email.
+
+    Mirrors the notification fan-out gate: master ``email_notifications``
+    in user settings, then ``email_enabled`` + ``email_on_support_case``
+    in notification preferences. Historically support-case emails ignored
+    these toggles entirely, so the ``email_on_support_case`` switch in the
+    UI did nothing. Fails OPEN on lookup errors — a Redis/Mongo blip must
+    never silently drop a support email.
+    """
+    try:
+        from repositories.user_settings_repo import get_user_settings
+
+        settings_row = await get_user_settings(
+            {"user_id": user_id, "user_type": user_type}
+        )
+        if settings_row is not None and not bool(
+            getattr(settings_row, "email_notifications", True)
+        ):
+            return False
+    except Exception:
+        pass
+    try:
+        from services.notification_service import (
+            retrieve_or_create_notification_preferences,
+        )
+
+        prefs = await retrieve_or_create_notification_preferences(user_id, user_type)
+        if not bool(getattr(prefs, "email_enabled", True)):
+            return False
+        if not bool(getattr(prefs, "email_on_support_case", True)):
+            return False
+    except Exception:
+        pass
+    return True
+
+
 async def _queue_email(
-    to_email: str, template_key: str, context: dict[str, Any]
+    to_email: str,
+    template_key: str,
+    context: dict[str, Any],
+    *,
+    recipient_user_id: Optional[str] = None,
+    recipient_user_type: Optional["UserType"] = None,
 ) -> None:
-    """Queue a templated email — silent on failure."""
+    """Queue a templated email — silent on failure.
+
+    When the caller knows who the recipient is (``recipient_user_id`` +
+    ``recipient_user_type``), the send respects that user's email
+    preferences (master toggle + ``email_on_support_case``).
+    """
     if not to_email:
         return
+    if recipient_user_id and recipient_user_type is not None:
+        if not await _email_pref_allows(recipient_user_id, recipient_user_type):
+            logger.info(
+                "support_case email skipped (preferences) template=%s user=%s",
+                template_key,
+                recipient_user_id,
+            )
+            return
     try:
         from core.email.manager import EmailManager
         from core.email.types import EmailDispatchRequest
@@ -439,12 +502,23 @@ async def add_support_case(
 
     # 3. Emails: tenant always, admins only for STANDARD+
     if opener_email:
-        await _queue_email(opener_email, "support_case.opened.tenant", ctx)
+        await _queue_email(
+            opener_email,
+            "support_case.opened.tenant",
+            ctx,
+            recipient_user_id=created.opened_by,
+            recipient_user_type=UserType.SYSTEM_USER,
+        )
 
     if support_tier in (SupportTier.STANDARD, SupportTier.PRIORITY):
-        admin_emails = await _list_admin_emails()
-        for email in admin_emails:
-            await _queue_email(email, "support_case.opened.admin", ctx)
+        for admin_id, email in await _list_admin_recipients():
+            await _queue_email(
+                email,
+                "support_case.opened.admin",
+                ctx,
+                recipient_user_id=admin_id or None,
+                recipient_user_type=UserType.ADMIN,
+            )
 
     # 4. In-app notifications: tier-independent
     try:
@@ -559,7 +633,11 @@ async def add_support_case_message(
             opener_email = await _resolve_tenant_opener_email(case)
             if opener_email and _throttle_admin_reply_email(case_id):
                 await _queue_email(
-                    opener_email, "support_case.admin_replied.tenant", ctx
+                    opener_email,
+                    "support_case.admin_replied.tenant",
+                    ctx,
+                    recipient_user_id=case.opened_by,
+                    recipient_user_type=UserType.SYSTEM_USER,
                 )
         elif actor_type == "tenant":
             if support_tier == SupportTier.PRIORITY and case.assigned_admin_id:
@@ -569,6 +647,8 @@ async def add_support_case_message(
                         admin_email,
                         "support_case.tenant_replied.admin",
                         ctx,
+                        recipient_user_id=case.assigned_admin_id,
+                        recipient_user_type=UserType.ADMIN,
                     )
 
     # In-app notifications
@@ -672,7 +752,13 @@ async def transition_support_case(
         SupportCaseStatus.CLOSED.value: "support_case.closed.tenant",
     }.get(target_enum.value)
     if opener_email and tenant_template:
-        await _queue_email(opener_email, tenant_template, ctx)
+        await _queue_email(
+            opener_email,
+            tenant_template,
+            ctx,
+            recipient_user_id=case.opened_by,
+            recipient_user_type=UserType.SYSTEM_USER,
+        )
 
     # Admin emails — tier-gated for PRIORITY (per-event notifications)
     if support_tier == SupportTier.PRIORITY and case.assigned_admin_id:
@@ -682,7 +768,13 @@ async def transition_support_case(
             SupportCaseStatus.CLOSED,
         ):
             # Re-use the generic assigned template since these are admin-side pings.
-            await _queue_email(admin_email, "support_case.assigned.admin", ctx)
+            await _queue_email(
+                admin_email,
+                "support_case.assigned.admin",
+                ctx,
+                recipient_user_id=case.assigned_admin_id,
+                recipient_user_type=UserType.ADMIN,
+            )
 
     # In-app
     try:
@@ -759,7 +851,13 @@ async def assign_support_case(
                 company_name=company_name,
                 support_tier=support_tier,
             )
-            await _queue_email(admin_email, "support_case.assigned.admin", ctx)
+            await _queue_email(
+                admin_email,
+                "support_case.assigned.admin",
+                ctx,
+                recipient_user_id=admin_id,
+                recipient_user_type=UserType.ADMIN,
+            )
 
     try:
         from services.notification_service import notify_support_case_assigned
@@ -1030,7 +1128,13 @@ async def nudge_awaiting_tenant_cases() -> None:
                 case, company_name=company_name, support_tier=support_tier
             )
             if opener_email:
-                await _queue_email(opener_email, "support_case.awaiting_tenant", ctx)
+                await _queue_email(
+                    opener_email,
+                    "support_case.awaiting_tenant",
+                    ctx,
+                    recipient_user_id=case.opened_by,
+                    recipient_user_type=UserType.SYSTEM_USER,
+                )
         except Exception:
             logger.warning("nudge email dispatch failed", exc_info=True)
 
@@ -1056,15 +1160,21 @@ async def alert_sla_breaches() -> None:
             continue
         company_name = await _resolve_tenant_company_name(tenant_id)
         ctx = _case_context(case, company_name=company_name, support_tier=support_tier)
-        recipients: List[str] = []
+        recipients: List[tuple[str, str]] = []
         if case.assigned_admin_id:
             email = await _resolve_admin_email(case.assigned_admin_id)
             if email:
-                recipients.append(email)
+                recipients.append((case.assigned_admin_id, email))
         else:
-            recipients = await _list_admin_emails()
-        for addr in recipients:
-            await _queue_email(addr, "support_case.sla_breach.admin", ctx)
+            recipients = await _list_admin_recipients()
+        for admin_id, addr in recipients:
+            await _queue_email(
+                addr,
+                "support_case.sla_breach.admin",
+                ctx,
+                recipient_user_id=admin_id or None,
+                recipient_user_type=UserType.ADMIN,
+            )
 
 
 # ---------------------------------------------------------------------------

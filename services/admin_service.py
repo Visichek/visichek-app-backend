@@ -95,7 +95,9 @@ async def _send_admin_invite_email(
         )
         login_url = (settings.app_base_url or "").rstrip("/")
         if login_url:
-            login_url = f"{login_url}/login"
+            # Admins sign in at the platform console — /login is a retired
+            # chooser that now redirects to the tenant portal.
+            login_url = f"{login_url}/admin/login"
 
         await EmailManager.get_instance().send_template(
             EmailDispatchRequest(

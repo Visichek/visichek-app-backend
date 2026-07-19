@@ -325,7 +325,7 @@ async def update_preferences(
         "queued).\n"
         "  - ``skipped_reason``: present when the email was intentionally "
         "skipped. Known values: ``email_disabled_in_preferences``, "
-        "``smtp_not_configured``, ``missing_recipient_email``, "
+        "``email_transport_not_configured``, ``missing_recipient_email``, "
         "``smtp_send_failed``, ``unexpected_error``.\n"
         "  - ``message``: optional human-readable error string when "
         "the skip reason warrants one (SMTP send failure, etc.).\n\n"

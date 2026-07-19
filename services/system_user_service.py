@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 
 from bson import ObjectId
@@ -42,6 +43,8 @@ from core.email_utils import normalize_email
 from config.role_permissions import get_default_permissions_for_role
 from services.audit_service import record_audit_event
 from services.plan_limits import enforce_entity_cap
+
+logger = logging.getLogger(__name__)
 
 
 async def _resolve_branch_ids_for_user_assignment(
@@ -223,6 +226,34 @@ async def add_system_user(
     except Exception:
         pass
 
+    # Heads-up for the tenant's super_admin(s): in-app always, email only
+    # for opt-ins (``email_on_new_user`` defaults to False). Fire-and-forget
+    # — a notification failure must never fail user creation. Previously
+    # ``notify_new_user_added`` had no caller, so the "New user" email
+    # preference in the UI did nothing.
+    try:
+        from services.notification_service import notify_new_user_added
+
+        super_admins = await get_system_users(
+            {
+                "tenant_id": new_user.tenant_id,
+                "role": "super_admin",
+                "is_active": True,
+            },
+            start=0,
+            stop=5,
+        )
+        for sa in super_admins:
+            if sa.id and sa.id != new_user.id:
+                await notify_new_user_added(
+                    sa.id,
+                    UserType.SYSTEM_USER,
+                    new_user.full_name or new_user.email,
+                    new_user.tenant_id,
+                )
+    except Exception:
+        logger.debug("new-user notification failed", exc_info=True)
+
     return new_user
 
 
@@ -347,7 +378,8 @@ async def _send_super_admin_welcome_email(
         platform_name = settings.email_sender_name or "VisiChek"
         login_url = (settings.app_base_url or "").rstrip("/")
         if login_url:
-            login_url = f"{login_url}/login"
+            # Tenant super_admins sign in at the tenant portal.
+            login_url = f"{login_url}/app/login"
 
         await EmailManager.get_instance().send_template(
             EmailDispatchRequest(

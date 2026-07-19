@@ -3,13 +3,16 @@ from __future__ import annotations
 from core.email.types import MountedTemplate
 from email_templates import admin_invite as _admin_invite
 from email_templates import admin_otp_code as _admin_otp_code
+from email_templates import billing_dunning as _billing_dunning
 from email_templates import dsr_access_package as _dsr_access_package
 from email_templates import dsr_completed as _dsr_completed
 from email_templates import dsr_in_progress as _dsr_in_progress
 from email_templates import notification_templates as _notification_templates
 from email_templates import notification_test as _notification_test
 from email_templates import onboarding_accepted as _onboarding_accepted
+from email_templates import onboarding_completed as _onboarding_completed
 from email_templates import onboarding_partial_accepted as _onboarding_partial_accepted
+from email_templates import onboarding_rejected as _onboarding_rejected
 from email_templates import password_reset as _password_reset
 from email_templates import password_reset_temp as _password_reset_temp
 from email_templates import starter_template as _starter
@@ -59,6 +62,14 @@ def get_mounted_templates() -> list[MountedTemplate]:
         # needs to sign in for the first time.
         _mount(_onboarding_accepted),
         _mount(_onboarding_partial_accepted),
+        # Rejection + completion status emails for the same flow — these
+        # keys were queued by the service long before the templates
+        # existed, so the worker dropped every rejection/completion email.
+        _mount(_onboarding_rejected),
+        _mount(_onboarding_completed),
+        # Billing dunning: payment retry warnings + the final Free
+        # downgrade notice (all stages share one template).
+        _mount(_billing_dunning),
         # Visitor lifecycle (Issue 7 — badge email on approval)
         _mount(_visitor_badge_approved),
         # DSR right-of-access: secure download link for the subject's data export.

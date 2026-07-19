@@ -237,7 +237,7 @@ def get_settings() -> Settings:
         email_username=os.getenv("EMAIL_USERNAME"),
         email_password=os.getenv("EMAIL_PASSWORD"),
         email_from_email=os.getenv("EMAIL_FROM_EMAIL"),
-        email_sender_name=os.getenv("EMAIL_SENDER_NAME", "FasterAPI"),
+        email_sender_name=os.getenv("EMAIL_SENDER_NAME", "VisiChek"),
         email_retry_attempts=int(os.getenv("EMAIL_RETRY_ATTEMPTS", "3")),
         email_retry_backoff_seconds=float(
             os.getenv("EMAIL_RETRY_BACKOFF_SECONDS", "1.0")

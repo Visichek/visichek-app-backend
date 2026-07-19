@@ -6,7 +6,6 @@ import time
 from bson import ObjectId
 
 from core.payments import PaymentIntentRequest, PaymentManager
-from core.queue import QueueManager
 from core.settings import get_settings
 from repositories.subscription_repo import (
     get_subscriptions,
@@ -288,50 +287,154 @@ async def _suspend_subscription(subscription: SubscriptionOut, now: int) -> None
         )
 
 
+def _dunning_stage_copy(
+    attempt_number: int | None, max_attempts: int
+) -> tuple[str, str, str, str]:
+    """Return ``(stage, subject_line, title, body)`` for a dunning email."""
+    if attempt_number is None or attempt_number >= max_attempts:
+        return (
+            "subscription_downgraded",
+            "Your subscription has been moved to the Free plan",
+            "Subscription moved to Free",
+            "We were unable to collect payment after several attempts, so "
+            "your workspace has been moved to the Free plan. Your data is "
+            "safe — upgrade again at any time to restore your previous "
+            "plan's features.",
+        )
+    if attempt_number == 1:
+        return (
+            "payment_failed",
+            "We couldn't process your subscription payment",
+            "Payment failed",
+            "Your latest subscription payment didn't go through. We'll retry "
+            "automatically — no action is needed if your payment method is "
+            "up to date.",
+        )
+    if attempt_number == 4:
+        return (
+            "payment_last_chance",
+            "Final notice: your subscription payment is still failing",
+            "Final payment notice",
+            "This is the last retry before your workspace is moved to the "
+            "Free plan. Please update your payment method now to keep your "
+            "current plan.",
+        )
+    return (
+        "payment_action_required",
+        "Action required: your subscription payment is failing",
+        "Action required",
+        "We still can't collect your subscription payment. Please review "
+        "your payment method to avoid losing access to your plan's "
+        "features.",
+    )
+
+
+async def _resolve_billing_recipient(
+    tenant_id: str,
+) -> tuple[str | None, str | None]:
+    """Best-effort ``(email, name)`` of the tenant's billing contact.
+
+    Prefers the main super_admin; falls back to any active super_admin.
+    """
+    try:
+        from repositories.system_user_repo import get_system_users
+
+        rows = await get_system_users(
+            {
+                "tenant_id": tenant_id,
+                "role": "super_admin",
+                "is_active": True,
+            },
+            start=0,
+            stop=10,
+        )
+        if not rows:
+            return None, None
+        main = next(
+            (r for r in rows if getattr(r, "is_main_super_admin", False)), rows[0]
+        )
+        return (
+            str(main.email) if getattr(main, "email", None) else None,
+            getattr(main, "full_name", None),
+        )
+    except Exception:
+        logger.warning(
+            "dunning: billing recipient lookup failed for tenant %s",
+            tenant_id,
+            exc_info=True,
+        )
+        return None, None
+
+
 async def _queue_dunning_email(
     subscription: SubscriptionOut, attempt_number: int | None = None
 ) -> None:
-    """
-    Queue appropriate dunning email based on attempt number.
+    """Send the appropriate dunning email for the attempt number.
 
-    Email templates:
-    - "payment_failed" for attempt 1
-    - "payment_action_required" for attempts 2-3
-    - "payment_last_chance" for attempt 4
-    - "subscription_suspended" when max reached
+    Stages: ``payment_failed`` (attempt 1), ``payment_action_required``
+    (attempts 2-3), ``payment_last_chance`` (attempt 4), and the Free
+    downgrade notice once max attempts are exhausted. All stages render
+    through the mounted ``billing_dunning`` template via the EmailManager
+    (queue-aware) — the old path enqueued a
+    ``services.email_service:send_dunning_email`` task that never
+    existed, so no dunning email was ever delivered.
     """
     settings = get_settings()
     max_attempts = settings.max_dunning_attempts
+    stage, subject_line, title, body = _dunning_stage_copy(
+        attempt_number, max_attempts
+    )
 
-    try:
-        queue = QueueManager.get_instance()
-    except RuntimeError:
-        logger.warning("QueueManager not available, skipping dunning email queue")
+    recipient_email, recipient_name = await _resolve_billing_recipient(
+        subscription.tenant_id
+    )
+    if not recipient_email:
+        logger.warning(
+            "dunning: no billing recipient for tenant %s — %s email skipped",
+            subscription.tenant_id,
+            stage,
+        )
         return
 
-    template_name: str
-    if attempt_number is None or attempt_number >= max_attempts:
-        template_name = "subscription_suspended"
-    elif attempt_number == 1:
-        template_name = "payment_failed"
-    elif 2 <= attempt_number <= 3:
-        template_name = "payment_action_required"
-    elif attempt_number == 4:
-        template_name = "payment_last_chance"
-    else:
-        template_name = "payment_action_required"
+    organization_name = ""
+    try:
+        from services.tenant_service import retrieve_tenant_by_id
 
-    payload = {
-        "tenant_id": subscription.tenant_id,
-        "subscription_id": subscription.id,
-        "template_name": template_name,
-        "attempt_number": attempt_number,
-        "max_attempts": max_attempts,
-    }
+        tenant = await retrieve_tenant_by_id(subscription.tenant_id)
+        organization_name = getattr(tenant, "company_name", "") or ""
+    except Exception:
+        pass
+
+    billing_url = (settings.app_base_url or "").rstrip("/")
+    if billing_url:
+        billing_url = f"{billing_url}/app/billing"
 
     try:
-        queue.enqueue("services.email_service:send_dunning_email", payload)
-        logger.info(f"Queued {template_name} email for subscription {subscription.id}")
+        from core.email.manager import EmailManager
+        from core.email.types import EmailDispatchRequest
+
+        await EmailManager.get_instance().send_template(
+            EmailDispatchRequest(
+                to_email=recipient_email,
+                template_key="billing_dunning",
+                context={
+                    "subject_line": subject_line,
+                    "title": title,
+                    "body": body,
+                    "recipient_name": recipient_name or recipient_email,
+                    "platform_name": settings.email_sender_name or "VisiChek",
+                    "organization_name": organization_name,
+                    "billing_url": billing_url,
+                    "stage": stage,
+                    "attempt_number": attempt_number,
+                    "max_attempts": max_attempts,
+                },
+                dispatch="auto",
+            )
+        )
+        logger.info(
+            "Queued %s email for subscription %s", stage, subscription.id
+        )
     except Exception as e:
         logger.error(f"Failed to queue dunning email: {str(e)}", exc_info=True)
 
