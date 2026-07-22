@@ -158,7 +158,7 @@ incident_deadline = _make_template(
     subject_template="Incident reporting deadline approaching",
     title_template="An incident is nearing its NDPC deadline",
     intro_template=(
-        "Hello {recipient_name}, an incident in your tenant is approaching the "
+        "Hello {recipient_name}, an incident in your organisation is approaching the "
         "72-hour NDPC notification window. Review it now so you don't miss the "
         "reporting deadline."
     ),
@@ -211,8 +211,8 @@ subscription_alert = _make_template(
 
 new_user_added = _make_template(
     key="notif_new_user_added",
-    subject_template="New user added to your tenant",
-    title_template="A new user joined your tenant",
+    subject_template="New user added to your organisation",
+    title_template="A new user joined your organisation",
     intro_template=(
         "Hello {recipient_name}, {new_user_name} was added to your "
         "organisation. If this wasn't expected, review your user list."

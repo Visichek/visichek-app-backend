@@ -919,7 +919,7 @@ async def notify_dsr_submitted_to_platform_admins(
         admins = await get_admins(
             {"account_status": AccountStatus.ACTIVE.value}, start=0, stop=200
         )
-        org_label = tenant_name or f"tenant {tenant_id}"
+        org_label = tenant_name or f"organization {tenant_id}"
         for admin in admins:
             try:
                 await send_notification(
@@ -1352,7 +1352,7 @@ async def notify_support_case_opened(
                     user_id=admin.id or "",
                     user_type=UserType.ADMIN,
                     title="New Support Case",
-                    body=f"A tenant opened a support case: {subject}",
+                    body=f"An organization opened a support case: {subject}",
                     type="info",
                     link=f"/admin/support-cases/{case_id}",
                     tenant_id=tenant_id,

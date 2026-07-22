@@ -18,7 +18,7 @@ def _common(context: dict[str, Any]) -> dict[str, Any]:
     return {
         "case_subject": str(context.get("case_subject", "(no subject)")),
         "case_priority": str(context.get("case_priority", "medium")),
-        "company_name": str(context.get("tenant_company_name", "A tenant")),
+        "company_name": str(context.get("tenant_company_name", "An organization")),
         "link": str(context.get("case_url", "#")),
         "case_id": str(context.get("case_id", "")),
     }
@@ -40,7 +40,7 @@ def render_html(context: dict[str, Any]) -> str:
         + ui.panel(
             ui.meta_rows(
                 [
-                    ("Tenant", c["company_name"]),
+                    ("Organization", c["company_name"]),
                     ("Subject", c["case_subject"]),
                     ("Priority", ui.badge(c["case_priority"], variant="danger")),
                 ]
@@ -67,7 +67,7 @@ def render_text(context: dict[str, Any]) -> str:
         "",
         "The SLA deadline has elapsed on the following case.",
         "",
-        f"Tenant:   {c['company_name']}",
+        f"Organization: {c['company_name']}",
         f"Subject:  {c['case_subject']}",
         f"Priority: {c['case_priority']}",
         "",

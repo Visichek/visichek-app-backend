@@ -20,7 +20,7 @@ def _common(context: dict[str, Any]) -> dict[str, Any]:
         "case_subject": str(context.get("case_subject", "(no subject)")),
         "case_priority": str(context.get("case_priority", "medium")),
         "case_category": str(context.get("case_category", "other")),
-        "company_name": str(context.get("tenant_company_name", "A tenant")),
+        "company_name": str(context.get("tenant_company_name", "An organization")),
         "preview": str(context.get("message_preview", "")),
         "link": str(context.get("case_url", "#")),
         "case_id": str(context.get("case_id", "")),

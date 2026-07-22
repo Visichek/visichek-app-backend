@@ -47,7 +47,7 @@ async def _get_provider_for_tenant(tenant_id: str) -> str:
         raise AppException(
             status_code=400,
             code=ErrorCode.VALIDATION_FAILED,
-            message="Invalid tenant ID",
+            message="Invalid organization ID",
         )
 
     tenant = await get_tenant({"_id": ObjectId(tenant_id)})
@@ -55,7 +55,7 @@ async def _get_provider_for_tenant(tenant_id: str) -> str:
         raise AppException(
             status_code=404,
             code=ErrorCode.RESOURCE_NOT_FOUND,
-            message="Tenant not found",
+            message="Organization not found",
             details={"tenant_id": tenant_id},
         )
 
