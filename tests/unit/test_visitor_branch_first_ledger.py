@@ -5,11 +5,14 @@ Covers:
 - services/visitor_first_seen_backfill.py — idempotent backfill
 - services/usage_service.get_tenant_usage_summary — ledger-backed numbers
 - insertion call sites — visit_session_service, public_registration_service,
-  checkin_service (both kiosk choke points) record a ledger row on success
+  checkin_service (all three create_checkin call sites — kiosk verified
+  submit, submit-by-visitor-id, and the legacy checkin-configs submit_checkin
+  path) record a ledger row on success
 """
 
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
@@ -265,3 +268,175 @@ class TestUsageSummaryLedgerNumbers:
             "branch-2": 2,
         }
         assert "total_checkins_this_month" in summary.entity_counts
+
+
+# ---------------------------------------------------------------------------
+# services/checkin_service.submit_checkin — the legacy checkin-configs kiosk
+# path (api/v1/checkin_config_route.py:97 → submit_checkin). A third,
+# distinct create_checkin() call site alongside _submit_verified_checkin_core
+# and submit_returning_visitor_checkin_by_id — it uses upsert_visitor_from_checkin
+# (legacy `visitors` collection), so it has no visitor_profile_id in scope
+# without an explicit profile upsert.
+# ---------------------------------------------------------------------------
+
+
+class TestSubmitCheckinLedger:
+    @pytest.mark.asyncio
+    async def test_submit_checkin_records_ledger_row(self):
+        from schemas.checkin_schema import (
+            CheckinPurpose,
+            CheckinSubmitRequest,
+        )
+        from services import checkin_service
+
+        config = MagicMock(tenant_id="tenant-1")
+        visitor = MagicMock(
+            id="visitor-1",
+            email="visitor@example.com",
+            phone="+1000000000",
+            full_name="Jane Doe",
+            bio_data={},
+            portrait_url=None,
+            verified=False,
+            verification_method=None,
+        )
+        checkin_out = MagicMock(id="checkin-1")
+
+        req = CheckinSubmitRequest(
+            bio_data={"full_name": "Jane Doe"},
+            tenant_specific_data={},
+            purpose=CheckinPurpose(purpose="meeting"),
+        )
+
+        with (
+            patch.object(
+                checkin_service, "get_checkin_config", AsyncMock(return_value=config)
+            ),
+            patch(
+                "services.checkin_config_service.resolve_required_fields_for_tenant",
+                AsyncMock(return_value=([], None)),
+            ),
+            patch(
+                "services.visitor_service.upsert_visitor_from_checkin",
+                AsyncMock(return_value=visitor),
+            ),
+            patch.object(
+                checkin_service,
+                "get_active_pending_for_visitor",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "services.kyc_service.kyc_available_for_tenant",
+                AsyncMock(return_value=(False, False, None)),
+            ),
+            patch.object(
+                checkin_service,
+                "_resolve_checkin_branch_id",
+                AsyncMock(return_value="branch-1"),
+            ),
+            patch.object(
+                checkin_service, "create_checkin", AsyncMock(return_value=checkin_out)
+            ),
+            patch.object(
+                checkin_service, "invalidate_tenant_dashboard_cache", MagicMock()
+            ),
+            patch.object(
+                checkin_service,
+                "_upsert_visitor_profile_from_submit",
+                AsyncMock(return_value="profile-1"),
+            ),
+            patch(
+                "repositories.visitor_branch_first_repo.record_first_seen",
+                AsyncMock(return_value=True),
+            ) as mock_record,
+            patch(
+                "services.notification_service.notify_checkin_pending_approval",
+                AsyncMock(return_value=None),
+            ),
+        ):
+            result = await checkin_service.submit_checkin("config-1", req)
+
+        assert result is checkin_out
+        mock_record.assert_awaited_once_with(
+            "tenant-1", "branch-1", "profile-1", pytest.approx(int(time.time()), abs=5)
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_checkin_skips_ledger_when_profile_unresolved(self):
+        """No visitor_profile_id (profile upsert failed) -> ledger insert
+        skipped, but the check-in itself still succeeds."""
+        from schemas.checkin_schema import (
+            CheckinPurpose,
+            CheckinSubmitRequest,
+        )
+        from services import checkin_service
+
+        config = MagicMock(tenant_id="tenant-1")
+        visitor = MagicMock(
+            id="visitor-1",
+            email=None,
+            phone="+1000000000",
+            full_name="Jane Doe",
+            bio_data={},
+            portrait_url=None,
+            verified=False,
+            verification_method=None,
+        )
+        checkin_out = MagicMock(id="checkin-1")
+
+        req = CheckinSubmitRequest(
+            bio_data={"full_name": "Jane Doe"},
+            tenant_specific_data={},
+            purpose=CheckinPurpose(purpose="meeting"),
+        )
+
+        with (
+            patch.object(
+                checkin_service, "get_checkin_config", AsyncMock(return_value=config)
+            ),
+            patch(
+                "services.checkin_config_service.resolve_required_fields_for_tenant",
+                AsyncMock(return_value=([], None)),
+            ),
+            patch(
+                "services.visitor_service.upsert_visitor_from_checkin",
+                AsyncMock(return_value=visitor),
+            ),
+            patch.object(
+                checkin_service,
+                "get_active_pending_for_visitor",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "services.kyc_service.kyc_available_for_tenant",
+                AsyncMock(return_value=(False, False, None)),
+            ),
+            patch.object(
+                checkin_service,
+                "_resolve_checkin_branch_id",
+                AsyncMock(return_value="branch-1"),
+            ),
+            patch.object(
+                checkin_service, "create_checkin", AsyncMock(return_value=checkin_out)
+            ),
+            patch.object(
+                checkin_service, "invalidate_tenant_dashboard_cache", MagicMock()
+            ),
+            patch.object(
+                checkin_service,
+                "_upsert_visitor_profile_from_submit",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "repositories.visitor_branch_first_repo.record_first_seen",
+                AsyncMock(return_value=True),
+            ) as mock_record,
+            patch(
+                "services.notification_service.notify_checkin_pending_approval",
+                AsyncMock(return_value=None),
+            ),
+        ):
+            result = await checkin_service.submit_checkin("config-1", req)
+
+        assert result is checkin_out
+        mock_record.assert_not_awaited()

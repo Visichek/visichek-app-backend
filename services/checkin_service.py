@@ -832,6 +832,15 @@ async def submit_returning_visitor_checkin_by_id(
         await record_first_seen(
             tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
         )
+    else:
+        logger.warning(
+            "visitor_branch_first ledger insert skipped tenant=%s checkin=%s "
+            "visitor_profile_id=%s branch_id=%s",
+            tenant_id,
+            checkin.id,
+            visitor_profile_id,
+            create_data.branch_id,
+        )
 
     # Fire notification (fire-and-forget).
     try:
@@ -1199,6 +1208,15 @@ async def _submit_verified_checkin_core(
         await record_first_seen(
             tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
         )
+    else:
+        logger.warning(
+            "visitor_branch_first ledger insert skipped tenant=%s checkin=%s "
+            "visitor_profile_id=%s branch_id=%s",
+            tenant_id,
+            checkin.id,
+            visitor_profile_id,
+            create_data.branch_id,
+        )
 
     # Persist the visitor's consent acceptance (fire-and-forget). The kiosk
     # submit path has no visit_sessions row, so consent lives in the dedicated
@@ -1387,6 +1405,51 @@ async def submit_checkin(
     )
     checkin = await create_checkin(create_data)
     invalidate_tenant_dashboard_cache(tenant_id)
+
+    # Upsert a VisitorProfile the same way the other submit paths do (this
+    # legacy endpoint only touches the ``visitors`` collection above, so
+    # without this the visitor has no visitor_profile_id and is invisible
+    # to the first-seen ledger below). Fire-and-forget — never blocks the
+    # check-in.
+    visitor_profile_id: Optional[str] = None
+    try:
+        visitor_profile_id = await _upsert_visitor_profile_from_submit(
+            tenant_id=tenant_id,
+            email=visitor.email,
+            phone=visitor.phone,
+            full_name=visitor.full_name,
+            company=(visitor.bio_data or {}).get("company")
+            or (visitor.bio_data or {}).get("organization"),
+            portrait_url=visitor.portrait_url,
+            verified=visitor.verified,
+            id_type=(
+                visitor.verification_method.value
+                if visitor.verification_method is not None
+                else None
+            ),
+        )
+    except Exception as e:
+        logger.warning(f"Failed to upsert visitor profile from legacy submit: {e}")
+
+    # New-visitor first-seen ledger (WS0.3). This is the third and last
+    # kiosk check-in creation path (``/checkin-configs/{id}/checkins``) —
+    # see checkin_service create_checkin call-site audit in the WS0.3
+    # report for the full list.
+    if visitor_profile_id and create_data.branch_id:
+        from repositories.visitor_branch_first_repo import record_first_seen
+
+        await record_first_seen(
+            tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
+        )
+    else:
+        logger.warning(
+            "visitor_branch_first ledger insert skipped tenant=%s checkin=%s "
+            "visitor_profile_id=%s branch_id=%s",
+            tenant_id,
+            checkin.id,
+            visitor_profile_id,
+            create_data.branch_id,
+        )
 
     # Notify approvers only when the check-in is queue-visible.
     if initial_state == CheckinState.PENDING_APPROVAL:

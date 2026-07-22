@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import Optional
 
@@ -52,6 +53,8 @@ from schemas.visit_session_schema import VisitSessionCreate, VisitSessionUpdate
 from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import verify_badge_token, verify_registration_token
 from services.plan_limits import enforce_entity_cap, get_month_bounds
+
+logger = logging.getLogger(__name__)
 
 
 async def register_visitor_public(
@@ -238,6 +241,15 @@ async def register_visitor_public(
         from repositories.visitor_branch_first_repo import record_first_seen
 
         await record_first_seen(tenant_id, branch_id, profile.id, int(time.time()))
+    else:
+        logger.warning(
+            "visitor_branch_first ledger insert skipped tenant=%s session=%s "
+            "visitor_profile_id=%s branch_id=%s",
+            tenant_id,
+            session.id,
+            profile.id,
+            branch_id,
+        )
 
     # Phase A3 audit hook (Issue 5). When a registration QR shaped the
     # visit, record a focused event tying the resulting visit session

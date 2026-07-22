@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Optional
 
@@ -67,6 +68,8 @@ from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import sign_badge_token, verify_badge_token
 from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
 from services.plan_limits import enforce_entity_cap, get_month_bounds
+
+logger = logging.getLogger(__name__)
 
 
 async def _nudge_live_dashboard(tenant_id: str) -> None:
@@ -290,6 +293,15 @@ async def check_in_visitor(
         from repositories.visitor_branch_first_repo import record_first_seen
 
         await record_first_seen(tenant_id, branch_id, profile.id, int(time.time()))
+    else:
+        logger.warning(
+            "visitor_branch_first ledger insert skipped tenant=%s session=%s "
+            "visitor_profile_id=%s branch_id=%s",
+            tenant_id,
+            session.id,
+            profile.id,
+            branch_id,
+        )
 
     # 8. Update visitor profile visit count and last visit date
     await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
