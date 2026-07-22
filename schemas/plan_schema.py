@@ -77,6 +77,7 @@ class TenantCapLimit(BaseModel):
     max_branches: Optional[int] = None
     max_visitors_per_month: Optional[int] = None
     max_appointments_per_month: Optional[int] = None
+    visitors_per_branch_per_month: Optional[int] = None
 
 
 class PlanBase(BaseModel):

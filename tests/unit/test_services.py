@@ -820,12 +820,10 @@ class TestVisitSessionService:
         "services.visit_session_service.increment_visitor_profile_visits",
         new_callable=AsyncMock,
     )
-    @patch("services.visit_session_service.enforce_entity_cap", new_callable=AsyncMock)
-    @patch(
-        "services.visit_session_service.count_visit_sessions",
-        new_callable=AsyncMock,
-        return_value=0,
-    )
+    @patch("services.visit_session_service.enforce_branch_visitor_cap", new_callable=AsyncMock)
+    @patch("services.visit_session_service._get_plan_data", new_callable=AsyncMock, return_value=None)
+    @patch("services.visit_session_service.has_first_seen", new_callable=AsyncMock, return_value=False)
+    @patch("services.visit_session_service.record_first_seen", new_callable=AsyncMock, return_value=True)
     @patch("services.visit_session_service.sign_badge_token")
     @patch("services.visit_session_service.get_or_create_visitor_profile")
     @patch("services.visit_session_service.update_visitor_profile")
@@ -846,7 +844,9 @@ class TestVisitSessionService:
         mock_update_profile,
         mock_get_profile,
         mock_sign_token,
-        mock_count_vs,
+        mock_record_first_seen,
+        mock_has_first_seen,
+        mock_get_plan_data,
         mock_cap_vs,
         mock_inc_visits,
     ):

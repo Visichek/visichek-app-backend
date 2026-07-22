@@ -500,6 +500,7 @@ PREMIUM_PLAN = CanonicalPlan(
         max_branches=None,  # unlimited
         max_visitors_per_month=500,  # per location baseline
         max_appointments_per_month=None,
+        visitors_per_branch_per_month=1000,
     ),
     storage_limits=StorageLimit(
         max_documents=10_000, max_storage_mb=10_240, max_file_size_mb=20
@@ -518,6 +519,7 @@ PREMIUM_PLAN = CanonicalPlan(
             "max_system_users",
             "max_branches",
             "max_appointments_per_month",
+            "visitors_per_branch_per_month",
         }
     ),
     adjustable_plan_fields=frozenset(
@@ -571,6 +573,7 @@ ENTERPRISE_TEMPLATE = CanonicalPlan(
             "max_system_users",
             "max_branches",
             "max_appointments_per_month",
+            "visitors_per_branch_per_month",
         }
     ),
     adjustable_plan_fields=frozenset(

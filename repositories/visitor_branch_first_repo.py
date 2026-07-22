@@ -50,6 +50,29 @@ async def record_first_seen(
         return False
 
 
+async def has_first_seen(
+    tenant_id: str,
+    branch_id: str,
+    visitor_profile_id: str,
+) -> bool:
+    """Peek (no insert) whether a ledger row already exists for this
+    (tenant, branch, visitor_profile) triple — i.e. whether this visitor is
+    a RETURNING visitor at this branch. Used by cap enforcement to
+    determine ``is_new_visitor`` before deciding whether to insert the
+    check-in/session at all (enforcement must run before the ledger insert,
+    not after).
+    """
+    doc = await db[COLLECTION].find_one(
+        {
+            "tenant_id": tenant_id,
+            "branch_id": branch_id,
+            "visitor_profile_id": visitor_profile_id,
+        },
+        {"_id": 1},
+    )
+    return doc is not None
+
+
 async def count_new_for_month(
     tenant_id: str,
     month_start: int,

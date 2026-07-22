@@ -123,6 +123,71 @@ async def enforce_entity_cap(
         )
 
 
+async def enforce_branch_visitor_cap(
+    tenant_id: str,
+    branch_id: Optional[str],
+    resolved_plan: Optional[dict],
+    *,
+    is_new_visitor: bool,
+    friendly_message: Optional[str] = None,
+) -> None:
+    """Raise 429 if a NEW visitor would push this branch (or the tenant,
+    when no per-branch cap is configured) over its monthly new-visitor cap.
+
+    ``resolved_plan`` is the caller's already-resolved plan snapshot (see
+    ``resolve_tenant_plan`` / ``_get_plan_data``) — passed in rather than
+    re-resolved here so call sites that already need the snapshot for
+    other checks don't pay for a second lookup.
+
+    Returning visitors (``is_new_visitor=False``) never block — repeat
+    check-ins never count against a cap. Fails OPEN when the plan can't be
+    resolved (mirrors ``enforce_entity_cap``).
+    """
+    if not is_new_visitor:
+        return
+    if not resolved_plan:
+        return  # Fail open — middleware handles missing-subscription case
+
+    from repositories.visitor_branch_first_repo import count_new_for_month
+
+    caps = resolved_plan.get("tenant_caps") or {}
+    month_start, month_end = get_month_bounds()
+
+    per_branch_limit = caps.get("visitors_per_branch_per_month")
+    if per_branch_limit is not None and branch_id:
+        count = await count_new_for_month(
+            tenant_id, month_start, month_end, branch_id=branch_id
+        )
+        if count >= per_branch_limit:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=friendly_message
+                or (
+                    f"This location's monthly new-visitor limit has been reached "
+                    f"({per_branch_limit}). Upgrade your plan for more capacity."
+                ),
+            )
+        return
+
+    # No per-branch cap configured — fall back to the tenant-wide monthly
+    # cap (plus any addon top-up folded into the snapshot by Task 1).
+    max_visitors = caps.get("max_visitors_per_month")
+    if max_visitors is None:
+        return  # Unlimited
+    extra_visitors = resolved_plan.get("extra_visitors_per_month") or 0
+    effective_limit = max_visitors + extra_visitors
+    count = await count_new_for_month(tenant_id, month_start, month_end)
+    if count >= effective_limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=friendly_message
+            or (
+                f"Monthly visitor limit reached ({effective_limit}). "
+                f"Upgrade your plan for more visitors."
+            ),
+        )
+
+
 def get_month_bounds(now: Optional[datetime] = None) -> tuple[int, int]:
     """Return (start_of_month_epoch, start_of_next_month_epoch) in UTC seconds.
 

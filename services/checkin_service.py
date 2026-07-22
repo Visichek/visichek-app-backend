@@ -36,9 +36,15 @@ from services.consent_service import (
     record_visitor_consent,
 )
 from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
+from services.plan_limits import _get_plan_data, enforce_branch_visitor_cap
 
 
 logger = logging.getLogger(__name__)
+
+KIOSK_CAP_MESSAGE = (
+    "This location can't accept new visitor registrations right now — "
+    "please see the front desk."
+)
 
 
 async def _resolve_checkin_branch_id(
@@ -770,13 +776,63 @@ async def submit_returning_visitor_checkin_by_id(
             details={"existing_checkin_id": existing_pending.id},
         )
 
+    # Keep the VisitorProfile visit counter in sync (fire-and-forget).
+    # Resolved BEFORE the check-in is created so the is_new peek used by
+    # cap enforcement below reflects the correct profile.
+    visitor_profile_id: Optional[str] = None
+    try:
+        visitor_profile_id = await _upsert_visitor_profile_from_submit(
+            tenant_id=tenant_id,
+            email=visitor.email,
+            phone=visitor.phone,
+            full_name=visitor.full_name,
+            company=(visitor.bio_data or {}).get("company")
+            or (visitor.bio_data or {}).get("organization"),
+            portrait_url=visitor.portrait_url,
+            verified=visitor.verified,
+            id_type=(
+                visitor.verification_method.value
+                if visitor.verification_method is not None
+                else None
+            ),
+        )
+    except Exception as e:
+        import logging
+
+        logging.warning(f"Failed to upsert visitor profile from returning submit: {e}")
+
+    # Per-branch new-visitor cap enforcement (WS0.2). This is the
+    # "submit by visitor_id" (already-known-visitor) choke point. By
+    # definition the caller believes this visitor is returning, but that
+    # is only true for THIS branch if a ledger row already exists here —
+    # if this is their first visit to this particular branch, they count
+    # as new and the cap applies (see plan brief).
+    resolved_branch_id = await _resolve_checkin_branch_id(
+        tenant_id, tenant_specific_data
+    )
+    is_new_visitor = True
+    if visitor_profile_id and resolved_branch_id:
+        from repositories.visitor_branch_first_repo import has_first_seen
+
+        is_new_visitor = not await has_first_seen(
+            tenant_id, resolved_branch_id, visitor_profile_id
+        )
+    resolved_plan = await _get_plan_data(tenant_id)
+    await enforce_branch_visitor_cap(
+        tenant_id,
+        resolved_branch_id,
+        resolved_plan,
+        is_new_visitor=is_new_visitor,
+        friendly_message=KIOSK_CAP_MESSAGE,
+    )
+
     create_data = CheckinCreate(
         tenant_id=tenant_id,
         visitor_id=visitor_id,
         checkin_config_id=checkin_config_id,
         id_extraction_id=None,
         tenant_specific_data=tenant_specific_data,
-        branch_id=await _resolve_checkin_branch_id(tenant_id, tenant_specific_data),
+        branch_id=resolved_branch_id,
         purpose=purpose,
         state=CheckinState.PENDING_APPROVAL,
         verified=visitor.verified,
@@ -800,38 +856,16 @@ async def submit_returning_visitor_checkin_by_id(
         user_agent=consent.get("user_agent"),
     )
 
-    # Keep the VisitorProfile visit counter in sync (fire-and-forget).
-    visitor_profile_id: Optional[str] = None
-    try:
-        visitor_profile_id = await _upsert_visitor_profile_from_submit(
-            tenant_id=tenant_id,
-            email=visitor.email,
-            phone=visitor.phone,
-            full_name=visitor.full_name,
-            company=(visitor.bio_data or {}).get("company")
-            or (visitor.bio_data or {}).get("organization"),
-            portrait_url=visitor.portrait_url,
-            verified=visitor.verified,
-            id_type=(
-                visitor.verification_method.value
-                if visitor.verification_method is not None
-                else None
-            ),
-        )
-    except Exception as e:
-        import logging
-
-        logging.warning(f"Failed to upsert visitor profile from returning submit: {e}")
-
     # New-visitor first-seen ledger (WS0.3). submit-by-visitor-id is a
     # distinct kiosk choke point from _submit_verified_checkin_core (it
     # skips visitor verification since the visitor is already known).
     if visitor_profile_id and create_data.branch_id:
-        from repositories.visitor_branch_first_repo import record_first_seen
+        if is_new_visitor:
+            from repositories.visitor_branch_first_repo import record_first_seen
 
-        await record_first_seen(
-            tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
-        )
+            await record_first_seen(
+                tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
+            )
     else:
         logger.warning(
             "visitor_branch_first ledger insert skipped tenant=%s checkin=%s "
@@ -1184,6 +1218,31 @@ async def _submit_verified_checkin_core(
         initial_state.value,
     )
 
+    # 5b. Per-branch new-visitor cap enforcement (WS0.2). Kiosk submit was
+    # previously UNCAPPED — this is a deliberate behavior change, softened
+    # by counting only new visitors. Resolve the branch first so the
+    # is_new peek and the cap check both run BEFORE the check-in is
+    # created; a new visitor at a branch at cap gets a 429 and nothing is
+    # persisted.
+    resolved_branch_id = await _resolve_checkin_branch_id(
+        tenant_id, tenant_specific_data
+    )
+    is_new_visitor = True
+    if visitor_profile_id and resolved_branch_id:
+        from repositories.visitor_branch_first_repo import has_first_seen
+
+        is_new_visitor = not await has_first_seen(
+            tenant_id, resolved_branch_id, visitor_profile_id
+        )
+    resolved_plan = await _get_plan_data(tenant_id)
+    await enforce_branch_visitor_cap(
+        tenant_id,
+        resolved_branch_id,
+        resolved_plan,
+        is_new_visitor=is_new_visitor,
+        friendly_message=KIOSK_CAP_MESSAGE,
+    )
+
     # 6. Create check-in
     create_data = CheckinCreate(
         tenant_id=tenant_id,
@@ -1191,7 +1250,7 @@ async def _submit_verified_checkin_core(
         checkin_config_id=checkin_config_id,
         id_extraction_id=id_extraction_id,
         tenant_specific_data=tenant_specific_data,
-        branch_id=await _resolve_checkin_branch_id(tenant_id, tenant_specific_data),
+        branch_id=resolved_branch_id,
         purpose=purpose,
         state=initial_state,
         verified=visitor_verified,
@@ -1203,11 +1262,12 @@ async def _submit_verified_checkin_core(
     # point for both fresh-verification submits and the anti-spoof KYC
     # path — everything reaching this line has a persisted check-in.
     if visitor_profile_id and create_data.branch_id:
-        from repositories.visitor_branch_first_repo import record_first_seen
+        if is_new_visitor:
+            from repositories.visitor_branch_first_repo import record_first_seen
 
-        await record_first_seen(
-            tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
-        )
+            await record_first_seen(
+                tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
+            )
     else:
         logger.warning(
             "visitor_branch_first ledger insert skipped tenant=%s checkin=%s "
@@ -1391,26 +1451,12 @@ async def submit_checkin(
         initial_state.value,
     )
 
-    # Create checkin
-    create_data = CheckinCreate(
-        tenant_id=tenant_id,
-        visitor_id=visitor_id,
-        checkin_config_id=checkin_config_id,
-        id_extraction_id=req.id_extraction_id,
-        tenant_specific_data=req.tenant_specific_data,
-        branch_id=await _resolve_checkin_branch_id(tenant_id, req.tenant_specific_data),
-        purpose=req.purpose,
-        state=initial_state,
-        verified=visitor.verified,
-    )
-    checkin = await create_checkin(create_data)
-    invalidate_tenant_dashboard_cache(tenant_id)
-
     # Upsert a VisitorProfile the same way the other submit paths do (this
     # legacy endpoint only touches the ``visitors`` collection above, so
     # without this the visitor has no visitor_profile_id and is invisible
-    # to the first-seen ledger below). Fire-and-forget — never blocks the
-    # check-in.
+    # to the first-seen ledger / cap enforcement below). Resolved BEFORE
+    # the check-in is created so cap enforcement can run first — never
+    # blocks the check-in on failure (best-effort upsert).
     visitor_profile_id: Optional[str] = None
     try:
         visitor_profile_id = await _upsert_visitor_profile_from_submit(
@@ -1431,16 +1477,54 @@ async def submit_checkin(
     except Exception as e:
         logger.warning(f"Failed to upsert visitor profile from legacy submit: {e}")
 
+    # Per-branch new-visitor cap enforcement (WS0.2). Same choke point as
+    # the other kiosk submit paths — resolve branch + is_new BEFORE
+    # creating the check-in.
+    resolved_branch_id = await _resolve_checkin_branch_id(
+        tenant_id, req.tenant_specific_data
+    )
+    is_new_visitor = True
+    if visitor_profile_id and resolved_branch_id:
+        from repositories.visitor_branch_first_repo import has_first_seen
+
+        is_new_visitor = not await has_first_seen(
+            tenant_id, resolved_branch_id, visitor_profile_id
+        )
+    resolved_plan = await _get_plan_data(tenant_id)
+    await enforce_branch_visitor_cap(
+        tenant_id,
+        resolved_branch_id,
+        resolved_plan,
+        is_new_visitor=is_new_visitor,
+        friendly_message=KIOSK_CAP_MESSAGE,
+    )
+
+    # Create checkin
+    create_data = CheckinCreate(
+        tenant_id=tenant_id,
+        visitor_id=visitor_id,
+        checkin_config_id=checkin_config_id,
+        id_extraction_id=req.id_extraction_id,
+        tenant_specific_data=req.tenant_specific_data,
+        branch_id=resolved_branch_id,
+        purpose=req.purpose,
+        state=initial_state,
+        verified=visitor.verified,
+    )
+    checkin = await create_checkin(create_data)
+    invalidate_tenant_dashboard_cache(tenant_id)
+
     # New-visitor first-seen ledger (WS0.3). This is the third and last
     # kiosk check-in creation path (``/checkin-configs/{id}/checkins``) —
     # see checkin_service create_checkin call-site audit in the WS0.3
     # report for the full list.
     if visitor_profile_id and create_data.branch_id:
-        from repositories.visitor_branch_first_repo import record_first_seen
+        if is_new_visitor:
+            from repositories.visitor_branch_first_repo import record_first_seen
 
-        await record_first_seen(
-            tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
-        )
+            await record_first_seen(
+                tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
+            )
     else:
         logger.warning(
             "visitor_branch_first ledger insert skipped tenant=%s checkin=%s "

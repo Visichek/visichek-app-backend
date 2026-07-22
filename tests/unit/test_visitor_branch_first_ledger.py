@@ -346,6 +346,13 @@ class TestSubmitCheckinLedger:
                 AsyncMock(return_value="profile-1"),
             ),
             patch(
+                "repositories.visitor_branch_first_repo.has_first_seen",
+                AsyncMock(return_value=False),
+            ),
+            patch.object(
+                checkin_service, "_get_plan_data", AsyncMock(return_value=None)
+            ),
+            patch(
                 "repositories.visitor_branch_first_repo.record_first_seen",
                 AsyncMock(return_value=True),
             ) as mock_record,
@@ -426,6 +433,9 @@ class TestSubmitCheckinLedger:
                 checkin_service,
                 "_upsert_visitor_profile_from_submit",
                 AsyncMock(return_value=None),
+            ),
+            patch.object(
+                checkin_service, "_get_plan_data", AsyncMock(return_value=None)
             ),
             patch(
                 "repositories.visitor_branch_first_repo.record_first_seen",

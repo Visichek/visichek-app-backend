@@ -9,7 +9,6 @@ from fastapi import HTTPException
 
 from core.errors import resource_not_found
 from repositories.visit_session_repo import (
-    count_visit_sessions,
     create_visit_session,
     get_visit_session,
     update_visit_session,
@@ -52,7 +51,8 @@ from schemas.imports import (
 from schemas.visit_session_schema import VisitSessionCreate, VisitSessionUpdate
 from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import verify_badge_token, verify_registration_token
-from services.plan_limits import enforce_entity_cap, get_month_bounds
+from services.plan_limits import _get_plan_data, enforce_branch_visitor_cap
+from repositories.visitor_branch_first_repo import has_first_seen, record_first_seen
 
 logger = logging.getLogger(__name__)
 
@@ -111,21 +111,6 @@ async def register_visitor_public(
 
     if not request.full_name:
         raise HTTPException(status_code=400, detail="full_name is required")
-
-    # Enforce plan cap on visit sessions created this calendar month
-    month_start, month_end = get_month_bounds()
-    month_count = await count_visit_sessions(
-        {
-            "tenant_id": tenant_id,
-            "check_in_time": {"$gte": month_start, "$lt": month_end},
-        }
-    )
-    await enforce_entity_cap(
-        tenant_id=tenant_id,
-        cap_key="max_visitors_per_month",
-        current_count=month_count,
-        friendly_name="Monthly visitor",
-    )
 
     # Consent enforcement based on tenant's lawful basis
     from schemas.imports import LawfulBasis
@@ -209,6 +194,24 @@ async def register_visitor_public(
     if not branch_id:
         branch_id = await resolve_hq_branch_id(tenant_id)
 
+    # Per-branch new-visitor cap enforcement (WS0.2). Determine is_new
+    # BEFORE creating the session/ledger row — kiosk self-registration is a
+    # new-visitor choke point just like the reception flow.
+    is_new_visitor = True
+    if profile.id and branch_id:
+        is_new_visitor = not await has_first_seen(tenant_id, branch_id, profile.id)
+    resolved_plan = await _get_plan_data(tenant_id)
+    await enforce_branch_visitor_cap(
+        tenant_id,
+        branch_id,
+        resolved_plan,
+        is_new_visitor=is_new_visitor,
+        friendly_message=(
+            "This location can't accept new visitor registrations right now — "
+            "please see the front desk."
+        ),
+    )
+
     # Create visit session with REGISTERED status
     session_data = VisitSessionCreate(
         tenant_id=tenant_id,
@@ -238,9 +241,8 @@ async def register_visitor_public(
     # the full rationale — kiosk self-registration is one of the insertion
     # choke points the ledger must cover.
     if profile.id and branch_id:
-        from repositories.visitor_branch_first_repo import record_first_seen
-
-        await record_first_seen(tenant_id, branch_id, profile.id, int(time.time()))
+        if is_new_visitor:
+            await record_first_seen(tenant_id, branch_id, profile.id, int(time.time()))
     else:
         logger.warning(
             "visitor_branch_first ledger insert skipped tenant=%s session=%s "
