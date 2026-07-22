@@ -291,6 +291,7 @@ async def build_me_limitations(
             "deniedFeatures": [],
             "lockedEntities": {"branches": [], "departments": []},
             "enterprise": {"isEnterprise": False, "subAppPrefix": None},
+            "activeAddons": [],
         }
 
     plan_data = await resolve_tenant_plan(tenant_id)
@@ -306,6 +307,7 @@ async def build_me_limitations(
             "deniedFeatures": [],
             "lockedEntities": {"branches": [], "departments": []},
             "enterprise": {"isEnterprise": False, "subAppPrefix": None},
+            "activeAddons": [],
         }
 
     denied_endpoints = _denied_endpoints_from_plan(plan_data)
@@ -357,4 +359,9 @@ async def build_me_limitations(
             "isEnterprise": is_enterprise,
             "subAppPrefix": sub_app_prefix,
         },
+        # Addon-inclusive already: the resolved plan snapshot has branch/
+        # visitor addon benefits folded into it (see plan_cache_service.
+        # _apply_addon_benefits). This is just the raw summary list for
+        # display purposes.
+        "activeAddons": plan_data.get("active_addons") or [],
     }

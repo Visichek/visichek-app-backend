@@ -168,6 +168,8 @@ async def resolve_tenant_plan(tenant_id: str) -> Optional[dict]:
         "trial_ends_at": sub.trial_ends_at,
     }
 
+    resolved = await _apply_addon_benefits(tenant_id, resolved)
+
     # Cache the resolved plan
     await set_cached_tenant_plan(tenant_id, resolved)
     return resolved
@@ -226,7 +228,77 @@ def _merge_tenant_caps(plan_caps: dict, overrides: Optional[dict]) -> dict:
     return {**plan_caps, **overrides}
 
 
-def _build_resolved_from_raw(sub: dict, plan: dict, tenant_id: str) -> dict:
+async def _apply_addon_benefits(tenant_id: str, snapshot: dict) -> dict:
+    """Fold active branch_quota / visitor_quota addon benefits into ``snapshot``.
+
+    Called by both ``resolve_tenant_plan`` and ``_build_resolved_from_raw``
+    (and thereby the bulk path, ``resolve_tenant_plans_bulk``) so single and
+    bulk resolution never diverge. Mutates and returns ``snapshot``:
+
+    - ``branch_quota`` rows: if the effective ``tenant_caps.max_branches`` is
+      not None, add ``sum(quantity * benefit_snapshot.get("branches", 1))``;
+      if the cap is None (unlimited) it stays None.
+    - ``visitor_quota`` rows: set a new ``extra_visitors_per_month`` field to
+      ``sum(quantity * benefit_snapshot.get("visitors", 0))``. Kept separate
+      from ``max_visitors_per_month`` — enforcement adds them together.
+    - ``storage_extension`` rows are intentionally IGNORED here — they're
+      already consumed by ``services.storage_quota_service``; folding them
+      in here would double-count.
+    - Attaches ``active_addons: [{kind, quantity, expires_at}, ...]``.
+
+    Addon lookup failures degrade to "no addons" rather than breaking plan
+    resolution (fail open, consistent with the rest of this module).
+    """
+    from repositories.tenant_addon_repo import list_active_for_tenant
+    from schemas.addon_schema import AddonKind, TenantAddonStatus
+
+    try:
+        rows = await list_active_for_tenant(tenant_id)
+    except Exception:
+        rows = []
+
+    tenant_caps = dict(snapshot.get("tenant_caps") or {})
+    max_branches = tenant_caps.get("max_branches")
+
+    branch_add = 0
+    visitor_add = 0
+    active_addons: List[dict] = []
+
+    for row in rows:
+        # Defensive: only count rows that are explicitly active — the repo
+        # query already filters status + expiry, but re-check as belt-and-
+        # braces against future callers relaxing the filter.
+        if row.status != TenantAddonStatus.ACTIVE:
+            continue
+        benefit = row.benefit_snapshot or {}
+        kind_value = (
+            row.addon_kind.value
+            if hasattr(row.addon_kind, "value")
+            else str(row.addon_kind)
+        )
+        if kind_value == AddonKind.BRANCH_QUOTA.value:
+            branch_add += row.quantity * int(benefit.get("branches", 1) or 0)
+        elif kind_value == AddonKind.VISITOR_QUOTA.value:
+            visitor_add += row.quantity * int(benefit.get("visitors", 0) or 0)
+        # storage_extension: deliberately not summed here — see docstring.
+        active_addons.append(
+            {
+                "kind": kind_value,
+                "quantity": row.quantity,
+                "expires_at": row.expires_at,
+            }
+        )
+
+    if max_branches is not None:
+        tenant_caps["max_branches"] = int(max_branches) + branch_add
+
+    snapshot["tenant_caps"] = tenant_caps
+    snapshot["extra_visitors_per_month"] = visitor_add
+    snapshot["active_addons"] = active_addons
+    return snapshot
+
+
+async def _build_resolved_from_raw(sub: dict, plan: dict, tenant_id: str) -> dict:
     """Build the resolved plan dict from raw Mongo documents.
 
     Same merge rules as ``resolve_tenant_plan`` but operating on plain dicts —
@@ -238,7 +310,7 @@ def _build_resolved_from_raw(sub: dict, plan: dict, tenant_id: str) -> dict:
     sub_id_raw = sub.get("_id")
     sub_id = str(sub_id_raw) if isinstance(sub_id_raw, ObjectId) else sub_id_raw
 
-    return {
+    resolved = {
         "plan_id": plan_id,
         "plan_name": plan.get("name"),
         "plan_display_name": plan.get("display_name"),
@@ -274,6 +346,8 @@ def _build_resolved_from_raw(sub: dict, plan: dict, tenant_id: str) -> dict:
         "current_period_end": sub.get("current_period_end"),
         "trial_ends_at": sub.get("trial_ends_at"),
     }
+
+    return await _apply_addon_benefits(tenant_id, resolved)
 
 
 async def resolve_tenant_plans_bulk(tenant_ids: List[str]) -> dict[str, dict]:
@@ -363,7 +437,7 @@ async def resolve_tenant_plans_bulk(tenant_ids: List[str]) -> dict[str, dict]:
         plan = plans_by_id.get(str(sub.get("plan_id")))
         if not plan:
             continue
-        resolved = _build_resolved_from_raw(sub, plan, tid)
+        resolved = await _build_resolved_from_raw(sub, plan, tid)
         result[tid] = resolved
         try:
             to_cache[f"{TENANT_PLAN_PREFIX}{tid}"] = json.dumps(resolved)

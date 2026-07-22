@@ -132,6 +132,10 @@ async def test_bulk_resolver_bulk_fetches_misses() -> None:
         patch.object(plan_cache_service, "cache_db", fake_redis),
         patch("core.database.db", fake_db),
         patch.object(plan_cache_service, "asyncio", new=__import__("asyncio")),
+        patch(
+            "repositories.tenant_addon_repo.list_active_for_tenant",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         result = await plan_cache_service.resolve_tenant_plans_bulk(tenant_ids)
 

@@ -57,6 +57,35 @@ logger = logging.getLogger(__name__)
 _PROVIDER_PREFERENCE: Tuple[str, ...] = ("stripe", "flutterwave", "paystack", "app")
 
 
+async def _invalidate_tenant_addon_caches(tenant_id: Optional[str]) -> None:
+    """Drop every cache that could be serving stale addon-derived entitlements.
+
+    Called whenever a tenant's active addon set changes (activate, cancel,
+    expiry sweep): the resolved-plan cache (WS0.1 bakes addon benefits into
+    it), the ``usage.my_usage`` precompute, and the ``tenant_usage`` entity
+    cache. Best-effort — a cache miss just means the next read is a little
+    slower, never a correctness issue.
+    """
+    if not tenant_id:
+        return
+    from core.queue.entity_cache import invalidate_entity
+    from core.queue.precompute import delete_precompute
+    from services.plan_cache_service import invalidate_tenant_plan_cache
+
+    try:
+        await invalidate_tenant_plan_cache(tenant_id)
+    except Exception:
+        pass
+    try:
+        delete_precompute("usage.my_usage", tenant_id=tenant_id)
+    except Exception:
+        pass
+    try:
+        invalidate_entity("tenant_usage", tenant_id)
+    except Exception:
+        pass
+
+
 # ─── Catalog admin ──────────────────────────────────────────────────
 
 
@@ -358,6 +387,9 @@ async def activate_tenant_addon_by_reference(
     except Exception:
         pass
 
+    if updated is not None:
+        await _invalidate_tenant_addon_caches(updated.tenant_id)
+
     return updated
 
 
@@ -404,6 +436,9 @@ async def cancel_tenant_addon(
         )
     except Exception:
         pass
+
+    await _invalidate_tenant_addon_caches(updated.tenant_id)
+
     return updated
 
 
@@ -444,6 +479,15 @@ async def expire_due_addons() -> int:
     automatically when an addon's validity window runs out. Returns
     the count of rows transitioned.
     """
-    from repositories.tenant_addon_repo import expire_due_tenant_addons
+    from repositories.tenant_addon_repo import (
+        expire_due_tenant_addons,
+        list_due_tenant_ids_for_expiry,
+    )
 
-    return await expire_due_tenant_addons()
+    # Snapshot which tenants are affected BEFORE the flip so we know who to
+    # invalidate — the update_many below no longer reports individual rows.
+    tenant_ids = await list_due_tenant_ids_for_expiry()
+    count = await expire_due_tenant_addons()
+    for tenant_id in tenant_ids:
+        await _invalidate_tenant_addon_caches(tenant_id)
+    return count

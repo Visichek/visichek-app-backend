@@ -125,5 +125,20 @@ async def expire_due_tenant_addons() -> int:
     return getattr(result, "modified_count", 0) or 0
 
 
+async def list_due_tenant_ids_for_expiry() -> List[str]:
+    """Distinct ``tenant_id`` values with an active addon past ``expires_at``.
+
+    Queried BEFORE ``expire_due_tenant_addons`` flips status, so the caller
+    (the ``expire_due_addons`` scheduled job) knows which tenants' plan /
+    usage caches need invalidating once the sweep completes.
+    """
+    now = int(time.time())
+    filt = {
+        "status": TenantAddonStatus.ACTIVE.value,
+        "expires_at": {"$ne": None, "$lte": now},
+    }
+    return await db[COLLECTION].distinct("tenant_id", filt)
+
+
 async def count_tenant_addons(filter_dict: dict) -> int:
     return await db[COLLECTION].count_documents(filter_dict)
