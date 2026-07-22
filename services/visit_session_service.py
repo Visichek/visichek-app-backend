@@ -281,6 +281,16 @@ async def check_in_visitor(
     session = await create_visit_session(session_data)
     invalidate_tenant_dashboard_cache(tenant_id)
 
+    # 7A. New-visitor first-seen ledger (WS0.3). Records a row the first
+    # time this visitor_profile is ever seen at this branch — used by
+    # usage reporting (and, later, per-branch cap enforcement). Never
+    # skipped for lack of a branch: branch_id was already HQ-defaulted
+    # above unless the tenant has zero branches at all.
+    if profile.id and branch_id:
+        from repositories.visitor_branch_first_repo import record_first_seen
+
+        await record_first_seen(tenant_id, branch_id, profile.id, int(time.time()))
+
     # 8. Update visitor profile visit count and last visit date
     await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
 

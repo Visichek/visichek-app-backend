@@ -338,6 +338,23 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("session_user_type backfill failed at startup", exc_info=True)
 
+    # One-shot new-visitor first-seen ledger backfill (WS0.3). Derives
+    # earliest (tenant, branch, visitor_profile) visits from visit_sessions
+    # + checkins and inserts any missing visitor_branch_firsts rows.
+    # Idempotent: record_first_seen is insert-if-absent, backed by the
+    # unique index. See services/visitor_first_seen_backfill.py.
+    try:
+        from services.visitor_first_seen_backfill import backfill_visitor_first_seen
+
+        first_seen_backfill_summary = await backfill_visitor_first_seen()
+        logger.info(
+            "visitor_first_seen_backfill summary: %s", first_seen_backfill_summary
+        )
+    except Exception:
+        logger.warning(
+            "visitor_first_seen_backfill failed at startup", exc_info=True
+        )
+
     # Main super_admin invariant — backfill + auto-heal. Ensures every
     # active tenant has exactly one ``is_main_super_admin=True`` row.
     # Runs AFTER ensure_indexes (which creates the partial-unique index

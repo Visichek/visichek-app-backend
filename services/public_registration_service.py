@@ -231,6 +231,14 @@ async def register_visitor_public(
     )
     session = await create_visit_session(session_data)
 
+    # New-visitor first-seen ledger (WS0.3). See visit_session_service for
+    # the full rationale — kiosk self-registration is one of the insertion
+    # choke points the ledger must cover.
+    if profile.id and branch_id:
+        from repositories.visitor_branch_first_repo import record_first_seen
+
+        await record_first_seen(tenant_id, branch_id, profile.id, int(time.time()))
+
     # Phase A3 audit hook (Issue 5). When a registration QR shaped the
     # visit, record a focused event tying the resulting visit session
     # to the token id and resolved scope. We hold the raw token in a

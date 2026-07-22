@@ -413,7 +413,7 @@ async def _upsert_visitor_profile_from_submit(
     portrait_url: Optional[str],
     verified: bool,
     id_type: Optional[str],
-) -> None:
+) -> Optional[str]:
     """Upsert a VisitorProfile row tied to the submitting visitor.
 
     The profile is the authoritative record of "has this person visited us
@@ -453,7 +453,7 @@ async def _upsert_visitor_profile_from_submit(
         )
 
     if profile is None or not profile.id or not ObjectId.is_valid(profile.id):
-        return
+        return None
 
     # Merge any missing fields into the existing profile so future submissions
     # can lookup via either channel. Never overwrite an existing value with
@@ -482,6 +482,7 @@ async def _upsert_visitor_profile_from_submit(
         )
 
     await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
+    return profile.id
 
 
 def _registration_token_id(token: str) -> str:
@@ -800,8 +801,9 @@ async def submit_returning_visitor_checkin_by_id(
     )
 
     # Keep the VisitorProfile visit counter in sync (fire-and-forget).
+    visitor_profile_id: Optional[str] = None
     try:
-        await _upsert_visitor_profile_from_submit(
+        visitor_profile_id = await _upsert_visitor_profile_from_submit(
             tenant_id=tenant_id,
             email=visitor.email,
             phone=visitor.phone,
@@ -820,6 +822,16 @@ async def submit_returning_visitor_checkin_by_id(
         import logging
 
         logging.warning(f"Failed to upsert visitor profile from returning submit: {e}")
+
+    # New-visitor first-seen ledger (WS0.3). submit-by-visitor-id is a
+    # distinct kiosk choke point from _submit_verified_checkin_core (it
+    # skips visitor verification since the visitor is already known).
+    if visitor_profile_id and create_data.branch_id:
+        from repositories.visitor_branch_first_repo import record_first_seen
+
+        await record_first_seen(
+            tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
+        )
 
     # Fire notification (fire-and-forget).
     try:
@@ -1046,8 +1058,9 @@ async def _submit_verified_checkin_core(
 
     # 2c. Upsert a VisitorProfile keyed on email OR phone so repeat submissions
     # are linked to the same profile for visit-history tracking.
+    visitor_profile_id: Optional[str] = None
     try:
-        await _upsert_visitor_profile_from_submit(
+        visitor_profile_id = await _upsert_visitor_profile_from_submit(
             tenant_id=tenant_id,
             email=email,
             phone=phone,
@@ -1176,6 +1189,16 @@ async def _submit_verified_checkin_core(
     )
     checkin = await create_checkin(create_data)
     invalidate_tenant_dashboard_cache(tenant_id)
+
+    # New-visitor first-seen ledger (WS0.3). Kiosk submit is the choke
+    # point for both fresh-verification submits and the anti-spoof KYC
+    # path — everything reaching this line has a persisted check-in.
+    if visitor_profile_id and create_data.branch_id:
+        from repositories.visitor_branch_first_repo import record_first_seen
+
+        await record_first_seen(
+            tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
+        )
 
     # Persist the visitor's consent acceptance (fire-and-forget). The kiosk
     # submit path has no visit_sessions row, so consent lives in the dedicated

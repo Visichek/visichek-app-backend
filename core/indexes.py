@@ -392,6 +392,24 @@ _INDEX_PLAN: list[tuple[str, list[tuple[str, int]], dict[str, Any]]] = [
         [("tenant_id", ASCENDING)],
         {"sparse": True},
     ),
+    # ── new-visitor first-seen ledger (WS0.3) ─────────────────────────
+    # One row per (tenant, branch, visitor_profile) — the unique index IS
+    # the "is this visitor new to this branch?" check: record_first_seen
+    # relies on a DuplicateKeyError to detect a returning visitor.
+    (
+        "visitor_branch_firsts",
+        [
+            ("tenant_id", ASCENDING),
+            ("branch_id", ASCENDING),
+            ("visitor_profile_id", ASCENDING),
+        ],
+        {"unique": True, "name": "tenant_branch_visitor_profile_unique"},
+    ),
+    (
+        "visitor_branch_firsts",
+        [("tenant_id", ASCENDING), ("first_seen_at", ASCENDING)],
+        {},
+    ),
 ]
 
 
