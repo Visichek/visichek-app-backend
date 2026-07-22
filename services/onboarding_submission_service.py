@@ -471,7 +471,7 @@ def _ensure_in_terminal_window(
         raise AppException(
             status_code=409,
             code=ErrorCode.VALIDATION_FAILED,
-            message=f"Cannot {action} a submission already accepted; offboard the tenant instead",
+            message=f"Cannot {action} a submission already accepted; offboard the organization instead",
             details={"status": submission.status.value},
         )
 
@@ -517,7 +517,7 @@ async def _accept_internal(
         raise AppException(
             status_code=400,
             code=ErrorCode.VALIDATION_FAILED,
-            message="Missing fields required to provision the tenant",
+            message="Missing fields required to provision the organization",
             details={"missing": missing},
         )
 
@@ -576,7 +576,7 @@ async def _accept_internal(
         raise AppException(
             status_code=500,
             code=ErrorCode.INTERNAL_ERROR,
-            message="Tenant provisioning returned no id",
+            message="Organization provisioning returned no id",
         )
 
     existing_super = await get_system_user(
@@ -587,7 +587,7 @@ async def _accept_internal(
         raise AppException(
             status_code=409,
             code=ErrorCode.VALIDATION_FAILED,
-            message="Tenant already has a super admin",
+            message="Organization already has a super admin",
         )
 
     try:

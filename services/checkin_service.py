@@ -36,15 +36,14 @@ from services.consent_service import (
     record_visitor_consent,
 )
 from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
-from services.plan_limits import _get_plan_data, enforce_branch_visitor_cap
+from services.plan_limits import (
+    KIOSK_CAP_MESSAGE,
+    _get_plan_data,
+    enforce_branch_visitor_cap,
+)
 
 
 logger = logging.getLogger(__name__)
-
-KIOSK_CAP_MESSAGE = (
-    "This location can't accept new visitor registrations right now — "
-    "please see the front desk."
-)
 
 
 async def _resolve_checkin_branch_id(
@@ -425,8 +424,9 @@ async def _upsert_visitor_profile_from_submit(
     The profile is the authoritative record of "has this person visited us
     before" for the public prefill lookup. Keyed on phone first, then email —
     whichever the visitor supplied is used to find an existing profile; a new
-    one is created if neither matches. Visit count is incremented on every
-    successful submit so the profile reflects true visit frequency.
+    one is created if neither matches. Visit count is NOT incremented here —
+    callers must do so only after per-branch cap enforcement passes, so a
+    429-blocked submission never inflates the visitor's visit history.
 
     Fire-and-forget at the caller — any exception here is logged but never
     blocks the check-in.
@@ -436,7 +436,6 @@ async def _upsert_visitor_profile_from_submit(
     from repositories.visitor_profile_repo import (
         get_visitor_profile_by_email,
         get_visitor_profile_by_phone,
-        increment_visitor_profile_visits,
         update_visitor_profile,
     )
     from schemas.visitor_profile_schema import VisitorProfileUpdate
@@ -487,7 +486,6 @@ async def _upsert_visitor_profile_from_submit(
             VisitorProfileUpdate(**update_fields),
         )
 
-    await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
     return profile.id
 
 
@@ -825,6 +823,15 @@ async def submit_returning_visitor_checkin_by_id(
         is_new_visitor=is_new_visitor,
         friendly_message=KIOSK_CAP_MESSAGE,
     )
+
+    # Increment visit count only after cap enforcement passes, so a
+    # 429-blocked submission never inflates the visitor's visit history.
+    from bson import ObjectId
+
+    if visitor_profile_id and ObjectId.is_valid(visitor_profile_id):
+        from repositories.visitor_profile_repo import increment_visitor_profile_visits
+
+        await increment_visitor_profile_visits({"_id": ObjectId(visitor_profile_id)})
 
     create_data = CheckinCreate(
         tenant_id=tenant_id,
@@ -1243,6 +1250,15 @@ async def _submit_verified_checkin_core(
         friendly_message=KIOSK_CAP_MESSAGE,
     )
 
+    # Increment visit count only after cap enforcement passes, so a
+    # 429-blocked submission never inflates the visitor's visit history.
+    from bson import ObjectId
+
+    if visitor_profile_id and ObjectId.is_valid(visitor_profile_id):
+        from repositories.visitor_profile_repo import increment_visitor_profile_visits
+
+        await increment_visitor_profile_visits({"_id": ObjectId(visitor_profile_id)})
+
     # 6. Create check-in
     create_data = CheckinCreate(
         tenant_id=tenant_id,
@@ -1498,6 +1514,15 @@ async def submit_checkin(
         is_new_visitor=is_new_visitor,
         friendly_message=KIOSK_CAP_MESSAGE,
     )
+
+    # Increment visit count only after cap enforcement passes, so a
+    # 429-blocked submission never inflates the visitor's visit history.
+    from bson import ObjectId
+
+    if visitor_profile_id and ObjectId.is_valid(visitor_profile_id):
+        from repositories.visitor_profile_repo import increment_visitor_profile_visits
+
+        await increment_visitor_profile_visits({"_id": ObjectId(visitor_profile_id)})
 
     # Create checkin
     create_data = CheckinCreate(

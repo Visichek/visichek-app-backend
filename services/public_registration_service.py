@@ -51,7 +51,11 @@ from schemas.imports import (
 from schemas.visit_session_schema import VisitSessionCreate, VisitSessionUpdate
 from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import verify_badge_token, verify_registration_token
-from services.plan_limits import _get_plan_data, enforce_branch_visitor_cap
+from services.plan_limits import (
+    KIOSK_CAP_MESSAGE,
+    _get_plan_data,
+    enforce_branch_visitor_cap,
+)
 from repositories.visitor_branch_first_repo import has_first_seen, record_first_seen
 
 logger = logging.getLogger(__name__)
@@ -148,9 +152,6 @@ async def register_visitor_public(
         company=request.company,
     )
 
-    # Increment visit count
-    await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
-
     # Resolve department
     department_name = None
     department_id = request.department_id
@@ -206,11 +207,12 @@ async def register_visitor_public(
         branch_id,
         resolved_plan,
         is_new_visitor=is_new_visitor,
-        friendly_message=(
-            "This location can't accept new visitor registrations right now — "
-            "please see the front desk."
-        ),
+        friendly_message=KIOSK_CAP_MESSAGE,
     )
+
+    # Increment visit count — only after cap enforcement passes, so a
+    # 429-blocked registration never inflates the visitor's visit history.
+    await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
 
     # Create visit session with REGISTERED status
     session_data = VisitSessionCreate(

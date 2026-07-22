@@ -25,6 +25,14 @@ from fastapi import HTTPException, status
 
 from services.plan_cache_service import resolve_tenant_plan
 
+# Shared user-facing message for a 429 raised by enforce_branch_visitor_cap
+# on kiosk / public self-registration flows. Hoisted here so
+# checkin_service.py and public_registration_service.py don't drift.
+KIOSK_CAP_MESSAGE = (
+    "This location can't accept new visitor registrations right now — "
+    "please see the front desk."
+)
+
 
 async def _get_plan_data(tenant_id: str) -> Optional[dict]:
     try:

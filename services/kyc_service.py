@@ -320,7 +320,7 @@ async def skip_kyc_for_checkin(
         raise AppException(
             status_code=403,
             code=ErrorCode.FEATURE_DISABLED,
-            message="This tenant requires KYC verification — skip is not allowed.",
+            message="This organization requires KYC verification — skip is not allowed.",
         )
 
     # Whether or not a verification row already exists, transition to

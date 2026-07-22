@@ -360,6 +360,10 @@ class TestSubmitCheckinLedger:
                 "services.notification_service.notify_checkin_pending_approval",
                 AsyncMock(return_value=None),
             ),
+            patch(
+                "repositories.visitor_profile_repo.increment_visitor_profile_visits",
+                AsyncMock(return_value=None),
+            ),
         ):
             result = await checkin_service.submit_checkin("config-1", req)
 
