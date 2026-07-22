@@ -10,16 +10,34 @@ derives, for every ``visitor_profile``, the earliest visit per
 ``check_in_time`` field), and inserts a ledger row if one doesn't already
 exist for that key.
 
-Idempotent and safe to re-run on every boot (no done-marker, per repo
-convention): ``record_first_seen`` is itself insert-if-absent, backed by the
-unique compound index, so a second run over the same data is a no-op.
-Cursor-batched to avoid materialising a huge in-memory map on large tenants.
+Idempotent and safe to re-run on every boot: ``record_first_seen`` is itself
+insert-if-absent, backed by the unique compound index, so a second run over
+the same data is a no-op even without any marker.
+
+High-water mark: a ``backfill_markers`` document (``_id="visitor_first_seen"``)
+records the max source timestamp (``check_in_time``/``date_created``)
+processed by the last run. Every boot after the first only scans source rows
+newer than that mark, so once the historical backlog is cleared, subsequent
+boots do effectively zero work instead of re-scanning the tenant's entire
+``visit_sessions``/``checkins`` history on every restart. The mark is purely
+an optimization, not a correctness gate — per-row idempotency (insert-if-
+absent via the unique index) is what actually prevents duplicates, so a
+stale or reset mark just means some already-processed rows get re-scanned
+and no-op through ``record_first_seen``, never a wrong result.
+
+Note on memory: the earliest-per-key map IS still materialized in memory for
+the span being scanned (cursors are ``batch_size``-paged for network/DB
+efficiency, not to bound memory) — but because the high-water mark keeps
+that span to "whatever was created since the last boot" after the first
+catch-up run, this stays small in steady state. The one large scan is the
+initial catch-up over pre-deploy history.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+import time
+from typing import Any, Optional
 
 from core.database import db
 from repositories.visitor_branch_first_repo import record_first_seen
@@ -28,16 +46,89 @@ logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 500
 
+MARKERS_COLLECTION = "backfill_markers"
+_MARKER_ID = "visitor_first_seen"
 
-async def _earliest_from_visit_sessions() -> dict[tuple[str, str, str], int]:
-    """Earliest ``check_in_time`` per (tenant_id, branch_id, visitor_profile_id)."""
+
+async def _get_high_water_mark() -> int:
+    """Return the max source timestamp processed by the previous run (0 if none)."""
+    try:
+        doc = await db[MARKERS_COLLECTION].find_one({"_id": _MARKER_ID})
+        return int(doc.get("high_water_mark", 0)) if doc else 0
+    except Exception:
+        logger.warning(
+            "visitor_first_seen_backfill: failed to read high-water mark — "
+            "falling back to a full scan",
+            exc_info=True,
+        )
+        return 0
+
+
+async def _set_high_water_mark(ts: int) -> None:
+    try:
+        await db[MARKERS_COLLECTION].update_one(
+            {"_id": _MARKER_ID},
+            {"$set": {"high_water_mark": ts, "last_run_at": int(time.time())}},
+            upsert=True,
+        )
+    except Exception:
+        logger.warning(
+            "visitor_first_seen_backfill: failed to persist high-water mark "
+            "(next boot will re-scan from the previous mark)",
+            exc_info=True,
+        )
+
+
+async def _warn_if_unique_index_missing() -> None:
+    """Log loudly if the ``visitor_branch_firsts`` unique index is absent.
+
+    ``record_first_seen`` relies on a ``DuplicateKeyError`` from this index
+    to detect returning visitors — without it, this backfill (and every
+    live check-in) can silently insert duplicate ledger rows.
+    """
+    try:
+        indexes = await db.visitor_branch_firsts.index_information()
+        has_unique = any(
+            spec.get("unique") for spec in indexes.values() if isinstance(spec, dict)
+        )
+        if not has_unique:
+            logger.warning(
+                "visitor_first_seen_backfill: STARTING WITHOUT the "
+                "visitor_branch_firsts unique compound index "
+                "(tenant_id, branch_id, visitor_profile_id) — "
+                "record_first_seen dedup relies on this index; duplicate "
+                "ledger rows are possible until core.indexes.ensure_indexes runs."
+            )
+    except Exception:
+        logger.warning(
+            "visitor_first_seen_backfill: could not verify visitor_branch_firsts "
+            "unique index presence",
+            exc_info=True,
+        )
+
+
+async def _earliest_from_visit_sessions(
+    since_ts: int = 0,
+) -> dict[tuple[str, str, str], int]:
+    """Earliest ``check_in_time`` per (tenant_id, branch_id, visitor_profile_id).
+
+    ``since_ts`` restricts the scan to rows whose ``check_in_time`` OR
+    ``date_created`` is >= the high-water mark, so a catch-up run after the
+    first boot only re-reads what changed since the previous run.
+    """
     earliest: dict[tuple[str, str, str], int] = {}
+    query: dict[str, Any] = {
+        "tenant_id": {"$exists": True, "$ne": None},
+        "branch_id": {"$exists": True, "$ne": None},
+        "visitor_profile_id": {"$exists": True, "$ne": None},
+    }
+    if since_ts:
+        query["$or"] = [
+            {"check_in_time": {"$gte": since_ts}},
+            {"date_created": {"$gte": since_ts}},
+        ]
     cursor = db.visit_sessions.find(
-        {
-            "tenant_id": {"$exists": True, "$ne": None},
-            "branch_id": {"$exists": True, "$ne": None},
-            "visitor_profile_id": {"$exists": True, "$ne": None},
-        },
+        query,
         {
             "tenant_id": 1,
             "branch_id": 1,
@@ -64,6 +155,7 @@ async def _earliest_from_visit_sessions() -> dict[tuple[str, str, str], int]:
 
 async def _earliest_from_checkins(
     earliest: dict[tuple[str, str, str], int],
+    since_ts: int = 0,
 ) -> None:
     """Merge earliest ``date_created`` per key from ``checkins`` into ``earliest``.
 
@@ -80,12 +172,16 @@ async def _earliest_from_checkins(
 
     visitor_cache: dict[str, str | None] = {}
 
+    query: dict[str, Any] = {
+        "tenant_id": {"$exists": True, "$ne": None},
+        "branch_id": {"$exists": True, "$ne": None},
+        "visitor_id": {"$exists": True, "$ne": None},
+    }
+    if since_ts:
+        query["date_created"] = {"$gte": since_ts}
+
     cursor = db.checkins.find(
-        {
-            "tenant_id": {"$exists": True, "$ne": None},
-            "branch_id": {"$exists": True, "$ne": None},
-            "visitor_id": {"$exists": True, "$ne": None},
-        },
+        query,
         {
             "tenant_id": 1,
             "branch_id": 1,
@@ -151,19 +247,33 @@ def _to_object_id(value: Any) -> Any:
         return value
 
 
-async def backfill_visitor_first_seen() -> dict[str, int]:
+async def backfill_visitor_first_seen(
+    since_ts: Optional[int] = None,
+) -> dict[str, int]:
     """Derive and insert missing ``visitor_branch_firsts`` rows.
+
+    Scoped to source rows newer than the stored high-water mark (see module
+    docstring) unless ``since_ts`` is explicitly passed (mainly for tests /
+    a manual forced re-scan). On success, advances the mark to the max
+    source timestamp seen this run so the NEXT boot only scans what's new.
 
     Returns a summary dict for startup logging.
     """
     summary = {"candidates": 0, "inserted": 0, "already_present": 0, "errors": 0}
 
-    earliest = await _earliest_from_visit_sessions()
-    await _earliest_from_checkins(earliest)
+    await _warn_if_unique_index_missing()
+
+    effective_since = await _get_high_water_mark() if since_ts is None else since_ts
+
+    earliest = await _earliest_from_visit_sessions(effective_since)
+    await _earliest_from_checkins(earliest, effective_since)
 
     summary["candidates"] = len(earliest)
 
+    max_ts_seen = effective_since
     for (tenant_id, branch_id, visitor_profile_id), ts in earliest.items():
+        if ts > max_ts_seen:
+            max_ts_seen = ts
         try:
             inserted = await record_first_seen(
                 tenant_id, branch_id, visitor_profile_id, ts
@@ -182,5 +292,8 @@ async def backfill_visitor_first_seen() -> dict[str, int]:
                 visitor_profile_id,
                 exc_info=True,
             )
+
+    if max_ts_seen > effective_since:
+        await _set_high_water_mark(max_ts_seen)
 
     return summary

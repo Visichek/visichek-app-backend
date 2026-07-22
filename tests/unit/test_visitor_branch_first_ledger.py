@@ -350,7 +350,7 @@ class TestSubmitCheckinLedger:
                 AsyncMock(return_value=False),
             ),
             patch.object(
-                checkin_service, "_get_plan_data", AsyncMock(return_value=None)
+                checkin_service, "get_plan_data_safe", AsyncMock(return_value=None)
             ),
             patch(
                 "repositories.visitor_branch_first_repo.record_first_seen",
@@ -439,7 +439,7 @@ class TestSubmitCheckinLedger:
                 AsyncMock(return_value=None),
             ),
             patch.object(
-                checkin_service, "_get_plan_data", AsyncMock(return_value=None)
+                checkin_service, "get_plan_data_safe", AsyncMock(return_value=None)
             ),
             patch(
                 "repositories.visitor_branch_first_repo.record_first_seen",

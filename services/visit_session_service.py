@@ -66,7 +66,7 @@ from schemas.imports import (
 from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import sign_badge_token, verify_badge_token
 from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
-from services.plan_limits import _get_plan_data, enforce_branch_visitor_cap
+from services.plan_limits import get_plan_data_safe, enforce_branch_visitor_cap
 from repositories.visitor_branch_first_repo import has_first_seen, record_first_seen
 
 logger = logging.getLogger(__name__)
@@ -245,7 +245,7 @@ async def check_in_visitor(
     is_new_visitor = True
     if profile.id and branch_id:
         is_new_visitor = not await has_first_seen(tenant_id, branch_id, profile.id)
-    resolved_plan = await _get_plan_data(tenant_id)
+    resolved_plan = await get_plan_data_safe(tenant_id)
     await enforce_branch_visitor_cap(
         tenant_id,
         branch_id,

@@ -61,16 +61,37 @@ async def has_first_seen(
     determine ``is_new_visitor`` before deciding whether to insert the
     check-in/session at all (enforcement must run before the ledger insert,
     not after).
+
+    Fails OPEN: on a Mongo error, returns ``True`` (treated as "already
+    seen" / returning visitor) so the caller's ``is_new_visitor`` peek comes
+    back ``False`` — a visitor never gets 429-blocked or 500'd because the
+    ledger was unreachable. This also means the caller's later
+    ``record_first_seen`` call is skipped (guarded by the same
+    ``is_new_visitor`` flag), so we may miss a ledger row rather than block
+    or corrupt a check-in — an acceptable trade, since ``record_first_seen``
+    itself dedupes via the unique index and a missed row just means this
+    visitor's next visit to this branch is treated as first-seen again.
     """
-    doc = await db[COLLECTION].find_one(
-        {
-            "tenant_id": tenant_id,
-            "branch_id": branch_id,
-            "visitor_profile_id": visitor_profile_id,
-        },
-        {"_id": 1},
-    )
-    return doc is not None
+    try:
+        doc = await db[COLLECTION].find_one(
+            {
+                "tenant_id": tenant_id,
+                "branch_id": branch_id,
+                "visitor_profile_id": visitor_profile_id,
+            },
+            {"_id": 1},
+        )
+        return doc is not None
+    except Exception:
+        logger.warning(
+            "visitor_branch_first_repo: has_first_seen failed tenant=%s branch=%s "
+            "visitor_profile=%s — failing open (treated as returning visitor)",
+            tenant_id,
+            branch_id,
+            visitor_profile_id,
+            exc_info=True,
+        )
+        return True
 
 
 async def count_new_for_month(
@@ -90,7 +111,17 @@ async def count_new_for_month(
     }
     if branch_id:
         query["branch_id"] = branch_id
-    return await db[COLLECTION].count_documents(query)
+    try:
+        return await db[COLLECTION].count_documents(query)
+    except Exception:
+        logger.warning(
+            "visitor_branch_first_repo: count_new_for_month failed tenant=%s "
+            "branch=%s — failing open (returning 0, cap never trips)",
+            tenant_id,
+            branch_id,
+            exc_info=True,
+        )
+        return 0
 
 
 async def counts_by_branch_for_month(
@@ -109,8 +140,17 @@ async def counts_by_branch_for_month(
         {"$group": {"_id": "$branch_id", "count": {"$sum": 1}}},
     ]
     result: dict[str, int] = {}
-    async for row in db[COLLECTION].aggregate(pipeline):
-        branch_id = row.get("_id")
-        if branch_id:
-            result[str(branch_id)] = int(row.get("count", 0))
+    try:
+        async for row in db[COLLECTION].aggregate(pipeline):
+            branch_id = row.get("_id")
+            if branch_id:
+                result[str(branch_id)] = int(row.get("count", 0))
+    except Exception:
+        logger.warning(
+            "visitor_branch_first_repo: counts_by_branch_for_month failed tenant=%s "
+            "— failing open (returning {})",
+            tenant_id,
+            exc_info=True,
+        )
+        return {}
     return result

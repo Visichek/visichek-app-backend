@@ -38,7 +38,7 @@ from services.consent_service import (
 from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
 from services.plan_limits import (
     KIOSK_CAP_MESSAGE,
-    _get_plan_data,
+    get_plan_data_safe,
     enforce_branch_visitor_cap,
 )
 
@@ -808,14 +808,20 @@ async def submit_returning_visitor_checkin_by_id(
     resolved_branch_id = await _resolve_checkin_branch_id(
         tenant_id, tenant_specific_data
     )
-    is_new_visitor = True
+    # Default False, not True: this is "submit by visitor_id" — the caller
+    # has already proven the visitor exists, so if profile resolution
+    # failed above (visitor_profile_id is None) we have no evidence this
+    # is a NEW visitor. Never block a known-returning visitor on
+    # uncertainty; only mark them new when the ledger peek positively
+    # confirms it.
+    is_new_visitor = False
     if visitor_profile_id and resolved_branch_id:
         from repositories.visitor_branch_first_repo import has_first_seen
 
         is_new_visitor = not await has_first_seen(
             tenant_id, resolved_branch_id, visitor_profile_id
         )
-    resolved_plan = await _get_plan_data(tenant_id)
+    resolved_plan = await get_plan_data_safe(tenant_id)
     await enforce_branch_visitor_cap(
         tenant_id,
         resolved_branch_id,
@@ -1229,19 +1235,28 @@ async def _submit_verified_checkin_core(
     # previously UNCAPPED — this is a deliberate behavior change, softened
     # by counting only new visitors. Resolve the branch first so the
     # is_new peek and the cap check both run BEFORE the check-in is
-    # created; a new visitor at a branch at cap gets a 429 and nothing is
-    # persisted.
+    # created. NOTE: the ``visitors`` collection row (and the VisitorProfile
+    # upsert above) are written before this point regardless — a
+    # 429-blocked new visitor still leaves those rows persisted; only the
+    # checkin/visit-history/ledger writes are skipped. See item 4 of the
+    # Task 6 fix report for the full rationale on why the visitor upsert
+    # can't cheaply move after enforcement here.
     resolved_branch_id = await _resolve_checkin_branch_id(
         tenant_id, tenant_specific_data
     )
-    is_new_visitor = True
+    # Default False: never block on uncertainty. Only flips True when the
+    # ledger peek below positively confirms this visitor hasn't been seen
+    # at this branch (profile-upsert failure above leaves
+    # visitor_profile_id None, which must never manufacture a "new" verdict
+    # that could 429 a returning visitor).
+    is_new_visitor = False
     if visitor_profile_id and resolved_branch_id:
         from repositories.visitor_branch_first_repo import has_first_seen
 
         is_new_visitor = not await has_first_seen(
             tenant_id, resolved_branch_id, visitor_profile_id
         )
-    resolved_plan = await _get_plan_data(tenant_id)
+    resolved_plan = await get_plan_data_safe(tenant_id)
     await enforce_branch_visitor_cap(
         tenant_id,
         resolved_branch_id,
@@ -1423,7 +1438,13 @@ async def submit_checkin(
             details={"missing_fields": list(missing_fields)},
         )
 
-    # Upsert visitor
+    # Upsert visitor. This necessarily runs BEFORE per-branch cap
+    # enforcement below — visitor_id is needed for the pending-checkin
+    # dup-check and visitor.email/phone feed the VisitorProfile upsert that
+    # determines is_new_visitor for enforcement. A 429-blocked new visitor
+    # therefore still leaves this ``visitors`` row (and the VisitorProfile
+    # row) persisted; only the checkin/visit-history/ledger writes are
+    # skipped after the cap check fails.
     from services.visitor_service import upsert_visitor_from_checkin
 
     visitor = await upsert_visitor_from_checkin(
@@ -1499,14 +1520,18 @@ async def submit_checkin(
     resolved_branch_id = await _resolve_checkin_branch_id(
         tenant_id, req.tenant_specific_data
     )
-    is_new_visitor = True
+    # Default False: never block on uncertainty (see the two other submit
+    # paths above for the full rationale) — a failed/unresolved profile
+    # upsert must never manufacture a "new visitor" verdict that could
+    # 429 a returning visitor.
+    is_new_visitor = False
     if visitor_profile_id and resolved_branch_id:
         from repositories.visitor_branch_first_repo import has_first_seen
 
         is_new_visitor = not await has_first_seen(
             tenant_id, resolved_branch_id, visitor_profile_id
         )
-    resolved_plan = await _get_plan_data(tenant_id)
+    resolved_plan = await get_plan_data_safe(tenant_id)
     await enforce_branch_visitor_cap(
         tenant_id,
         resolved_branch_id,

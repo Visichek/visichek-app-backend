@@ -34,11 +34,22 @@ KIOSK_CAP_MESSAGE = (
 )
 
 
-async def _get_plan_data(tenant_id: str) -> Optional[dict]:
+async def get_plan_data_safe(tenant_id: str) -> Optional[dict]:
+    """Resolve the tenant's plan, swallowing any resolution failure to None.
+
+    Public name for what was previously the module-private ``_get_plan_data``.
+    Callers across services import this directly, so it's promoted to a
+    proper public helper; ``_get_plan_data`` is kept as an alias for any
+    caller still importing the old name.
+    """
     try:
         return await resolve_tenant_plan(tenant_id)
     except Exception:
         return None
+
+
+# Backwards-compatible alias — prefer ``get_plan_data_safe`` in new code.
+_get_plan_data = get_plan_data_safe
 
 
 async def is_feature_enabled(
@@ -161,6 +172,13 @@ async def enforce_branch_visitor_cap(
     caps = resolved_plan.get("tenant_caps") or {}
     month_start, month_end = get_month_bounds()
 
+    # NOTE: when a per-branch cap is configured AND the branch resolves,
+    # this clause returns unconditionally (see the ``return`` a few lines
+    # below) — the tenant-wide ``max_visitors_per_month`` check further
+    # down never runs for that request. So on a plan like Premium that
+    # sets both a per-branch cap and a tenant-wide cap, the tenant-wide
+    # cap only actually applies when the branch can't be resolved (e.g.
+    # legacy check-ins with no branch_id).
     per_branch_limit = caps.get("visitors_per_branch_per_month")
     if per_branch_limit is not None and branch_id:
         count = await count_new_for_month(

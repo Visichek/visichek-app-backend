@@ -14,7 +14,8 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+import contextlib
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -300,7 +301,7 @@ class TestKioskPathNowEnforces:
             ),
             patch.object(
                 checkin_service,
-                "_get_plan_data",
+                "get_plan_data_safe",
                 AsyncMock(
                     return_value={
                         "tenant_caps": {"visitors_per_branch_per_month": 0}
@@ -336,3 +337,321 @@ class TestKioskPathNowEnforces:
         assert exc_info.value.status_code == 429
         mock_create_checkin.assert_not_called()
         assert exc_info.value.detail == checkin_service.KIOSK_CAP_MESSAGE
+
+    async def test_profile_resolution_failure_at_cap_does_not_block_checkin(self):
+        """Task 6 item 2: if ``_upsert_visitor_profile_from_submit`` returns
+        None (failure/unresolved), ``is_new_visitor`` must default to False
+        so the check-in proceeds even when the branch is at its cap — never
+        block on uncertainty about whether this visitor is new."""
+        from services import checkin_service
+
+        with (
+            patch.object(
+                checkin_service,
+                "enforce_consent_if_required",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                checkin_service,
+                "_enforce_tenant_geofence",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "repositories.visitor_repo.find_visitor_by_email_or_phone_any",
+                AsyncMock(return_value=None),
+            ),
+            patch("repositories.visitor_repo.create_visitor", AsyncMock()) as mock_create_visitor,
+            patch.object(
+                checkin_service,
+                "_collect_returning_visitor_fallback",
+                AsyncMock(return_value={}),
+            ),
+            patch.object(
+                checkin_service,
+                "_upsert_visitor_profile_from_submit",
+                AsyncMock(return_value=None),  # profile resolution failed
+            ),
+            patch.object(
+                checkin_service,
+                "get_active_pending_for_visitor",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                checkin_service,
+                "_resolve_checkin_branch_id",
+                AsyncMock(return_value="branch-1"),
+            ),
+            patch.object(
+                checkin_service,
+                "get_plan_data_safe",
+                AsyncMock(
+                    return_value={
+                        "tenant_caps": {"visitors_per_branch_per_month": 0}
+                    }
+                ),
+            ),
+            # Branch is already AT cap — a new visitor here would 429.
+            patch(
+                "repositories.visitor_branch_first_repo.count_new_for_month",
+                AsyncMock(return_value=0),
+            ),
+            patch.object(checkin_service, "create_checkin", AsyncMock()) as mock_create_checkin,
+            patch.object(
+                checkin_service,
+                "record_visitor_consent",
+                AsyncMock(return_value=None),
+            ),
+        ):
+            from unittest.mock import MagicMock
+
+            from schemas.checkin_schema import CheckinPurpose
+
+            mock_create_visitor.return_value = MagicMock(
+                id="visitor-1", portrait_url=None, verified=False
+            )
+            mock_create_checkin.return_value = MagicMock(id="checkin-1")
+
+            # Must NOT raise — profile-resolution failure must never
+            # manufacture a "new visitor" verdict that blocks at cap.
+            result = await checkin_service._submit_verified_checkin_core(
+                tenant_id="tenant-1",
+                checkin_config_id="config-1",
+                required_field_keys=set(),
+                email=None,
+                phone="+1000000000",
+                bio_data={"full_name": "Jane Doe"},
+                tenant_specific_data={},
+                purpose=CheckinPurpose(purpose="meeting"),
+            )
+
+        assert result is not None
+        mock_create_checkin.assert_awaited_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestReturningVisitorByIdLedgerInsert:
+    """Task 6 item 8: ledger-insert assertion for
+    ``submit_returning_visitor_checkin_by_id``."""
+
+    def _base_mocks(self, has_first_seen_return: bool):
+        from bson import ObjectId
+
+        visitor_id = str(ObjectId())
+        tenant_id = str(ObjectId())
+
+        visitor = MagicMock(
+            id=visitor_id,
+            email="jane@example.com",
+            phone="+1000000000",
+            full_name="Jane Doe",
+            bio_data={},
+            portrait_url=None,
+            verified=False,
+            verification_method=None,
+        )
+        tenant = MagicMock(id=tenant_id)
+
+        patches = [
+            patch(
+                "repositories.tenant_repo.get_tenant",
+                AsyncMock(return_value=tenant),
+            ),
+            patch(
+                "repositories.visitor_repo.get_visitor",
+                AsyncMock(return_value=visitor),
+            ),
+            patch(
+                "repositories.checkin_config_repo.get_active_checkin_config_for_tenant",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "services.checkin_config_service.resolve_required_fields_for_tenant",
+                AsyncMock(return_value=([], None)),
+            ),
+        ]
+        return tenant_id, visitor_id, patches
+
+    async def test_first_time_at_branch_inserts_ledger_row(self):
+        from services import checkin_service
+
+        tenant_id, visitor_id, base_patches = self._base_mocks(
+            has_first_seen_return=False
+        )
+
+        extra_patches = [
+            patch.object(
+                checkin_service,
+                "enforce_consent_if_required",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                checkin_service,
+                "_enforce_tenant_geofence",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                checkin_service,
+                "get_active_pending_for_visitor",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                checkin_service,
+                "_upsert_visitor_profile_from_submit",
+                AsyncMock(return_value="profile-1"),
+            ),
+            patch.object(
+                checkin_service,
+                "_resolve_checkin_branch_id",
+                AsyncMock(return_value="branch-1"),
+            ),
+            patch(
+                "repositories.visitor_branch_first_repo.has_first_seen",
+                AsyncMock(return_value=False),  # never seen at this branch -> new
+            ),
+            patch.object(
+                checkin_service,
+                "get_plan_data_safe",
+                AsyncMock(return_value=None),  # fail open, cap never checked
+            ),
+            patch.object(
+                checkin_service,
+                "create_checkin",
+                AsyncMock(return_value=MagicMock(id="checkin-1")),
+            ),
+            patch.object(
+                checkin_service,
+                "invalidate_tenant_dashboard_cache",
+                MagicMock(),
+            ),
+            patch.object(
+                checkin_service,
+                "record_visitor_consent",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "repositories.visitor_profile_repo.increment_visitor_profile_visits",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "services.notification_service.notify_checkin_pending_approval",
+                AsyncMock(return_value=None),
+            ),
+        ]
+        record_first_seen_patch = patch(
+            "repositories.visitor_branch_first_repo.record_first_seen",
+            AsyncMock(return_value=True),
+        )
+
+        with contextlib.ExitStack() as stack:
+            for p in base_patches + extra_patches:
+                stack.enter_context(p)
+            mock_record_first_seen = stack.enter_context(record_first_seen_patch)
+
+            from schemas.checkin_schema import CheckinPurpose
+
+            await checkin_service.submit_returning_visitor_checkin_by_id(
+                tenant_id=tenant_id,
+                visitor_id=visitor_id,
+                purpose=CheckinPurpose(purpose="meeting"),
+                tenant_specific_data={},
+            )
+
+        mock_record_first_seen.assert_awaited_once()
+
+    async def test_already_seen_at_branch_no_insert_no_block_at_cap(self):
+        from services import checkin_service
+
+        tenant_id, visitor_id, base_patches = self._base_mocks(
+            has_first_seen_return=True
+        )
+
+        extra_patches = [
+            patch.object(
+                checkin_service,
+                "enforce_consent_if_required",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                checkin_service,
+                "_enforce_tenant_geofence",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                checkin_service,
+                "get_active_pending_for_visitor",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                checkin_service,
+                "_upsert_visitor_profile_from_submit",
+                AsyncMock(return_value="profile-1"),
+            ),
+            patch.object(
+                checkin_service,
+                "_resolve_checkin_branch_id",
+                AsyncMock(return_value="branch-1"),
+            ),
+            patch(
+                "repositories.visitor_branch_first_repo.has_first_seen",
+                AsyncMock(return_value=True),  # already seen -> returning
+            ),
+            patch.object(
+                checkin_service,
+                "get_plan_data_safe",
+                AsyncMock(
+                    return_value={
+                        "tenant_caps": {"visitors_per_branch_per_month": 0}
+                    }
+                ),
+            ),
+            # Branch is AT cap for new visitors — must not matter here.
+            patch(
+                "repositories.visitor_branch_first_repo.count_new_for_month",
+                AsyncMock(return_value=0),
+            ),
+            patch.object(
+                checkin_service,
+                "create_checkin",
+                AsyncMock(return_value=MagicMock(id="checkin-1")),
+            ),
+            patch.object(
+                checkin_service,
+                "invalidate_tenant_dashboard_cache",
+                MagicMock(),
+            ),
+            patch.object(
+                checkin_service,
+                "record_visitor_consent",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "repositories.visitor_profile_repo.increment_visitor_profile_visits",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "services.notification_service.notify_checkin_pending_approval",
+                AsyncMock(return_value=None),
+            ),
+        ]
+        record_first_seen_patch = patch(
+            "repositories.visitor_branch_first_repo.record_first_seen",
+            AsyncMock(return_value=True),
+        )
+
+        with contextlib.ExitStack() as stack:
+            for p in base_patches + extra_patches:
+                stack.enter_context(p)
+            mock_record_first_seen = stack.enter_context(record_first_seen_patch)
+
+            from schemas.checkin_schema import CheckinPurpose
+
+            result = await checkin_service.submit_returning_visitor_checkin_by_id(
+                tenant_id=tenant_id,
+                visitor_id=visitor_id,
+                purpose=CheckinPurpose(purpose="meeting"),
+                tenant_specific_data={},
+            )
+
+        assert result is not None
+        mock_record_first_seen.assert_not_awaited()

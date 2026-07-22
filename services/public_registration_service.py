@@ -53,7 +53,7 @@ from services.visitor_profile_service import get_or_create_visitor_profile
 from services.qr_service import verify_badge_token, verify_registration_token
 from services.plan_limits import (
     KIOSK_CAP_MESSAGE,
-    _get_plan_data,
+    get_plan_data_safe,
     enforce_branch_visitor_cap,
 )
 from repositories.visitor_branch_first_repo import has_first_seen, record_first_seen
@@ -201,7 +201,7 @@ async def register_visitor_public(
     is_new_visitor = True
     if profile.id and branch_id:
         is_new_visitor = not await has_first_seen(tenant_id, branch_id, profile.id)
-    resolved_plan = await _get_plan_data(tenant_id)
+    resolved_plan = await get_plan_data_safe(tenant_id)
     await enforce_branch_visitor_cap(
         tenant_id,
         branch_id,
