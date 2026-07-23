@@ -436,6 +436,12 @@ ADMIN_PERMISSIONS: list[Permission] = [
         "/v1/plans/{plan_id}/features/{feature_key}",
         "Toggle plan feature",
     ),
+    _p(
+        "preview_plan_limitations",
+        ["POST"],
+        "/v1/admins/plans/{plan_id}/preview-limitations",
+        "Preview a draft plan's limitations (enterprise composer)",
+    ),
     # Subscriptions (bulk)
     _p(
         "bulk_cancel_subscriptions",
@@ -1620,6 +1626,7 @@ ADMIN_BILLING_PERMISSIONS: list[Permission] = list(
 ) + _admin_perms_by_path_prefix(
     (
         "/v1/plans",
+        "/v1/admins/plans",
         "/v1/subscriptions",
         "/v1/discounts",
         "/v1/usage",

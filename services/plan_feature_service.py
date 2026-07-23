@@ -53,9 +53,140 @@ class FeatureToggleSpec:
     # Optional human-readable hint about what to set in the env when
     # ``requires_external_config`` is ``True``.
     external_config_hint: Optional[str] = None
+    # Full set of deny rules this feature compiles to when disabled.
+    # ``endpoint_pattern``/``methods`` above stay the *primary* pattern
+    # used by ``set_plan_feature`` (single-rule toggle, unchanged
+    # behavior); ``deny_rules`` is the complete list the enterprise
+    # composer's compiler (``compile_feature_rules``) emits — copied
+    # verbatim from the proven per-tier deny lists in
+    # ``config.plan_tiers`` so we never invent a pattern that isn't
+    # already enforced elsewhere. Empty for features with no existing
+    # endpoint-level gate (e.g. ``api_access``, which is a boolean plan
+    # flag today, not an fnmatch-gated route).
+    deny_rules: tuple[FeatureRule, ...] = ()
 
 
 TOGGLEABLE_FEATURES: dict[str, FeatureToggleSpec] = {
+    "branding": FeatureToggleSpec(
+        key="branding",
+        label="Custom branding",
+        description="Custom logos, colors, and badge styling.",
+        endpoint_pattern="/v1/branding*",
+        methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
+        deny_rules=(
+            FeatureRule(
+                endpoint_pattern="/v1/branding*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="Custom branding requires Premium or Enterprise",
+            ),
+            FeatureRule(
+                endpoint_pattern="/v1/branding/*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="Custom branding requires Premium or Enterprise",
+            ),
+        ),
+    ),
+    "branching": FeatureToggleSpec(
+        key="branching",
+        label="Multi-location (branches)",
+        description="Create and manage more than one branch/location.",
+        endpoint_pattern="/v1/branches/*",
+        methods=("POST", "PUT", "PATCH", "DELETE"),
+        deny_rules=(
+            FeatureRule(
+                endpoint_pattern="/v1/branches",
+                methods=["POST"],
+                enabled=False,
+                description="Multi-location requires Premium or Enterprise",
+            ),
+            FeatureRule(
+                endpoint_pattern="/v1/branches/*",
+                methods=["POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="Multi-location requires Premium or Enterprise",
+            ),
+        ),
+    ),
+    "appointments": FeatureToggleSpec(
+        key="appointments",
+        label="Appointments",
+        description="Appointment scheduling + host roster.",
+        endpoint_pattern="/v1/appointments*",
+        methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
+        deny_rules=(
+            FeatureRule(
+                endpoint_pattern="/v1/appointments*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="Appointments require Premium or Enterprise",
+            ),
+            FeatureRule(
+                endpoint_pattern="/v1/appointments/*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="Appointments require Premium or Enterprise",
+            ),
+        ),
+    ),
+    "badges": FeatureToggleSpec(
+        key="badges",
+        label="Badge printing",
+        description="Visitor badge printing.",
+        endpoint_pattern="/v1/badges*",
+        methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
+        deny_rules=(
+            FeatureRule(
+                endpoint_pattern="/v1/badges*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="Badge printing requires Starter or higher",
+            ),
+            FeatureRule(
+                endpoint_pattern="/v1/badges/*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="Badge printing requires Starter or higher",
+            ),
+        ),
+    ),
+    "csv_export": FeatureToggleSpec(
+        key="csv_export",
+        label="CSV export",
+        description="CSV export of dashboard and compliance data.",
+        endpoint_pattern="/v1/dashboard/export*",
+        methods=("GET",),
+        deny_rules=(
+            FeatureRule(
+                endpoint_pattern="/v1/dashboard/export*",
+                methods=["GET"],
+                enabled=False,
+                description="CSV export requires Premium or Enterprise",
+            ),
+            FeatureRule(
+                endpoint_pattern="/v1/compliance/export*",
+                methods=["GET"],
+                enabled=False,
+                description="CSV export requires Premium or Enterprise",
+            ),
+        ),
+    ),
+    "host_email_notifications": FeatureToggleSpec(
+        key="host_email_notifications",
+        label="Host email notifications",
+        description="Email notifications to hosts on visitor arrival.",
+        endpoint_pattern="/v1/notifications/preferences",
+        methods=("PUT", "PATCH"),
+        deny_rules=(
+            FeatureRule(
+                endpoint_pattern="/v1/notifications/preferences",
+                methods=["PUT", "PATCH"],
+                enabled=False,
+                description="Host email notifications require Premium or Enterprise",
+            ),
+        ),
+    ),
     "kyc": FeatureToggleSpec(
         key="kyc",
         label="Identity verification (Dojah KYC)",
@@ -74,6 +205,78 @@ TOGGLEABLE_FEATURES: dict[str, FeatureToggleSpec] = {
             "Set DOJAH_APP_ID, DOJAH_SECRET_KEY, DOJAH_PUBLIC_KEY in "
             "the backend environment for the toggle to take effect."
         ),
+        deny_rules=(
+            FeatureRule(
+                endpoint_pattern="/v1/kyc*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="ID verification requires Premium or Enterprise",
+            ),
+            FeatureRule(
+                endpoint_pattern="/v1/kyc/*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="ID verification requires Premium or Enterprise",
+            ),
+        ),
+    ),
+    "watchlist": FeatureToggleSpec(
+        key="watchlist",
+        label="Watchlist",
+        description="Flagged / watchlisted visitors.",
+        endpoint_pattern="/v1/watchlist*",
+        methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
+        deny_rules=(
+            FeatureRule(
+                endpoint_pattern="/v1/watchlist*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="Watchlist requires Enterprise",
+            ),
+            FeatureRule(
+                endpoint_pattern="/v1/watchlist/*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="Watchlist requires Enterprise",
+            ),
+        ),
+    ),
+    "sso": FeatureToggleSpec(
+        key="sso",
+        label="SSO",
+        description="Single sign-on (Azure / Google Workspace).",
+        endpoint_pattern="/v1/sso*",
+        methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
+        deny_rules=(
+            FeatureRule(
+                endpoint_pattern="/v1/sso*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="SSO requires Enterprise",
+            ),
+            FeatureRule(
+                endpoint_pattern="/v1/sso/*",
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                enabled=False,
+                description="SSO requires Enterprise",
+            ),
+        ),
+    ),
+    # ``api_access`` has no endpoint-level deny pattern anywhere in the
+    # codebase today — it's a plain boolean flag on the plan document
+    # (``CanonicalPlan.api_access`` / ``PlanBase.api_access``), not an
+    # fnmatch-gated route surface. Listed here so the enterprise
+    # composer's checklist UI can toggle it (it flips the boolean via
+    # the normal ``PlanUpdate.api_access`` field, not via feature_rules
+    # — ``deny_rules`` stays empty rather than inventing a pattern that
+    # nothing enforces).
+    "api_access": FeatureToggleSpec(
+        key="api_access",
+        label="API access",
+        description="Programmatic API access for this plan.",
+        endpoint_pattern="/v1/api-access",
+        methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
+        deny_rules=(),
     ),
 }
 
@@ -81,6 +284,31 @@ TOGGLEABLE_FEATURES: dict[str, FeatureToggleSpec] = {
 def get_feature_catalog() -> list[FeatureToggleSpec]:
     """Stable-ordered list of every togglable feature."""
     return list(TOGGLEABLE_FEATURES.values())
+
+
+def compile_feature_rules(enabled: dict[str, bool]) -> list[FeatureRule]:
+    """Compile a ``{feature_key: enabled}`` toggle map into ``feature_rules``.
+
+    Used by the enterprise plan composer (and its preview endpoint) to
+    turn a checklist of feature toggles into the same ``feature_rules``
+    shape ``PlanEnforcementMiddleware`` already knows how to enforce —
+    no new enforcement path, just a new way to author the list. Every
+    deny rule emitted here is copied verbatim from
+    :data:`TOGGLEABLE_FEATURES[key].deny_rules`, which in turn mirror
+    the proven per-tier deny lists in ``config.plan_tiers``.
+
+    A feature key absent from ``enabled`` falls back to its
+    ``default_enabled`` value. Enabled features emit no rule (the
+    middleware's default is "allowed"); disabled features emit their
+    full ``deny_rules`` set. Unknown keys in ``enabled`` are ignored.
+    """
+    rules: list[FeatureRule] = []
+    for key, spec in TOGGLEABLE_FEATURES.items():
+        is_enabled = enabled.get(key, spec.default_enabled)
+        if is_enabled:
+            continue
+        rules.extend(spec.deny_rules)
+    return rules
 
 
 def _spec_or_404(feature_key: str) -> FeatureToggleSpec:

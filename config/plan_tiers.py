@@ -587,6 +587,13 @@ ENTERPRISE_TEMPLATE = CanonicalPlan(
             "visitors_per_branch_per_month",
         }
     ),
+    # Task 13: the allowlist's job is blocking accidental cap-name typos
+    # and the trial_days footgun — NOT blocking composition. Enterprise
+    # plans are hand-built per customer by an admin (the "enterprise
+    # composer"), so the identity/catalogue fields an admin legitimately
+    # sets while composing one (display name, description, the compiled
+    # feature_rules, public visibility, catalogue sort position) must be
+    # editable too, alongside the original pricing/support fields.
     adjustable_plan_fields=frozenset(
         {
             "base_price_monthly",
@@ -596,6 +603,11 @@ ENTERPRISE_TEMPLATE = CanonicalPlan(
             "custom_branding",
             "api_access",
             "priority_support",
+            "display_name",
+            "description",
+            "feature_rules",
+            "is_public",
+            "sort_order",
         }
     ),
 )

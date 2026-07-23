@@ -24,6 +24,11 @@ from security.account_status_check import check_admin_account_status_and_permiss
 
 router = APIRouter(prefix="/plans", tags=["Plans"])
 
+# Enterprise composer preview — admin-only, lives under /v1/admins/plans
+# (distinct prefix from the tenant-agnostic /v1/plans surface above,
+# mirroring the admin_router / public_router split in addon_route.py).
+admin_router = APIRouter(prefix="/admins/plans", tags=["Plans (Admin)"])
+
 
 def _plan_status_builder(values):
     if "all" in values:
@@ -557,3 +562,31 @@ async def toggle_plan_feature_endpoint(
         actor_role="admin",
         request_id=getattr(request.state, "request_id", None),
     )
+
+
+# ── Enterprise composer: draft preview ───────────────────────────────
+
+
+@admin_router.post("/{plan_id}/preview-limitations")
+@document_response(
+    message="Plan preview computed",
+    description=(
+        "Computes the ``me/limitations``-shaped payload a draft plan "
+        "edit would produce, WITHOUT persisting anything. Merges the "
+        "request body (a partial ``PlanUpdate``) on top of the stored "
+        "plan and re-runs the same denied-endpoints / denied-features / "
+        "caps composition used for a real tenant. No caching — every "
+        "call re-derives from the current stored plan. Used by the "
+        "enterprise plan composer's review step so an admin can see "
+        "exactly what a bespoke plan will deny before saving it."
+    ),
+    summary="Preview a draft plan's limitations (enterprise composer)",
+)
+async def preview_plan_limitations_endpoint(
+    plan_id: str,
+    payload: PlanUpdate,
+    admin=Depends(check_admin_account_status_and_permissions),
+):
+    from services.me_limitations_service import build_admin_plan_preview_limitations
+
+    return await build_admin_plan_preview_limitations(plan_id, payload)

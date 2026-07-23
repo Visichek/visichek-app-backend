@@ -65,7 +65,9 @@ from bson import ObjectId
 
 from config.plan_tiers import FREE_PLAN_NAME
 from core.database import db
+from core.errors import resource_not_found
 from repositories.plan_repo import get_plan
+from schemas.plan_schema import PlanUpdate
 from security.principal import AuthPrincipal
 from services.plan_cache_service import resolve_tenant_plan
 
@@ -370,4 +372,101 @@ async def build_me_limitations(
         # _apply_addon_benefits). This is just the raw summary list for
         # display purposes.
         "activeAddons": plan_data.get("active_addons") or [],
+    }
+
+
+async def build_admin_plan_preview_limitations(
+    plan_id: str, draft: PlanUpdate
+) -> Dict[str, Any]:
+    """Preview the ``me/limitations`` shape a draft plan edit would produce.
+
+    Used by the enterprise composer's review step (``POST
+    /v1/admins/plans/{id}/preview-limitations``): merges ``draft`` on
+    top of the stored plan ``plan_id`` (without persisting anything)
+    and runs the same denied-endpoints / denied-features / caps
+    composition ``build_me_limitations`` uses for a real tenant, minus
+    the tenant-specific bits (no subscription, no locked entities —
+    there is no tenant yet). No caching; every call re-derives from
+    the current stored plan plus the in-memory draft.
+    """
+    plan = await get_plan({"_id": ObjectId(plan_id)}) if ObjectId.is_valid(plan_id) else None
+    if plan is None:
+        raise resource_not_found(resource="Plan", resource_id=plan_id)
+
+    overrides = draft.model_dump(exclude_unset=True, exclude_none=True)
+
+    feature_rules = overrides.get("feature_rules")
+    if feature_rules is None:
+        feature_rules = [r.model_dump() for r in plan.feature_rules]
+    else:
+        feature_rules = [
+            r.model_dump() if hasattr(r, "model_dump") else r for r in feature_rules
+        ]
+
+    tenant_caps_override = overrides.get("tenant_caps") or {}
+    tenant_caps = plan.tenant_caps.model_dump()
+    tenant_caps.update(tenant_caps_override)
+
+    tier = overrides.get("tier", plan.tier)
+    tier_value = tier.value if hasattr(tier, "value") else str(tier)
+
+    plan_data = {
+        "plan_id": str(plan.id) if plan.id else plan_id,
+        "plan_name": plan.name,
+        "plan_display_name": overrides.get("display_name", plan.display_name),
+        "tier": tier_value,
+        "feature_rules": feature_rules,
+        "tenant_caps": tenant_caps,
+        "extra_visitors_per_month": 0,
+        "active_addons": [],
+        "subscription_status": None,
+        "current_period_end": None,
+        "currency": plan.currency,
+    }
+
+    denied_endpoints = _denied_endpoints_from_plan(plan_data)
+    denied_features = _denied_feature_keys(denied_endpoints)
+    tier_extras = _EXTRA_FEATURE_KEYS_BY_TIER.get(tier_value.lower(), ())
+    if tier_extras:
+        denied_features = sorted(set(denied_features) | set(tier_extras))
+
+    caps_out: Dict[str, Any] = {
+        "maxBranches": tenant_caps.get("max_branches"),
+        "maxDepartments": tenant_caps.get("max_departments"),
+        "maxSystemUsers": tenant_caps.get("max_system_users"),
+        "maxVisitorsPerMonth": tenant_caps.get("max_visitors_per_month"),
+        "maxAppointmentsPerMonth": tenant_caps.get("max_appointments_per_month"),
+        "extraVisitorsPerMonth": 0,
+    }
+    caps_out.update(_ANALYTICS_CAPS_BY_TIER.get(tier_value.lower(), {}))
+
+    is_enterprise = tier_value == "enterprise"
+    plan_name = overrides.get("name", plan.name)
+    sub_app_prefix = f"/v1/enterprise/{plan_name}" if is_enterprise and plan_name else None
+
+    return {
+        "tenantId": None,
+        "plan": {
+            "id": plan_data["plan_id"],
+            "name": plan_name,
+            "displayName": plan_data["plan_display_name"],
+            "tier": tier_value,
+            "isFreeFallback": False,
+            "subscriptionStatus": None,
+            "currentPeriodEnd": None,
+            "billingCycle": None,
+            "effectivePrice": overrides.get("base_price_monthly", plan.base_price_monthly),
+            "basePriceMonthly": overrides.get("base_price_monthly", plan.base_price_monthly),
+            "basePriceYearly": overrides.get("base_price_yearly", plan.base_price_yearly),
+            "currency": plan.currency,
+        },
+        "caps": caps_out,
+        "deniedEndpoints": denied_endpoints,
+        "deniedFeatures": denied_features,
+        "lockedEntities": {"branches": [], "departments": []},
+        "enterprise": {
+            "isEnterprise": is_enterprise,
+            "subAppPrefix": sub_app_prefix,
+        },
+        "activeAddons": [],
     }

@@ -997,7 +997,10 @@ from api.v1.sub_processor_route import router as v1_sub_processor_route_router
 from api.v1.compliance_route import router as v1_compliance_route_router
 from api.v1.audit_route import router as v1_audit_route_router
 from api.v1.incident_route import router as v1_incident_route_router
-from api.v1.plan_route import router as v1_plan_route_router
+from api.v1.plan_route import (
+    admin_router as v1_plan_admin_route_router,
+    router as v1_plan_route_router,
+)
 from api.v1.pricing_marketing_route import router as v1_pricing_marketing_route_router
 from api.v1.faq_route import router as v1_faq_route_router
 from api.v1.subscription_route import router as v1_subscription_route_router
@@ -1120,6 +1123,7 @@ app.include_router(v1_compliance_route_router, prefix="/v1")
 app.include_router(v1_audit_route_router, prefix="/v1")
 app.include_router(v1_incident_route_router, prefix="/v1")
 app.include_router(v1_plan_route_router, prefix="/v1")
+app.include_router(v1_plan_admin_route_router, prefix="/v1")
 app.include_router(v1_pricing_marketing_route_router, prefix="/v1")
 app.include_router(v1_faq_route_router, prefix="/v1")
 app.include_router(v1_subscription_route_router, prefix="/v1")
