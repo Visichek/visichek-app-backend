@@ -187,6 +187,17 @@ class TenantAddonBase(BaseModel):
     purchased_at: Optional[int] = None  # set on payment success
     expires_at: Optional[int] = None  # None = perpetual
 
+    # Renewal bookkeeping for ``recurring_snapshot=True`` rows — mirrors
+    # ``SubscriptionBase``'s dunning fields. ``renewal_attempts`` counts
+    # consecutive failed renewal charges since the last success;
+    # ``next_retry_at`` is when the renewal sweep should retry a row
+    # currently in its dunning grace window (``expires_at`` is pushed out
+    # to match while a retry is pending, so the addon keeps granting
+    # benefit through the grace period — see services/addon_renewal_service.py).
+    renewal_attempts: int = 0
+    next_retry_at: Optional[int] = None
+    last_renewal_attempt_at: Optional[int] = None
+
     # Payment correlation: provider + reference + checkout id.
     payment_provider: Optional[str] = None
     payment_reference: Optional[str] = None
@@ -207,6 +218,10 @@ class TenantAddonUpdate(BaseModel):
     status: Optional[TenantAddonStatus] = None
     purchased_at: Optional[int] = None
     expires_at: Optional[int] = None
+    unit_price_snapshot: Optional[float] = None
+    renewal_attempts: Optional[int] = None
+    next_retry_at: Optional[int] = None
+    last_renewal_attempt_at: Optional[int] = None
     payment_provider: Optional[str] = None
     payment_reference: Optional[str] = None
     checkout_url: Optional[str] = None

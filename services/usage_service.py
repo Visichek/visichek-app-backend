@@ -159,8 +159,13 @@ async def get_tenant_usage_summary(
     #    as the primary "X of Y used" progress bars on the dashboard.
     month_start, month_end = get_month_bounds()
 
+    # Branch docs store ``status: "active"|"inactive"`` (no ``is_active``
+    # field) — locked branches (status=inactive, see branch_service.
+    # enforce_branch_lock / lock_down_to_hq) must not count as used
+    # capacity in usage displays. ``_enforce_branch_cap`` intentionally
+    # keeps counting ALL branches (locked ones still consume cap space).
     branches_count = await db["branches"].count_documents(
-        {"tenant_id": tenant_id, "is_active": {"$ne": False}}
+        {"tenant_id": tenant_id, "status": {"$ne": "inactive"}}
     )
     departments_count = await db["departments"].count_documents(
         {"tenant_id": tenant_id, "is_active": {"$ne": False}}

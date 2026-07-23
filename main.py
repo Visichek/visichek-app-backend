@@ -465,6 +465,20 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Schedule recurring add-on renewal (hourly, alongside subscription
+    # renewal). Charges the tenant's saved instrument for recurring
+    # tenant_addons (e.g. additional-branch) due for renewal; a declined
+    # or missing-instrument charge enters a dunning-style grace window
+    # before the row is marked expired (never a fake create_intent
+    # success — see services/addon_renewal_service.py).
+    scheduler.add_job(
+        "services.addon_renewal_service:renew_due_addons",
+        trigger=IntervalTrigger(hours=1),
+        id="renew_due_addons",
+        name="Addon Renewal Check",
+        replace_existing=True,
+    )
+
     # Main super_admin invariant — periodic re-check (every 6 hours).
     # Heals tenants whose state drifted out of band (e.g. someone
     # manually changed flags) and opens a HIGH-priority support case

@@ -140,5 +140,24 @@ async def list_due_tenant_ids_for_expiry() -> List[str]:
     return await db[COLLECTION].distinct("tenant_id", filt)
 
 
+async def list_due_recurring_tenant_addons(now: int, *, limit: int = 1000) -> List[TenantAddonOut]:
+    """Recurring active addons due for a renewal charge or dunning retry.
+
+    For ``recurring_snapshot=True`` rows, ``expires_at`` doubles as "next
+    action due at": the normal renewal date, or — while a row is in its
+    failed-renewal grace window — the next retry timestamp
+    (``services.addon_renewal_service`` pushes ``expires_at`` out to match
+    ``next_retry_at`` on a declined charge). Used by the hourly
+    ``renew_due_addons`` scheduled job.
+    """
+    filt: dict = {
+        "status": TenantAddonStatus.ACTIVE.value,
+        "recurring_snapshot": True,
+        "expires_at": {"$ne": None, "$lte": now},
+    }
+    cursor = db[COLLECTION].find(filt).limit(limit)
+    return [TenantAddonOut(**doc) async for doc in cursor]
+
+
 async def count_tenant_addons(filter_dict: dict) -> int:
     return await db[COLLECTION].count_documents(filter_dict)

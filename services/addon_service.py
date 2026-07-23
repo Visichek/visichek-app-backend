@@ -184,15 +184,20 @@ async def _invalidate_tenant_addon_caches(tenant_id: Optional[str]) -> None:
     """Drop every cache that could be serving stale addon-derived entitlements.
 
     Called whenever a tenant's active addon set changes (activate, cancel,
-    expiry sweep): the resolved-plan cache (WS0.1 bakes addon benefits into
-    it), the ``usage.my_usage`` precompute, and the ``tenant_usage`` entity
-    cache. Best-effort — a cache miss just means the next read is a little
-    slower, never a correctness issue.
+    expiry sweep, renewal success/failure): the resolved-plan cache (WS0.1
+    bakes addon benefits into it), the ``usage.my_usage`` precompute, and
+    the ``tenant_usage`` entity cache. Also re-runs the branch lock walk
+    (``branch_service.enforce_branch_lock``) — a no-op unless the
+    addon-inclusive ``max_branches`` cap just dropped below the tenant's
+    active branch count, in which case it locks the newest branches beyond
+    the new cap. Best-effort — a cache miss / lock-walk failure just means
+    the next read is a little slower / stale, never raised to the caller.
     """
     if not tenant_id:
         return
     from core.queue.entity_cache import invalidate_entity
     from core.queue.precompute import delete_precompute
+    from services.branch_service import enforce_branch_lock
     from services.plan_cache_service import invalidate_tenant_plan_cache
 
     try:
@@ -205,6 +210,10 @@ async def _invalidate_tenant_addon_caches(tenant_id: Optional[str]) -> None:
         pass
     try:
         invalidate_entity("tenant_usage", tenant_id)
+    except Exception:
+        pass
+    try:
+        await enforce_branch_lock(tenant_id)
     except Exception:
         pass
 

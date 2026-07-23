@@ -329,6 +329,12 @@ async def build_me_limitations(
         "maxSystemUsers": caps_raw.get("max_system_users"),
         "maxVisitorsPerMonth": caps_raw.get("max_visitors_per_month"),
         "maxAppointmentsPerMonth": caps_raw.get("max_appointments_per_month"),
+        # Addon-inclusive visitor top-up (WS0.1 folds active visitor_quota
+        # addon benefit into the resolved snapshot as
+        # extra_visitors_per_month) — surfaced so aggregate visitor-cap
+        # consumers (e.g. WS8 usage cards) can be addon-inclusive without
+        # a second call.
+        "extraVisitorsPerMonth": plan_data.get("extra_visitors_per_month") or 0,
     }
     # Analytics ceilings (Insights page). Absent on paid tiers => unlimited.
     caps_out.update(
