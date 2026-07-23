@@ -1,11 +1,14 @@
 import json
+import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 
 from core.errors import AppException, ErrorCode
 from core.queue.entity_cache import get_or_compute_entity
-from core.response_envelope import document_response
+from core.response_envelope import document_response, success_payload
 from schemas.checkin_schema import CheckinOut, CheckinPurpose
 from schemas.imports import IDType
 from schemas.public_registration_schema import (
@@ -25,8 +28,13 @@ from services.checkin_service import (
     submit_returning_visitor_checkin_by_id,
     submit_verified_checkin_for_tenant,
 )
+from services.checkin_status_service import (
+    TERMINAL_CHECKIN_STATES,
+    get_public_checkin_status,
+    wait_for_checkin_status_change,
+)
 from services.consent_service import build_consent_payload
-from services.qr_service import sign_checkin_capability
+from services.qr_service import sign_checkin_capability, verify_checkin_capability
 from services.public_registration_service import (
     check_returning_visitor_status,
     checkout_visitor_public,
@@ -41,6 +49,8 @@ from services.public_registration_service import (
     register_visitor_public,
     verify_public_registration_token,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/public", tags=["Public Registration"])
 
@@ -597,3 +607,142 @@ async def finalize_registration_public_endpoint(
 )
 async def public_badge_pass_endpoint(token: str):
     return await get_public_badge_pass(token)
+
+
+_NO_STORE_HEADERS = {"Cache-Control": "no-store"}
+
+
+async def _require_status_capability(checkin_id: str, capability_token: str) -> None:
+    """Reject status polls lacking a valid capability token.
+
+    Mirrors the KYC guard (``api/v1/kyc_route.py``): the token is bound to
+    this exact ``checkin_id`` and handed out only in the check-in creation
+    response, so possession of a check-in id alone cannot read approval
+    status or badge data (CWE-639 / CWE-862). Verified with
+    ``purpose="status"`` — the same token stays acceptable here long after
+    the short KYC window closes. Rejections are audited (best-effort) under
+    a distinct action so probing is visible.
+    """
+    if capability_token and verify_checkin_capability(
+        capability_token, checkin_id=checkin_id, purpose="status"
+    ):
+        return
+    try:
+        from services.audit_service import record_audit_event
+
+        await record_audit_event(
+            actor_id="anonymous",
+            actor_role="kiosk_visitor",
+            action="checkin.status_capability_rejected",
+            resource_type="checkin",
+            resource_id=checkin_id,
+            tenant_id=None,
+            details={"reason": "missing_or_invalid_capability_token"},
+        )
+    except Exception:
+        logger.warning(
+            "failed to audit rejected status capability for checkin %s",
+            checkin_id,
+            exc_info=True,
+        )
+    raise AppException(
+        status_code=403,
+        code=ErrorCode.AUTH_PERMISSION_DENIED,
+        message="Missing or invalid capability token for this check-in",
+        headers=dict(_NO_STORE_HEADERS),
+    )
+
+
+@router.get("/checkins/{checkin_id}/status")
+@document_response(
+    message="Check-in status retrieved",
+    description=(
+        "Public kiosk status endpoint (WS5). Auth is the capability token "
+        "minted in the check-in creation response, passed IN THE QUERY — "
+        "never send a Bearer header (this endpoint is unauthenticated by "
+        "design; a tenant Bearer token would route the request through plan "
+        "enforcement).\n\n"
+        "``wait=1`` long-polls: the request is held up to ~25s and returns "
+        "early the moment the front desk approves or rejects; on timeout it "
+        "returns the current state and the client re-issues immediately. "
+        "``wait=0`` (default) returns immediately.\n\n"
+        "Badge fields populate once the check-in is APPROVED and a badge "
+        "exists. Free-plan organizations approve without a badge — "
+        "``state: approved`` with ``badge: null`` is the expected outcome "
+        "there, not an error. ``badge_expires_at`` is null under the MANUAL "
+        "badge-expiry policy (no auto-expiry).\n\n"
+        "Serves kiosk check-ins (``checkins`` collection) only: capability "
+        "tokens are minted exclusively by the kiosk submit endpoints, so a "
+        "visit-session id can never authenticate here. The reception-"
+        "assisted visit-session flow receives its badge synchronously from "
+        "the confirm / finalize response and needs no waiting screen.\n\n"
+        "All responses carry ``Cache-Control: no-store``."
+    ),
+    summary="Public check-in status (long-poll capable)",
+    success_example={
+        "checkin_id": "507f1f77bcf86cd799439011",
+        "state": "approved",
+        "badge": {
+            "token": "bqt_9f3c…",
+            "visitor_name": "Nathaniel Uriri",
+            "status": "checked_in",
+            "tenant": {"company_name": "Doux Finance", "branding_enabled": True},
+        },
+        "badge_token": "bqt_9f3c…",
+        "badge_expires_at": 1748448000,
+        "rejection_reason": None,
+    },
+    response_codes={
+        403: "Missing or invalid capability token",
+        404: "Check-in not found",
+    },
+)
+async def public_checkin_status_endpoint(
+    checkin_id: str,
+    request: Request,
+    capability_token: str = Query(
+        ...,
+        description=(
+            "Capability token from the check-in creation response, bound to "
+            "this check-in. Required — a bare check-in id does not authorize "
+            "reading status or badge data."
+        ),
+    ),
+    wait: int = Query(
+        0,
+        ge=0,
+        le=1,
+        description=(
+            "1 = long-poll (hold up to ~25s, return early on a front-desk "
+            "decision); 0 = return the current state immediately."
+        ),
+    ),
+):
+    await _require_status_capability(checkin_id, capability_token)
+
+    status_out = await get_public_checkin_status(checkin_id)
+
+    if wait == 1 and status_out.state not in TERMINAL_CHECKIN_STATES:
+        await wait_for_checkin_status_change(request, checkin_id)
+        # Recompute the absolute state — whether we woke on a nudge, a
+        # disconnect, or the deadline, the fresh snapshot is what's true.
+        status_out = await get_public_checkin_status(checkin_id)
+
+    # ``Cache-Control: no-store`` is REQUIRED on every response here:
+    # HttpCacheMiddleware caches public JSON GETs for 60s otherwise (the
+    # 'v1-public' segment is not in its bypass list), which would freeze
+    # the kiosk waiting screen on a stale state. Returning the Response
+    # directly passes through @document_response untouched, so the
+    # envelope is built here (same shape, same by_alias=False encoding).
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        headers=dict(_NO_STORE_HEADERS),
+        content=jsonable_encoder(
+            success_payload(
+                data=status_out,
+                message="Check-in status retrieved",
+                request_id=getattr(request.state, "request_id", None),
+            ),
+            by_alias=False,
+        ),
+    )

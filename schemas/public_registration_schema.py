@@ -207,6 +207,32 @@ class PublicBadgePassOut(BaseModel):
     branding: Optional[PublicBadgeBranding] = None
 
 
+class PublicCheckinStatusOut(BaseModel):
+    """Live status payload for the kiosk waiting screen (WS5).
+
+    Served by ``GET /v1/public/checkins/{checkin_id}/status`` (capability
+    token in the query, optional 25s long-poll). ``state`` mirrors
+    ``CheckinState`` (``pending_verification`` / ``pending_approval`` /
+    ``approved`` / ``rejected`` / ``checked_out``).
+
+    Badge fields are populated only once the check-in is APPROVED **and**
+    a badge artifact exists. Free-plan organizations approve without a
+    badge — ``state == "approved"`` with ``badge`` null is a valid,
+    non-error outcome (the kiosk shows a "see the front desk" screen).
+    ``badge_expires_at`` is None when the organization's badge-expiry
+    policy is MANUAL (no auto-expiry). ``badge_token`` is the same value
+    the ``/badge/{token}`` public page accepts, so the kiosk can deep-link
+    the phone-friendly badge view even if ``badge`` failed to resolve.
+    """
+
+    checkin_id: str
+    state: str
+    badge: Optional[PublicBadgePassOut] = None
+    badge_token: Optional[str] = None
+    badge_expires_at: Optional[int] = None
+    rejection_reason: Optional[str] = None
+
+
 class PublicReturningVisitorSubmitRequest(BaseModel):
     """Minimal submit body for a recognised returning visitor.
 

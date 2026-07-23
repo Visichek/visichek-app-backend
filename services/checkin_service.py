@@ -46,6 +46,23 @@ from services.plan_limits import (
 logger = logging.getLogger(__name__)
 
 
+async def _nudge_checkin_status(checkin_id: str) -> None:
+    """Best-effort nudge to any kiosk long-poll parked on this check-in's
+    status (``GET /v1/public/checkins/{id}/status?wait=1``).
+
+    A publish failure must never break an approval / rejection — the kiosk
+    falls back to its bounded-poll timeout and recomputes the state anyway.
+    """
+    try:
+        from services.checkin_status_service import publish_checkin_status_nudge
+
+        await publish_checkin_status_nudge(checkin_id)
+    except Exception:
+        logger.debug(
+            "checkin status nudge failed checkin=%s", checkin_id, exc_info=True
+        )
+
+
 async def _resolve_checkin_branch_id(
     tenant_id: str, tenant_specific_data: Optional[dict]
 ) -> Optional[str]:
@@ -2235,6 +2252,9 @@ async def confirm_checkin(
             ),
         )
         invalidate_tenant_dashboard_cache(tenant_id)
+        # Wake the kiosk waiting screen (public status long-poll) — the
+        # visitor sees "approved" within ~a second instead of a poll cycle.
+        await _nudge_checkin_status(checkin_id)
 
         # Sync path (bypasses the queued-write auto-audit) — record directly.
         from services.audit_service import record_audit_event
@@ -2322,6 +2342,8 @@ async def confirm_checkin(
             ),
         )
         invalidate_tenant_dashboard_cache(tenant_id)
+        # Wake the kiosk waiting screen (public status long-poll).
+        await _nudge_checkin_status(checkin_id)
 
         # Sync path (bypasses the queued-write auto-audit) — record directly.
         from services.audit_service import record_audit_event
@@ -2407,6 +2429,9 @@ async def force_approve_pending_verification(
         checkin_id, CheckinUpdate(state=CheckinState.PENDING_APPROVAL)
     )
     invalidate_tenant_dashboard_cache(checkin.tenant_id)
+    # Wake the kiosk waiting screen — the visitor moves from "verifying"
+    # to "waiting for the front desk" without waiting out a poll cycle.
+    await _nudge_checkin_status(checkin_id)
 
     from services.audit_service import record_audit_event
 
