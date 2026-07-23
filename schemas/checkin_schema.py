@@ -52,6 +52,16 @@ class CheckinBase(BaseModel):
     # ``tenant_specific_data['branch_id']`` to a first-class field so reads
     # can filter on it and branch_filter() applies.
     branch_id: Optional[str] = None
+    # Department / host attribution, promoted from the raw kiosk form data
+    # (``tenant_specific_data['department_id']`` / ``['host_id']``) at submit
+    # time. The ``*_name`` companions are point-in-time snapshots resolved by
+    # the service layer so the public badge pass and badge email can render
+    # them without a live lookup. All None when the tenant's check-in form
+    # doesn't collect the field (WS7 badge data contract).
+    department_id: Optional[str] = None
+    department_name: Optional[str] = None
+    host_id: Optional[str] = None
+    host_name: Optional[str] = None
     id_extraction_id: Optional[str] = None
     tenant_specific_data: dict
     purpose: CheckinPurpose

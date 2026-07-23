@@ -9,11 +9,25 @@ import time
 from core.settings import get_settings
 
 
-def sign_badge_token(session_id: str, expiry_hours: int = 24) -> str:
-    """Create an HMAC-signed QR token for a visit session badge."""
+def sign_badge_token(
+    session_id: str,
+    expiry_hours: int = 24,
+    *,
+    expires_at: int | None = None,
+) -> str:
+    """Create an HMAC-signed QR token for a visit session badge.
+
+    ``expires_at`` (epoch seconds), when given, wins over ``expiry_hours`` so
+    the token's embedded expiry can match an exact badge-expiry timestamp
+    (e.g. tenant end-of-day) instead of a whole-hour offset.
+    """
     settings = get_settings()
     secret = settings.qr_signing_secret.encode("utf-8")
-    expiry = int(time.time()) + (expiry_hours * 3600)
+    expiry = (
+        int(expires_at)
+        if expires_at is not None
+        else int(time.time()) + (expiry_hours * 3600)
+    )
     payload = f"{session_id}|{expiry}"
     signature = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
     token = base64.urlsafe_b64encode(f"{payload}|{signature}".encode("utf-8")).decode(

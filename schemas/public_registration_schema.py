@@ -168,10 +168,26 @@ class PublicBadgePassTenant(BaseModel):
     branding_enabled: bool = False
 
 
+class PublicBadgeBranding(BaseModel):
+    """Custom-branding block for the unified badge renderer (WS7).
+
+    Present only when the tenant's plan grants the ``custom_branding``
+    feature flag — non-branded orgs get ``branding: null`` and the frontend
+    renders the neutral VisiChek layout."""
+
+    header_color: Optional[str] = None
+    text_color: Optional[str] = None
+    logo_url: Optional[str] = None
+    logo_position: Optional[str] = None
+    company_display_name: Optional[str] = None
+
+
 class PublicBadgePassOut(BaseModel):
     """Public printable visitor badge — reachable by anyone holding the
     visitor's ``badge_qr_token``. Carries only the non-sensitive fields the
-    badge prints (no email, phone, ID number, or portrait)."""
+    badge prints (no email, phone, ID number, or portrait). The host is
+    exposed by display name only — contact details (email/phone) are never
+    put on the public pass."""
 
     token: str
     visitor_name: str
@@ -181,8 +197,14 @@ class PublicBadgePassOut(BaseModel):
     department_name: Optional[str] = None
     status: str
     issued_at: Optional[int] = None
+    # ``expires_at`` is None when the org's badge-expiry policy is MANUAL —
+    # the badge stays valid until the visit is checked out / revoked.
     expires_at: Optional[int] = None
+    # When the visitor actually entered (visit-session ``check_in_time`` or
+    # the check-in's ``approved_at``).
+    check_in_time: Optional[int] = None
     tenant: PublicBadgePassTenant
+    branding: Optional[PublicBadgeBranding] = None
 
 
 class PublicReturningVisitorSubmitRequest(BaseModel):
