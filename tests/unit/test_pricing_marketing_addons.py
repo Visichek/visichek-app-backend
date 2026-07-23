@@ -107,15 +107,17 @@ async def test_addon_card_overlay_overrides_blurb_and_visibility() -> None:
     ):
         cards = await _build_addon_cards(overlay)
 
-    card = cards[0]
-    assert card.blurb == "Custom marketing copy for the branch add-on"
-    assert card.visible is False
+    # visible=False in the overlay drops the card entirely from the public
+    # payload — it must never leak an unreleased SKU's pricing.
+    assert cards == []
 
 
 async def test_non_default_active_addon_hidden_without_overlay_opt_in() -> None:
     """Opt-in marketing posture: an active catalog addon outside
     ``MARKETING_DEFAULT_VISIBLE_SLUGS`` must NOT appear on the public
-    pricing page unless an overlay row explicitly sets visible=True.
+    pricing page unless an overlay row explicitly sets visible=True. Not
+    just downgraded to ``visible: false`` — dropped entirely, so the
+    payload never leaks an unreleased SKU's pricing.
     """
     from services.pricing_marketing_service import _build_addon_cards
 
@@ -134,16 +136,17 @@ async def test_non_default_active_addon_hidden_without_overlay_opt_in() -> None:
         ),
     ):
         cards_no_overlay = await _build_addon_cards(None)
-        assert cards_no_overlay[0].visible is False
+        assert cards_no_overlay == []
 
         empty_overlay = PricingMarketingOverlayOut(addons=[])
         cards_empty_overlay = await _build_addon_cards(empty_overlay)
-        assert cards_empty_overlay[0].visible is False
+        assert cards_empty_overlay == []
 
         opted_in_overlay = PricingMarketingOverlayOut(
             addons=[PricingAddonCopy(slug="storage-topup", visible=True)],
         )
         cards_opted_in = await _build_addon_cards(opted_in_overlay)
+        assert len(cards_opted_in) == 1
         assert cards_opted_in[0].visible is True
 
 
@@ -157,6 +160,11 @@ async def test_fixed_pricing_addon_has_no_requires_plan() -> None:
         derived_from=None,
         recurring=False,
     )
+    # Not in MARKETING_DEFAULT_VISIBLE_SLUGS, so opt it in via overlay to
+    # exercise this addon's requires_plan derivation on the public payload.
+    overlay = PricingMarketingOverlayOut(
+        addons=[PricingAddonCopy(slug="storage-extension", visible=True)],
+    )
     with (
         patch("services.pricing_marketing_service.list_addons", new=AsyncMock(return_value=[addon])),
         patch(
@@ -164,8 +172,9 @@ async def test_fixed_pricing_addon_has_no_requires_plan() -> None:
             new=AsyncMock(return_value=2_000.0),
         ),
     ):
-        cards = await _build_addon_cards(None)
+        cards = await _build_addon_cards(overlay)
 
+    assert len(cards) == 1
     assert cards[0].requires_plan is None
 
 

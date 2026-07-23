@@ -123,6 +123,134 @@ async def test_renewal_success_rolls_expiry_and_reprices_from_live_premium() -> 
     mock_provider.charge_recurring.assert_called_once()
 
 
+# ─── Renewal lead window: early renewal never shortens the paid period ─
+
+
+async def test_early_renewal_rolls_new_expiry_from_old_expires_at_not_now() -> None:
+    """A row due in 90 minutes (inside the 2h lead window) still gets its
+    new expiry computed from the OLD expires_at, not from ``now`` — early
+    renewal must never shorten the paid period."""
+    from core.payments.types import PaymentStatus
+    from services.addon_renewal_service import renew_due_addons
+
+    now = int(time.time())
+    old_expires_at = now + 90 * 60  # 90 minutes out — inside the lead window
+    row = _row(unit_price_snapshot=100_000.0, expires_at=old_expires_at)
+    tx = MagicMock(status=PaymentStatus.SUCCEEDED)
+
+    mock_provider = MagicMock()
+    mock_provider.charge_recurring.return_value = tx
+    mock_manager = MagicMock()
+    mock_manager.get_provider.return_value = mock_provider
+
+    tenant = MagicMock(
+        paystack_authorization_code="auth_123",
+        paystack_auth_email="a@b.com",
+    )
+
+    with (
+        patch(
+            "services.addon_renewal_service.list_due_recurring_tenant_addons",
+            new=AsyncMock(return_value=[row]),
+        ),
+        patch("services.addon_renewal_service.get_addon_by_id", new=AsyncMock(return_value=_addon())),
+        patch(
+            "services.addon_renewal_service.resolve_addon_unit_price",
+            new=AsyncMock(return_value=100_000.0),
+        ),
+        patch("services.addon_renewal_service.PaymentManager.get_instance", return_value=mock_manager),
+        patch(
+            "services.addon_renewal_service._get_provider_for_tenant",
+            new=AsyncMock(return_value="paystack"),
+        ),
+        patch("services.addon_renewal_service.get_tenant", new=AsyncMock(return_value=tenant)),
+        patch(
+            "services.addon_renewal_service.update_tenant_addon", new=AsyncMock(return_value=row)
+        ) as mock_update,
+        patch("services.addon_renewal_service.generate_invoice", new=AsyncMock()),
+        patch("services.addon_renewal_service.record_audit_event", new=AsyncMock()),
+        patch("services.addon_renewal_service._invalidate_tenant_addon_caches", new=AsyncMock()),
+    ):
+        result = await renew_due_addons()
+
+    assert result["renewed"] == 1
+    mock_update.assert_awaited_once()
+    assert mock_update.await_args is not None
+    payload: TenantAddonUpdate = mock_update.await_args.args[1]
+    # New expiry = OLD expires_at + cycle, NOT now + cycle.
+    assert payload.expires_at == old_expires_at + 30 * 86400
+
+
+# ─── Idempotent charge reference per (row, period) ─────────────────────
+
+
+async def test_charge_reference_is_deterministic_per_row_and_period() -> None:
+    """Two renewal attempts for the SAME period (expires_at unchanged
+    between them, e.g. the first attempt's persist failed) must produce
+    the identical charge reference so the provider's own idempotency
+    dedupes the retry instead of double-charging."""
+    from core.payments.types import PaymentStatus
+    from services.addon_renewal_service import renew_due_addons
+
+    now = int(time.time())
+    old_expires_at = now - 10
+    row = _row(unit_price_snapshot=100_000.0, expires_at=old_expires_at)
+    tx = MagicMock(status=PaymentStatus.SUCCEEDED)
+
+    mock_provider = MagicMock()
+    mock_provider.charge_recurring.return_value = tx
+    mock_manager = MagicMock()
+    mock_manager.get_provider.return_value = mock_provider
+
+    tenant = MagicMock(
+        paystack_authorization_code="auth_123",
+        paystack_auth_email="a@b.com",
+    )
+
+    references: list[str] = []
+
+    def _capture_reference(**kwargs):
+        references.append(kwargs["reference"])
+        return tx
+
+    mock_provider.charge_recurring.side_effect = _capture_reference
+
+    async def _run_once():
+        with (
+            patch(
+                "services.addon_renewal_service.list_due_recurring_tenant_addons",
+                new=AsyncMock(return_value=[row]),
+            ),
+            patch("services.addon_renewal_service.get_addon_by_id", new=AsyncMock(return_value=_addon())),
+            patch(
+                "services.addon_renewal_service.resolve_addon_unit_price",
+                new=AsyncMock(return_value=100_000.0),
+            ),
+            patch("services.addon_renewal_service.PaymentManager.get_instance", return_value=mock_manager),
+            patch(
+                "services.addon_renewal_service._get_provider_for_tenant",
+                new=AsyncMock(return_value="paystack"),
+            ),
+            patch("services.addon_renewal_service.get_tenant", new=AsyncMock(return_value=tenant)),
+            # Simulate the persist failing so the row's expires_at never
+            # actually moves — the same period is retried next run.
+            patch(
+                "services.addon_renewal_service.update_tenant_addon", new=AsyncMock(return_value=None)
+            ),
+            patch("services.addon_renewal_service.generate_invoice", new=AsyncMock()),
+            patch("services.addon_renewal_service.record_audit_event", new=AsyncMock()),
+            patch("services.addon_renewal_service._invalidate_tenant_addon_caches", new=AsyncMock()),
+        ):
+            await renew_due_addons()
+
+    await _run_once()
+    await _run_once()
+
+    assert len(references) == 2
+    assert references[0] == references[1]
+    assert references[0] == f"addon-renewal-{row.id}-{old_expires_at}"
+
+
 # ─── No saved instrument is a FAILURE, not a fake success ─────────────
 
 

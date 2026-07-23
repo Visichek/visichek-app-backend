@@ -608,6 +608,13 @@ ENTERPRISE_TEMPLATE = CanonicalPlan(
             "feature_rules",
             "is_public",
             "sort_order",
+            # Task 14: FE limits step includes storage inputs for
+            # enterprise plans (currently gated off in the UI, but the
+            # backend allowlist must not 400 the moment FE wires it up).
+            # FE's buildEditPayload does NOT send crud_limits or
+            # retrieval_quotas for any tier — no PlanFormData field maps
+            # to them — so those are intentionally left off here.
+            "storage_limits",
         }
     ),
 )

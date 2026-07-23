@@ -196,7 +196,14 @@ async def _attempt_addon_renewal(row: TenantAddonOut, *, now: int) -> str:
         return await _fail_renewal(row, now=now, max_attempts=max_attempts, retry_days=retry_days)
 
     amount_minor = int(round(resolved_price * row.quantity * 100))
-    reference = f"addon-renewal-{row.id}-{now}"
+    # Deterministic per (row, current period) reference — NOT per-attempt.
+    # If the charge succeeds but the subsequent persist fails, the next
+    # run re-attempts renewal for the SAME period (expires_at hasn't
+    # moved yet) and must reuse this exact reference so the payment
+    # provider's own idempotency dedupes the retry instead of double
+    # charging the tenant.
+    period_key = row.expires_at if row.expires_at is not None else now
+    reference = f"addon-renewal-{row.id}-{period_key}"
     metadata = {
         "tenant_addon_id": row.id or "",
         "tenant_id": row.tenant_id,
@@ -224,7 +231,12 @@ async def _attempt_addon_renewal(row: TenantAddonOut, *, now: int) -> str:
 
 async def _succeed_renewal(row: TenantAddonOut, *, now: int, resolved_price: float) -> str:
     cycle_days = _CYCLE_DAYS.get(row.billing_cycle_snapshot or "monthly", 30)
-    new_expires_at = now + cycle_days * 86400
+    # Roll the new expiry from the OLD expires_at, not from `now` — renewing
+    # ahead of the deadline (see the lead window in
+    # ``tenant_addon_repo.list_due_recurring_tenant_addons``) must never
+    # shorten the paid period.
+    base = row.expires_at if row.expires_at is not None else now
+    new_expires_at = base + cycle_days * 86400
 
     updated = await update_tenant_addon(
         row.id or "",

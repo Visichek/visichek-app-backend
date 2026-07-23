@@ -469,11 +469,13 @@ async def _build_addon_cards(
     overlay only ever supplies text (blurb) / visibility, following the
     same contract as plan/feature copy.
 
-    Visibility is opt-in: a card is visible only if the overlay
+    Visibility is opt-in: a card is included only if the overlay
     explicitly sets ``visible: true`` for that slug, or the slug is in
     ``MARKETING_DEFAULT_VISIBLE_SLUGS``. Any other active catalog addon
     (eg an admin-activated storage top-up) stays hidden until an admin
-    opts it in via the overlay.
+    opts it in via the overlay. This builds the PUBLIC payload, so
+    non-visible cards are dropped entirely — never returned with
+    ``visible: false`` — to avoid leaking unreleased SKU pricing.
     """
     addons_copy = _index_by(overlay.addons, "slug") if overlay else {}
     catalog = await list_addons({"status": AddonStatus.ACTIVE.value})
@@ -486,6 +488,8 @@ async def _build_addon_cards(
             visible = bool(copy.visible)
         else:
             visible = slug in MARKETING_DEFAULT_VISIBLE_SLUGS
+        if not visible:
+            continue
         blurb = (copy.blurb if copy and copy.blurb else None) or (
             DEFAULT_ADDON_BLURBS.get(slug) or addon.description
         )

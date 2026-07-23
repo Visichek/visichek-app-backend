@@ -114,6 +114,11 @@ async def expire_due_tenant_addons() -> int:
         {
             "status": TenantAddonStatus.ACTIVE.value,
             "expires_at": {"$ne": None, "$lte": now},
+            # Recurring rows' lifecycle (including terminal expiry after
+            # exhausted dunning retries) is owned exclusively by
+            # ``services.addon_renewal_service`` — this sweep must never
+            # touch them, even when a grace-window expires_at is past.
+            "recurring_snapshot": {"$ne": True},
         },
         {
             "$set": {
@@ -136,8 +141,20 @@ async def list_due_tenant_ids_for_expiry() -> List[str]:
     filt = {
         "status": TenantAddonStatus.ACTIVE.value,
         "expires_at": {"$ne": None, "$lte": now},
+        # Same exclusion as expire_due_tenant_addons — recurring rows are
+        # not this sweep's concern, so their tenants shouldn't be flagged
+        # for invalidation here either.
+        "recurring_snapshot": {"$ne": True},
     }
     return await db[COLLECTION].distinct("tenant_id", filt)
+
+
+# Renew ahead of the actual expiry so benefits never lapse between hourly
+# runs: a row due at, say, 10:59 might otherwise sit unrenewed until the
+# 11:00 run finds it just barely past due plus scheduler jitter. Selecting
+# everything within this lead window guarantees the hourly cadence always
+# catches a row before it goes stale.
+_RENEWAL_LEAD_SECONDS = 2 * 60 * 60  # 2 hours
 
 
 async def list_due_recurring_tenant_addons(now: int, *, limit: int = 1000) -> List[TenantAddonOut]:
@@ -148,12 +165,16 @@ async def list_due_recurring_tenant_addons(now: int, *, limit: int = 1000) -> Li
     failed-renewal grace window — the next retry timestamp
     (``services.addon_renewal_service`` pushes ``expires_at`` out to match
     ``next_retry_at`` on a declined charge). Used by the hourly
-    ``renew_due_addons`` scheduled job.
+    ``renew_due_addons`` scheduled job. Selects rows due within
+    ``_RENEWAL_LEAD_SECONDS`` so renewal always runs ahead of the actual
+    lapse; ``_succeed_renewal`` rolls the new expiry from the OLD
+    ``expires_at`` (not from ``now``) so renewing early never shortens the
+    paid period.
     """
     filt: dict = {
         "status": TenantAddonStatus.ACTIVE.value,
         "recurring_snapshot": True,
-        "expires_at": {"$ne": None, "$lte": now},
+        "expires_at": {"$ne": None, "$lte": now + _RENEWAL_LEAD_SECONDS},
     }
     cursor = db[COLLECTION].find(filt).limit(limit)
     return [TenantAddonOut(**doc) async for doc in cursor]

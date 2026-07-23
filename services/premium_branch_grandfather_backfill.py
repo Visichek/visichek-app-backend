@@ -156,14 +156,16 @@ async def _notify_tenant(tenant_id: str, *, quantity: int, branch_count: int) ->
                 link="/app/billing",
                 tenant_id=tenant_id,
             )
+        # Only mark notified once the send actually completed — a
+        # transient failure (below) must retry next boot, not be
+        # silently treated as delivered.
+        await _mark_notified(tenant_id)
     except Exception:
         logger.warning(
             "premium_branch_grandfather_backfill: notify failed for tenant=%s",
             tenant_id,
             exc_info=True,
         )
-    finally:
-        await _mark_notified(tenant_id)
 
 
 async def backfill_premium_branch_grandfathering() -> dict[str, int]:

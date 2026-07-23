@@ -168,6 +168,24 @@ class TestEnterpriseEditEnforcement:
         assert result is not None
         mock_update.assert_awaited_once()
 
+    @patch("services.plan_service.update_plan", new_callable=AsyncMock)
+    @patch("services.plan_service.get_plan", new_callable=AsyncMock)
+    async def test_storage_limits_field_is_allowed(self, mock_get, mock_update):
+        """Regression: Task 14's FE limits step includes storage inputs
+        for enterprise plans — storage_limits must be in
+        ENTERPRISE_TEMPLATE.adjustable_plan_fields or an enterprise
+        storage edit 400s as tier-locked."""
+        mock_get.return_value = _make_plan_out()
+        mock_update.return_value = _make_plan_out()
+        from services.plan_service import update_plan_by_id
+
+        result = await update_plan_by_id(
+            "5f0a1b2c3d4e5f6a7b8c9d0e",
+            PlanUpdate(storage_limits={"max_documents": 5000, "max_storage_mb": 10_000}),
+        )
+        assert result is not None
+        mock_update.assert_awaited_once()
+
     @patch("services.plan_service.get_plan", new_callable=AsyncMock)
     async def test_singleton_plans_unaffected_by_enterprise_fallback(self, mock_get):
         mock_get.return_value = _make_plan_out(

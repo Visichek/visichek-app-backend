@@ -249,6 +249,56 @@ async def test_single_branch_tenant_gets_no_grant_but_is_notified_once():
     mock_notify.assert_awaited_once()
 
 
+async def test_notify_failure_does_not_mark_notified_and_retries_next_boot():
+    """Regression: a transient send failure must NOT write the notify
+    marker, so the tenant is retried on the next boot instead of being
+    silently treated as notified."""
+    from services.premium_branch_grandfather_backfill import _notify_tenant
+
+    markers_col = _FakeCollection(find_one_val=None)
+    fake_db = _FakeDB({"backfill_markers": markers_col})
+
+    with (
+        patch("services.premium_branch_grandfather_backfill.db", fake_db),
+        patch(
+            "services.premium_branch_grandfather_backfill.get_main_super_admin",
+            new=AsyncMock(return_value=_fake_admin()),
+        ),
+        patch(
+            "services.premium_branch_grandfather_backfill.send_notification",
+            new=AsyncMock(side_effect=RuntimeError("smtp down")),
+        ),
+    ):
+        await _notify_tenant("tenant-1", quantity=2, branch_count=3)
+
+    # No marker written — the failure must not be recorded as a success.
+    assert markers_col.updated == []
+
+
+async def test_notify_success_marks_notified():
+    from services.premium_branch_grandfather_backfill import _notify_tenant
+
+    markers_col = _FakeCollection(find_one_val=None)
+    fake_db = _FakeDB({"backfill_markers": markers_col})
+
+    with (
+        patch("services.premium_branch_grandfather_backfill.db", fake_db),
+        patch(
+            "services.premium_branch_grandfather_backfill.get_main_super_admin",
+            new=AsyncMock(return_value=_fake_admin()),
+        ),
+        patch(
+            "services.premium_branch_grandfather_backfill.send_notification",
+            new=AsyncMock(),
+        ),
+    ):
+        await _notify_tenant("tenant-1", quantity=2, branch_count=3)
+
+    assert len(markers_col.updated) == 1
+    filt, _update = markers_col.updated[0]
+    assert filt == {"_id": "premium_grandfather_notified:tenant-1"}
+
+
 # ─── Effective max_branches after migration (plan-cache fold) ─────────
 
 
