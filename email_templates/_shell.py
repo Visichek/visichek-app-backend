@@ -18,10 +18,12 @@ email-safe, client-bulletproof HTML:
 Design constraints that shaped every helper here:
 
 * **Tables + inline styles only.** No flexbox/grid, no external CSS.
-* **No remote images.** The VisiChek logomark ships only as SVG (which Gmail
-  and Outlook strip), so the header is a *bulletproof HTML wordmark* — a green
-  check badge + "VisiChek" — that always renders and never trips
-  image-blocking. The badge echoes the brand's checkmark logomark.
+* **Raster logo with bulletproof fallback.** Inline SVG is stripped by Gmail
+  and Outlook, and ``data:`` URIs are blocked by Gmail — so the header uses
+  the real checkmark logomark as a *hosted raster* ``<img>`` (served from
+  visichek.app) with a styled green-check ``alt`` next to the "VisiChek"
+  text wordmark. Image-blocking clients still see a branded green check
+  character plus the wordmark; nothing ever renders blank.
 * **Presentation only.** These helpers never escape or mutate caller content;
   each template stays responsible for escaping its own interpolated values
   exactly as it did before (see ``html.escape`` use in the dsr_* templates).
@@ -92,23 +94,32 @@ _BADGE_VARIANTS: dict[str, tuple[str, str]] = {
 }
 
 
-# ── Header wordmark (bulletproof, no images) ─────────────────────────
-def _wordmark() -> str:
-    """A green check-badge + 'VisiChek' wordmark, pure table HTML.
+# ── Header wordmark (real logomark image + bulletproof fallback) ─────
+# The actual brand checkmark, hosted on the marketing site as a raster PNG
+# (transparent background) so Gmail/Outlook render it. Inline SVG is
+# stripped and data: URIs are blocked by Gmail, so a hosted raster is the
+# only email-safe way to ship the real logo.
+LOGO_URL = "https://visichek.app/android-chrome-192x192.png"
+LOGO_GREEN = "#359300"  # the website logomark's exact green
 
-    Echoes the brand's green checkmark logomark without depending on a
-    remote image (the real logomark is SVG, which most inboxes strip).
+
+def _wordmark() -> str:
+    """The real VisiChek checkmark logomark + 'VisiChek' text wordmark.
+
+    Image-blocking clients fall back to the styled ``alt`` — a bold green
+    check character — so the header never renders blank.
     """
     return (
         "<table role='presentation' cellpadding='0' cellspacing='0' border='0'>"
         "<tr>"
-        "<td width='34' height='34' align='center' valign='middle' "
-        f"bgcolor='{GREEN}' style='width:34px;height:34px;border-radius:9px;"
-        f"background:linear-gradient(135deg,{GREEN_TOP} 0%,{GREEN_DARK} 100%);'>"
-        f"<span style='color:#FFFFFF;font-family:{FONT_SANS};font-size:19px;"
-        "font-weight:700;line-height:34px;'>&#10003;</span>"
+        "<td width='36' height='36' align='center' valign='middle' "
+        "style='width:36px;height:36px;'>"
+        f"<img src='{LOGO_URL}' width='36' height='36' alt='&#10003;' "
+        f"style='display:block;border:0;outline:none;width:36px;height:36px;"
+        f"color:{LOGO_GREEN};font-family:{FONT_SANS};font-size:24px;"
+        "font-weight:700;line-height:36px;text-align:center;'/>"
         "</td>"
-        f"<td style='padding-left:11px;font-family:{FONT_SERIF};font-size:21px;"
+        f"<td style='padding-left:10px;font-family:{FONT_SERIF};font-size:21px;"
         f"font-weight:700;color:{INK};letter-spacing:-0.01em;'>VisiChek</td>"
         "</tr></table>"
     )
@@ -387,18 +398,19 @@ def button(label: str, href: str, *, accent: str | None = None) -> str:
         "<!--[if mso]>"
         "<v:roundrect xmlns:v='urn:schemas-microsoft-com:vml' "
         "xmlns:w='urn:schemas-microsoft-com:office:word' "
-        f"href='{href}' style='height:50px;v-text-anchor:middle;width:280px;' "
+        f"href='{href}' style='height:56px;v-text-anchor:middle;width:320px;' "
         f"arcsize='50%' strokecolor='{grad_bottom}' fillcolor='{solid}'>"
         "<w:anchorlock/>"
-        "<center style='color:#FFFFFF;font-family:sans-serif;font-size:15px;"
+        "<center style='color:#FFFFFF;font-family:sans-serif;font-size:16px;"
         f"font-weight:bold;'>{label}</center>"
         "</v:roundrect>"
         "<![endif]-->"
         "<!--[if !mso]><!-->"
-        f"<a href='{href}' style='display:inline-block;padding:15px 40px;"
-        f"font-family:{FONT_SANS};font-size:15px;font-weight:700;color:#FFFFFF;"
+        f"<a href='{href}' style='display:inline-block;padding:17px 52px;"
+        f"font-family:{FONT_SANS};font-size:16px;font-weight:700;color:#FFFFFF;"
         "text-decoration:none;border-radius:9999px;'>"
-        f"<span style='color:#FFFFFF;text-decoration:none;'>{label}</span></a>"
+        f"<span style='color:#FFFFFF !important;text-decoration:none;'>{label}"
+        "</span></a>"
         "<!--<![endif]-->"
         "</td></tr></table>"
     )
@@ -420,40 +432,75 @@ def fallback_link(
     )
 
 
-def cred_card(rows: Sequence[tuple[str, str, bool]]) -> str:
+def cred_card(rows: Sequence[tuple[str, str, bool]], *, copy_hint: bool = True) -> str:
     """Credentials panel: list of ``(label, value, is_mono)`` rows.
 
     Used for sign-in email + temporary password. ``is_mono`` renders the
-    value in the monospace stack (passwords, codes).
+    value in its own bordered copy box — monospace, larger, spaced-out, and
+    tagged ``user-select:all`` so a single tap/click selects the whole value
+    in clients that honour it (Apple Mail, most webmail). Email clients
+    can't run JS, so a styled select-friendly box + hint is the closest an
+    email can get to a copy button.
     """
     cells = []
     for i, (label, value, is_mono) in enumerate(rows):
-        spacing = "margin:0;" if i == len(rows) - 1 else "margin:0 0 14px;"
+        last = i == len(rows) - 1
+        spacing = "margin:0;" if last else "margin:0 0 14px;"
         if is_mono:
             value_html = (
-                f"<p style='{spacing}font-family:{FONT_MONO};font-size:15px;"
-                f"font-weight:700;color:{INK};letter-spacing:0.01em;'>{value}</p>"
+                f"<table role='presentation' width='100%' cellpadding='0' "
+                f"cellspacing='0' border='0' style='{spacing}'>"
+                f"<tr><td align='center' bgcolor='{CARD_BG}' "
+                f"style='background:{CARD_BG};border:1px dashed {GREEN_TINT_BORDER};"
+                "border-radius:10px;padding:13px 16px;'>"
+                f"<span style='font-family:{FONT_MONO};font-size:18px;"
+                f"font-weight:700;color:{INK};letter-spacing:0.08em;"
+                "word-break:break-all;user-select:all;-webkit-user-select:all;'>"
+                f"{value}</span>"
+                "</td></tr></table>"
             )
         else:
             value_html = (
                 f"<p style='{spacing}font-family:{FONT_SANS};font-size:15px;"
-                f"font-weight:600;color:{INK};'>{value}</p>"
+                f"font-weight:600;color:{INK};word-break:break-all;"
+                f"user-select:all;-webkit-user-select:all;'>{value}</p>"
             )
         cells.append(
             f"<p style='margin:0 0 5px;font-family:{FONT_SANS};font-size:12px;"
             f"text-transform:uppercase;letter-spacing:0.06em;color:{INK_MUTED};'>"
             f"{label}</p>" + value_html
         )
+    hint_html = ""
+    if copy_hint and rows:
+        hint_html = (
+            f"<p style='margin:14px 0 0;font-family:{FONT_SANS};font-size:12px;"
+            f"line-height:1.55;color:{INK_MUTED};'>Tip: tap and hold a value "
+            "(or triple-click on desktop) to select it, then copy.</p>"
+        )
     return (
         f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
         f"border='0' style='margin:4px 0 20px;background:{SUBTLE_BG};"
         f"border:1px solid {BORDER};border-radius:14px;'>"
-        f"<tr><td style='padding:18px 22px;'>{''.join(cells)}</td></tr></table>"
+        f"<tr><td style='padding:18px 22px;'>{''.join(cells)}{hint_html}"
+        "</td></tr></table>"
     )
 
 
-def code_box(code: str, *, label: str = "Verification code") -> str:
-    """Prominent one-time-code panel (OTP) — green-tinted, large mono code."""
+def code_box(
+    code: str, *, label: str = "Verification code", copy_hint: bool = True
+) -> str:
+    """Prominent one-time-code panel (OTP) — green-tinted, large mono code.
+
+    The code is tagged ``user-select:all`` so one tap/click selects the
+    whole thing in clients that honour it; a short hint covers the rest.
+    """
+    hint_html = ""
+    if copy_hint:
+        hint_html = (
+            f"<p style='margin:10px 0 0;font-family:{FONT_SANS};font-size:12px;"
+            f"line-height:1.5;color:{INK_MUTED};'>Tap or triple-click the code "
+            "to select it, then copy.</p>"
+        )
     return (
         f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
         f"border='0' style='margin:6px 0 20px;background:{GREEN_TINT_BG};"
@@ -463,7 +510,9 @@ def code_box(code: str, *, label: str = "Verification code") -> str:
         f"font-weight:700;text-transform:uppercase;letter-spacing:0.12em;"
         f"color:{GREEN_DARK};'>{label}</p>"
         f"<p style='margin:0;font-family:{FONT_MONO};font-size:34px;"
-        f"font-weight:700;letter-spacing:0.18em;color:{INK};'>{code}</p>"
+        f"font-weight:700;letter-spacing:0.18em;color:{INK};"
+        f"user-select:all;-webkit-user-select:all;'>{code}</p>"
+        f"{hint_html}"
         "</td></tr></table>"
     )
 

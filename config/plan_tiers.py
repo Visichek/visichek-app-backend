@@ -159,9 +159,9 @@ FREE_DENIED_FEATURES: List[FeatureRule] = [
         "Multi-location requires Premium or Enterprise",
         methods=["POST", "PUT", "PATCH", "DELETE"],
     ),
-    # ── Compliance & governance — blocked entirely on Free ────────────
-    _deny("/v1/incidents", "Incident logging requires Premium or Enterprise"),
-    _deny("/v1/incidents/*", "Incident logging requires Premium or Enterprise"),
+    # ── Compliance & governance — blocked on Free (incidents excepted:
+    # every plan can report security incidents; NDPA notification duties
+    # don't pause for a paywall) ──────────────────────────────────────
     _deny("/v1/dsr", "Data subject requests require Premium or Enterprise"),
     _deny("/v1/dsr/*", "Data subject requests require Premium or Enterprise"),
     _deny(

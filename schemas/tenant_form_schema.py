@@ -87,6 +87,13 @@ class FormFieldDefinition(BaseModel):
     visible: bool = True
     order: int = 0
     maps_to: Optional[str] = None
+    # System-managed lock. Locked fields cannot be removed from the form,
+    # and their ``required`` / ``maps_to`` / ``type`` cannot be changed by
+    # the tenant — only label / help_text / placeholder / order remain
+    # editable. Enforced server-side in ``services/tenant_form_service``
+    # (autosave + publish) for system fields such as the check-in
+    # ``department_id`` picker.
+    locked: bool = False
 
     # --- String validation ---
     min_length: Optional[int] = None

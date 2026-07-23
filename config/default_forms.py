@@ -41,6 +41,34 @@ _DEFAULT_PURPOSE_OPTIONS: List[FormFieldOption] = [
 ]
 
 
+def checkin_department_field() -> FormFieldDefinition:
+    """The system-managed Department picker on the check-in form.
+
+    Locked: tenants cannot remove it or make it optional (enforced in
+    ``services/tenant_form_service``). A GENERAL registration QR needs the
+    visitor to pick a department so the visit can be routed; a
+    department-scoped QR pins the department via the signed token and the
+    public form omits this field.
+
+    ``options`` is intentionally an empty list — the kiosk resolves the
+    option list live from the tenant's active departments at render time
+    (``GET /v1/public/register/{tenant_id}/departments``), keyed on
+    ``field_id == "department_id"``.
+    """
+    return FormFieldDefinition(
+        field_id="department_id",
+        type=FormFieldType.SELECT,
+        label="Department",
+        required=True,
+        locked=True,
+        visible=True,
+        order=60,
+        maps_to="department_id",
+        help_text="Which department are you visiting?",
+        options=[],
+    )
+
+
 def _checkin_defaults() -> List[FormFieldDefinition]:
     """Default check-in form fields.
 
@@ -98,6 +126,7 @@ def _checkin_defaults() -> List[FormFieldDefinition]:
             maps_to="purpose",
             options=list(_DEFAULT_PURPOSE_OPTIONS),
         ),
+        checkin_department_field(),
     ]
 
 

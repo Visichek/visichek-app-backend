@@ -14,6 +14,7 @@ from uuid import uuid4
 from bson import ObjectId
 
 from config.default_forms import (
+    checkin_department_field,
     default_description_for_target,
     default_fields_for_target,
     default_name_for_target,
@@ -33,7 +34,7 @@ from repositories.tenant_form_repo import (
     unset_draft,
     update_tenant_form,
 )
-from schemas.imports import FormStatus, FormTargetType
+from schemas.imports import FormFieldType, FormStatus, FormTargetType
 from schemas.tenant_form_schema import (
     FormFieldDefinition,
     TenantFormCreate,
@@ -99,6 +100,55 @@ def _to_public(form: TenantFormOut) -> TenantFormPublicOut:
     )
 
 
+def _enforce_locked_department_field(
+    fields: Optional[List[FormFieldDefinition]], target_type: str
+) -> Optional[List[FormFieldDefinition]]:
+    """Server-side lock for the system Department field on check-in forms.
+
+    The public registration QR (GENERAL scope) relies on the check-in form
+    carrying a required ``department_id`` picker, so for
+    ``target_type == "checkin"``:
+
+    * a field list missing the department field gets the system default
+      re-injected (see :func:`config.default_forms.checkin_department_field`);
+    * an existing department field (matched on ``field_id`` or ``maps_to``)
+      has ``required`` / ``locked`` / ``maps_to`` / ``type`` forced back to
+      the system values — label / help_text / placeholder / order stay
+      tenant-editable.
+
+    Appointment / visit_session targets are exempt: department is a
+    first-class column there, not a form field. ``None`` (no draft fields
+    supplied) passes through untouched.
+    """
+    if fields is None or target_type != FormTargetType.CHECKIN.value:
+        return fields
+
+    result: List[FormFieldDefinition] = []
+    found = False
+    for field in fields:
+        if field.field_id == "department_id" or field.maps_to == "department_id":
+            found = True
+            result.append(
+                field.model_copy(
+                    update={
+                        "type": FormFieldType.SELECT,
+                        "required": True,
+                        "locked": True,
+                        "maps_to": "department_id",
+                    }
+                )
+            )
+        else:
+            result.append(field)
+
+    if not found:
+        default = checkin_department_field()
+        max_order = max((f.order for f in result), default=0)
+        result.append(default.model_copy(update={"order": max_order + 10}))
+
+    return result
+
+
 def _validate_publish(
     name: str, fields: List[FormFieldDefinition]
 ) -> List[Dict[str, Any]]:
@@ -160,6 +210,11 @@ def _validate_publish(
             )
 
         if field.type.value in ("select", "multi_select"):
+            # The system Department picker deliberately carries an empty
+            # option list — the kiosk resolves options live from the
+            # tenant's active departments at render time.
+            if field.maps_to == "department_id":
+                continue
             if not field.options or len(field.options) == 0:
                 issues.append(
                     {
@@ -448,7 +503,11 @@ async def autosave_draft(
     if patch.description is not None:
         update.draft_description = patch.description
     if patch.fields is not None:
-        update.draft_fields = patch.fields
+        # System-field lock: check-in forms must always carry the required
+        # department picker, regardless of what the client sent.
+        update.draft_fields = _enforce_locked_department_field(
+            patch.fields, head.target_type.value
+        )
 
     touched_draft = (
         patch.name is not None
@@ -529,6 +588,15 @@ async def publish_form(
     )
     candidate_fields = (
         head.draft_fields if head.draft_fields is not None else head.fields
+    )
+    # System-field lock: re-assert the required department picker on
+    # check-in forms before validation, so drafts saved by older clients
+    # (or hand-crafted PATCHes) can't publish without it.
+    candidate_fields = (
+        _enforce_locked_department_field(
+            candidate_fields or [], head.target_type.value
+        )
+        or []
     )
 
     issues = _validate_publish(candidate_name or "", candidate_fields or [])

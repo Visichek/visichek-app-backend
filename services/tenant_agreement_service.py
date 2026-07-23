@@ -201,6 +201,7 @@ async def mark_accepted(
     actor_role: str = "super_admin",
     accepted_at: Optional[int] = None,
     request_id: Optional[str] = None,
+    notify_admins: bool = True,
 ) -> Optional[TenantAgreementOut]:
     """Freeze and mark a tenant's agreement copy accepted at the current version.
 
@@ -237,6 +238,27 @@ async def mark_accepted(
             details={"agreement_key": agreement_key, "version": updated.version},
             request_id=request_id,
         )
+        # Tell platform admins the tenant signed this policy. Skipped by the
+        # onboarding confirm flow, which sends its own combined notification.
+        if notify_admins:
+            try:
+                from services.notification_service import (
+                    notify_tenant_agreement_accepted,
+                )
+
+                await notify_tenant_agreement_accepted(
+                    tenant_id,
+                    agreement_key,
+                    agreement_title=getattr(updated, "title", None),
+                )
+            except Exception:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "Failed to dispatch agreement-accepted notifications for tenant_id=%s",
+                    tenant_id,
+                    exc_info=True,
+                )
     return updated
 
 

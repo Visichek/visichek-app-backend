@@ -756,6 +756,14 @@ async def submit_returning_visitor_checkin_by_id(
         if f.required and f.category == CheckinFieldCategory.TENANT_SPECIFIC
     }
     missing_fields = required_tenant_specific_keys - set(tenant_specific_data.keys())
+    if "department_id" in missing_fields:
+        # Same degenerate-case rule as ``_submit_verified_checkin_core``:
+        # tenants with no active departments render no picker and fall
+        # back to HQ routing, so don't reject the submit.
+        from repositories.department_repo import get_departments
+
+        if not await get_departments({"tenant_id": tenant_id, "is_active": True}):
+            missing_fields = missing_fields - {"department_id"}
     if missing_fields:
         raise AppException(
             status_code=400,
@@ -923,6 +931,7 @@ async def submit_verified_checkin_for_tenant(
     visitor_lat: Optional[float] = None,
     visitor_lng: Optional[float] = None,
     kyc_reference_id: Optional[str] = None,
+    registration_token: Optional[str] = None,
     consent: Optional[dict] = None,
 ) -> CheckinOut:
     """Tenant-scoped submit. Resolves the tenant's active config, or falls back
@@ -931,6 +940,13 @@ async def submit_verified_checkin_for_tenant(
     Used by the public kiosk endpoint ``POST /public/tenants/{tenant_id}/submit``
     so the kiosk can submit against the tenant even when the super_admin has
     not yet customized the check-in form.
+
+    ``registration_token`` (Issue 5): when the kiosk was opened from a
+    signed registration QR, the token's department/branch scope overrides
+    whatever the browser put in ``tenant_specific_data`` — in particular a
+    department-scoped QR backfills ``tenant_specific_data['department_id']``
+    so the required department field passes validation even though the
+    public form hid the picker.
     """
     from bson import ObjectId
 
@@ -950,10 +966,20 @@ async def submit_verified_checkin_for_tenant(
 
     config = await get_active_checkin_config_for_tenant(tenant_id)
     checkin_config_id = config.id or "" if config else ""
+
+    # Enforce token scope BEFORE required-field validation so a
+    # department-scoped QR backfills tenant_specific_data['department_id']
+    # (and never leaves partial state behind on a mismatch).
+    token_scope = _enforce_registration_token_scope(
+        tenant_id=tenant_id,
+        tenant_specific_data=tenant_specific_data,
+        registration_token=registration_token,
+    )
+
     merged_fields, _form = await resolve_required_fields_for_tenant(tenant_id)
     required_field_keys = {f.key for f in merged_fields if f.required}
 
-    return await _submit_verified_checkin_core(
+    checkin = await _submit_verified_checkin_core(
         tenant_id=tenant_id,
         checkin_config_id=checkin_config_id,
         required_field_keys=required_field_keys,
@@ -970,6 +996,39 @@ async def submit_verified_checkin_for_tenant(
         kyc_reference_id=kyc_reference_id,
         consent=consent,
     )
+
+    # Phase A3 audit hook (Issue 5) — same contract as
+    # ``submit_verified_checkin``: record which QR shaped the check-in
+    # without persisting the replayable token. Fire-and-forget.
+    if token_scope:
+        try:
+            from services.audit_service import record_audit_event
+
+            await record_audit_event(
+                actor_id=checkin.visitor_id,
+                actor_role="kiosk_visitor",
+                action="checkin.registered_via_qr",
+                resource_type="checkin",
+                resource_id=checkin.id or "",
+                tenant_id=tenant_id,
+                details={
+                    "registration_token_id": token_scope.get("token_id"),
+                    "registration_token_scope": {
+                        "department_id": token_scope.get("department_id"),
+                        "branch_id": token_scope.get("branch_id"),
+                    },
+                },
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "checkin.registered_via_qr audit record failed for checkin %s",
+                checkin.id,
+                exc_info=True,
+            )
+
+    return checkin
 
 
 async def _submit_verified_checkin_core(
@@ -1151,6 +1210,15 @@ async def _submit_verified_checkin_core(
     effective_required_keys = required_field_keys - {"email"}
     available_keys = set(merged_bio_data.keys()) | set(tenant_specific_data.keys())
     missing_fields = effective_required_keys - available_keys
+    if "department_id" in missing_fields:
+        # Degenerate case: a tenant with no active departments can't offer
+        # the department picker — the kiosk omits the field and the visit
+        # falls back to HQ routing. Only enforce the requirement when the
+        # tenant actually has departments to choose from.
+        from repositories.department_repo import get_departments
+
+        if not await get_departments({"tenant_id": tenant_id, "is_active": True}):
+            missing_fields = missing_fields - {"department_id"}
     if missing_fields:
         raise AppException(
             status_code=400,

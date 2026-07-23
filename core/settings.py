@@ -32,6 +32,31 @@ def _parse_int_list(value: str | None) -> tuple[int, ...]:
     return tuple(int(x.strip()) for x in value.split(",") if x.strip())
 
 
+# Production frontend origin — the last-resort base for the post-payment
+# return page when neither PAYMENT_CALLBACK_URL nor APP_BASE_URL is set.
+_DEFAULT_FRONTEND_BASE_URL = "https://client.visichek.app"
+# The frontend's payment-return resolver page
+# (src/app/(tenant)/app/billing/checkout/return/page.tsx).
+_CHECKOUT_RETURN_PATH = "/app/billing/checkout/return"
+
+
+def _resolve_payment_callback_url() -> str:
+    """Where Paystack/Flutterwave redirect the customer's browser after payment.
+
+    Resolution order: explicit PAYMENT_CALLBACK_URL → APP_BASE_URL + the
+    return-page path → the production frontend origin + the return-page path.
+    Always non-empty so a checkout never bounces the customer to whatever
+    Callback URL happens to be configured in the provider's dashboard.
+    """
+    explicit = os.getenv("PAYMENT_CALLBACK_URL", "").strip()
+    if explicit:
+        return explicit
+    base = (
+        os.getenv("APP_BASE_URL", "").strip().rstrip("/") or _DEFAULT_FRONTEND_BASE_URL
+    )
+    return f"{base}{_CHECKOUT_RETURN_PATH}"
+
+
 @dataclass(frozen=True)
 class Settings:
     env: str
@@ -126,8 +151,9 @@ class Settings:
     # customer's browser AFTER payment — the "callback URL". Point this at a
     # FRONTEND page, NOT the webhook endpoint. The provider appends
     # ?reference=...&trxref=... so the page can resolve + display the result.
-    # When unset, the provider falls back to the Callback URL configured in its
-    # own dashboard. A per-checkout ``metadata.redirect_url`` overrides this.
+    # Always non-empty: PAYMENT_CALLBACK_URL → APP_BASE_URL + return path →
+    # production frontend origin (see _resolve_payment_callback_url). A
+    # per-checkout ``metadata.redirect_url`` overrides this.
     payment_callback_url: str = ""
     # Cloudflare Turnstile secret key for verifying self-onboarding submissions.
     # When unset, Turnstile verification is skipped (development convenience).
@@ -337,7 +363,7 @@ def get_settings() -> Settings:
         checkout_session_ttl_seconds=int(
             os.getenv("CHECKOUT_SESSION_TTL_SECONDS", str(24 * 60 * 60))
         ),
-        payment_callback_url=os.getenv("PAYMENT_CALLBACK_URL", "").strip(),
+        payment_callback_url=_resolve_payment_callback_url(),
         turnstile_secret_key=os.getenv("TURNSTILE_SECRET_KEY") or None,
         turnstile_verify_url=os.getenv(
             "TURNSTILE_VERIFY_URL",

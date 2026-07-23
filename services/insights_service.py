@@ -431,7 +431,13 @@ def _checkin_match(
 ) -> Dict[str, Any]:
     match: Dict[str, Any] = {"tenant_id": scope.tenant_id}
     if scope.branch_id:
-        match["tenant_specific_data.branch_id"] = scope.branch_id
+        # branch_id was promoted to a first-class checkin field; legacy rows
+        # only carry it inside tenant_specific_data. Match either so branch
+        # scoping doesn't silently zero out one era of data.
+        match["$or"] = [
+            {"branch_id": scope.branch_id},
+            {"tenant_specific_data.branch_id": scope.branch_id},
+        ]
     elif scope.department_ids is not None:
         match["tenant_specific_data.department_id"] = {"$in": scope.department_ids}
     if start is not None or stop is not None:
@@ -691,6 +697,18 @@ async def _section_appointment(scope: _Scope, start: int, stop: int) -> Insights
 async def _section_new_returning(
     scope: _Scope, start: int, stop: int
 ) -> InsightsSection:
+    """First-time vs returning visitors in range.
+
+    Kiosk / receptionist submissions are stored as ``checkins`` (keyed by
+    ``visitor_id``), NOT ``visit_sessions`` (keyed by
+    ``visitor_profile_id``) — so, like every other Insights section, both
+    collections must be summed or tenants whose traffic flows through the
+    check-in path always see an empty pie.
+    """
+    new_count = 0
+    returning_count = 0
+
+    # visit_sessions side.
     in_range = _visit_match(scope, start=start, stop=stop)
     visitor_ids: List[str] = []
     async for doc in db["visit_sessions"].aggregate(
@@ -699,8 +717,6 @@ async def _section_new_returning(
         if doc.get("_id"):
             visitor_ids.append(str(doc["_id"]))
 
-    new_count = 0
-    returning_count = 0
     if visitor_ids:
         all_time = _visit_match(scope)
         async for doc in db["visit_sessions"].aggregate(
@@ -718,6 +734,40 @@ async def _section_new_returning(
                 new_count += 1
             else:
                 returning_count += 1
+
+    # checkins side. Checkins carry no check_in_time; date_created is the
+    # check-in moment (same convention as _checkin_match).
+    ci_in_range = _checkin_match(scope, start=start, stop=stop)
+    checkin_visitor_ids: List[str] = []
+    async for doc in db["checkins"].aggregate(
+        [{"$match": ci_in_range}, {"$group": {"_id": "$visitor_id"}}]
+    ):
+        if doc.get("_id"):
+            checkin_visitor_ids.append(str(doc["_id"]))
+
+    if checkin_visitor_ids:
+        ci_all_time = _checkin_match(scope)
+        async for doc in db["checkins"].aggregate(
+            [
+                {
+                    "$match": {
+                        **ci_all_time,
+                        "visitor_id": {"$in": checkin_visitor_ids},
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$visitor_id",
+                        "first": {"$min": "$date_created"},
+                    }
+                },
+            ]
+        ):
+            if (doc.get("first") or 0) >= start:
+                new_count += 1
+            else:
+                returning_count += 1
+
     slices = _build_distribution(
         {"new": new_count, "returning": returning_count},
         {"new": "First-time visitors", "returning": "Returning visitors"},
@@ -893,6 +943,7 @@ async def _build_kpis(
     trends_enabled: bool,
     now: int,
     audit_match_base: Dict[str, Any],
+    kyc_enabled: bool = True,
 ) -> List[Kpi]:
     span = stop - start
     prev_start, prev_stop = start - span, start
@@ -907,11 +958,11 @@ async def _build_kpis(
             _count_visits(scope, start, stop),
             _count_visits(scope, prev_start, prev_stop) if trends_enabled else _zero(),
             _live_active(scope),
-            _verification_rate(scope, start, stop),
+            _verification_rate(scope, start, stop) if kyc_enabled else _zero(),
             _open_incidents(scope),
             _critical_incidents(scope),
         )
-        return [
+        kpis = [
             Kpi(
                 key="totalVisits",
                 label="Total visits",
@@ -925,21 +976,30 @@ async def _build_kpis(
                 value=active,
                 description="Visitors on-site right now",
             ),
-            Kpi(
-                key="verificationRate",
-                label="Verification rate",
-                value=vrate,
-                unit="%",
-                trend=None,
-                description="Verified visits in range",
-            ),
+        ]
+        # Verification rate only exists on plans with KYC / ID verification
+        # (Dojah) — plans without it can never verify a visit, so a
+        # permanent 0% card would just be noise.
+        if kyc_enabled:
+            kpis.append(
+                Kpi(
+                    key="verificationRate",
+                    label="Verification rate",
+                    value=vrate,
+                    unit="%",
+                    trend=None,
+                    description="Verified visits in range",
+                )
+            )
+        kpis.append(
             Kpi(
                 key="openIncidents",
                 label="Open incidents",
                 value=open_inc,
                 description=f"{crit} critical",
-            ),
-        ]
+            )
+        )
+        return kpis
 
     if role == "dept_admin":
         visits, prev_visits, appts, prev_appts, noshow, hosts = await asyncio.gather(
@@ -1298,6 +1358,31 @@ async def _resolve_tier(tenant_id: str) -> str:
     return "free"
 
 
+async def _kyc_verification_enabled(tenant_id: str) -> bool:
+    """Whether the tenant's plan includes KYC / ID verification (Dojah).
+
+    The verification-rate KPI is meaningless on plans whose feature rules
+    deny the ``/v1/kyc*`` surface — no verifications can ever happen — so
+    the KPI is omitted for them. Defaults to False when the plan can't be
+    resolved (matching the free-tier fallback above).
+    """
+    try:
+        from services.plan_cache_service import resolve_tenant_plan
+
+        resolved = await resolve_tenant_plan(tenant_id)
+        if not resolved:
+            return False
+        for rule in resolved.get("feature_rules", []) or []:
+            if rule.get("enabled", True):
+                continue
+            pattern = str(rule.get("endpoint_pattern") or "")
+            if pattern.startswith("/v1/kyc"):
+                return False
+        return True
+    except Exception:
+        return False
+
+
 async def _tenant_created_at(tenant_id: str) -> int:
     if not ObjectId.is_valid(tenant_id):
         return 0
@@ -1504,6 +1589,8 @@ async def get_insights(
         elif sid == "feed":
             section_coros[sid] = _section_feed(scope, status_filter=status_filter)
 
+    kyc_enabled = await _kyc_verification_enabled(tenant_id)
+
     kpis, earliest = await asyncio.gather(
         _build_kpis(
             role,
@@ -1513,6 +1600,7 @@ async def get_insights(
             trends_enabled=not is_free,
             now=now,
             audit_match_base=audit_base,
+            kyc_enabled=kyc_enabled,
         ),
         _earliest_data(tenant_id, created_at or eff_start),
     )

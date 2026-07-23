@@ -1414,6 +1414,113 @@ async def notify_onboarding_submission_received(
         )
 
 
+async def notify_tenant_onboarding_confirmed(
+    tenant_id: str,
+    tenant_name: Optional[str],
+    *,
+    address_provided: bool = False,
+    dpa_accepted: bool = False,
+) -> None:
+    """Fire-and-forget: notify every active application admin that a tenant's
+    super_admin has completed the first-login company-details confirmation
+    (address filled in, DPA signed)."""
+    try:
+        from repositories.admin_repo import get_admins
+        from schemas.imports import AccountStatus
+
+        org_label = tenant_name or "A tenant"
+        completed_bits = []
+        if address_provided:
+            completed_bits.append("organization address")
+        if dpa_accepted:
+            completed_bits.append("Data Processing Agreement")
+        detail = (
+            f" ({' and '.join(completed_bits)} recorded)" if completed_bits else ""
+        )
+
+        admins = await get_admins(
+            {"account_status": AccountStatus.ACTIVE.value}, start=0, stop=200
+        )
+        for admin in admins:
+            try:
+                await send_notification(
+                    user_id=admin.id or "",
+                    user_type=UserType.ADMIN,
+                    title="Tenant Confirmed Company Details",
+                    body=f"{org_label} completed their onboarding confirmation{detail}.",
+                    type="info",
+                    link=f"/admin/tenants/{tenant_id}",
+                    tenant_id=tenant_id,
+                    resource_type="tenant",
+                    resource_id=tenant_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to notify admin %s about tenant onboarding confirmation",
+                    admin.id,
+                    exc_info=True,
+                )
+    except Exception:
+        logger.warning(
+            "Failed to dispatch tenant-onboarding-confirmed notifications",
+            exc_info=True,
+        )
+
+
+async def notify_tenant_agreement_accepted(
+    tenant_id: str,
+    agreement_key: str,
+    *,
+    agreement_title: Optional[str] = None,
+    tenant_name: Optional[str] = None,
+) -> None:
+    """Fire-and-forget: notify every active application admin that a tenant
+    signed one of its policy agreements (DPA, visitor privacy policy, …)."""
+    try:
+        from repositories.admin_repo import get_admins
+        from schemas.imports import AccountStatus
+
+        org_label = tenant_name
+        if not org_label:
+            try:
+                from repositories.tenant_repo import get_tenant
+
+                tenant = await get_tenant({"_id": ObjectId(tenant_id)})
+                org_label = getattr(tenant, "company_name", None)
+            except Exception:
+                org_label = None
+        org_label = org_label or "A tenant"
+        policy_label = agreement_title or agreement_key.replace("_", " ").title()
+
+        admins = await get_admins(
+            {"account_status": AccountStatus.ACTIVE.value}, start=0, stop=200
+        )
+        for admin in admins:
+            try:
+                await send_notification(
+                    user_id=admin.id or "",
+                    user_type=UserType.ADMIN,
+                    title="Tenant Signed Policy Agreement",
+                    body=f"{org_label} accepted the {policy_label}.",
+                    type="info",
+                    link=f"/admin/tenants/{tenant_id}",
+                    tenant_id=tenant_id,
+                    resource_type="tenant",
+                    resource_id=tenant_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to notify admin %s about tenant agreement acceptance",
+                    admin.id,
+                    exc_info=True,
+                )
+    except Exception:
+        logger.warning(
+            "Failed to dispatch tenant-agreement-accepted notifications",
+            exc_info=True,
+        )
+
+
 async def notify_support_case_reply(
     case_id: str,
     recipient_user_id: str,

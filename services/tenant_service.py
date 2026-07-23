@@ -395,6 +395,11 @@ def _build_confirmation_out(
         tenant_id=tenant.id or "",
         company_name=tenant.company_name,
         organization_address=getattr(tenant, "organization_address", None),
+        address_street=getattr(tenant, "address_street", None),
+        address_city=getattr(tenant, "address_city", None),
+        address_state=getattr(tenant, "address_state", None),
+        address_postal_code=getattr(tenant, "address_postal_code", None),
+        address_country=getattr(tenant, "address_country", None),
         dpo_contact_email=tenant.dpo_contact_email,
         privacy_policy_url=tenant.privacy_policy_url,
         country_of_hosting=tenant.country_of_hosting,
@@ -446,6 +451,25 @@ async def confirm_tenant_info(
     # ever sends dpa_accepted=true; a false/missing value is ignored.
     dpa_accepted = edits.pop("dpa_accepted", None)
     dpa_accepted_at = edits.pop("dpa_accepted_at", None)
+
+    # When any structured address part is edited, recompose the single joined
+    # organization_address (the line the DPA renders) from the merged part set
+    # so the two representations never drift apart.
+    _address_parts = (
+        "address_street",
+        "address_city",
+        "address_state",
+        "address_postal_code",
+        "address_country",
+    )
+    if any(key in edits for key in _address_parts):
+        merged = [
+            edits[key] if key in edits else getattr(before, key, None)
+            for key in _address_parts
+        ]
+        composed = ", ".join(p.strip() for p in merged if p and p.strip())
+        if composed:
+            edits["organization_address"] = composed[:500]
 
     changes: dict[str, Any] = {}
     for key, new_value in edits.items():
@@ -499,6 +523,9 @@ async def confirm_tenant_info(
                 actor_role=actor_role,
                 accepted_at=dpa_update.get("dpa_accepted_at"),
                 request_id=request_id,
+                # The combined onboarding-confirmed notification below already
+                # covers the DPA acceptance.
+                notify_admins=False,
             )
         except Exception:
             import logging as _logging
@@ -522,6 +549,30 @@ async def confirm_tenant_info(
         )
     except Exception:
         pass
+
+    # Tell platform admins the tenant finished this onboarding step
+    # (fire-and-forget — never blocks the confirmation flow).
+    try:
+        from services.notification_service import notify_tenant_onboarding_confirmed
+
+        address_provided = bool(
+            getattr(updated, "organization_address", None)
+            or any(getattr(updated, key, None) for key in _address_parts)
+        )
+        await notify_tenant_onboarding_confirmed(
+            tenant_id=tenant_id,
+            tenant_name=updated.company_name,
+            address_provided=address_provided,
+            dpa_accepted=bool(dpa_update),
+        )
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "Failed to dispatch onboarding-confirmed notifications for tenant_id=%s",
+            tenant_id,
+            exc_info=True,
+        )
 
     submission = await _load_onboarding_context(tenant_id)
     return _build_confirmation_out(updated, submission)
