@@ -734,6 +734,18 @@ SUPER_ADMIN_PERMISSIONS: list[Permission] = [
         "Deactivate branch",
     ),
     _p("delete_branch", ["DELETE"], "/v1/branches/{branch_id}", "Delete branch"),
+    _p(
+        "get_branch_contact",
+        ["GET"],
+        "/v1/branches/{branch_id}/contact",
+        "View branch point of contact",
+    ),
+    _p(
+        "get_org_contact",
+        ["GET"],
+        "/v1/tenants/me/contact",
+        "View organization point of contact",
+    ),
     # Department management
     _p("create_department", ["POST"], "/v1/departments/", "Create department"),
     _p("list_departments", ["GET"], "/v1/departments/", "List departments"),
@@ -1041,6 +1053,13 @@ DEPT_ADMIN_PERMISSIONS: list[Permission] = [
         "/v1/branding/tenant/{tenant_id}",
         "View tenant branding",
     ),
+    # Branch point of contact (own branches only — enforced in-handler)
+    _p(
+        "get_branch_contact",
+        ["GET"],
+        "/v1/branches/{branch_id}/contact",
+        "View branch point of contact",
+    ),
     # Department management (own department)
     _p("create_department", ["POST"], "/v1/departments/", "Create department"),
     _p("list_departments", ["GET"], "/v1/departments/", "List departments"),
@@ -1188,6 +1207,13 @@ RECEPTIONIST_PERMISSIONS: list[Permission] = [
         ["GET"],
         "/v1/branding/tenant/{tenant_id}",
         "View tenant branding",
+    ),
+    # Branch point of contact (own branches only — enforced in-handler)
+    _p(
+        "get_branch_contact",
+        ["GET"],
+        "/v1/branches/{branch_id}/contact",
+        "View branch point of contact",
     ),
     # Visitor management
     _p("check_in", ["POST"], "/v1/visitors/check-in", "Check in visitor"),

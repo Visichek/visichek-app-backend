@@ -120,6 +120,26 @@ class BranchBriefSummary(BaseModel):
     is_active: Optional[bool] = None
 
 
+class ContactBriefSummary(BaseModel):
+    """Point-of-contact card for a branch or organization.
+
+    Resolution order (see ``services.summary_resolver.resolve_contact_summary``):
+    a designated contact system_user -> the branch's own email/phone as a
+    synthetic contact -> the tenant's main super admin. ``source`` says which
+    rung produced the card ("user" | "branch" | "main_super_admin").
+
+    ``phone`` can only come from ``branch.phone`` — system_users have no
+    phone field.
+    """
+
+    user_id: Optional[str] = None
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[str] = None
+    source: str
+
+
 class HostBriefSummary(BaseModel):
     id: str
     name: Optional[str] = None

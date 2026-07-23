@@ -9,7 +9,10 @@ class BadgeBase(BaseModel):
     checkin_id: str
     qr_code_value: str
     issued_at: int
-    expires_at: int
+    # None = no auto-expiry (tenant_settings.visitor_badge_expiry == MANUAL):
+    # the badge stays valid until the visit is checked out or the badge is
+    # revoked. Every expiry check must treat None as "not expired".
+    expires_at: Optional[int] = None
     revoked_at: Optional[int] = None
 
 
@@ -51,7 +54,9 @@ class BadgePayload(BaseModel):
     host_employee_name: Optional[str] = None
     purpose: str
     issued_at: int
-    expires_at: int
+    # Mirrors ``BadgeBase.expires_at`` — None means no auto-expiry (MANUAL
+    # badge-expiry policy).
+    expires_at: Optional[int] = None
 
     @model_validator(mode="after")
     def mirror_qr_value(self) -> "BadgePayload":

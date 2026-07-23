@@ -46,6 +46,23 @@ from services.plan_limits import (
 logger = logging.getLogger(__name__)
 
 
+async def _nudge_checkin_status(checkin_id: str) -> None:
+    """Best-effort nudge to any kiosk long-poll parked on this check-in's
+    status (``GET /v1/public/checkins/{id}/status?wait=1``).
+
+    A publish failure must never break an approval / rejection — the kiosk
+    falls back to its bounded-poll timeout and recomputes the state anyway.
+    """
+    try:
+        from services.checkin_status_service import publish_checkin_status_nudge
+
+        await publish_checkin_status_nudge(checkin_id)
+    except Exception:
+        logger.debug(
+            "checkin status nudge failed checkin=%s", checkin_id, exc_info=True
+        )
+
+
 async def _resolve_checkin_branch_id(
     tenant_id: str, tenant_specific_data: Optional[dict]
 ) -> Optional[str]:
@@ -63,6 +80,67 @@ async def _resolve_checkin_branch_id(
     from services.branch_service import resolve_hq_branch_id
 
     return await resolve_hq_branch_id(tenant_id)
+
+
+async def resolve_checkin_dept_host(
+    tenant_id: str, tenant_specific_data: Optional[dict]
+) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """Resolve ``(department_id, department_name, host_id, host_name)`` for a
+    check-in from what the kiosk form provided (WS7 badge data contract).
+
+    The kiosk form (checkin config / tenant form builder) stamps
+    ``department_id`` / ``host_id`` into ``tenant_specific_data`` when the
+    tenant collects those fields; a department-scoped registration QR also
+    backfills ``department_id``. This helper promotes the ids to first-class
+    fields and snapshots the display names at submit time so the public badge
+    pass and badge email can render them without a live lookup.
+
+    Best-effort and never raises: an unknown / cross-tenant id yields the id
+    with a ``None`` name; a missing field yields ``(None, None)``.
+    """
+    from bson import ObjectId
+
+    data = tenant_specific_data or {}
+    department_id: Optional[str] = data.get("department_id") or None
+    department_name: Optional[str] = None
+    host_id: Optional[str] = data.get("host_id") or None
+    host_name: Optional[str] = None
+
+    if department_id and ObjectId.is_valid(department_id):
+        try:
+            from repositories.department_repo import get_department
+
+            dept = await get_department(
+                {"_id": ObjectId(department_id), "tenant_id": tenant_id}
+            )
+            if dept is not None:
+                department_name = dept.name
+        except Exception:
+            logger.warning(
+                "resolve_checkin_dept_host: department lookup failed "
+                "tenant=%s department_id=%s",
+                tenant_id,
+                department_id,
+                exc_info=True,
+            )
+
+    if host_id:
+        try:
+            from services.host_service import resolve_host_identity
+
+            resolved = await resolve_host_identity(tenant_id, host_id)
+            if resolved is not None:
+                host_name = resolved[0]
+        except Exception:
+            logger.warning(
+                "resolve_checkin_dept_host: host lookup failed "
+                "tenant=%s host_id=%s",
+                tenant_id,
+                host_id,
+                exc_info=True,
+            )
+
+    return department_id, department_name, host_id, host_name
 
 
 async def _enforce_tenant_geofence(
@@ -847,6 +925,14 @@ async def submit_returning_visitor_checkin_by_id(
 
         await increment_visitor_profile_visits({"_id": ObjectId(visitor_profile_id)})
 
+    # Department / host attribution snapshots (WS7 badge data contract).
+    (
+        resolved_department_id,
+        resolved_department_name,
+        resolved_host_id,
+        resolved_host_name,
+    ) = await resolve_checkin_dept_host(tenant_id, tenant_specific_data)
+
     create_data = CheckinCreate(
         tenant_id=tenant_id,
         visitor_id=visitor_id,
@@ -854,6 +940,10 @@ async def submit_returning_visitor_checkin_by_id(
         id_extraction_id=None,
         tenant_specific_data=tenant_specific_data,
         branch_id=resolved_branch_id,
+        department_id=resolved_department_id,
+        department_name=resolved_department_name,
+        host_id=resolved_host_id,
+        host_name=resolved_host_name,
         purpose=purpose,
         state=CheckinState.PENDING_APPROVAL,
         verified=visitor.verified,
@@ -1342,7 +1432,15 @@ async def _submit_verified_checkin_core(
 
         await increment_visitor_profile_visits({"_id": ObjectId(visitor_profile_id)})
 
-    # 6. Create check-in
+    # 6. Create check-in. Department / host attribution snapshots are
+    # resolved from what the kiosk form provided (WS7 badge data contract).
+    (
+        resolved_department_id,
+        resolved_department_name,
+        resolved_host_id,
+        resolved_host_name,
+    ) = await resolve_checkin_dept_host(tenant_id, tenant_specific_data)
+
     create_data = CheckinCreate(
         tenant_id=tenant_id,
         visitor_id=visitor_id,
@@ -1350,6 +1448,10 @@ async def _submit_verified_checkin_core(
         id_extraction_id=id_extraction_id,
         tenant_specific_data=tenant_specific_data,
         branch_id=resolved_branch_id,
+        department_id=resolved_department_id,
+        department_name=resolved_department_name,
+        host_id=resolved_host_id,
+        host_name=resolved_host_name,
         purpose=purpose,
         state=initial_state,
         verified=visitor_verified,
@@ -1617,7 +1719,15 @@ async def submit_checkin(
 
         await increment_visitor_profile_visits({"_id": ObjectId(visitor_profile_id)})
 
-    # Create checkin
+    # Create checkin. Department / host attribution snapshots are resolved
+    # from what the kiosk form provided (WS7 badge data contract).
+    (
+        resolved_department_id,
+        resolved_department_name,
+        resolved_host_id,
+        resolved_host_name,
+    ) = await resolve_checkin_dept_host(tenant_id, req.tenant_specific_data)
+
     create_data = CheckinCreate(
         tenant_id=tenant_id,
         visitor_id=visitor_id,
@@ -1625,6 +1735,10 @@ async def submit_checkin(
         id_extraction_id=req.id_extraction_id,
         tenant_specific_data=req.tenant_specific_data,
         branch_id=resolved_branch_id,
+        department_id=resolved_department_id,
+        department_name=resolved_department_name,
+        host_id=resolved_host_id,
+        host_name=resolved_host_name,
         purpose=req.purpose,
         state=initial_state,
         verified=visitor.verified,
@@ -1780,8 +1894,10 @@ async def list_pending_approvals_for_tenant(
                     c.purpose.expected_duration_minutes if c.purpose else None
                 ),
                 photo_url=visitor_summary.portrait_url if visitor_summary else None,
-                department_id=None,
-                host_id=None,
+                # First-class on rows written after the WS7 contract; None
+                # for older rows (the raw ids remain in tenant_specific_data).
+                department_id=getattr(c, "department_id", None),
+                host_id=getattr(c, "host_id", None),
                 scheduled_datetime=None,
                 created_at=c.date_created or 0,
                 visitor=visitor_summary,
@@ -1930,6 +2046,8 @@ async def _send_visitor_badge_email_if_enabled(
     visitor,
     badge,
     checkin_id: str,
+    host_name: Optional[str] = None,
+    department_name: Optional[str] = None,
 ) -> None:
     """Issue 7: dispatch the visitor's badge email after approval.
 
@@ -2036,8 +2154,11 @@ async def _send_visitor_badge_email_if_enabled(
             context={
                 "visitor_name": getattr(visitor, "full_name", None) or "there",
                 "tenant_name": tenant_name,
-                "host_name": "",  # TODO: resolve from checkin context
-                "department_name": "",  # TODO: resolve from checkin context
+                # Snapshots resolved by the caller from the check-in row
+                # (WS7 badge data contract). The template hides the rows
+                # when empty.
+                "host_name": host_name or "",
+                "department_name": department_name or "",
                 "badge_url": badge_url,
                 "badge_page_url": badge_page_url,
                 "badge_qr_token": badge_qr_token,
@@ -2070,8 +2191,31 @@ async def confirm_checkin(
             raise resource_not_found(resource="Visitor", resource_id=checkin.visitor_id)
 
         now = int(time.time())
-        # Set expires_at to end of tenant's local day (for now use UTC end-of-day)
-        expires_at = ((now // 86400) + 1) * 86400  # Next midnight UTC
+        # Badge expiry honours tenant_settings.visitor_badge_expiry
+        # (END_OF_DAY | HOURS n | MANUAL). MANUAL → expires_at is None (no
+        # auto-expiry; the badge stays valid until the visit is checked out
+        # or the badge is revoked). END_OF_DAY stays **UTC** end-of-day —
+        # tenant-local-day remains a known gap (see resolve_badge_expiry).
+        from services.badge_service import resolve_badge_expiry
+
+        expires_at = await resolve_badge_expiry(tenant_id, now=now)
+
+        # Department / host snapshots for the badge payload + email. Rows
+        # written after the WS7 contract carry them first-class; older rows
+        # fall back to a live resolve from the raw kiosk form data.
+        department_name = getattr(checkin, "department_name", None)
+        host_name = getattr(checkin, "host_name", None)
+        if department_name is None or host_name is None:
+            (
+                _dep_id,
+                fallback_department_name,
+                _host_id,
+                fallback_host_name,
+            ) = await resolve_checkin_dept_host(
+                tenant_id, getattr(checkin, "tenant_specific_data", None)
+            )
+            department_name = department_name or fallback_department_name
+            host_name = host_name or fallback_host_name
 
         # Plan gate — badge printing is denied on Free. Manual check-in
         # still goes through (we transition the checkin to APPROVED
@@ -2108,6 +2252,9 @@ async def confirm_checkin(
             ),
         )
         invalidate_tenant_dashboard_cache(tenant_id)
+        # Wake the kiosk waiting screen (public status long-poll) — the
+        # visitor sees "approved" within ~a second instead of a poll cycle.
+        await _nudge_checkin_status(checkin_id)
 
         # Sync path (bypasses the queued-write auto-audit) — record directly.
         from services.audit_service import record_audit_event
@@ -2153,6 +2300,8 @@ async def confirm_checkin(
                 visitor=visitor,
                 badge=badge,
                 checkin_id=checkin_id,
+                host_name=host_name,
+                department_name=department_name,
             )
         except Exception as e:
             import logging
@@ -2170,7 +2319,7 @@ async def confirm_checkin(
                 visitor_name=visitor.full_name,
                 verified=visitor.verified,
                 portrait_url=visitor.portrait_url,
-                host_employee_name=None,  # TODO: resolve from context if available
+                host_employee_name=host_name,
                 purpose=checkin.purpose.purpose,
                 issued_at=badge.issued_at,
                 expires_at=badge.expires_at,
@@ -2193,6 +2342,8 @@ async def confirm_checkin(
             ),
         )
         invalidate_tenant_dashboard_cache(tenant_id)
+        # Wake the kiosk waiting screen (public status long-poll).
+        await _nudge_checkin_status(checkin_id)
 
         # Sync path (bypasses the queued-write auto-audit) — record directly.
         from services.audit_service import record_audit_event
@@ -2278,6 +2429,9 @@ async def force_approve_pending_verification(
         checkin_id, CheckinUpdate(state=CheckinState.PENDING_APPROVAL)
     )
     invalidate_tenant_dashboard_cache(checkin.tenant_id)
+    # Wake the kiosk waiting screen — the visitor moves from "verifying"
+    # to "waiting for the front desk" without waiting out a poll cycle.
+    await _nudge_checkin_status(checkin_id)
 
     from services.audit_service import record_audit_event
 

@@ -577,8 +577,28 @@ async def confirm_check_in(
     )
 
     badge_token: Optional[str] = None
+    badge_expiry: Optional[int] = None
     if badge_printing_enabled:
-        badge_token = sign_badge_token(session.id or "", expiry_hours=24)
+        # Honour tenant_settings.visitor_badge_expiry (END_OF_DAY | HOURS n
+        # | MANUAL) instead of the old hardcoded +24h. MANUAL → no
+        # auto-expiry: ``badge_expiry`` stays None and the badge remains
+        # valid until the visit is checked out. The signed QR token embeds
+        # its own expiry, so for MANUAL we sign with a far-future horizon —
+        # actual validity is then governed by the session status, not the
+        # token. END_OF_DAY stays UTC end-of-day (tenant-local-day is a
+        # known gap — see services.badge_service.resolve_badge_expiry).
+        from services.badge_service import resolve_badge_expiry
+
+        now_ts = int(time.time())
+        badge_expiry = await resolve_badge_expiry(tenant_id, now=now_ts)
+        token_expires_at = (
+            badge_expiry
+            if badge_expiry is not None
+            else now_ts + 10 * 365 * 86400  # MANUAL: token must outlive the visit
+        )
+        badge_token = sign_badge_token(
+            session.id or "", expires_at=token_expires_at
+        )
 
     # Update session: set status to CHECKED_IN. On Free, the badge_*
     # fields stay None so downstream code (badge expiry sweep, badge
@@ -588,7 +608,10 @@ async def confirm_check_in(
         update_payload.badge_qr_token = badge_token
         update_payload.badge_format = BadgeFormat(badge_format)
         update_payload.badge_generation_time = int(time.time())
-        update_payload.badge_expiry = int(time.time()) + 86400
+        # None (MANUAL) is dropped by the update repo's exclude-None dump —
+        # the session's badge_expiry simply stays unset, which every reader
+        # already treats as "no expiry recorded".
+        update_payload.badge_expiry = badge_expiry
     updated_session = await update_visit_session(
         {"_id": ObjectId(session.id)},
         update_payload,
@@ -771,6 +794,7 @@ async def _checkout_approved_checkin(
     checkin_id: str,
     tenant_id: str,
     check_out_method: Optional[Any] = None,
+    check_out_reason: Optional[str] = None,
 ) -> CheckoutResult:
     if not ObjectId.is_valid(checkin_id):
         raise HTTPException(status_code=400, detail="Invalid check-in ID format")
@@ -787,7 +811,12 @@ async def _checkout_approved_checkin(
     now = int(time.time())
     updated = await update_checkin(
         checkin_id,
-        CheckinUpdate(state=CheckinState.CHECKED_OUT, checked_out_at=now),
+        CheckinUpdate(
+            state=CheckinState.CHECKED_OUT,
+            checked_out_at=now,
+            check_out_method=check_out_method,
+            check_out_reason=check_out_reason,
+        ),
     )
     invalidate_tenant_dashboard_cache(tenant_id)
     expected_minutes = (
@@ -807,6 +836,7 @@ async def _checkout_approved_checkin(
         eligible_since_field="approved_at",
         checked_out_at=now,
         check_out_method=check_out_method,
+        check_out_reason=check_out_reason,
         checkin=updated,
         **timing,
     )
@@ -873,14 +903,22 @@ async def _checkout_checkin_by_badge_qr(
     badge_qr_token: str,
     tenant_id: str,
     check_out_method: Optional[Any] = None,
+    check_out_reason: Optional[str] = None,
 ) -> Optional[CheckoutResult]:
     badge = await get_badge_by_qr_value(badge_qr_token)
     if not badge or badge.tenant_id != tenant_id:
         return None
-    if badge.revoked_at is not None or badge.expires_at < int(time.time()):
+    # ``expires_at`` is None for MANUAL-expiry badges — those never
+    # auto-expire, so only a concrete past timestamp blocks the checkout.
+    if badge.revoked_at is not None or (
+        badge.expires_at is not None and badge.expires_at < int(time.time())
+    ):
         return None
     return await _checkout_approved_checkin(
-        badge.checkin_id, tenant_id, check_out_method=check_out_method
+        badge.checkin_id,
+        tenant_id,
+        check_out_method=check_out_method,
+        check_out_reason=check_out_reason,
     )
 
 
@@ -900,6 +938,7 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Checkou
                 request.badge_qr_token,
                 tenant_id,
                 check_out_method=request.check_out_method,
+                check_out_reason=request.check_out_reason,
             )
             if checkin_checkout is not None:
                 return checkin_checkout
@@ -918,7 +957,10 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Checkou
         if checkin_id is None:
             raise HTTPException(status_code=400, detail="Missing check-in ID")
         return await _checkout_approved_checkin(
-            checkin_id, tenant_id, check_out_method=request.check_out_method
+            checkin_id,
+            tenant_id,
+            check_out_method=request.check_out_method,
+            check_out_reason=request.check_out_reason,
         )
     elif _checkout_request_id(request, "scheduled_appointment"):
         appointment_id = _checkout_request_id(request, "scheduled_appointment")
@@ -947,6 +989,7 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Checkou
             status=VisitStatus.CHECKED_OUT,
             check_out_method=request.check_out_method,
             check_out_time=now,
+            check_out_reason=request.check_out_reason,
         ),
     )
     invalidate_tenant_dashboard_cache(tenant_id)
@@ -979,6 +1022,7 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Checkou
         eligible_since_field="check_in_time",
         checked_out_at=now,
         check_out_method=request.check_out_method,
+        check_out_reason=request.check_out_reason,
         visit_session=updated,
         **timing,
     )

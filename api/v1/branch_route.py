@@ -85,6 +85,12 @@ async def _branch_status_facet(
 # Only super_admin can manage branches
 _super_admin_dep = verify_system_user_token("super_admin")
 
+# Contact lookup is read-only and useful to branch-scoped staff too
+# (scoped principals are still restricted to their own branches in-handler).
+_branch_contact_dep = verify_system_user_token(
+    "super_admin", "dept_admin", "receptionist", "security_officer"
+)
+
 
 @router.post("")
 @document_response(
@@ -219,6 +225,49 @@ async def get_branch_endpoint(
         if owning_tenant != principal.tenant_id:
             return None
     return branch
+
+
+@router.get("/{branch_id}/contact")
+@document_response(
+    message="Branch contact fetched successfully",
+    description=(
+        "Point-of-contact card for a branch: the designated contact user, "
+        "else the branch's own email/phone, else the organization's main "
+        "super admin. Never empty in practice."
+    ),
+    summary="Get branch point of contact",
+    success_example={
+        "user_id": "507f1f77bcf86cd799439012",
+        "full_name": "Ada Obi",
+        "email": "ada@acme.com",
+        "phone": None,
+        "role": "super_admin",
+        "source": "main_super_admin",
+    },
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden",
+        404: "Branch not found",
+    },
+)
+async def get_branch_contact_endpoint(
+    branch_id: str,
+    principal: AuthPrincipal = Depends(_branch_contact_dep),
+) -> Any:
+    """Synchronous read — no queueing, no entity cache (the card blends
+    branch + user data, so caching it under either entity would go stale)."""
+    from fastapi import HTTPException
+
+    from services.branch_service import get_branch_contact_summary
+
+    # Branch-scoped roles may only look up contacts for their own branches;
+    # 404 (not 403) so branch existence isn't leaked across scopes.
+    if principal.is_branch_scoped and branch_id not in (principal.branch_ids or []):
+        raise HTTPException(status_code=404, detail="Branch not found")
+    branch = await retrieve_branch_by_id(branch_id)
+    if not branch or branch.tenant_id != principal.tenant_id:
+        raise HTTPException(status_code=404, detail="Branch not found")
+    return await get_branch_contact_summary(branch)
 
 
 @router.put("/{branch_id}")

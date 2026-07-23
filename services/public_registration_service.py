@@ -26,6 +26,7 @@ from repositories.system_user_repo import get_system_user
 from repositories.tenant_settings_repo import get_tenant_settings
 from schemas.public_registration_schema import (
     PublicAppointmentLookupOut,
+    PublicBadgeBranding,
     PublicBadgePassOut,
     PublicBadgePassTenant,
     PublicCheckoutResponse,
@@ -651,12 +652,14 @@ async def finalize_public_registration(
     )
 
 
-async def _resolve_badge_pass_tenant(tenant_id: str) -> PublicBadgePassTenant:
-    """Build the tenant sub-object for the public badge pass.
+async def _resolve_badge_pass_tenant(
+    tenant_id: str,
+) -> tuple[PublicBadgePassTenant, Optional[PublicBadgeBranding]]:
+    """Build the tenant + branding sub-objects for the public badge pass.
 
     Honours the ``custom_branding`` plan flag: when off, the tenant logo
-    is suppressed even if one is stored — the print template falls back
-    to the VisiChek mark.
+    is suppressed even if one is stored and the ``branding`` block is
+    ``None`` — the frontend renders the neutral VisiChek layout.
     """
     company_name = "VisiChek"
     if ObjectId.is_valid(tenant_id):
@@ -675,19 +678,36 @@ async def _resolve_badge_pass_tenant(tenant_id: str) -> PublicBadgePassTenant:
         branding_enabled = False
 
     logo_url: Optional[str] = None
+    branding_block: Optional[PublicBadgeBranding] = None
     if branding_enabled:
         try:
             from services.branding_service import retrieve_branding_by_tenant
 
             branding = await retrieve_branding_by_tenant(tenant_id)
             logo_url = getattr(branding, "logo_url", None) or None
+            logo_position = getattr(branding, "badge_logo_position", None)
+            branding_block = PublicBadgeBranding(
+                # Fallback chain documented on the branding schema:
+                # header → primary color, text → white.
+                header_color=getattr(branding, "badge_header_color", None)
+                or getattr(branding, "primary_color", None),
+                text_color=getattr(branding, "badge_text_color", None) or "#FFFFFF",
+                logo_url=logo_url,
+                logo_position=getattr(logo_position, "value", logo_position),
+                company_display_name=getattr(branding, "company_display_name", None)
+                or company_name,
+            )
         except Exception:
             logo_url = None
+            branding_block = None
 
-    return PublicBadgePassTenant(
-        company_name=company_name,
-        logo_url=logo_url,
-        branding_enabled=branding_enabled,
+    return (
+        PublicBadgePassTenant(
+            company_name=company_name,
+            logo_url=logo_url,
+            branding_enabled=branding_enabled,
+        ),
+        branding_block,
     )
 
 
@@ -716,7 +736,7 @@ async def get_public_badge_pass(token: str) -> PublicBadgePassOut:
     if session_id and ObjectId.is_valid(session_id):
         session = await get_visit_session({"_id": ObjectId(session_id)})
         if session:
-            tenant = await _resolve_badge_pass_tenant(session.tenant_id)
+            tenant, branding = await _resolve_badge_pass_tenant(session.tenant_id)
             status_value = (
                 session.status.value
                 if hasattr(session.status, "value")
@@ -728,13 +748,17 @@ async def get_public_badge_pass(token: str) -> PublicBadgePassOut:
                 or "Visitor",
                 company=getattr(session, "company_snapshot", None),
                 purpose=getattr(session, "purpose", None),
+                # Host is surfaced by display name only — contact details
+                # are never exposed on the public pass.
                 host_name=getattr(session, "host_name_snapshot", None),
                 department_name=getattr(session, "department_name_snapshot", None),
                 status=status_value,
                 issued_at=getattr(session, "badge_generation_time", None)
                 or getattr(session, "check_in_time", None),
                 expires_at=getattr(session, "badge_expiry", None),
+                check_in_time=getattr(session, "check_in_time", None),
                 tenant=tenant,
+                branding=branding,
             )
 
     # 2) Fall back to looking the token up as a ``badges.qr_code_value``
@@ -778,17 +802,49 @@ async def get_public_badge_pass(token: str) -> PublicBadgePassOut:
     }
     status_value = state_to_visit_status.get(state_value, VisitStatus.REGISTERED.value)
 
-    tenant = await _resolve_badge_pass_tenant(badge.tenant_id)
+    tenant, branding = await _resolve_badge_pass_tenant(badge.tenant_id)
+
+    # Department / host attribution (WS7 badge data contract). Check-ins
+    # written after the contract carry first-class snapshots; older rows fall
+    # back to a best-effort live resolve from the raw kiosk form data. Only
+    # the host's display name is exposed — never contact details.
+    department_name = getattr(checkin, "department_name", None)
+    host_name = getattr(checkin, "host_name", None)
+    if department_name is None or host_name is None:
+        try:
+            from services.checkin_service import resolve_checkin_dept_host
+
+            (
+                _dep_id,
+                fallback_department_name,
+                _host_id,
+                fallback_host_name,
+            ) = await resolve_checkin_dept_host(
+                badge.tenant_id, getattr(checkin, "tenant_specific_data", None)
+            )
+            department_name = department_name or fallback_department_name
+            host_name = host_name or fallback_host_name
+        except Exception:
+            logger.warning(
+                "get_public_badge_pass: dept/host fallback resolve failed "
+                "checkin=%s",
+                badge.checkin_id,
+                exc_info=True,
+            )
 
     return PublicBadgePassOut(
         token=token,
         visitor_name=visitor_name,
         company=company,
         purpose=purpose_value,
-        host_name=None,
-        department_name=None,
+        host_name=host_name,
+        department_name=department_name,
         status=status_value,
         issued_at=badge.issued_at,
         expires_at=badge.expires_at,
+        # For the staff-approved flow, approval == admittance; badge
+        # issuance stamps ``issued_at`` at the same moment.
+        check_in_time=getattr(checkin, "approved_at", None) or badge.issued_at,
         tenant=tenant,
+        branding=branding,
     )

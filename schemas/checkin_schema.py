@@ -52,6 +52,16 @@ class CheckinBase(BaseModel):
     # ``tenant_specific_data['branch_id']`` to a first-class field so reads
     # can filter on it and branch_filter() applies.
     branch_id: Optional[str] = None
+    # Department / host attribution, promoted from the raw kiosk form data
+    # (``tenant_specific_data['department_id']`` / ``['host_id']``) at submit
+    # time. The ``*_name`` companions are point-in-time snapshots resolved by
+    # the service layer so the public badge pass and badge email can render
+    # them without a live lookup. All None when the tenant's check-in form
+    # doesn't collect the field (WS7 badge data contract).
+    department_id: Optional[str] = None
+    department_name: Optional[str] = None
+    host_id: Optional[str] = None
+    host_name: Optional[str] = None
     id_extraction_id: Optional[str] = None
     tenant_specific_data: dict
     purpose: CheckinPurpose
@@ -70,6 +80,16 @@ class CheckinBase(BaseModel):
     approval_notes: Optional[str] = None
     rejection_reason: Optional[str] = None
     checked_out_at: Optional[int] = None
+    # How the visitor was checked out (qr_scan / manual / auto). None while
+    # still on-site and for legacy rows checked out before this field
+    # existed.
+    check_out_method: Optional[CheckOutMethod] = None
+    # Optional free-text note recorded at checkout. Manual checkouts may
+    # supply one; the auto-checkout sweep (WS6) always writes one
+    # ("Auto checkout after {N}h (no checkout recorded)").
+    check_out_reason: Optional[str] = None
+    # True only when the periodic auto-checkout sweep closed this check-in.
+    auto_checked_out: bool = False
 
 
 class CheckinCreate(CheckinBase):
@@ -90,6 +110,9 @@ class CheckinUpdate(BaseModel):
     rejection_reason: Optional[str] = None
     tenant_specific_data: Optional[dict] = None
     checked_out_at: Optional[int] = None
+    check_out_method: Optional[CheckOutMethod] = None
+    check_out_reason: Optional[str] = None
+    auto_checked_out: Optional[bool] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 

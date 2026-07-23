@@ -168,10 +168,26 @@ class PublicBadgePassTenant(BaseModel):
     branding_enabled: bool = False
 
 
+class PublicBadgeBranding(BaseModel):
+    """Custom-branding block for the unified badge renderer (WS7).
+
+    Present only when the tenant's plan grants the ``custom_branding``
+    feature flag — non-branded orgs get ``branding: null`` and the frontend
+    renders the neutral VisiChek layout."""
+
+    header_color: Optional[str] = None
+    text_color: Optional[str] = None
+    logo_url: Optional[str] = None
+    logo_position: Optional[str] = None
+    company_display_name: Optional[str] = None
+
+
 class PublicBadgePassOut(BaseModel):
     """Public printable visitor badge — reachable by anyone holding the
     visitor's ``badge_qr_token``. Carries only the non-sensitive fields the
-    badge prints (no email, phone, ID number, or portrait)."""
+    badge prints (no email, phone, ID number, or portrait). The host is
+    exposed by display name only — contact details (email/phone) are never
+    put on the public pass."""
 
     token: str
     visitor_name: str
@@ -181,8 +197,40 @@ class PublicBadgePassOut(BaseModel):
     department_name: Optional[str] = None
     status: str
     issued_at: Optional[int] = None
+    # ``expires_at`` is None when the org's badge-expiry policy is MANUAL —
+    # the badge stays valid until the visit is checked out / revoked.
     expires_at: Optional[int] = None
+    # When the visitor actually entered (visit-session ``check_in_time`` or
+    # the check-in's ``approved_at``).
+    check_in_time: Optional[int] = None
     tenant: PublicBadgePassTenant
+    branding: Optional[PublicBadgeBranding] = None
+
+
+class PublicCheckinStatusOut(BaseModel):
+    """Live status payload for the kiosk waiting screen (WS5).
+
+    Served by ``GET /v1/public/checkins/{checkin_id}/status`` (capability
+    token in the query, optional 25s long-poll). ``state`` mirrors
+    ``CheckinState`` (``pending_verification`` / ``pending_approval`` /
+    ``approved`` / ``rejected`` / ``checked_out``).
+
+    Badge fields are populated only once the check-in is APPROVED **and**
+    a badge artifact exists. Free-plan organizations approve without a
+    badge — ``state == "approved"`` with ``badge`` null is a valid,
+    non-error outcome (the kiosk shows a "see the front desk" screen).
+    ``badge_expires_at`` is None when the organization's badge-expiry
+    policy is MANUAL (no auto-expiry). ``badge_token`` is the same value
+    the ``/badge/{token}`` public page accepts, so the kiosk can deep-link
+    the phone-friendly badge view even if ``badge`` failed to resolve.
+    """
+
+    checkin_id: str
+    state: str
+    badge: Optional[PublicBadgePassOut] = None
+    badge_token: Optional[str] = None
+    badge_expires_at: Optional[int] = None
+    rejection_reason: Optional[str] = None
 
 
 class PublicReturningVisitorSubmitRequest(BaseModel):

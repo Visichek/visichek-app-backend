@@ -24,6 +24,7 @@ from schemas.imports import UserType
 from schemas.summary_schema import (
     AppointmentBriefSummary,
     BranchBriefSummary,
+    ContactBriefSummary,
     DepartmentBriefSummary,
     DiscountBriefSummary,
     HostBriefSummary,
@@ -387,6 +388,74 @@ async def resolve_branch_summary(
         )
     except Exception:
         return None
+
+
+async def resolve_contact_summary(
+    *,
+    tenant_id: Optional[str],
+    contact_user_id: Optional[str] = None,
+    branch_name: Optional[str] = None,
+    branch_email: Optional[str] = None,
+    branch_phone: Optional[str] = None,
+) -> Optional[ContactBriefSummary]:
+    """Point-of-contact card for a branch (or the org when only ``tenant_id``
+    is passed). Resolution chain — each rung best-effort, falling through on
+    any miss so the card is never empty in practice:
+
+    1. The designated ``contact_user_id`` (same-tenant system_user).
+    2. The branch's own email/phone as a synthetic contact (``source="branch"``).
+    3. The tenant's main super admin (exists by 4-layer invariant).
+
+    Returns ``None`` only when every rung fails (e.g. DB down) — callers
+    treat that like any other missing summary.
+    """
+    if not tenant_id:
+        return None
+    # Rung 1 — designated contact user.
+    oid = _to_object_id(contact_user_id)
+    if oid is not None:
+        try:
+            from repositories.system_user_repo import get_system_user
+
+            user = await get_system_user({"_id": oid, "tenant_id": tenant_id})
+            if user:
+                return ContactBriefSummary(
+                    user_id=str(user.id or ""),
+                    full_name=user.full_name,
+                    email=user.email,
+                    phone=None,  # system_users have no phone field
+                    role=getattr(user.role, "value", None) or str(user.role),
+                    source="user",
+                )
+        except Exception:
+            pass
+    # Rung 2 — the branch's own email/phone as a synthetic contact.
+    if branch_email or branch_phone:
+        return ContactBriefSummary(
+            user_id=None,
+            full_name=branch_name,
+            email=branch_email,
+            phone=branch_phone,
+            role=None,
+            source="branch",
+        )
+    # Rung 3 — main super admin.
+    try:
+        from repositories.system_user_repo import get_main_super_admin
+
+        admin = await get_main_super_admin(tenant_id)
+        if admin:
+            return ContactBriefSummary(
+                user_id=str(admin.id or ""),
+                full_name=admin.full_name,
+                email=admin.email,
+                phone=None,
+                role=getattr(admin.role, "value", None) or str(admin.role),
+                source="main_super_admin",
+            )
+    except Exception:
+        pass
+    return None
 
 
 async def resolve_host_summary(

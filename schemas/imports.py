@@ -77,6 +77,9 @@ class CheckInMethod(str, Enum):
 class CheckOutMethod(str, Enum):
     QR_SCAN = "qr_scan"
     MANUAL = "manual"
+    # Stamped by the periodic auto-checkout sweep (WS6) — never sent by a
+    # client. See services/auto_checkout_service.py.
+    AUTO = "auto"
 
 
 class VerificationMethod(str, Enum):
