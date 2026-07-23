@@ -12,7 +12,7 @@
 
 * ``DELETE /v1/pricing-marketing/{kind}/{key}`` — application admin
   only. Removes one overlay row. ``kind`` ∈ ``plan`` | ``feature`` |
-  ``category``.
+  ``category`` | ``addon``.
 """
 
 from __future__ import annotations
@@ -69,10 +69,11 @@ async def get_pricing_marketing_endpoint() -> Any:
     description=(
         "Partial update of the marketing overlay. Application admin "
         "only. Top-level fields (headline, subheadline, currency_display) "
-        "are upserted; the list fields (plans, features, categories) "
-        "merge per item by their natural key — pass the existing key to "
-        "update one row, a new key to add a row, or an empty list to "
-        "clear the section. Omit the field to leave it untouched."
+        "are upserted; the list fields (plans, features, categories, "
+        "addons) merge per item by their natural key — pass the "
+        "existing key to update one row, a new key to add a row, or an "
+        "empty list to clear the section. Omit the field to leave it "
+        "untouched."
     ),
     summary="Patch pricing-marketing overlay (async)",
 )
@@ -102,10 +103,10 @@ async def patch_pricing_marketing_endpoint(
     status_code=status.HTTP_202_ACCEPTED,
     description=(
         "Remove one overlay row by natural key. ``kind`` is one of "
-        "``plan`` (key = plan_name), ``feature`` (key = row_key), or "
-        "``category`` (key = category_key). No-ops cleanly if the row "
-        "isn't present. Use this to clear stale copy for a plan or "
-        "feature that's been retired."
+        "``plan`` (key = plan_name), ``feature`` (key = row_key), "
+        "``category`` (key = category_key), or ``addon`` (key = slug). "
+        "No-ops cleanly if the row isn't present. Use this to clear "
+        "stale copy for a plan, feature, or addon that's been retired."
     ),
     summary="Delete pricing-marketing overlay row (async)",
 )
