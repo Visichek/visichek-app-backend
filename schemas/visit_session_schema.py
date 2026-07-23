@@ -19,6 +19,14 @@ class VisitSessionBase(BaseModel):
     # Check-in details
     check_in_method: Optional[CheckInMethod] = None
     check_out_method: Optional[CheckOutMethod] = None
+    # Optional free-text note recorded at checkout. Manual checkouts may
+    # supply one; the auto-checkout sweep (WS6) always writes one
+    # ("Auto checkout after {N}h (no checkout recorded)").
+    check_out_reason: Optional[str] = None
+    # True only when the periodic auto-checkout sweep closed this visit
+    # (no real checkout was ever recorded). Drives the "Auto checkout"
+    # badge on visitor surfaces.
+    auto_checked_out: bool = False
     verification_status: VerificationStatus = VerificationStatus.UNVERIFIED
     verification_method: Optional[VerificationMethod] = None
     verified_by: Optional[str] = None
@@ -59,6 +67,8 @@ class VisitSessionUpdate(BaseModel):
     status: Optional[VisitStatus] = None
     check_out_method: Optional[CheckOutMethod] = None
     check_out_time: Optional[int] = None
+    check_out_reason: Optional[str] = None
+    auto_checked_out: Optional[bool] = None
     verification_status: Optional[VerificationStatus] = None
     verification_method: Optional[VerificationMethod] = None
     verified_by: Optional[str] = None
@@ -190,6 +200,9 @@ class CheckOutRequest(BaseModel):
     checkout_id: Optional[str] = None
     source_type: Optional[str] = None
     check_out_method: CheckOutMethod = CheckOutMethod.QR_SCAN
+    # Optional staff-supplied note recorded on the visit/check-in row
+    # (e.g. "Left via side exit"). Never required.
+    check_out_reason: Optional[str] = None
 
 
 class AwaitingCheckoutItem(BaseModel):
@@ -263,6 +276,7 @@ class CheckoutResult(BaseModel):
     )
 
     check_out_method: Optional[CheckOutMethod] = None
+    check_out_reason: Optional[str] = None
 
     # Source record. Exactly one of the next three is populated.
     visit_session: Optional[Any] = None

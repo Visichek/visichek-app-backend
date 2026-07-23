@@ -57,7 +57,11 @@ class TenantSettingsBase(BaseModel):
     require_id_scan: bool = False
     require_host_approval: bool = False
     require_consent_before_check_in: bool = True
-    auto_checkout_after_hours: Optional[int] = None
+    # Visitors still shown as on-site after this many hours are closed by
+    # the auto-checkout sweep (services/auto_checkout_service.py, every
+    # 15 min). None or 0 disables the sweep for the tenant. Existing
+    # tenants are backfilled to 12 once via backfill_auto_checkout_default.
+    auto_checkout_after_hours: Optional[int] = 12
     visitor_badge_expiry: VisitorBadgeExpiry = VisitorBadgeExpiry.END_OF_DAY
     visitor_badge_expiry_hours: Optional[int] = None
     allow_self_registration: bool = False

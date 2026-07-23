@@ -794,6 +794,7 @@ async def _checkout_approved_checkin(
     checkin_id: str,
     tenant_id: str,
     check_out_method: Optional[Any] = None,
+    check_out_reason: Optional[str] = None,
 ) -> CheckoutResult:
     if not ObjectId.is_valid(checkin_id):
         raise HTTPException(status_code=400, detail="Invalid check-in ID format")
@@ -810,7 +811,12 @@ async def _checkout_approved_checkin(
     now = int(time.time())
     updated = await update_checkin(
         checkin_id,
-        CheckinUpdate(state=CheckinState.CHECKED_OUT, checked_out_at=now),
+        CheckinUpdate(
+            state=CheckinState.CHECKED_OUT,
+            checked_out_at=now,
+            check_out_method=check_out_method,
+            check_out_reason=check_out_reason,
+        ),
     )
     invalidate_tenant_dashboard_cache(tenant_id)
     expected_minutes = (
@@ -830,6 +836,7 @@ async def _checkout_approved_checkin(
         eligible_since_field="approved_at",
         checked_out_at=now,
         check_out_method=check_out_method,
+        check_out_reason=check_out_reason,
         checkin=updated,
         **timing,
     )
@@ -896,6 +903,7 @@ async def _checkout_checkin_by_badge_qr(
     badge_qr_token: str,
     tenant_id: str,
     check_out_method: Optional[Any] = None,
+    check_out_reason: Optional[str] = None,
 ) -> Optional[CheckoutResult]:
     badge = await get_badge_by_qr_value(badge_qr_token)
     if not badge or badge.tenant_id != tenant_id:
@@ -907,7 +915,10 @@ async def _checkout_checkin_by_badge_qr(
     ):
         return None
     return await _checkout_approved_checkin(
-        badge.checkin_id, tenant_id, check_out_method=check_out_method
+        badge.checkin_id,
+        tenant_id,
+        check_out_method=check_out_method,
+        check_out_reason=check_out_reason,
     )
 
 
@@ -927,6 +938,7 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Checkou
                 request.badge_qr_token,
                 tenant_id,
                 check_out_method=request.check_out_method,
+                check_out_reason=request.check_out_reason,
             )
             if checkin_checkout is not None:
                 return checkin_checkout
@@ -945,7 +957,10 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Checkou
         if checkin_id is None:
             raise HTTPException(status_code=400, detail="Missing check-in ID")
         return await _checkout_approved_checkin(
-            checkin_id, tenant_id, check_out_method=request.check_out_method
+            checkin_id,
+            tenant_id,
+            check_out_method=request.check_out_method,
+            check_out_reason=request.check_out_reason,
         )
     elif _checkout_request_id(request, "scheduled_appointment"):
         appointment_id = _checkout_request_id(request, "scheduled_appointment")
@@ -974,6 +989,7 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Checkou
             status=VisitStatus.CHECKED_OUT,
             check_out_method=request.check_out_method,
             check_out_time=now,
+            check_out_reason=request.check_out_reason,
         ),
     )
     invalidate_tenant_dashboard_cache(tenant_id)
@@ -1006,6 +1022,7 @@ async def check_out_visitor(request: CheckOutRequest, tenant_id: str) -> Checkou
         eligible_since_field="check_in_time",
         checked_out_at=now,
         check_out_method=request.check_out_method,
+        check_out_reason=request.check_out_reason,
         visit_session=updated,
         **timing,
     )

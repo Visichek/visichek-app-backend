@@ -355,6 +355,25 @@ async def lifespan(app: FastAPI):
             "visitor_first_seen_backfill failed at startup", exc_info=True
         )
 
+    # One-shot auto-checkout default backfill (WS6). Writes the new
+    # ``auto_checkout_after_hours`` default (12) into EXISTING
+    # tenant_settings docs whose value is still None (the old inert
+    # default). Gated by a backfill_markers doc so a tenant later setting
+    # it back to None/0 (= disabled) is never overwritten on reboot.
+    # See services/auto_checkout_service.py.
+    try:
+        from services.auto_checkout_service import backfill_auto_checkout_default
+
+        auto_checkout_backfill_summary = await backfill_auto_checkout_default()
+        logger.info(
+            "auto_checkout_default backfill summary: %s",
+            auto_checkout_backfill_summary,
+        )
+    except Exception:
+        logger.warning(
+            "auto_checkout_default backfill failed at startup", exc_info=True
+        )
+
     # Main super_admin invariant — backfill + auto-heal. Ensures every
     # active tenant has exactly one ``is_main_super_admin=True`` row.
     # Runs AFTER ensure_indexes (which creates the partial-unique index
@@ -662,6 +681,18 @@ async def lifespan(app: FastAPI):
         trigger=IntervalTrigger(hours=1),
         id="appointment_no_show_sweep",
         name="Appointment No-Show Sweeper",
+        replace_existing=True,
+    )
+    # Auto-checkout sweep (WS6): closes visit_sessions still checked_in
+    # and checkins still approved older than each tenant's
+    # ``auto_checkout_after_hours`` policy (None/0 = disabled), revoking
+    # any still-active badges. Cursor-batched and capped per run —
+    # leftovers roll to the next 15-minute pass.
+    scheduler.add_job(
+        "services.auto_checkout_service:run_auto_checkout_sweep",
+        trigger=IntervalTrigger(minutes=15),
+        id="auto_checkout_sweep",
+        name="Auto-Checkout Sweeper",
         replace_existing=True,
     )
     # Remind hosts ~30 minutes before a scheduled appointment. In-app
