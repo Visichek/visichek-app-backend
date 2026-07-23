@@ -112,6 +112,41 @@ async def test_addon_card_overlay_overrides_blurb_and_visibility() -> None:
     assert card.visible is False
 
 
+async def test_non_default_active_addon_hidden_without_overlay_opt_in() -> None:
+    """Opt-in marketing posture: an active catalog addon outside
+    ``MARKETING_DEFAULT_VISIBLE_SLUGS`` must NOT appear on the public
+    pricing page unless an overlay row explicitly sets visible=True.
+    """
+    from services.pricing_marketing_service import _build_addon_cards
+
+    addon = _branch_addon(
+        slug="storage-topup",
+        name="Storage top-up",
+        pricing_mode="fixed",
+        derived_from=None,
+        recurring=False,
+    )
+    with (
+        patch("services.pricing_marketing_service.list_addons", new=AsyncMock(return_value=[addon])),
+        patch(
+            "services.pricing_marketing_service.resolve_addon_unit_price",
+            new=AsyncMock(return_value=5_000.0),
+        ),
+    ):
+        cards_no_overlay = await _build_addon_cards(None)
+        assert cards_no_overlay[0].visible is False
+
+        empty_overlay = PricingMarketingOverlayOut(addons=[])
+        cards_empty_overlay = await _build_addon_cards(empty_overlay)
+        assert cards_empty_overlay[0].visible is False
+
+        opted_in_overlay = PricingMarketingOverlayOut(
+            addons=[PricingAddonCopy(slug="storage-topup", visible=True)],
+        )
+        cards_opted_in = await _build_addon_cards(opted_in_overlay)
+        assert cards_opted_in[0].visible is True
+
+
 async def test_fixed_pricing_addon_has_no_requires_plan() -> None:
     from services.pricing_marketing_service import _build_addon_cards
 

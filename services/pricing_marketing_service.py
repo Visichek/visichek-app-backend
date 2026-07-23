@@ -449,6 +449,16 @@ def _addon_requires_plan(addon: AddonOut) -> Optional[str]:
     return None
 
 
+#: Addons that show on the public marketing pricing page by default,
+#: even without an explicit overlay opt-in. Keep this list small and
+#: deliberate — any other active catalog addon (eg a future storage
+#: top-up) stays hidden from marketing until an admin explicitly sets
+#: ``visible: true`` on its overlay row. This is an opt-in posture:
+#: admin-activating an addon in the catalog must never silently
+#: surface it on the public site.
+MARKETING_DEFAULT_VISIBLE_SLUGS = {"additional-branch"}
+
+
 async def _build_addon_cards(
     overlay: Optional[PricingMarketingOverlayOut],
 ) -> List[PricingAddonCard]:
@@ -458,6 +468,12 @@ async def _build_addon_cards(
     ``resolve_addon_unit_price`` — never cached/overlay-stored. The
     overlay only ever supplies text (blurb) / visibility, following the
     same contract as plan/feature copy.
+
+    Visibility is opt-in: a card is visible only if the overlay
+    explicitly sets ``visible: true`` for that slug, or the slug is in
+    ``MARKETING_DEFAULT_VISIBLE_SLUGS``. Any other active catalog addon
+    (eg an admin-activated storage top-up) stays hidden until an admin
+    opts it in via the overlay.
     """
     addons_copy = _index_by(overlay.addons, "slug") if overlay else {}
     catalog = await list_addons({"status": AddonStatus.ACTIVE.value})
@@ -466,7 +482,10 @@ async def _build_addon_cards(
     for addon in catalog:
         slug = addon.slug or addon.name
         copy = addons_copy.get(slug)
-        visible = copy.visible if copy and copy.visible is not None else True
+        if copy and copy.visible is not None:
+            visible = bool(copy.visible)
+        else:
+            visible = slug in MARKETING_DEFAULT_VISIBLE_SLUGS
         blurb = (copy.blurb if copy and copy.blurb else None) or (
             DEFAULT_ADDON_BLURBS.get(slug) or addon.description
         )
