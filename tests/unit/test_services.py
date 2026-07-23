@@ -820,10 +820,25 @@ class TestVisitSessionService:
         "services.visit_session_service.increment_visitor_profile_visits",
         new_callable=AsyncMock,
     )
-    @patch("services.visit_session_service.enforce_branch_visitor_cap", new_callable=AsyncMock)
-    @patch("services.visit_session_service.get_plan_data_safe", new_callable=AsyncMock, return_value=None)
-    @patch("services.visit_session_service.has_first_seen", new_callable=AsyncMock, return_value=False)
-    @patch("services.visit_session_service.record_first_seen", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "services.visit_session_service.enforce_branch_visitor_cap",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "services.visit_session_service.get_plan_data_safe",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    @patch(
+        "services.visit_session_service.has_first_seen",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
+    @patch(
+        "services.visit_session_service.record_first_seen",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("services.visit_session_service.sign_badge_token")
     @patch("services.visit_session_service.get_or_create_visitor_profile")
     @patch("services.visit_session_service.update_visitor_profile")

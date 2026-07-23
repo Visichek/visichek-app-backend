@@ -73,7 +73,9 @@ def fake_collection(monkeypatch) -> _FakeCollection:
     return collection
 
 
-async def test_expire_due_tenant_addons_excludes_recurring_rows(fake_collection) -> None:
+async def test_expire_due_tenant_addons_excludes_recurring_rows(
+    fake_collection,
+) -> None:
     from repositories.tenant_addon_repo import expire_due_tenant_addons
 
     await expire_due_tenant_addons()
@@ -83,7 +85,9 @@ async def test_expire_due_tenant_addons_excludes_recurring_rows(fake_collection)
     assert filt.get("recurring_snapshot") == {"$ne": True}
 
 
-async def test_list_due_tenant_ids_for_expiry_excludes_recurring_rows(fake_collection) -> None:
+async def test_list_due_tenant_ids_for_expiry_excludes_recurring_rows(
+    fake_collection,
+) -> None:
     from repositories.tenant_addon_repo import list_due_tenant_ids_for_expiry
 
     await list_due_tenant_ids_for_expiry()
@@ -93,7 +97,9 @@ async def test_list_due_tenant_ids_for_expiry_excludes_recurring_rows(fake_colle
     assert filt.get("recurring_snapshot") == {"$ne": True}
 
 
-async def test_list_due_recurring_tenant_addons_uses_lead_window(fake_collection) -> None:
+async def test_list_due_recurring_tenant_addons_uses_lead_window(
+    fake_collection,
+) -> None:
     from repositories.tenant_addon_repo import (
         _RENEWAL_LEAD_SECONDS,
         list_due_recurring_tenant_addons,

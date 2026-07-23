@@ -826,8 +826,7 @@ async def get_public_badge_pass(token: str) -> PublicBadgePassOut:
             host_name = host_name or fallback_host_name
         except Exception:
             logger.warning(
-                "get_public_badge_pass: dept/host fallback resolve failed "
-                "checkin=%s",
+                "get_public_badge_pass: dept/host fallback resolve failed checkin=%s",
                 badge.checkin_id,
                 exc_info=True,
             )

@@ -389,7 +389,11 @@ async def build_admin_plan_preview_limitations(
     there is no tenant yet). No caching; every call re-derives from
     the current stored plan plus the in-memory draft.
     """
-    plan = await get_plan({"_id": ObjectId(plan_id)}) if ObjectId.is_valid(plan_id) else None
+    plan = (
+        await get_plan({"_id": ObjectId(plan_id)})
+        if ObjectId.is_valid(plan_id)
+        else None
+    )
     if plan is None:
         raise resource_not_found(resource="Plan", resource_id=plan_id)
 
@@ -442,7 +446,9 @@ async def build_admin_plan_preview_limitations(
 
     is_enterprise = tier_value == "enterprise"
     plan_name = overrides.get("name", plan.name)
-    sub_app_prefix = f"/v1/enterprise/{plan_name}" if is_enterprise and plan_name else None
+    sub_app_prefix = (
+        f"/v1/enterprise/{plan_name}" if is_enterprise and plan_name else None
+    )
 
     return {
         "tenantId": None,
@@ -455,9 +461,15 @@ async def build_admin_plan_preview_limitations(
             "subscriptionStatus": None,
             "currentPeriodEnd": None,
             "billingCycle": None,
-            "effectivePrice": overrides.get("base_price_monthly", plan.base_price_monthly),
-            "basePriceMonthly": overrides.get("base_price_monthly", plan.base_price_monthly),
-            "basePriceYearly": overrides.get("base_price_yearly", plan.base_price_yearly),
+            "effectivePrice": overrides.get(
+                "base_price_monthly", plan.base_price_monthly
+            ),
+            "basePriceMonthly": overrides.get(
+                "base_price_monthly", plan.base_price_monthly
+            ),
+            "basePriceYearly": overrides.get(
+                "base_price_yearly", plan.base_price_yearly
+            ),
             "currency": plan.currency,
         },
         "caps": caps_out,

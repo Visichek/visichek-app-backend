@@ -40,7 +40,10 @@ def _premium_plan(base_price_monthly: float = 150_000.0) -> Any:
 
 
 def _derived_addon(
-    *, unit_price: float = 0.0, addon_id: str = "addon1", slug: str | None = "additional-branch"
+    *,
+    unit_price: float = 0.0,
+    addon_id: str = "addon1",
+    slug: str | None = "additional-branch",
 ) -> AddonOut:
     return AddonOut(
         _id=addon_id,
@@ -51,7 +54,11 @@ def _derived_addon(
         unit_price=unit_price,
         currency="NGN",
         pricing_mode="derived",
-        derived_from={"plan": "premium", "field": "base_price_monthly", "multiplier": 0.8},
+        derived_from={
+            "plan": "premium",
+            "field": "base_price_monthly",
+            "multiplier": 0.8,
+        },
         recurring=True,
         billing_cycle="monthly",
         validity_days=None,
@@ -85,7 +92,10 @@ async def test_derived_addon_resolves_live_from_referenced_plan() -> None:
     from services.addon_service import resolve_addon_unit_price
 
     addon = _derived_addon(unit_price=999.0)  # stale cached value
-    with patch("repositories.plan_repo.get_plan", new=AsyncMock(return_value=_premium_plan(150_000.0))):
+    with patch(
+        "repositories.plan_repo.get_plan",
+        new=AsyncMock(return_value=_premium_plan(150_000.0)),
+    ):
         price = await resolve_addon_unit_price(addon)
 
     assert price == 150_000.0 * 0.8  # 120,000
@@ -97,9 +107,15 @@ async def test_derived_addon_follows_live_premium_price_changes() -> None:
     from services.addon_service import resolve_addon_unit_price
 
     addon = _derived_addon()
-    with patch("repositories.plan_repo.get_plan", new=AsyncMock(return_value=_premium_plan(150_000.0))):
+    with patch(
+        "repositories.plan_repo.get_plan",
+        new=AsyncMock(return_value=_premium_plan(150_000.0)),
+    ):
         price_before = await resolve_addon_unit_price(addon)
-    with patch("repositories.plan_repo.get_plan", new=AsyncMock(return_value=_premium_plan(200_000.0))):
+    with patch(
+        "repositories.plan_repo.get_plan",
+        new=AsyncMock(return_value=_premium_plan(200_000.0)),
+    ):
         price_after = await resolve_addon_unit_price(addon)
 
     assert price_before == 120_000.0
@@ -126,8 +142,13 @@ async def test_resync_updates_derived_addons_referencing_the_plan() -> None:
     row = _derived_addon(unit_price=100_000.0, addon_id="addon1")
     with (
         patch("services.addon_service.list_addons", new=AsyncMock(return_value=[row])),
-        patch("repositories.plan_repo.get_plan", new=AsyncMock(return_value=_premium_plan(200_000.0))),
-        patch("services.addon_service.update_addon", new=AsyncMock(return_value=None)) as mock_update,
+        patch(
+            "repositories.plan_repo.get_plan",
+            new=AsyncMock(return_value=_premium_plan(200_000.0)),
+        ),
+        patch(
+            "services.addon_service.update_addon", new=AsyncMock(return_value=None)
+        ) as mock_update,
     ):
         updated_count = await resync_derived_addon_prices("premium")
 
@@ -146,7 +167,10 @@ async def test_resync_skips_rows_whose_price_is_unchanged() -> None:
     row = _derived_addon(unit_price=120_000.0)
     with (
         patch("services.addon_service.list_addons", new=AsyncMock(return_value=[row])),
-        patch("repositories.plan_repo.get_plan", new=AsyncMock(return_value=_premium_plan(150_000.0))),
+        patch(
+            "repositories.plan_repo.get_plan",
+            new=AsyncMock(return_value=_premium_plan(150_000.0)),
+        ),
         patch("services.addon_service.update_addon", new=AsyncMock()) as mock_update,
     ):
         updated_count = await resync_derived_addon_prices("premium")
@@ -164,7 +188,9 @@ async def test_purchase_blocked_for_non_premium_tenant() -> None:
 
     addon = _derived_addon(unit_price=120_000.0)
     with (
-        patch("services.addon_service.get_public_addon", new=AsyncMock(return_value=addon)),
+        patch(
+            "services.addon_service.get_public_addon", new=AsyncMock(return_value=addon)
+        ),
         patch(
             "services.plan_cache_service.resolve_tenant_plan",
             new=AsyncMock(return_value={"tier": "starter"}),
@@ -189,7 +215,11 @@ async def test_purchase_allowed_for_premium_tenant_cold_cache_miss_enum_tier() -
     tier-gate regression) instead of 403ing a legitimate Premium tenant."""
     from schemas.plan_schema import PlanTier
     from services.addon_service import initiate_addon_purchase
-    from core.payments.types import PaymentIntentResponse, PaymentProviderName, PaymentStatus
+    from core.payments.types import (
+        PaymentIntentResponse,
+        PaymentProviderName,
+        PaymentStatus,
+    )
 
     addon = _derived_addon(unit_price=120_000.0)
     saved_row = TenantAddonOut(
@@ -210,7 +240,9 @@ async def test_purchase_allowed_for_premium_tenant_cold_cache_miss_enum_tier() -
         provider_payload={},
     )
     with (
-        patch("services.addon_service.get_public_addon", new=AsyncMock(return_value=addon)),
+        patch(
+            "services.addon_service.get_public_addon", new=AsyncMock(return_value=addon)
+        ),
         patch(
             # Simulate the cold-miss DB-resolution path: tier comes back as
             # the enum member (PlanTier.PREMIUM), not the string "premium".
@@ -223,7 +255,8 @@ async def test_purchase_allowed_for_premium_tenant_cold_cache_miss_enum_tier() -
             return_value=("app", intent),
         ),
         patch(
-            "services.addon_service.create_tenant_addon", new=AsyncMock(return_value=saved_row)
+            "services.addon_service.create_tenant_addon",
+            new=AsyncMock(return_value=saved_row),
         ) as mock_create,
         patch("services.addon_service.record_audit_event", new=AsyncMock()),
     ):
@@ -238,7 +271,9 @@ async def test_purchase_allowed_for_premium_tenant_cold_cache_miss_enum_tier() -
     mock_create.assert_awaited_once()
 
 
-async def test_purchase_allowed_for_premium_tenant_and_snapshots_price_and_cycle() -> None:
+async def test_purchase_allowed_for_premium_tenant_and_snapshots_price_and_cycle() -> (
+    None
+):
     from services.addon_service import initiate_addon_purchase
     from core.payments.types import PaymentIntentResponse
 
@@ -264,7 +299,9 @@ async def test_purchase_allowed_for_premium_tenant_and_snapshots_price_and_cycle
         provider_payload={},
     )
     with (
-        patch("services.addon_service.get_public_addon", new=AsyncMock(return_value=addon)),
+        patch(
+            "services.addon_service.get_public_addon", new=AsyncMock(return_value=addon)
+        ),
         patch(
             "services.plan_cache_service.resolve_tenant_plan",
             new=AsyncMock(return_value={"tier": "premium"}),
@@ -275,7 +312,8 @@ async def test_purchase_allowed_for_premium_tenant_and_snapshots_price_and_cycle
             return_value=("app", intent),
         ),
         patch(
-            "services.addon_service.create_tenant_addon", new=AsyncMock(return_value=saved_row)
+            "services.addon_service.create_tenant_addon",
+            new=AsyncMock(return_value=saved_row),
         ) as mock_create,
         patch("services.addon_service.record_audit_event", new=AsyncMock()),
     ):
@@ -299,7 +337,9 @@ async def test_purchase_allowed_for_premium_tenant_and_snapshots_price_and_cycle
 # ─── Activation snapshot immutability ────────────────────────────────
 
 
-async def test_recurring_activation_uses_purchase_time_snapshot_not_current_catalog() -> None:
+async def test_recurring_activation_uses_purchase_time_snapshot_not_current_catalog() -> (
+    None
+):
     """A catalog edit between purchase and webhook must NOT change the
     granted expiry for a recurring addon — this is the quirk WS2 must
     NOT repeat for price/validity."""
@@ -337,10 +377,13 @@ async def test_recurring_activation_uses_purchase_time_snapshot_not_current_cata
             new=AsyncMock(return_value=mutated_catalog_addon),
         ) as mock_get_addon,
         patch(
-            "services.addon_service.update_tenant_addon", new=AsyncMock(return_value=updated_row)
+            "services.addon_service.update_tenant_addon",
+            new=AsyncMock(return_value=updated_row),
         ) as mock_update,
         patch("services.addon_service.record_audit_event", new=AsyncMock()),
-        patch("services.addon_service._invalidate_tenant_addon_caches", new=AsyncMock()),
+        patch(
+            "services.addon_service._invalidate_tenant_addon_caches", new=AsyncMock()
+        ),
     ):
         await activate_tenant_addon_by_reference(
             payment_reference="addon_ref1", completed_at=1_000_000
@@ -376,7 +419,9 @@ async def test_seed_creates_singleton_addon_when_absent() -> None:
             "services.addon_bootstrap.resolve_derived_addon_price",
             new=AsyncMock(return_value=120_000.0),
         ),
-        patch("services.addon_bootstrap.create_addon", new=AsyncMock(return_value=created)) as mock_create,
+        patch(
+            "services.addon_bootstrap.create_addon", new=AsyncMock(return_value=created)
+        ) as mock_create,
     ):
         result = await ensure_addon_catalog()
 
@@ -404,17 +449,25 @@ async def test_seed_is_idempotent_and_preserves_admin_description() -> None:
         unit_price=100_000.0,
         currency="NGN",
         pricing_mode="derived",
-        derived_from={"plan": "premium", "field": "base_price_monthly", "multiplier": 0.8},
+        derived_from={
+            "plan": "premium",
+            "field": "base_price_monthly",
+            "multiplier": 0.8,
+        },
         recurring=True,
         billing_cycle="monthly",
     )
     with (
-        patch("services.addon_bootstrap.get_addon", new=AsyncMock(return_value=existing)),
+        patch(
+            "services.addon_bootstrap.get_addon", new=AsyncMock(return_value=existing)
+        ),
         patch(
             "services.addon_bootstrap.resolve_derived_addon_price",
             new=AsyncMock(return_value=160_000.0),
         ),
-        patch("services.addon_bootstrap.update_addon", new=AsyncMock(return_value=None)) as mock_update,
+        patch(
+            "services.addon_bootstrap.update_addon", new=AsyncMock(return_value=None)
+        ) as mock_update,
     ):
         result = await ensure_addon_catalog()
 

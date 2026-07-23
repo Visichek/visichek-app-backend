@@ -351,9 +351,7 @@ async def lifespan(app: FastAPI):
             "visitor_first_seen_backfill summary: %s", first_seen_backfill_summary
         )
     except Exception:
-        logger.warning(
-            "visitor_first_seen_backfill failed at startup", exc_info=True
-        )
+        logger.warning("visitor_first_seen_backfill failed at startup", exc_info=True)
 
     # One-shot auto-checkout default backfill (WS6). Writes the new
     # ``auto_checkout_after_hours`` default (12) into EXISTING

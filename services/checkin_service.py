@@ -133,8 +133,7 @@ async def resolve_checkin_dept_host(
                 host_name = resolved[0]
         except Exception:
             logger.warning(
-                "resolve_checkin_dept_host: host lookup failed "
-                "tenant=%s host_id=%s",
+                "resolve_checkin_dept_host: host lookup failed tenant=%s host_id=%s",
                 tenant_id,
                 host_id,
                 exc_info=True,

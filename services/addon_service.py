@@ -162,7 +162,9 @@ async def resync_derived_addon_prices(plan_name: str) -> int:
     display-cache price never drifts far from the live derived value.
     Best-effort per row — one bad row never blocks the others.
     """
-    rows = await list_addons({"pricing_mode": "derived", "derived_from.plan": plan_name})
+    rows = await list_addons(
+        {"pricing_mode": "derived", "derived_from.plan": plan_name}
+    )
     updated = 0
     for row in rows:
         if not row.id or not row.derived_from:

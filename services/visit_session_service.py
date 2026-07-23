@@ -596,9 +596,7 @@ async def confirm_check_in(
             if badge_expiry is not None
             else now_ts + 10 * 365 * 86400  # MANUAL: token must outlive the visit
         )
-        badge_token = sign_badge_token(
-            session.id or "", expires_at=token_expires_at
-        )
+        badge_token = sign_badge_token(session.id or "", expires_at=token_expires_at)
 
     # Update session: set status to CHECKED_IN. On Free, the badge_*
     # fields stay None so downstream code (badge expiry sweep, badge

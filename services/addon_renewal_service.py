@@ -42,7 +42,10 @@ from repositories.tenant_addon_repo import (
 )
 from repositories.tenant_repo import get_tenant
 from schemas.addon_schema import TenantAddonOut, TenantAddonStatus, TenantAddonUpdate
-from services.addon_service import _invalidate_tenant_addon_caches, resolve_addon_unit_price
+from services.addon_service import (
+    _invalidate_tenant_addon_caches,
+    resolve_addon_unit_price,
+)
 from services.audit_service import record_audit_event
 from services.invoice_service import generate_invoice
 from services.renewal_service import _get_provider_for_tenant
@@ -138,7 +141,13 @@ async def renew_due_addons() -> dict:
         rows = await list_due_recurring_tenant_addons(now)
     except Exception:
         logger.exception("addon renewal: failed to list due rows")
-        return {"renewed": 0, "grace": 0, "expired": 0, "errors": 0, "total_processed": 0}
+        return {
+            "renewed": 0,
+            "grace": 0,
+            "expired": 0,
+            "errors": 0,
+            "total_processed": 0,
+        }
 
     for row in rows:
         try:
@@ -179,21 +188,31 @@ async def _attempt_addon_renewal(row: TenantAddonOut, *, now: int) -> str:
     # admin price change flows through at renewal, not just at purchase.
     addon = await get_addon_by_id(row.addon_id)
     resolved_price = (
-        await resolve_addon_unit_price(addon) if addon is not None else row.unit_price_snapshot
+        await resolve_addon_unit_price(addon)
+        if addon is not None
+        else row.unit_price_snapshot
     )
 
     try:
         payment_manager = PaymentManager.get_instance()
     except RuntimeError as e:
         logger.error("addon renewal: payment manager not configured: %s", e)
-        return await _fail_renewal(row, now=now, max_attempts=max_attempts, retry_days=retry_days)
+        return await _fail_renewal(
+            row, now=now, max_attempts=max_attempts, retry_days=retry_days
+        )
 
     try:
         provider_name = await _get_provider_for_tenant(row.tenant_id)
         provider = payment_manager.get_provider(provider_name)
     except Exception as e:
-        logger.error("addon renewal: failed to resolve provider for tenant %s: %s", row.tenant_id, e)
-        return await _fail_renewal(row, now=now, max_attempts=max_attempts, retry_days=retry_days)
+        logger.error(
+            "addon renewal: failed to resolve provider for tenant %s: %s",
+            row.tenant_id,
+            e,
+        )
+        return await _fail_renewal(
+            row, now=now, max_attempts=max_attempts, retry_days=retry_days
+        )
 
     amount_minor = int(round(resolved_price * row.quantity * 100))
     # Deterministic per (row, current period) reference — NOT per-attempt.
@@ -226,10 +245,14 @@ async def _attempt_addon_renewal(row: TenantAddonOut, *, now: int) -> str:
     # is a FAILED renewal (grace -> expired), never treated as success.
     if charged is True:
         return await _succeed_renewal(row, now=now, resolved_price=resolved_price)
-    return await _fail_renewal(row, now=now, max_attempts=max_attempts, retry_days=retry_days)
+    return await _fail_renewal(
+        row, now=now, max_attempts=max_attempts, retry_days=retry_days
+    )
 
 
-async def _succeed_renewal(row: TenantAddonOut, *, now: int, resolved_price: float) -> str:
+async def _succeed_renewal(
+    row: TenantAddonOut, *, now: int, resolved_price: float
+) -> str:
     cycle_days = _CYCLE_DAYS.get(row.billing_cycle_snapshot or "monthly", 30)
     # Roll the new expiry from the OLD expires_at, not from `now` — renewing
     # ahead of the deadline (see the lead window in

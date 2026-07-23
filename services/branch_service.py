@@ -153,9 +153,7 @@ async def retrieve_branches_for_tenant(
 
     branches = await get_branches({"tenant_id": tenant_id}, start=start, stop=stop)
     if branches:
-        await asyncio.gather(
-            *(_enrich_branch_with_contact(b) for b in branches)
-        )
+        await asyncio.gather(*(_enrich_branch_with_contact(b) for b in branches))
     return branches
 
 
@@ -425,7 +423,10 @@ async def enforce_branch_lock(tenant_id: str) -> int:
 
     cursor = (
         _db["branches"]
-        .find({"tenant_id": tenant_id}, projection={"_id": 1, "is_headquarters": 1, "status": 1})
+        .find(
+            {"tenant_id": tenant_id},
+            projection={"_id": 1, "is_headquarters": 1, "status": 1},
+        )
         .sort([("is_headquarters", -1), ("date_created", 1)])
     )
     to_lock: list = []

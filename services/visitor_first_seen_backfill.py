@@ -202,7 +202,9 @@ async def _earliest_from_checkins(
         if cache_key not in visitor_cache:
             profile_id: str | None = None
             try:
-                visitor_doc = await db.visitors.find_one({"_id": _to_object_id(visitor_id)})
+                visitor_doc = await db.visitors.find_one(
+                    {"_id": _to_object_id(visitor_id)}
+                )
                 if visitor_doc:
                     phone = visitor_doc.get("phone")
                     email = visitor_doc.get("email")

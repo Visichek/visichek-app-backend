@@ -157,7 +157,9 @@ async def list_due_tenant_ids_for_expiry() -> List[str]:
 _RENEWAL_LEAD_SECONDS = 2 * 60 * 60  # 2 hours
 
 
-async def list_due_recurring_tenant_addons(now: int, *, limit: int = 1000) -> List[TenantAddonOut]:
+async def list_due_recurring_tenant_addons(
+    now: int, *, limit: int = 1000
+) -> List[TenantAddonOut]:
     """Recurring active addons due for a renewal charge or dunning retry.
 
     For ``recurring_snapshot=True`` rows, ``expires_at`` doubles as "next

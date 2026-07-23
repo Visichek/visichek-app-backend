@@ -53,9 +53,7 @@ class TestVisitorBranchFirstRepo:
         from repositories import visitor_branch_first_repo as repo
 
         fake_collection = MagicMock()
-        fake_collection.insert_one = AsyncMock(
-            side_effect=DuplicateKeyError("dup")
-        )
+        fake_collection.insert_one = AsyncMock(side_effect=DuplicateKeyError("dup"))
         fake_db = {"visitor_branch_firsts": fake_collection}
 
         with patch.object(repo, "db", fake_db):
@@ -164,7 +162,9 @@ class TestVisitorFirstSeenBackfill:
         fake_visit_sessions = MagicMock()
         fake_visit_sessions.find = MagicMock(return_value=fake_cursor)
 
-        with patch.object(backfill, "db", MagicMock(visit_sessions=fake_visit_sessions)):
+        with patch.object(
+            backfill, "db", MagicMock(visit_sessions=fake_visit_sessions)
+        ):
             earliest = await backfill._earliest_from_visit_sessions()
 
         assert earliest == {("t1", "b1", "p1"): 1000}
@@ -177,7 +177,8 @@ class TestVisitorFirstSeenBackfill:
 
         with (
             patch.object(
-                backfill, "_earliest_from_visit_sessions",
+                backfill,
+                "_earliest_from_visit_sessions",
                 AsyncMock(return_value=dict(earliest_map)),
             ),
             patch.object(
@@ -203,15 +204,14 @@ class TestVisitorFirstSeenBackfill:
 
         with (
             patch.object(
-                backfill, "_earliest_from_visit_sessions",
+                backfill,
+                "_earliest_from_visit_sessions",
                 AsyncMock(return_value=dict(earliest_map)),
             ),
             patch.object(
                 backfill, "_earliest_from_checkins", AsyncMock(return_value=None)
             ),
-            patch.object(
-                backfill, "record_first_seen", AsyncMock(return_value=False)
-            ),
+            patch.object(backfill, "record_first_seen", AsyncMock(return_value=False)),
         ):
             summary = await backfill.backfill_visitor_first_seen()
 

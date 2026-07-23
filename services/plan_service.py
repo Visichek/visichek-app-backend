@@ -118,7 +118,10 @@ async def add_plan(
     # did not explicitly set it — an admin who deliberately passes
     # ``is_public=True`` for a showcase enterprise plan is still
     # respected.
-    if plan_tier_value == "enterprise" and "is_public" not in plan_data.model_fields_set:
+    if (
+        plan_tier_value == "enterprise"
+        and "is_public" not in plan_data.model_fields_set
+    ):
         plan_data.is_public = False
 
     plan = await create_plan(plan_data, preassigned_id=preassigned_id)

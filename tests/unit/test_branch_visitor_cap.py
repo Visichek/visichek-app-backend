@@ -68,6 +68,7 @@ class TestEnforceBranchVisitorCap:
     async def test_branch_a_at_cap_does_not_block_branch_b(self):
         """count_new_for_month is scoped per-branch — a full branch-A count
         must not leak into the branch-B check."""
+
         async def fake_count(tenant_id, start, end, branch_id=None):
             return 5 if branch_id == "branch-A" else 0
 
@@ -232,9 +233,7 @@ class TestPlanTiersVisitorsPerBranch:
         from config.plan_tiers import PREMIUM_PLAN
 
         assert PREMIUM_PLAN.tenant_caps.visitors_per_branch_per_month == 1000
-        assert (
-            "visitors_per_branch_per_month" in PREMIUM_PLAN.adjustable_cap_fields
-        )
+        assert "visitors_per_branch_per_month" in PREMIUM_PLAN.adjustable_cap_fields
 
     def test_premium_plan_max_branches_flipped_to_one(self):
         """Task 9: Premium moved from unlimited branches to 1 baked-in
@@ -249,8 +248,7 @@ class TestPlanTiersVisitorsPerBranch:
         from config.plan_tiers import ENTERPRISE_TEMPLATE
 
         assert (
-            "visitors_per_branch_per_month"
-            in ENTERPRISE_TEMPLATE.adjustable_cap_fields
+            "visitors_per_branch_per_month" in ENTERPRISE_TEMPLATE.adjustable_cap_fields
         )
 
 
@@ -278,7 +276,9 @@ class TestKioskPathNowEnforces:
                 "repositories.visitor_repo.find_visitor_by_email_or_phone_any",
                 AsyncMock(return_value=None),
             ),
-            patch("repositories.visitor_repo.create_visitor", AsyncMock()) as mock_create_visitor,
+            patch(
+                "repositories.visitor_repo.create_visitor", AsyncMock()
+            ) as mock_create_visitor,
             patch.object(
                 checkin_service,
                 "_collect_returning_visitor_fallback",
@@ -307,16 +307,16 @@ class TestKioskPathNowEnforces:
                 checkin_service,
                 "get_plan_data_safe",
                 AsyncMock(
-                    return_value={
-                        "tenant_caps": {"visitors_per_branch_per_month": 0}
-                    }
+                    return_value={"tenant_caps": {"visitors_per_branch_per_month": 0}}
                 ),
             ),
             patch(
                 "repositories.visitor_branch_first_repo.count_new_for_month",
                 AsyncMock(return_value=0),
             ),
-            patch.object(checkin_service, "create_checkin", AsyncMock()) as mock_create_checkin,
+            patch.object(
+                checkin_service, "create_checkin", AsyncMock()
+            ) as mock_create_checkin,
         ):
             from unittest.mock import MagicMock
 
@@ -364,7 +364,9 @@ class TestKioskPathNowEnforces:
                 "repositories.visitor_repo.find_visitor_by_email_or_phone_any",
                 AsyncMock(return_value=None),
             ),
-            patch("repositories.visitor_repo.create_visitor", AsyncMock()) as mock_create_visitor,
+            patch(
+                "repositories.visitor_repo.create_visitor", AsyncMock()
+            ) as mock_create_visitor,
             patch.object(
                 checkin_service,
                 "_collect_returning_visitor_fallback",
@@ -389,9 +391,7 @@ class TestKioskPathNowEnforces:
                 checkin_service,
                 "get_plan_data_safe",
                 AsyncMock(
-                    return_value={
-                        "tenant_caps": {"visitors_per_branch_per_month": 0}
-                    }
+                    return_value={"tenant_caps": {"visitors_per_branch_per_month": 0}}
                 ),
             ),
             # Branch is already AT cap — a new visitor here would 429.
@@ -399,7 +399,9 @@ class TestKioskPathNowEnforces:
                 "repositories.visitor_branch_first_repo.count_new_for_month",
                 AsyncMock(return_value=0),
             ),
-            patch.object(checkin_service, "create_checkin", AsyncMock()) as mock_create_checkin,
+            patch.object(
+                checkin_service, "create_checkin", AsyncMock()
+            ) as mock_create_checkin,
             patch.object(
                 checkin_service,
                 "record_visitor_consent",
@@ -604,9 +606,7 @@ class TestReturningVisitorByIdLedgerInsert:
                 checkin_service,
                 "get_plan_data_safe",
                 AsyncMock(
-                    return_value={
-                        "tenant_caps": {"visitors_per_branch_per_month": 0}
-                    }
+                    return_value={"tenant_caps": {"visitors_per_branch_per_month": 0}}
                 ),
             ),
             # Branch is AT cap for new visitors — must not matter here.

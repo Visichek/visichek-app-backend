@@ -109,7 +109,9 @@ class TestFeatureRegistryCompiler:
         from services.plan_feature_service import compile_feature_rules
 
         rules = compile_feature_rules({"branching": False})
-        write_rules = [r for r in rules if r.endpoint_pattern.startswith("/v1/branches")]
+        write_rules = [
+            r for r in rules if r.endpoint_pattern.startswith("/v1/branches")
+        ]
         assert write_rules
         for r in write_rules:
             assert "POST" in r.methods
@@ -181,7 +183,9 @@ class TestEnterpriseEditEnforcement:
 
         result = await update_plan_by_id(
             "5f0a1b2c3d4e5f6a7b8c9d0e",
-            PlanUpdate(storage_limits={"max_documents": 5000, "max_storage_mb": 10_000}),
+            PlanUpdate(
+                storage_limits={"max_documents": 5000, "max_storage_mb": 10_000}
+            ),
         )
         assert result is not None
         mock_update.assert_awaited_once()

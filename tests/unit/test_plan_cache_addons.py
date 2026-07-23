@@ -46,12 +46,16 @@ def _addon_row(
 async def test_branch_quota_adds_to_finite_cap() -> None:
     from services.plan_cache_service import _apply_addon_benefits
 
-    rows = [_addon_row(kind=AddonKind.BRANCH_QUOTA, quantity=3, benefit={"branches": 2})]
+    rows = [
+        _addon_row(kind=AddonKind.BRANCH_QUOTA, quantity=3, benefit={"branches": 2})
+    ]
     with patch(
         "repositories.tenant_addon_repo.list_active_for_tenant",
         new=AsyncMock(return_value=rows),
     ):
-        snapshot = await _apply_addon_benefits("t1", {"tenant_caps": {"max_branches": 5}})
+        snapshot = await _apply_addon_benefits(
+            "t1", {"tenant_caps": {"max_branches": 5}}
+        )
 
     assert snapshot["tenant_caps"]["max_branches"] == 5 + 3 * 2
 
@@ -64,7 +68,9 @@ async def test_branch_quota_missing_benefit_key_defaults_to_one() -> None:
         "repositories.tenant_addon_repo.list_active_for_tenant",
         new=AsyncMock(return_value=rows),
     ):
-        snapshot = await _apply_addon_benefits("t1", {"tenant_caps": {"max_branches": 1}})
+        snapshot = await _apply_addon_benefits(
+            "t1", {"tenant_caps": {"max_branches": 1}}
+        )
 
     # missing "branches" key defaults to 1 per addon per the benefit_snapshot convention
     assert snapshot["tenant_caps"]["max_branches"] == 1 + 2 * 1
@@ -73,7 +79,9 @@ async def test_branch_quota_missing_benefit_key_defaults_to_one() -> None:
 async def test_none_unlimited_branch_cap_preserved() -> None:
     from services.plan_cache_service import _apply_addon_benefits
 
-    rows = [_addon_row(kind=AddonKind.BRANCH_QUOTA, quantity=5, benefit={"branches": 1})]
+    rows = [
+        _addon_row(kind=AddonKind.BRANCH_QUOTA, quantity=5, benefit={"branches": 1})
+    ]
     with patch(
         "repositories.tenant_addon_repo.list_active_for_tenant",
         new=AsyncMock(return_value=rows),
@@ -163,7 +171,9 @@ async def test_snapshot_includes_active_addons_summary() -> None:
         "repositories.tenant_addon_repo.list_active_for_tenant",
         new=AsyncMock(return_value=rows),
     ):
-        snapshot = await _apply_addon_benefits("t1", {"tenant_caps": {"max_branches": 1}})
+        snapshot = await _apply_addon_benefits(
+            "t1", {"tenant_caps": {"max_branches": 1}}
+        )
 
     assert snapshot["active_addons"] == [
         {"kind": "branch_quota", "quantity": 2, "expires_at": 1234567890},
@@ -191,7 +201,9 @@ async def test_expired_addon_excluded_via_repo_filter() -> None:
         "repositories.tenant_addon_repo.list_active_for_tenant",
         new=AsyncMock(return_value=rows),
     ):
-        snapshot = await _apply_addon_benefits("t1", {"tenant_caps": {"max_branches": 1}})
+        snapshot = await _apply_addon_benefits(
+            "t1", {"tenant_caps": {"max_branches": 1}}
+        )
 
     assert snapshot["tenant_caps"]["max_branches"] == 1
     assert snapshot["active_addons"] == []
@@ -204,7 +216,9 @@ async def test_addon_lookup_failure_fails_open() -> None:
         "repositories.tenant_addon_repo.list_active_for_tenant",
         new=AsyncMock(side_effect=RuntimeError("boom")),
     ):
-        snapshot = await _apply_addon_benefits("t1", {"tenant_caps": {"max_branches": 5}})
+        snapshot = await _apply_addon_benefits(
+            "t1", {"tenant_caps": {"max_branches": 5}}
+        )
 
     assert snapshot["tenant_caps"]["max_branches"] == 5
     assert snapshot["active_addons"] == []
@@ -214,7 +228,9 @@ async def test_addon_lookup_failure_fails_open() -> None:
 # ─── single vs bulk resolver parity ─────────────────────────────────
 
 
-async def test_single_and_bulk_resolvers_produce_same_addon_inclusive_snapshot() -> None:
+async def test_single_and_bulk_resolvers_produce_same_addon_inclusive_snapshot() -> (
+    None
+):
     """resolve_tenant_plan (single) and resolve_tenant_plans_bulk (bulk) must
     converge on the same addon-folded shape for the same tenant."""
     from bson import ObjectId
@@ -361,9 +377,15 @@ async def test_single_and_bulk_resolvers_produce_same_addon_inclusive_snapshot()
         single_snapshot = await plan_cache_service.resolve_tenant_plan(tenant_id)
 
     assert single_snapshot is not None
-    assert single_snapshot["tenant_caps"]["max_branches"] == bulk_snapshot["tenant_caps"]["max_branches"]
+    assert (
+        single_snapshot["tenant_caps"]["max_branches"]
+        == bulk_snapshot["tenant_caps"]["max_branches"]
+    )
     assert single_snapshot["active_addons"] == bulk_snapshot["active_addons"]
-    assert single_snapshot["extra_visitors_per_month"] == bulk_snapshot["extra_visitors_per_month"]
+    assert (
+        single_snapshot["extra_visitors_per_month"]
+        == bulk_snapshot["extra_visitors_per_month"]
+    )
 
 
 # ─── invalidation wiring ─────────────────────────────────────────────
@@ -391,7 +413,8 @@ async def test_activate_addon_invalidates_plan_and_usage_caches() -> None:
             new=AsyncMock(return_value=row),
         ),
         patch(
-            "services.addon_service.get_addon_by_id", new=AsyncMock(return_value=fake_addon)
+            "services.addon_service.get_addon_by_id",
+            new=AsyncMock(return_value=fake_addon),
         ),
         patch(
             "services.addon_service.update_tenant_addon",

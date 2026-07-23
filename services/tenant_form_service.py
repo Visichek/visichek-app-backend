@@ -593,9 +593,7 @@ async def publish_form(
     # check-in forms before validation, so drafts saved by older clients
     # (or hand-crafted PATCHes) can't publish without it.
     candidate_fields = (
-        _enforce_locked_department_field(
-            candidate_fields or [], head.target_type.value
-        )
+        _enforce_locked_department_field(candidate_fields or [], head.target_type.value)
         or []
     )
 

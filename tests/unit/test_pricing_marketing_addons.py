@@ -33,7 +33,11 @@ def _branch_addon(**overrides) -> AddonOut:
         unit_price=100_000.0,
         currency="NGN",
         pricing_mode="derived",
-        derived_from={"plan": "premium", "field": "base_price_monthly", "multiplier": 0.8},
+        derived_from={
+            "plan": "premium",
+            "field": "base_price_monthly",
+            "multiplier": 0.8,
+        },
         recurring=True,
         billing_cycle="monthly",
         benefit_per_unit={"branches": 1},
@@ -50,7 +54,10 @@ async def test_addon_card_uses_live_resolved_price() -> None:
 
     addon = _branch_addon(unit_price=999.0)  # stale cached value
     with (
-        patch("services.pricing_marketing_service.list_addons", new=AsyncMock(return_value=[addon])),
+        patch(
+            "services.pricing_marketing_service.list_addons",
+            new=AsyncMock(return_value=[addon]),
+        ),
         patch(
             "services.pricing_marketing_service.resolve_addon_unit_price",
             new=AsyncMock(return_value=160_000.0),
@@ -70,7 +77,10 @@ async def test_addon_card_default_blurb_and_requires_plan() -> None:
 
     addon = _branch_addon()
     with (
-        patch("services.pricing_marketing_service.list_addons", new=AsyncMock(return_value=[addon])),
+        patch(
+            "services.pricing_marketing_service.list_addons",
+            new=AsyncMock(return_value=[addon]),
+        ),
         patch(
             "services.pricing_marketing_service.resolve_addon_unit_price",
             new=AsyncMock(return_value=120_000.0),
@@ -99,7 +109,10 @@ async def test_addon_card_overlay_overrides_blurb_and_visibility() -> None:
         ],
     )
     with (
-        patch("services.pricing_marketing_service.list_addons", new=AsyncMock(return_value=[addon])),
+        patch(
+            "services.pricing_marketing_service.list_addons",
+            new=AsyncMock(return_value=[addon]),
+        ),
         patch(
             "services.pricing_marketing_service.resolve_addon_unit_price",
             new=AsyncMock(return_value=120_000.0),
@@ -129,7 +142,10 @@ async def test_non_default_active_addon_hidden_without_overlay_opt_in() -> None:
         recurring=False,
     )
     with (
-        patch("services.pricing_marketing_service.list_addons", new=AsyncMock(return_value=[addon])),
+        patch(
+            "services.pricing_marketing_service.list_addons",
+            new=AsyncMock(return_value=[addon]),
+        ),
         patch(
             "services.pricing_marketing_service.resolve_addon_unit_price",
             new=AsyncMock(return_value=5_000.0),
@@ -166,7 +182,10 @@ async def test_fixed_pricing_addon_has_no_requires_plan() -> None:
         addons=[PricingAddonCopy(slug="storage-extension", visible=True)],
     )
     with (
-        patch("services.pricing_marketing_service.list_addons", new=AsyncMock(return_value=[addon])),
+        patch(
+            "services.pricing_marketing_service.list_addons",
+            new=AsyncMock(return_value=[addon]),
+        ),
         patch(
             "services.pricing_marketing_service.resolve_addon_unit_price",
             new=AsyncMock(return_value=2_000.0),
@@ -199,10 +218,21 @@ async def test_render_pricing_marketing_includes_addons_section() -> None:
     addon = _branch_addon()
 
     with (
-        patch("services.pricing_marketing_service.get_overlay", new=AsyncMock(return_value=None)),
-        patch("services.pricing_marketing_service.retrieve_plans", new=AsyncMock(return_value=[premium])),
-        patch("services.pricing_marketing_service.get_feature_catalog", return_value=[]),
-        patch("services.pricing_marketing_service.list_addons", new=AsyncMock(return_value=[addon])),
+        patch(
+            "services.pricing_marketing_service.get_overlay",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "services.pricing_marketing_service.retrieve_plans",
+            new=AsyncMock(return_value=[premium]),
+        ),
+        patch(
+            "services.pricing_marketing_service.get_feature_catalog", return_value=[]
+        ),
+        patch(
+            "services.pricing_marketing_service.list_addons",
+            new=AsyncMock(return_value=[addon]),
+        ),
         patch(
             "services.pricing_marketing_service.resolve_addon_unit_price",
             new=AsyncMock(return_value=120_000.0),
@@ -232,8 +262,14 @@ async def test_apply_overlay_patch_merges_addons_by_slug() -> None:
         return PricingMarketingOverlayOut(**payload)
 
     with (
-        patch("services.pricing_marketing_service.get_overlay", new=AsyncMock(return_value=existing)),
-        patch("services.pricing_marketing_service.replace_overlay", new=AsyncMock(side_effect=_fake_replace)),
+        patch(
+            "services.pricing_marketing_service.get_overlay",
+            new=AsyncMock(return_value=existing),
+        ),
+        patch(
+            "services.pricing_marketing_service.replace_overlay",
+            new=AsyncMock(side_effect=_fake_replace),
+        ),
     ):
         refreshed = await apply_overlay_patch(patch_payload)
 
@@ -255,8 +291,14 @@ async def test_delete_overlay_row_removes_addon_by_slug() -> None:
         return PricingMarketingOverlayOut(**payload)
 
     with (
-        patch("services.pricing_marketing_service.get_overlay", new=AsyncMock(return_value=existing)),
-        patch("services.pricing_marketing_service.replace_overlay", new=AsyncMock(side_effect=_fake_replace)),
+        patch(
+            "services.pricing_marketing_service.get_overlay",
+            new=AsyncMock(return_value=existing),
+        ),
+        patch(
+            "services.pricing_marketing_service.replace_overlay",
+            new=AsyncMock(side_effect=_fake_replace),
+        ),
     ):
         refreshed = await delete_overlay_row("addon", "additional-branch")
 

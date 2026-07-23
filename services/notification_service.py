@@ -1434,9 +1434,7 @@ async def notify_tenant_onboarding_confirmed(
             completed_bits.append("organization address")
         if dpa_accepted:
             completed_bits.append("Data Processing Agreement")
-        detail = (
-            f" ({' and '.join(completed_bits)} recorded)" if completed_bits else ""
-        )
+        detail = f" ({' and '.join(completed_bits)} recorded)" if completed_bits else ""
 
         admins = await get_admins(
             {"account_status": AccountStatus.ACTIVE.value}, start=0, stop=200

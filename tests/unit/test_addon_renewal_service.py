@@ -16,7 +16,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from schemas.addon_schema import AddonKind, AddonOut, AddonStatus, TenantAddonOut, TenantAddonStatus, TenantAddonUpdate
+from schemas.addon_schema import (
+    AddonKind,
+    AddonOut,
+    AddonStatus,
+    TenantAddonOut,
+    TenantAddonStatus,
+    TenantAddonUpdate,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -52,7 +59,11 @@ def _addon(**overrides: Any) -> AddonOut:
         "unit_price": 100_000.0,
         "currency": "NGN",
         "pricing_mode": "derived",
-        "derived_from": {"plan": "premium", "field": "base_price_monthly", "multiplier": 0.8},
+        "derived_from": {
+            "plan": "premium",
+            "field": "base_price_monthly",
+            "multiplier": 0.8,
+        },
         "recurring": True,
         "billing_cycle": "monthly",
         "benefit_per_unit": {"branches": 1},
@@ -87,24 +98,35 @@ async def test_renewal_success_rolls_expiry_and_reprices_from_live_premium() -> 
             "services.addon_renewal_service.list_due_recurring_tenant_addons",
             new=AsyncMock(return_value=[row]),
         ),
-        patch("services.addon_renewal_service.get_addon_by_id", new=AsyncMock(return_value=_addon())),
+        patch(
+            "services.addon_renewal_service.get_addon_by_id",
+            new=AsyncMock(return_value=_addon()),
+        ),
         patch(
             "services.addon_renewal_service.resolve_addon_unit_price",
             new=AsyncMock(return_value=160_000.0),  # live Premium price moved
         ),
-        patch("services.addon_renewal_service.PaymentManager.get_instance", return_value=mock_manager),
+        patch(
+            "services.addon_renewal_service.PaymentManager.get_instance",
+            return_value=mock_manager,
+        ),
         patch(
             "services.addon_renewal_service._get_provider_for_tenant",
             new=AsyncMock(return_value="paystack"),
         ),
-        patch("services.addon_renewal_service.get_tenant", new=AsyncMock(return_value=tenant)),
         patch(
-            "services.addon_renewal_service.update_tenant_addon", new=AsyncMock(return_value=row)
+            "services.addon_renewal_service.get_tenant",
+            new=AsyncMock(return_value=tenant),
+        ),
+        patch(
+            "services.addon_renewal_service.update_tenant_addon",
+            new=AsyncMock(return_value=row),
         ) as mock_update,
         patch("services.addon_renewal_service.generate_invoice", new=AsyncMock()),
         patch("services.addon_renewal_service.record_audit_event", new=AsyncMock()),
         patch(
-            "services.addon_renewal_service._invalidate_tenant_addon_caches", new=AsyncMock()
+            "services.addon_renewal_service._invalidate_tenant_addon_caches",
+            new=AsyncMock(),
         ) as mock_invalidate,
     ):
         result = await renew_due_addons()
@@ -153,23 +175,36 @@ async def test_early_renewal_rolls_new_expiry_from_old_expires_at_not_now() -> N
             "services.addon_renewal_service.list_due_recurring_tenant_addons",
             new=AsyncMock(return_value=[row]),
         ),
-        patch("services.addon_renewal_service.get_addon_by_id", new=AsyncMock(return_value=_addon())),
+        patch(
+            "services.addon_renewal_service.get_addon_by_id",
+            new=AsyncMock(return_value=_addon()),
+        ),
         patch(
             "services.addon_renewal_service.resolve_addon_unit_price",
             new=AsyncMock(return_value=100_000.0),
         ),
-        patch("services.addon_renewal_service.PaymentManager.get_instance", return_value=mock_manager),
+        patch(
+            "services.addon_renewal_service.PaymentManager.get_instance",
+            return_value=mock_manager,
+        ),
         patch(
             "services.addon_renewal_service._get_provider_for_tenant",
             new=AsyncMock(return_value="paystack"),
         ),
-        patch("services.addon_renewal_service.get_tenant", new=AsyncMock(return_value=tenant)),
         patch(
-            "services.addon_renewal_service.update_tenant_addon", new=AsyncMock(return_value=row)
+            "services.addon_renewal_service.get_tenant",
+            new=AsyncMock(return_value=tenant),
+        ),
+        patch(
+            "services.addon_renewal_service.update_tenant_addon",
+            new=AsyncMock(return_value=row),
         ) as mock_update,
         patch("services.addon_renewal_service.generate_invoice", new=AsyncMock()),
         patch("services.addon_renewal_service.record_audit_event", new=AsyncMock()),
-        patch("services.addon_renewal_service._invalidate_tenant_addon_caches", new=AsyncMock()),
+        patch(
+            "services.addon_renewal_service._invalidate_tenant_addon_caches",
+            new=AsyncMock(),
+        ),
     ):
         result = await renew_due_addons()
 
@@ -221,25 +256,38 @@ async def test_charge_reference_is_deterministic_per_row_and_period() -> None:
                 "services.addon_renewal_service.list_due_recurring_tenant_addons",
                 new=AsyncMock(return_value=[row]),
             ),
-            patch("services.addon_renewal_service.get_addon_by_id", new=AsyncMock(return_value=_addon())),
+            patch(
+                "services.addon_renewal_service.get_addon_by_id",
+                new=AsyncMock(return_value=_addon()),
+            ),
             patch(
                 "services.addon_renewal_service.resolve_addon_unit_price",
                 new=AsyncMock(return_value=100_000.0),
             ),
-            patch("services.addon_renewal_service.PaymentManager.get_instance", return_value=mock_manager),
+            patch(
+                "services.addon_renewal_service.PaymentManager.get_instance",
+                return_value=mock_manager,
+            ),
             patch(
                 "services.addon_renewal_service._get_provider_for_tenant",
                 new=AsyncMock(return_value="paystack"),
             ),
-            patch("services.addon_renewal_service.get_tenant", new=AsyncMock(return_value=tenant)),
+            patch(
+                "services.addon_renewal_service.get_tenant",
+                new=AsyncMock(return_value=tenant),
+            ),
             # Simulate the persist failing so the row's expires_at never
             # actually moves — the same period is retried next run.
             patch(
-                "services.addon_renewal_service.update_tenant_addon", new=AsyncMock(return_value=None)
+                "services.addon_renewal_service.update_tenant_addon",
+                new=AsyncMock(return_value=None),
             ),
             patch("services.addon_renewal_service.generate_invoice", new=AsyncMock()),
             patch("services.addon_renewal_service.record_audit_event", new=AsyncMock()),
-            patch("services.addon_renewal_service._invalidate_tenant_addon_caches", new=AsyncMock()),
+            patch(
+                "services.addon_renewal_service._invalidate_tenant_addon_caches",
+                new=AsyncMock(),
+            ),
         ):
             await renew_due_addons()
 
@@ -270,23 +318,36 @@ async def test_no_saved_instrument_is_failed_renewal_not_success() -> None:
             "services.addon_renewal_service.list_due_recurring_tenant_addons",
             new=AsyncMock(return_value=[row]),
         ),
-        patch("services.addon_renewal_service.get_addon_by_id", new=AsyncMock(return_value=_addon())),
+        patch(
+            "services.addon_renewal_service.get_addon_by_id",
+            new=AsyncMock(return_value=_addon()),
+        ),
         patch(
             "services.addon_renewal_service.resolve_addon_unit_price",
             new=AsyncMock(return_value=120_000.0),
         ),
-        patch("services.addon_renewal_service.PaymentManager.get_instance", return_value=mock_manager),
+        patch(
+            "services.addon_renewal_service.PaymentManager.get_instance",
+            return_value=mock_manager,
+        ),
         patch(
             "services.addon_renewal_service._get_provider_for_tenant",
             new=AsyncMock(return_value="paystack"),
         ),
         # No tenant record -> no saved instrument at all.
-        patch("services.addon_renewal_service.get_tenant", new=AsyncMock(return_value=None)),
         patch(
-            "services.addon_renewal_service.update_tenant_addon", new=AsyncMock(return_value=row)
+            "services.addon_renewal_service.get_tenant",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "services.addon_renewal_service.update_tenant_addon",
+            new=AsyncMock(return_value=row),
         ) as mock_update,
         patch("services.addon_renewal_service.record_audit_event", new=AsyncMock()),
-        patch("services.addon_renewal_service._invalidate_tenant_addon_caches", new=AsyncMock()),
+        patch(
+            "services.addon_renewal_service._invalidate_tenant_addon_caches",
+            new=AsyncMock(),
+        ),
     ):
         result = await renew_due_addons()
 
@@ -297,7 +358,9 @@ async def test_no_saved_instrument_is_failed_renewal_not_success() -> None:
     assert result["grace"] == 1
     assert mock_update.await_args is not None
     payload: TenantAddonUpdate = mock_update.await_args.args[1]
-    assert payload.status is None  # status untouched -> stays ACTIVE (grace), not flipped
+    assert (
+        payload.status is None
+    )  # status untouched -> stays ACTIVE (grace), not flipped
     assert payload.renewal_attempts == 1
     assert payload.next_retry_at is not None
 
@@ -309,37 +372,52 @@ async def test_declined_charge_enters_grace_then_expires_after_max_attempts() ->
     from core.payments.types import PaymentStatus
     from services.addon_renewal_service import renew_due_addons
 
-    row = _row(renewal_attempts=5)  # already at settings.max_dunning_attempts (default 5)
+    row = _row(
+        renewal_attempts=5
+    )  # already at settings.max_dunning_attempts (default 5)
 
     tx = MagicMock(status=PaymentStatus.FAILED)
     mock_provider = MagicMock()
     mock_provider.charge_recurring.return_value = tx
     mock_manager = MagicMock()
     mock_manager.get_provider.return_value = mock_provider
-    tenant = MagicMock(paystack_authorization_code="auth_123", paystack_auth_email="a@b.com")
+    tenant = MagicMock(
+        paystack_authorization_code="auth_123", paystack_auth_email="a@b.com"
+    )
 
     with (
         patch(
             "services.addon_renewal_service.list_due_recurring_tenant_addons",
             new=AsyncMock(return_value=[row]),
         ),
-        patch("services.addon_renewal_service.get_addon_by_id", new=AsyncMock(return_value=_addon())),
+        patch(
+            "services.addon_renewal_service.get_addon_by_id",
+            new=AsyncMock(return_value=_addon()),
+        ),
         patch(
             "services.addon_renewal_service.resolve_addon_unit_price",
             new=AsyncMock(return_value=120_000.0),
         ),
-        patch("services.addon_renewal_service.PaymentManager.get_instance", return_value=mock_manager),
+        patch(
+            "services.addon_renewal_service.PaymentManager.get_instance",
+            return_value=mock_manager,
+        ),
         patch(
             "services.addon_renewal_service._get_provider_for_tenant",
             new=AsyncMock(return_value="paystack"),
         ),
-        patch("services.addon_renewal_service.get_tenant", new=AsyncMock(return_value=tenant)),
         patch(
-            "services.addon_renewal_service.update_tenant_addon", new=AsyncMock(return_value=row)
+            "services.addon_renewal_service.get_tenant",
+            new=AsyncMock(return_value=tenant),
+        ),
+        patch(
+            "services.addon_renewal_service.update_tenant_addon",
+            new=AsyncMock(return_value=row),
         ) as mock_update,
         patch("services.addon_renewal_service.record_audit_event", new=AsyncMock()),
         patch(
-            "services.addon_renewal_service._invalidate_tenant_addon_caches", new=AsyncMock()
+            "services.addon_renewal_service._invalidate_tenant_addon_caches",
+            new=AsyncMock(),
         ) as mock_invalidate,
     ):
         result = await renew_due_addons()
@@ -412,7 +490,9 @@ async def test_enforce_branch_lock_noop_when_unlimited() -> None:
     assert locked == 0
 
 
-async def test_cancel_tenant_addon_triggers_cache_invalidation_which_locks_branches() -> None:
+async def test_cancel_tenant_addon_triggers_cache_invalidation_which_locks_branches() -> (
+    None
+):
     """cancel_tenant_addon must invalidate through
     _invalidate_tenant_addon_caches, which runs the branch lock walk."""
     from services.addon_service import cancel_tenant_addon
@@ -430,11 +510,21 @@ async def test_cancel_tenant_addon_triggers_cache_invalidation_which_locks_branc
     updated = row.model_copy(update={"status": TenantAddonStatus.CANCELLED})
 
     with (
-        patch("services.addon_service.get_tenant_addon_by_id", new=AsyncMock(return_value=row)),
-        patch("services.addon_service.update_tenant_addon", new=AsyncMock(return_value=updated)),
+        patch(
+            "services.addon_service.get_tenant_addon_by_id",
+            new=AsyncMock(return_value=row),
+        ),
+        patch(
+            "services.addon_service.update_tenant_addon",
+            new=AsyncMock(return_value=updated),
+        ),
         patch("services.addon_service.record_audit_event", new=AsyncMock()),
-        patch("services.branch_service.enforce_branch_lock", new=AsyncMock(return_value=1)) as mock_lock,
-        patch("services.plan_cache_service.invalidate_tenant_plan_cache", new=AsyncMock()),
+        patch(
+            "services.branch_service.enforce_branch_lock", new=AsyncMock(return_value=1)
+        ) as mock_lock,
+        patch(
+            "services.plan_cache_service.invalidate_tenant_plan_cache", new=AsyncMock()
+        ),
         patch("core.queue.precompute.delete_precompute"),
         patch("core.queue.entity_cache.invalidate_entity"),
     ):
@@ -467,7 +557,9 @@ async def test_enforce_branch_cap_counts_all_branches_including_locked() -> None
             "services.plan_cache_service.resolve_tenant_plan",
             new=AsyncMock(return_value={"tenant_caps": {"max_branches": 1}}),
         ),
-        patch("services.branch_service.count_branches", new=AsyncMock(return_value=1)) as mock_count,
+        patch(
+            "services.branch_service.count_branches", new=AsyncMock(return_value=1)
+        ) as mock_count,
     ):
         with pytest.raises(Exception):
             await _enforce_branch_cap("t1")
@@ -509,9 +601,13 @@ async def test_me_limitations_includes_extra_visitors_per_month() -> None:
         "active_addons": [],
     }
     with (
-        patch("services.me_limitations_service.resolve_tenant_plan", new=AsyncMock(return_value=plan_data)),
         patch(
-            "services.me_limitations_service._list_locked_branch_ids", new=AsyncMock(return_value=[])
+            "services.me_limitations_service.resolve_tenant_plan",
+            new=AsyncMock(return_value=plan_data),
+        ),
+        patch(
+            "services.me_limitations_service._list_locked_branch_ids",
+            new=AsyncMock(return_value=[]),
         ),
         patch(
             "services.me_limitations_service._list_locked_department_ids",

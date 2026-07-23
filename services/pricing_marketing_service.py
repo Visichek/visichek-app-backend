@@ -120,8 +120,7 @@ DEFAULT_PLAN_BULLETS: Dict[str, List[str]] = {
 
 DEFAULT_ADDON_BLURBS: Dict[str, str] = {
     "additional-branch": (
-        "Extra branches — 20% off Premium, each with its own "
-        "1,000 new visitors/month."
+        "Extra branches — 20% off Premium, each with its own 1,000 new visitors/month."
     ),
 }
 

@@ -42,7 +42,10 @@ from repositories.system_user_repo import get_main_super_admin
 from repositories.tenant_addon_repo import create_tenant_addon
 from schemas.addon_schema import AddonKind, TenantAddonCreate, TenantAddonStatus
 from schemas.imports import UserType
-from services.addon_service import ADDITIONAL_BRANCH_SLUG, _invalidate_tenant_addon_caches
+from services.addon_service import (
+    ADDITIONAL_BRANCH_SLUG,
+    _invalidate_tenant_addon_caches,
+)
 from services.notification_service import send_notification
 
 logger = logging.getLogger(__name__)

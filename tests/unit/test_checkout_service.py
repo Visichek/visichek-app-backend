@@ -701,7 +701,9 @@ async def test_get_tenant_checkout_does_not_leak_across_tenants() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _paystack_manager(fetch_result=None, fetch_error=None) -> tuple[MagicMock, MagicMock]:
+def _paystack_manager(
+    fetch_result=None, fetch_error=None
+) -> tuple[MagicMock, MagicMock]:
     manager = MagicMock()
     manager.has_provider = lambda name: name == "paystack"
     provider = MagicMock()

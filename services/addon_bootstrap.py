@@ -32,8 +32,7 @@ DEFAULT_ADDON_CATALOG: dict[str, dict[str, Any]] = {
     "additional-branch": {
         "name": "Additional Branch",
         "description": (
-            "Each additional branch includes its own 1,000 new visitors "
-            "per month."
+            "Each additional branch includes its own 1,000 new visitors per month."
         ),
         "kind": AddonKind.BRANCH_QUOTA,
         "status": AddonStatus.ACTIVE,
