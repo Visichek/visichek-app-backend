@@ -70,6 +70,20 @@ DEFAULT_REQUIRED_FIELDS: list[CheckinFieldDef] = [
         category=CheckinFieldCategory.TENANT_SPECIFIC,
         enum_kind=TenantEnumKind.PURPOSE_OF_VISIT,
     ),
+    CheckinFieldDef(
+        key="department_id",
+        label="Department",
+        type="select",
+        required=True,
+        category=CheckinFieldCategory.TENANT_SPECIFIC,
+        # No options / enum_kind on purpose: the kiosk special-cases
+        # key == "department_id" and resolves the option list live from
+        # the tenant's active departments
+        # (GET /v1/public/register/{tenant_id}/departments). A
+        # department-scoped QR token pins the department instead and the
+        # kiosk omits the field entirely.
+        help_text="Which department are you visiting?",
+    ),
 ]
 
 
@@ -146,6 +160,11 @@ def _form_field_to_checkin_field(field: FormFieldDefinition) -> CheckinFieldDef:
     so we coerce here instead of teaching the kiosk a new schema. Tenant
     form fields are always considered ``tenant_specific`` (BIO fields
     are system-managed and emitted separately by ``DEFAULT_REQUIRED_FIELDS``).
+
+    The system department field projects through as
+    ``key="department_id", type="select"`` with no options — by
+    convention the kiosk special-cases that key and resolves options
+    live from the tenant's active departments.
     """
     field_type = field.type.value if hasattr(field.type, "value") else str(field.type)
     options_payload: Optional[list[dict]] = None
@@ -201,6 +220,9 @@ def _merge_required_fields(
     4. The ``purpose`` picker is always present (defaulted from
        :data:`DEFAULT_REQUIRED_FIELDS`) — every kiosk needs to bucket
        the visit.
+    5. The ``department_id`` picker is always present too (same
+       defaulting) so a GENERAL registration QR can route the visit;
+       a published form's own department field wins over the default.
     """
     merged: list[CheckinFieldDef] = []
     seen_keys: set[str] = set()
@@ -235,6 +257,18 @@ def _merge_required_fields(
         if purpose_default is not None:
             merged.append(purpose_default)
             seen_keys.add("purpose")
+
+    # The department picker is likewise always present so tenants with no
+    # published check-in form still route GENERAL-QR visits. When the
+    # published form carries its own department field it already claimed
+    # the key above (published wins) and this is a no-op.
+    if "department_id" not in seen_keys:
+        department_default = next(
+            (f for f in DEFAULT_REQUIRED_FIELDS if f.key == "department_id"), None
+        )
+        if department_default is not None:
+            merged.append(department_default)
+            seen_keys.add("department_id")
 
     return merged
 

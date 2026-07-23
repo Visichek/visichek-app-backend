@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import time
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from bson import ObjectId
 from pydantic import BaseModel, Field, model_validator
@@ -64,11 +64,41 @@ class AddonBase(BaseModel):
     kind: AddonKind
     status: AddonStatus = AddonStatus.ACTIVE
 
+    # Stable machine key for idempotent catalog seeding / lookup of
+    # singleton addons (e.g. "additional-branch"). Optional because
+    # admin-authored addons don't need one — only bootstrap-seeded
+    # singletons do.
+    slug: Optional[str] = Field(default=None, max_length=80)
+
     # Per-unit pricing. ``quantity`` on purchase multiplies both the
     # price and the benefit (so 5 units of a 1 GB / ₦2,000 addon
     # costs ₦10,000 and grants 5 GB).
+    #
+    # ``unit_price`` is authoritative for ``pricing_mode="fixed"``
+    # addons. For ``pricing_mode="derived"`` addons it is a DISPLAY
+    # CACHE only — the true price is resolved live via
+    # ``services.addon_service.resolve_addon_unit_price`` from
+    # ``derived_from`` and this field is refreshed opportunistically
+    # (catalog seed refresh, Premium plan writes) so reads that skip
+    # the live resolution still show a reasonably fresh number.
     unit_price: float = Field(ge=0)
     currency: str = Field(default="NGN", min_length=3, max_length=3)
+
+    # "fixed" — unit_price is authoritative. "derived" — unit_price is
+    # computed live from another plan's field (see derived_from).
+    pricing_mode: Literal["fixed", "derived"] = "fixed"
+
+    # Only meaningful when pricing_mode="derived". Shape:
+    # {"plan": "premium", "field": "base_price_monthly", "multiplier": 0.8}
+    # — resolves to round(plan.<field> * multiplier) whole currency units.
+    derived_from: Optional[dict[str, Any]] = None
+
+    # Whether this addon renews automatically (charged each cycle)
+    # rather than being a one-time, time-bound purchase.
+    recurring: bool = False
+
+    # Renewal cadence for recurring addons. Ignored for one-time addons.
+    billing_cycle: Literal["monthly", "yearly"] = "monthly"
 
     # Benefit per unit. Storage addons: ``{"storage_mb": 1024}`` for
     # the 1 GB SKU. Visitor quota addons: ``{"visitors": 500}``.
@@ -76,8 +106,11 @@ class AddonBase(BaseModel):
     # consuming service which keys to read.
     benefit_per_unit: dict[str, Any] = Field(default_factory=dict)
 
-    # Default validity in days. ``None`` = perpetual / lifetime;
-    # otherwise ``expires_at = purchased_at + validity_days * 86400``.
+    # Default validity in days for ONE-TIME (non-recurring) addons.
+    # ``None`` = perpetual / lifetime; otherwise
+    # ``expires_at = purchased_at + validity_days * 86400``. Ignored
+    # for recurring addons, whose per-cycle length comes from
+    # ``billing_cycle`` instead.
     validity_days: Optional[int] = 365
 
     # Hard cap on units per purchase (None = unlimited). Lets us cap
@@ -96,6 +129,10 @@ class AddonUpdate(BaseModel):
     status: Optional[AddonStatus] = None
     unit_price: Optional[float] = None
     currency: Optional[str] = None
+    pricing_mode: Optional[Literal["fixed", "derived"]] = None
+    derived_from: Optional[dict[str, Any]] = None
+    recurring: Optional[bool] = None
+    billing_cycle: Optional[Literal["monthly", "yearly"]] = None
     benefit_per_unit: Optional[dict[str, Any]] = None
     validity_days: Optional[int] = None
     max_units_per_purchase: Optional[int] = None
@@ -136,9 +173,30 @@ class TenantAddonBase(BaseModel):
     currency_snapshot: str = "NGN"
     benefit_snapshot: dict[str, Any] = Field(default_factory=dict)
 
+    # Snapshotted at purchase time so a catalog edit between purchase
+    # and webhook activation can't change the granted validity/cycle
+    # (mirrors unit_price_snapshot's purpose for price). For recurring
+    # addons, activation computes expires_at from these — NOT from the
+    # addon's CURRENT catalog row — avoiding the pre-existing
+    # activate_tenant_addon_by_reference quirk.
+    recurring_snapshot: bool = False
+    validity_days_snapshot: Optional[int] = None
+    billing_cycle_snapshot: Optional[str] = None
+
     status: TenantAddonStatus = TenantAddonStatus.PENDING
     purchased_at: Optional[int] = None  # set on payment success
     expires_at: Optional[int] = None  # None = perpetual
+
+    # Renewal bookkeeping for ``recurring_snapshot=True`` rows — mirrors
+    # ``SubscriptionBase``'s dunning fields. ``renewal_attempts`` counts
+    # consecutive failed renewal charges since the last success;
+    # ``next_retry_at`` is when the renewal sweep should retry a row
+    # currently in its dunning grace window (``expires_at`` is pushed out
+    # to match while a retry is pending, so the addon keeps granting
+    # benefit through the grace period — see services/addon_renewal_service.py).
+    renewal_attempts: int = 0
+    next_retry_at: Optional[int] = None
+    last_renewal_attempt_at: Optional[int] = None
 
     # Payment correlation: provider + reference + checkout id.
     payment_provider: Optional[str] = None
@@ -150,6 +208,12 @@ class TenantAddonBase(BaseModel):
 
     created_by_user_id: Optional[str] = None
 
+    # Free-form provenance bag. Currently used by the Task 9 grandfathering
+    # backfill: ``{"granted": "premium-per-location-migration"}`` marks a
+    # zero-price row minted for a pre-existing Premium tenant so the
+    # backfill can skip tenants it has already processed on re-run.
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
 
 class TenantAddonCreate(TenantAddonBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))
@@ -160,6 +224,10 @@ class TenantAddonUpdate(BaseModel):
     status: Optional[TenantAddonStatus] = None
     purchased_at: Optional[int] = None
     expires_at: Optional[int] = None
+    unit_price_snapshot: Optional[float] = None
+    renewal_attempts: Optional[int] = None
+    next_retry_at: Optional[int] = None
+    last_renewal_attempt_at: Optional[int] = None
     payment_provider: Optional[str] = None
     payment_reference: Optional[str] = None
     checkout_url: Optional[str] = None

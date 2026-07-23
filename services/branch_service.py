@@ -292,6 +292,65 @@ async def lock_down_to_hq(tenant_id: str) -> int:
     return getattr(result, "modified_count", 0) or 0
 
 
+async def enforce_branch_lock(tenant_id: str) -> int:
+    """Lock branches beyond the tenant's CURRENT effective ``max_branches``.
+
+    Called after an addon expiry/cancel/renewal-failure drops the
+    addon-inclusive branch cap (see ``plan_cache_service._apply_addon_benefits``
+    — ``tenant_caps.max_branches`` already folds in active ``branch_quota``
+    addon benefit). Keeps HQ + the N-1 oldest other branches active; locks
+    (``status=inactive``, mirroring ``lock_down_to_hq``) the newest branches
+    beyond the cap.
+
+    Uses the EXACT same sort order as
+    ``services.me_limitations_service._list_locked_branch_ids``
+    (``is_headquarters`` desc, then ``date_created`` asc) so the tenant's
+    read-time ``lockedEntities.branches`` list always matches which branches
+    are actually inactive here. Idempotent and one-way: never reactivates a
+    branch that's back within cap (mirrors ``lock_down_to_hq``'s semantics —
+    unlocking is a deliberate admin/support action, not automatic).
+
+    Returns the number of branches newly locked. No-op (0) when the cap is
+    unlimited (``None``) or plan resolution fails (fails open).
+    """
+    try:
+        from services.plan_cache_service import resolve_tenant_plan
+
+        plan_data = await resolve_tenant_plan(tenant_id)
+    except Exception:
+        return 0
+    if not plan_data:
+        return 0
+
+    max_branches = (plan_data.get("tenant_caps") or {}).get("max_branches")
+    if max_branches is None:
+        return 0
+
+    from core.database import db as _db
+    import time as _time
+
+    cursor = (
+        _db["branches"]
+        .find({"tenant_id": tenant_id}, projection={"_id": 1, "is_headquarters": 1, "status": 1})
+        .sort([("is_headquarters", -1), ("date_created", 1)])
+    )
+    to_lock: list = []
+    seen = 0
+    async for doc in cursor:
+        seen += 1
+        if seen > int(max_branches) and doc.get("status") != "inactive":
+            to_lock.append(doc["_id"])
+
+    if not to_lock:
+        return 0
+    now = int(_time.time())
+    result = await _db["branches"].update_many(
+        {"_id": {"$in": to_lock}},
+        {"$set": {"status": "inactive", "last_updated": now}},
+    )
+    return getattr(result, "modified_count", 0) or 0
+
+
 async def _enforce_branch_cap(tenant_id: str) -> None:
     """Check if tenant has reached their plan's max_branches limit."""
     try:

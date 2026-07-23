@@ -159,9 +159,9 @@ FREE_DENIED_FEATURES: List[FeatureRule] = [
         "Multi-location requires Premium or Enterprise",
         methods=["POST", "PUT", "PATCH", "DELETE"],
     ),
-    # ── Compliance & governance — blocked entirely on Free ────────────
-    _deny("/v1/incidents", "Incident logging requires Premium or Enterprise"),
-    _deny("/v1/incidents/*", "Incident logging requires Premium or Enterprise"),
+    # ── Compliance & governance — blocked on Free (incidents excepted:
+    # every plan can report security incidents; NDPA notification duties
+    # don't pause for a paywall) ──────────────────────────────────────
     _deny("/v1/dsr", "Data subject requests require Premium or Enterprise"),
     _deny("/v1/dsr/*", "Data subject requests require Premium or Enterprise"),
     _deny(
@@ -497,9 +497,21 @@ PREMIUM_PLAN = CanonicalPlan(
     tenant_caps=TenantCapLimit(
         max_system_users=50,
         max_departments=15,  # per location — admins can scale via overrides
-        max_branches=None,  # unlimited
+        # Task 9: per-location pricing flip. Premium tenants now pay per
+        # branch via the "additional-branch" add-on (see addon_bootstrap.py)
+        # rather than getting unlimited branches baked into the tier. Note:
+        # this canonical-config value alone does NOT change the STORED
+        # plan document for existing installs — plan_bootstrap's refresh
+        # deliberately excludes tenant_caps (see
+        # services.plan_bootstrap._canonical_to_plan_update) so an admin's
+        # tuned caps survive redeploys. The stored doc is flipped by the
+        # one-shot services.premium_max_branches_flip_migration, which MUST
+        # run after the services.premium_branch_grandfather_backfill grants
+        # existing tenants their perpetual per-branch entitlements.
+        max_branches=1,
         max_visitors_per_month=500,  # per location baseline
         max_appointments_per_month=None,
+        visitors_per_branch_per_month=1000,
     ),
     storage_limits=StorageLimit(
         max_documents=10_000, max_storage_mb=10_240, max_file_size_mb=20
@@ -518,6 +530,7 @@ PREMIUM_PLAN = CanonicalPlan(
             "max_system_users",
             "max_branches",
             "max_appointments_per_month",
+            "visitors_per_branch_per_month",
         }
     ),
     adjustable_plan_fields=frozenset(
@@ -571,8 +584,16 @@ ENTERPRISE_TEMPLATE = CanonicalPlan(
             "max_system_users",
             "max_branches",
             "max_appointments_per_month",
+            "visitors_per_branch_per_month",
         }
     ),
+    # Task 13: the allowlist's job is blocking accidental cap-name typos
+    # and the trial_days footgun — NOT blocking composition. Enterprise
+    # plans are hand-built per customer by an admin (the "enterprise
+    # composer"), so the identity/catalogue fields an admin legitimately
+    # sets while composing one (display name, description, the compiled
+    # feature_rules, public visibility, catalogue sort position) must be
+    # editable too, alongside the original pricing/support fields.
     adjustable_plan_fields=frozenset(
         {
             "base_price_monthly",
@@ -582,6 +603,18 @@ ENTERPRISE_TEMPLATE = CanonicalPlan(
             "custom_branding",
             "api_access",
             "priority_support",
+            "display_name",
+            "description",
+            "feature_rules",
+            "is_public",
+            "sort_order",
+            # Task 14: FE limits step includes storage inputs for
+            # enterprise plans (currently gated off in the UI, but the
+            # backend allowlist must not 400 the moment FE wires it up).
+            # FE's buildEditPayload does NOT send crud_limits or
+            # retrieval_quotas for any tier — no PlanFormData field maps
+            # to them — so those are intentionally left off here.
+            "storage_limits",
         }
     ),
 )

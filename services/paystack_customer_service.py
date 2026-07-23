@@ -43,7 +43,7 @@ async def create_or_get_paystack_customer(
         raise AppException(
             status_code=400,
             code=ErrorCode.VALIDATION_FAILED,
-            message="Invalid tenant ID",
+            message="Invalid organization ID",
             details={"tenant_id": tenant_id},
         )
 
@@ -52,7 +52,7 @@ async def create_or_get_paystack_customer(
         raise AppException(
             status_code=404,
             code=ErrorCode.RESOURCE_NOT_FOUND,
-            message="Tenant not found",
+            message="Organization not found",
             details={"tenant_id": tenant_id},
         )
 
@@ -84,7 +84,7 @@ async def create_or_get_paystack_customer(
         raise AppException(
             status_code=500,
             code=ErrorCode.PAYMENT_PROVIDER_ERROR,
-            message="Failed to store Paystack customer code on tenant",
+            message="Failed to store Paystack customer code on organization",
             details=str(e),
         ) from e
 
@@ -171,7 +171,7 @@ async def get_paystack_customer(tenant_id: str) -> Optional[str]:
         raise AppException(
             status_code=400,
             code=ErrorCode.VALIDATION_FAILED,
-            message="Invalid tenant ID",
+            message="Invalid organization ID",
         )
 
     tenant = await get_tenant({"_id": ObjectId(tenant_id)})
@@ -179,7 +179,7 @@ async def get_paystack_customer(tenant_id: str) -> Optional[str]:
         raise AppException(
             status_code=404,
             code=ErrorCode.RESOURCE_NOT_FOUND,
-            message="Tenant not found",
+            message="Organization not found",
         )
 
     return tenant.paystack_customer_id

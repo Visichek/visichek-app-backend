@@ -36,6 +36,11 @@ from services.consent_service import (
     record_visitor_consent,
 )
 from services.dashboard_cache_service import invalidate_tenant_dashboard_cache
+from services.plan_limits import (
+    KIOSK_CAP_MESSAGE,
+    get_plan_data_safe,
+    enforce_branch_visitor_cap,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -413,14 +418,15 @@ async def _upsert_visitor_profile_from_submit(
     portrait_url: Optional[str],
     verified: bool,
     id_type: Optional[str],
-) -> None:
+) -> Optional[str]:
     """Upsert a VisitorProfile row tied to the submitting visitor.
 
     The profile is the authoritative record of "has this person visited us
     before" for the public prefill lookup. Keyed on phone first, then email —
     whichever the visitor supplied is used to find an existing profile; a new
-    one is created if neither matches. Visit count is incremented on every
-    successful submit so the profile reflects true visit frequency.
+    one is created if neither matches. Visit count is NOT incremented here —
+    callers must do so only after per-branch cap enforcement passes, so a
+    429-blocked submission never inflates the visitor's visit history.
 
     Fire-and-forget at the caller — any exception here is logged but never
     blocks the check-in.
@@ -430,7 +436,6 @@ async def _upsert_visitor_profile_from_submit(
     from repositories.visitor_profile_repo import (
         get_visitor_profile_by_email,
         get_visitor_profile_by_phone,
-        increment_visitor_profile_visits,
         update_visitor_profile,
     )
     from schemas.visitor_profile_schema import VisitorProfileUpdate
@@ -453,7 +458,7 @@ async def _upsert_visitor_profile_from_submit(
         )
 
     if profile is None or not profile.id or not ObjectId.is_valid(profile.id):
-        return
+        return None
 
     # Merge any missing fields into the existing profile so future submissions
     # can lookup via either channel. Never overwrite an existing value with
@@ -481,7 +486,7 @@ async def _upsert_visitor_profile_from_submit(
             VisitorProfileUpdate(**update_fields),
         )
 
-    await increment_visitor_profile_visits({"_id": ObjectId(profile.id)})
+    return profile.id
 
 
 def _registration_token_id(token: str) -> str:
@@ -751,6 +756,14 @@ async def submit_returning_visitor_checkin_by_id(
         if f.required and f.category == CheckinFieldCategory.TENANT_SPECIFIC
     }
     missing_fields = required_tenant_specific_keys - set(tenant_specific_data.keys())
+    if "department_id" in missing_fields:
+        # Same degenerate-case rule as ``_submit_verified_checkin_core``:
+        # tenants with no active departments render no picker and fall
+        # back to HQ routing, so don't reject the submit.
+        from repositories.department_repo import get_departments
+
+        if not await get_departments({"tenant_id": tenant_id, "is_active": True}):
+            missing_fields = missing_fields - {"department_id"}
     if missing_fields:
         raise AppException(
             status_code=400,
@@ -769,13 +782,78 @@ async def submit_returning_visitor_checkin_by_id(
             details={"existing_checkin_id": existing_pending.id},
         )
 
+    # Keep the VisitorProfile visit counter in sync (fire-and-forget).
+    # Resolved BEFORE the check-in is created so the is_new peek used by
+    # cap enforcement below reflects the correct profile.
+    visitor_profile_id: Optional[str] = None
+    try:
+        visitor_profile_id = await _upsert_visitor_profile_from_submit(
+            tenant_id=tenant_id,
+            email=visitor.email,
+            phone=visitor.phone,
+            full_name=visitor.full_name,
+            company=(visitor.bio_data or {}).get("company")
+            or (visitor.bio_data or {}).get("organization"),
+            portrait_url=visitor.portrait_url,
+            verified=visitor.verified,
+            id_type=(
+                visitor.verification_method.value
+                if visitor.verification_method is not None
+                else None
+            ),
+        )
+    except Exception as e:
+        import logging
+
+        logging.warning(f"Failed to upsert visitor profile from returning submit: {e}")
+
+    # Per-branch new-visitor cap enforcement (WS0.2). This is the
+    # "submit by visitor_id" (already-known-visitor) choke point. By
+    # definition the caller believes this visitor is returning, but that
+    # is only true for THIS branch if a ledger row already exists here —
+    # if this is their first visit to this particular branch, they count
+    # as new and the cap applies (see plan brief).
+    resolved_branch_id = await _resolve_checkin_branch_id(
+        tenant_id, tenant_specific_data
+    )
+    # Default False, not True: this is "submit by visitor_id" — the caller
+    # has already proven the visitor exists, so if profile resolution
+    # failed above (visitor_profile_id is None) we have no evidence this
+    # is a NEW visitor. Never block a known-returning visitor on
+    # uncertainty; only mark them new when the ledger peek positively
+    # confirms it.
+    is_new_visitor = False
+    if visitor_profile_id and resolved_branch_id:
+        from repositories.visitor_branch_first_repo import has_first_seen
+
+        is_new_visitor = not await has_first_seen(
+            tenant_id, resolved_branch_id, visitor_profile_id
+        )
+    resolved_plan = await get_plan_data_safe(tenant_id)
+    await enforce_branch_visitor_cap(
+        tenant_id,
+        resolved_branch_id,
+        resolved_plan,
+        is_new_visitor=is_new_visitor,
+        friendly_message=KIOSK_CAP_MESSAGE,
+    )
+
+    # Increment visit count only after cap enforcement passes, so a
+    # 429-blocked submission never inflates the visitor's visit history.
+    from bson import ObjectId
+
+    if visitor_profile_id and ObjectId.is_valid(visitor_profile_id):
+        from repositories.visitor_profile_repo import increment_visitor_profile_visits
+
+        await increment_visitor_profile_visits({"_id": ObjectId(visitor_profile_id)})
+
     create_data = CheckinCreate(
         tenant_id=tenant_id,
         visitor_id=visitor_id,
         checkin_config_id=checkin_config_id,
         id_extraction_id=None,
         tenant_specific_data=tenant_specific_data,
-        branch_id=await _resolve_checkin_branch_id(tenant_id, tenant_specific_data),
+        branch_id=resolved_branch_id,
         purpose=purpose,
         state=CheckinState.PENDING_APPROVAL,
         verified=visitor.verified,
@@ -799,27 +877,25 @@ async def submit_returning_visitor_checkin_by_id(
         user_agent=consent.get("user_agent"),
     )
 
-    # Keep the VisitorProfile visit counter in sync (fire-and-forget).
-    try:
-        await _upsert_visitor_profile_from_submit(
-            tenant_id=tenant_id,
-            email=visitor.email,
-            phone=visitor.phone,
-            full_name=visitor.full_name,
-            company=(visitor.bio_data or {}).get("company")
-            or (visitor.bio_data or {}).get("organization"),
-            portrait_url=visitor.portrait_url,
-            verified=visitor.verified,
-            id_type=(
-                visitor.verification_method.value
-                if visitor.verification_method is not None
-                else None
-            ),
-        )
-    except Exception as e:
-        import logging
+    # New-visitor first-seen ledger (WS0.3). submit-by-visitor-id is a
+    # distinct kiosk choke point from _submit_verified_checkin_core (it
+    # skips visitor verification since the visitor is already known).
+    if visitor_profile_id and create_data.branch_id:
+        if is_new_visitor:
+            from repositories.visitor_branch_first_repo import record_first_seen
 
-        logging.warning(f"Failed to upsert visitor profile from returning submit: {e}")
+            await record_first_seen(
+                tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
+            )
+    else:
+        logger.warning(
+            "visitor_branch_first ledger insert skipped tenant=%s checkin=%s "
+            "visitor_profile_id=%s branch_id=%s",
+            tenant_id,
+            checkin.id,
+            visitor_profile_id,
+            create_data.branch_id,
+        )
 
     # Fire notification (fire-and-forget).
     try:
@@ -855,6 +931,7 @@ async def submit_verified_checkin_for_tenant(
     visitor_lat: Optional[float] = None,
     visitor_lng: Optional[float] = None,
     kyc_reference_id: Optional[str] = None,
+    registration_token: Optional[str] = None,
     consent: Optional[dict] = None,
 ) -> CheckinOut:
     """Tenant-scoped submit. Resolves the tenant's active config, or falls back
@@ -863,6 +940,13 @@ async def submit_verified_checkin_for_tenant(
     Used by the public kiosk endpoint ``POST /public/tenants/{tenant_id}/submit``
     so the kiosk can submit against the tenant even when the super_admin has
     not yet customized the check-in form.
+
+    ``registration_token`` (Issue 5): when the kiosk was opened from a
+    signed registration QR, the token's department/branch scope overrides
+    whatever the browser put in ``tenant_specific_data`` — in particular a
+    department-scoped QR backfills ``tenant_specific_data['department_id']``
+    so the required department field passes validation even though the
+    public form hid the picker.
     """
     from bson import ObjectId
 
@@ -882,10 +966,20 @@ async def submit_verified_checkin_for_tenant(
 
     config = await get_active_checkin_config_for_tenant(tenant_id)
     checkin_config_id = config.id or "" if config else ""
+
+    # Enforce token scope BEFORE required-field validation so a
+    # department-scoped QR backfills tenant_specific_data['department_id']
+    # (and never leaves partial state behind on a mismatch).
+    token_scope = _enforce_registration_token_scope(
+        tenant_id=tenant_id,
+        tenant_specific_data=tenant_specific_data,
+        registration_token=registration_token,
+    )
+
     merged_fields, _form = await resolve_required_fields_for_tenant(tenant_id)
     required_field_keys = {f.key for f in merged_fields if f.required}
 
-    return await _submit_verified_checkin_core(
+    checkin = await _submit_verified_checkin_core(
         tenant_id=tenant_id,
         checkin_config_id=checkin_config_id,
         required_field_keys=required_field_keys,
@@ -902,6 +996,39 @@ async def submit_verified_checkin_for_tenant(
         kyc_reference_id=kyc_reference_id,
         consent=consent,
     )
+
+    # Phase A3 audit hook (Issue 5) — same contract as
+    # ``submit_verified_checkin``: record which QR shaped the check-in
+    # without persisting the replayable token. Fire-and-forget.
+    if token_scope:
+        try:
+            from services.audit_service import record_audit_event
+
+            await record_audit_event(
+                actor_id=checkin.visitor_id,
+                actor_role="kiosk_visitor",
+                action="checkin.registered_via_qr",
+                resource_type="checkin",
+                resource_id=checkin.id or "",
+                tenant_id=tenant_id,
+                details={
+                    "registration_token_id": token_scope.get("token_id"),
+                    "registration_token_scope": {
+                        "department_id": token_scope.get("department_id"),
+                        "branch_id": token_scope.get("branch_id"),
+                    },
+                },
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "checkin.registered_via_qr audit record failed for checkin %s",
+                checkin.id,
+                exc_info=True,
+            )
+
+    return checkin
 
 
 async def _submit_verified_checkin_core(
@@ -1046,8 +1173,9 @@ async def _submit_verified_checkin_core(
 
     # 2c. Upsert a VisitorProfile keyed on email OR phone so repeat submissions
     # are linked to the same profile for visit-history tracking.
+    visitor_profile_id: Optional[str] = None
     try:
-        await _upsert_visitor_profile_from_submit(
+        visitor_profile_id = await _upsert_visitor_profile_from_submit(
             tenant_id=tenant_id,
             email=email,
             phone=phone,
@@ -1082,6 +1210,15 @@ async def _submit_verified_checkin_core(
     effective_required_keys = required_field_keys - {"email"}
     available_keys = set(merged_bio_data.keys()) | set(tenant_specific_data.keys())
     missing_fields = effective_required_keys - available_keys
+    if "department_id" in missing_fields:
+        # Degenerate case: a tenant with no active departments can't offer
+        # the department picker — the kiosk omits the field and the visit
+        # falls back to HQ routing. Only enforce the requirement when the
+        # tenant actually has departments to choose from.
+        from repositories.department_repo import get_departments
+
+        if not await get_departments({"tenant_id": tenant_id, "is_active": True}):
+            missing_fields = missing_fields - {"department_id"}
     if missing_fields:
         raise AppException(
             status_code=400,
@@ -1162,6 +1299,49 @@ async def _submit_verified_checkin_core(
         initial_state.value,
     )
 
+    # 5b. Per-branch new-visitor cap enforcement (WS0.2). Kiosk submit was
+    # previously UNCAPPED — this is a deliberate behavior change, softened
+    # by counting only new visitors. Resolve the branch first so the
+    # is_new peek and the cap check both run BEFORE the check-in is
+    # created. NOTE: the ``visitors`` collection row (and the VisitorProfile
+    # upsert above) are written before this point regardless — a
+    # 429-blocked new visitor still leaves those rows persisted; only the
+    # checkin/visit-history/ledger writes are skipped. See item 4 of the
+    # Task 6 fix report for the full rationale on why the visitor upsert
+    # can't cheaply move after enforcement here.
+    resolved_branch_id = await _resolve_checkin_branch_id(
+        tenant_id, tenant_specific_data
+    )
+    # Default False: never block on uncertainty. Only flips True when the
+    # ledger peek below positively confirms this visitor hasn't been seen
+    # at this branch (profile-upsert failure above leaves
+    # visitor_profile_id None, which must never manufacture a "new" verdict
+    # that could 429 a returning visitor).
+    is_new_visitor = False
+    if visitor_profile_id and resolved_branch_id:
+        from repositories.visitor_branch_first_repo import has_first_seen
+
+        is_new_visitor = not await has_first_seen(
+            tenant_id, resolved_branch_id, visitor_profile_id
+        )
+    resolved_plan = await get_plan_data_safe(tenant_id)
+    await enforce_branch_visitor_cap(
+        tenant_id,
+        resolved_branch_id,
+        resolved_plan,
+        is_new_visitor=is_new_visitor,
+        friendly_message=KIOSK_CAP_MESSAGE,
+    )
+
+    # Increment visit count only after cap enforcement passes, so a
+    # 429-blocked submission never inflates the visitor's visit history.
+    from bson import ObjectId
+
+    if visitor_profile_id and ObjectId.is_valid(visitor_profile_id):
+        from repositories.visitor_profile_repo import increment_visitor_profile_visits
+
+        await increment_visitor_profile_visits({"_id": ObjectId(visitor_profile_id)})
+
     # 6. Create check-in
     create_data = CheckinCreate(
         tenant_id=tenant_id,
@@ -1169,13 +1349,33 @@ async def _submit_verified_checkin_core(
         checkin_config_id=checkin_config_id,
         id_extraction_id=id_extraction_id,
         tenant_specific_data=tenant_specific_data,
-        branch_id=await _resolve_checkin_branch_id(tenant_id, tenant_specific_data),
+        branch_id=resolved_branch_id,
         purpose=purpose,
         state=initial_state,
         verified=visitor_verified,
     )
     checkin = await create_checkin(create_data)
     invalidate_tenant_dashboard_cache(tenant_id)
+
+    # New-visitor first-seen ledger (WS0.3). Kiosk submit is the choke
+    # point for both fresh-verification submits and the anti-spoof KYC
+    # path — everything reaching this line has a persisted check-in.
+    if visitor_profile_id and create_data.branch_id:
+        if is_new_visitor:
+            from repositories.visitor_branch_first_repo import record_first_seen
+
+            await record_first_seen(
+                tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
+            )
+    else:
+        logger.warning(
+            "visitor_branch_first ledger insert skipped tenant=%s checkin=%s "
+            "visitor_profile_id=%s branch_id=%s",
+            tenant_id,
+            checkin.id,
+            visitor_profile_id,
+            create_data.branch_id,
+        )
 
     # Persist the visitor's consent acceptance (fire-and-forget). The kiosk
     # submit path has no visit_sessions row, so consent lives in the dedicated
@@ -1306,7 +1506,13 @@ async def submit_checkin(
             details={"missing_fields": list(missing_fields)},
         )
 
-    # Upsert visitor
+    # Upsert visitor. This necessarily runs BEFORE per-branch cap
+    # enforcement below — visitor_id is needed for the pending-checkin
+    # dup-check and visitor.email/phone feed the VisitorProfile upsert that
+    # determines is_new_visitor for enforcement. A 429-blocked new visitor
+    # therefore still leaves this ``visitors`` row (and the VisitorProfile
+    # row) persisted; only the checkin/visit-history/ledger writes are
+    # skipped after the cap check fails.
     from services.visitor_service import upsert_visitor_from_checkin
 
     visitor = await upsert_visitor_from_checkin(
@@ -1350,6 +1556,67 @@ async def submit_checkin(
         initial_state.value,
     )
 
+    # Upsert a VisitorProfile the same way the other submit paths do (this
+    # legacy endpoint only touches the ``visitors`` collection above, so
+    # without this the visitor has no visitor_profile_id and is invisible
+    # to the first-seen ledger / cap enforcement below). Resolved BEFORE
+    # the check-in is created so cap enforcement can run first — never
+    # blocks the check-in on failure (best-effort upsert).
+    visitor_profile_id: Optional[str] = None
+    try:
+        visitor_profile_id = await _upsert_visitor_profile_from_submit(
+            tenant_id=tenant_id,
+            email=visitor.email,
+            phone=visitor.phone,
+            full_name=visitor.full_name,
+            company=(visitor.bio_data or {}).get("company")
+            or (visitor.bio_data or {}).get("organization"),
+            portrait_url=visitor.portrait_url,
+            verified=visitor.verified,
+            id_type=(
+                visitor.verification_method.value
+                if visitor.verification_method is not None
+                else None
+            ),
+        )
+    except Exception as e:
+        logger.warning(f"Failed to upsert visitor profile from legacy submit: {e}")
+
+    # Per-branch new-visitor cap enforcement (WS0.2). Same choke point as
+    # the other kiosk submit paths — resolve branch + is_new BEFORE
+    # creating the check-in.
+    resolved_branch_id = await _resolve_checkin_branch_id(
+        tenant_id, req.tenant_specific_data
+    )
+    # Default False: never block on uncertainty (see the two other submit
+    # paths above for the full rationale) — a failed/unresolved profile
+    # upsert must never manufacture a "new visitor" verdict that could
+    # 429 a returning visitor.
+    is_new_visitor = False
+    if visitor_profile_id and resolved_branch_id:
+        from repositories.visitor_branch_first_repo import has_first_seen
+
+        is_new_visitor = not await has_first_seen(
+            tenant_id, resolved_branch_id, visitor_profile_id
+        )
+    resolved_plan = await get_plan_data_safe(tenant_id)
+    await enforce_branch_visitor_cap(
+        tenant_id,
+        resolved_branch_id,
+        resolved_plan,
+        is_new_visitor=is_new_visitor,
+        friendly_message=KIOSK_CAP_MESSAGE,
+    )
+
+    # Increment visit count only after cap enforcement passes, so a
+    # 429-blocked submission never inflates the visitor's visit history.
+    from bson import ObjectId
+
+    if visitor_profile_id and ObjectId.is_valid(visitor_profile_id):
+        from repositories.visitor_profile_repo import increment_visitor_profile_visits
+
+        await increment_visitor_profile_visits({"_id": ObjectId(visitor_profile_id)})
+
     # Create checkin
     create_data = CheckinCreate(
         tenant_id=tenant_id,
@@ -1357,13 +1624,34 @@ async def submit_checkin(
         checkin_config_id=checkin_config_id,
         id_extraction_id=req.id_extraction_id,
         tenant_specific_data=req.tenant_specific_data,
-        branch_id=await _resolve_checkin_branch_id(tenant_id, req.tenant_specific_data),
+        branch_id=resolved_branch_id,
         purpose=req.purpose,
         state=initial_state,
         verified=visitor.verified,
     )
     checkin = await create_checkin(create_data)
     invalidate_tenant_dashboard_cache(tenant_id)
+
+    # New-visitor first-seen ledger (WS0.3). This is the third and last
+    # kiosk check-in creation path (``/checkin-configs/{id}/checkins``) —
+    # see checkin_service create_checkin call-site audit in the WS0.3
+    # report for the full list.
+    if visitor_profile_id and create_data.branch_id:
+        if is_new_visitor:
+            from repositories.visitor_branch_first_repo import record_first_seen
+
+            await record_first_seen(
+                tenant_id, create_data.branch_id, visitor_profile_id, int(time.time())
+            )
+    else:
+        logger.warning(
+            "visitor_branch_first ledger insert skipped tenant=%s checkin=%s "
+            "visitor_profile_id=%s branch_id=%s",
+            tenant_id,
+            checkin.id,
+            visitor_profile_id,
+            create_data.branch_id,
+        )
 
     # Notify approvers only when the check-in is queue-visible.
     if initial_state == CheckinState.PENDING_APPROVAL:

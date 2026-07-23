@@ -26,7 +26,11 @@ router = APIRouter(prefix="/branches", tags=["Branches"])
 
 
 BRANCHES_LIST_SPEC = ListSpec(
-    sortable_fields=frozenset({"name", "date_created", "is_active", "status"}),
+    # NOTE: branch docs store ``status: "active"|"inactive"`` — there is no
+    # ``is_active`` field on the schema (pre-existing bug, fixed here per
+    # visichek-plan-verification-notes.md #19: the old ``is_active`` filter
+    # matched nothing).
+    sortable_fields=frozenset({"name", "date_created", "status"}),
     default_sort=(("name", 1),),
     search_fields=("name", "address", "city"),
     filters={
@@ -37,9 +41,9 @@ BRANCHES_LIST_SPEC = ListSpec(
             builder=lambda vs: (
                 {}
                 if "all" in vs
-                else {"is_active": vs[0] == "active"}
+                else {"status": vs[0]}
                 if len(vs) == 1
-                else {"is_active": {"$in": [v == "active" for v in vs]}}
+                else {"status": {"$in": vs}}
             ),
         ),
         "country": FilterDef(name="country"),
@@ -72,9 +76,9 @@ async def _branch_status_facet(
 ) -> dict[str, int]:
     if field != "status":
         return {}
-    base = {k: v for k, v in filter_doc.items() if k != "is_active"}
-    active = await collection.count_documents({**base, "is_active": True})
-    inactive = await collection.count_documents({**base, "is_active": False})
+    base = {k: v for k, v in filter_doc.items() if k != "status"}
+    active = await collection.count_documents({**base, "status": "active"})
+    inactive = await collection.count_documents({**base, "status": "inactive"})
     return {"active": active, "inactive": inactive, "all": active + inactive}
 
 

@@ -6,9 +6,18 @@ import time
 class TenantBase(BaseModel):
     company_name: str
     # The Organization's representative legal address, used as the Controller
-    # address in the per-tenant Data Processing Agreement. Collected/edited on
-    # the first-login "Confirm company details" screen.
+    # address in the per-tenant Data Processing Agreement. Composed server-side
+    # from the structured address_* parts below (which are collected on the
+    # first-login "Confirm company details" screen).
     organization_address: Optional[str] = None
+    # Structured breakdown of the organization address. organization_address
+    # stays the single joined string the DPA renders; these parts are the
+    # source of truth going forward.
+    address_street: Optional[str] = None
+    address_city: Optional[str] = None
+    address_state: Optional[str] = None
+    address_postal_code: Optional[str] = None
+    address_country: Optional[str] = None
     lawful_basis: LawfulBasis = LawfulBasis.LEGITIMATE_INTEREST
     notice_display_mode: NoticeDisplayMode = NoticeDisplayMode.PASSIVE
     retention_days: int = 1095  # 3 years default
@@ -72,6 +81,11 @@ class TenantCreate(TenantBase):
 class TenantUpdate(BaseModel):
     company_name: Optional[str] = None
     organization_address: Optional[str] = None
+    address_street: Optional[str] = None
+    address_city: Optional[str] = None
+    address_state: Optional[str] = None
+    address_postal_code: Optional[str] = None
+    address_country: Optional[str] = None
     lawful_basis: Optional[LawfulBasis] = None
     notice_display_mode: Optional[NoticeDisplayMode] = None
     retention_days: Optional[int] = None
@@ -190,6 +204,14 @@ class TenantInfoConfirmRequest(BaseModel):
 
     company_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     organization_address: Optional[str] = Field(default=None, max_length=500)
+    # Structured address parts. When any are sent, the service recomposes
+    # organization_address from the full (merged) part set so the DPA keeps a
+    # single joined address line.
+    address_street: Optional[str] = Field(default=None, max_length=200)
+    address_city: Optional[str] = Field(default=None, max_length=100)
+    address_state: Optional[str] = Field(default=None, max_length=100)
+    address_postal_code: Optional[str] = Field(default=None, max_length=20)
+    address_country: Optional[str] = Field(default=None, max_length=100)
     dpo_contact_email: Optional[EmailStr] = None
     privacy_policy_url: Optional[str] = None
     country_of_hosting: Optional[str] = None
@@ -213,6 +235,11 @@ class TenantInfoConfirmationOut(BaseModel):
     tenant_id: str
     company_name: str
     organization_address: Optional[str] = None
+    address_street: Optional[str] = None
+    address_city: Optional[str] = None
+    address_state: Optional[str] = None
+    address_postal_code: Optional[str] = None
+    address_country: Optional[str] = None
     dpo_contact_email: Optional[str] = None
     privacy_policy_url: Optional[str] = None
     country_of_hosting: Optional[str] = None

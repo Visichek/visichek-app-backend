@@ -159,8 +159,13 @@ async def get_tenant_usage_summary(
     #    as the primary "X of Y used" progress bars on the dashboard.
     month_start, month_end = get_month_bounds()
 
+    # Branch docs store ``status: "active"|"inactive"`` (no ``is_active``
+    # field) — locked branches (status=inactive, see branch_service.
+    # enforce_branch_lock / lock_down_to_hq) must not count as used
+    # capacity in usage displays. ``_enforce_branch_cap`` intentionally
+    # keeps counting ALL branches (locked ones still consume cap space).
     branches_count = await db["branches"].count_documents(
-        {"tenant_id": tenant_id, "is_active": {"$ne": False}}
+        {"tenant_id": tenant_id, "status": {"$ne": "inactive"}}
     )
     departments_count = await db["departments"].count_documents(
         {"tenant_id": tenant_id, "is_active": {"$ne": False}}
@@ -169,24 +174,37 @@ async def get_tenant_usage_summary(
         {"tenant_id": tenant_id, "account_status": "ACTIVE"}
     )
 
-    # Visitors-this-month: count visit_sessions created in the current
-    # calendar month. This matches the cap definition
-    # (``max_visitors_per_month``) which is enforced at session creation
-    # time. We fall back to the ``visitors`` collection if a tenant has
-    # legacy data without sessions yet.
-    visitors_this_month = await db["visit_sessions"].count_documents(
+    # Visitors-this-month: the new-visitor first-seen ledger (WS0.3) is now
+    # the source of truth — it supersedes the historical visit_sessions
+    # (by date_created) / visitors-collection fallback, which diverged from
+    # what cap enforcement actually counts (visit_sessions by
+    # check_in_time). visitors_by_branch gives the per-branch breakdown the
+    # dashboard needs; total_checkins_this_month keeps a separate raw
+    # check-in-activity number (visit_sessions + checkins, includes
+    # returning visitors) for dashboards that want that instead.
+    from repositories.visitor_branch_first_repo import (
+        count_new_for_month,
+        counts_by_branch_for_month,
+    )
+
+    visitors_this_month = await count_new_for_month(tenant_id, month_start, month_end)
+    visitors_by_branch = await counts_by_branch_for_month(
+        tenant_id, month_start, month_end
+    )
+
+    visit_sessions_this_month = await db["visit_sessions"].count_documents(
         {
             "tenant_id": tenant_id,
             "date_created": {"$gte": month_start, "$lt": month_end},
         }
     )
-    if visitors_this_month == 0:
-        visitors_this_month = await db["visitors"].count_documents(
-            {
-                "tenant_id": tenant_id,
-                "date_created": {"$gte": month_start, "$lt": month_end},
-            }
-        )
+    checkins_this_month = await db["checkins"].count_documents(
+        {
+            "tenant_id": tenant_id,
+            "date_created": {"$gte": month_start, "$lt": month_end},
+        }
+    )
+    total_checkins_this_month = visit_sessions_this_month + checkins_this_month
 
     appointments_this_month = await db["expected_appointments"].count_documents(
         {
@@ -200,6 +218,8 @@ async def get_tenant_usage_summary(
         "departments": departments_count,
         "system_users": system_users_count,
         "visitors_this_month": visitors_this_month,
+        "visitors_by_branch": visitors_by_branch,
+        "total_checkins_this_month": total_checkins_this_month,
         "appointments_this_month": appointments_this_month,
         # Keep month boundary on the response so the FE can render
         # "resets in N days" without recomputing client-side.

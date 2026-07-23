@@ -6,6 +6,7 @@ import json
 import requests  # type: ignore[import-untyped]
 
 from core.errors import AppException, ErrorCode
+from core.payments.callback import resolve_browser_callback_url
 from core.payments.provider import PaymentProvider
 from core.payments.types import (
     PaymentIntentRequest,
@@ -40,9 +41,7 @@ class FlutterwavePaymentProvider(PaymentProvider):
                 "tx_ref": payload.reference,
                 "amount": payload.amount_minor / 100,
                 "currency": payload.currency,
-                "redirect_url": payload.metadata.get("redirect_url")
-                if payload.metadata
-                else None,
+                "redirect_url": resolve_browser_callback_url(payload.metadata),
                 "customer": {"email": payload.customer_email}
                 if payload.customer_email
                 else None,

@@ -18,7 +18,7 @@ SUBJECT = "[Support] {tenant_company_name} replied on: {case_subject}"
 def _common(context: dict[str, Any]) -> dict[str, Any]:
     return {
         "case_subject": str(context.get("case_subject", "(no subject)")),
-        "company_name": str(context.get("tenant_company_name", "A tenant")),
+        "company_name": str(context.get("tenant_company_name", "An organization")),
         "preview": str(context.get("message_preview", "")),
         "link": str(context.get("case_url", "#")),
     }
@@ -28,8 +28,8 @@ def render_html(context: dict[str, Any]) -> str:
     c = _common(context)
 
     content = (
-        ui.eyebrow("Tenant reply")
-        + ui.heading("Tenant replied on support case")
+        ui.eyebrow("Organization reply")
+        + ui.heading("Organization replied on support case")
         + ui.paragraph(
             f"<strong>{c['company_name']}</strong> posted on {c['case_subject']}."
         )
@@ -37,7 +37,7 @@ def render_html(context: dict[str, Any]) -> str:
         + ui.button("Open case", c["link"])
     )
 
-    return ui.page(content, preheader="A tenant replied on a case")
+    return ui.page(content, preheader="An organization replied on a case")
 
 
 def render_text(context: dict[str, Any]) -> str:

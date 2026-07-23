@@ -30,6 +30,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from schemas.pricing_marketing_schema import (
+    PricingAddonCard,
     PricingComparisonCell,
     PricingComparisonRow,
     PricingComparisonSection,
@@ -40,11 +41,14 @@ from schemas.pricing_marketing_schema import (
     PricingPlanCard,
 )
 from schemas.plan_schema import PlanOut, PlanStatus, PlanTier
+from schemas.addon_schema import AddonOut, AddonStatus
 from repositories.pricing_marketing_repo import (
     create_overlay,
     get_overlay,
     replace_overlay,
 )
+from repositories.addon_repo import list_addons
+from services.addon_service import resolve_addon_unit_price
 from services.plan_feature_service import get_feature_catalog
 from services.plan_service import retrieve_plans
 
@@ -108,6 +112,17 @@ DEFAULT_PLAN_BULLETS: Dict[str, List[str]] = {
         "4-hour SLA on priority support",
         "Custom integrations & workflows",
     ],
+}
+
+
+# ── Default blurbs per addon slug ─────────────────────────────────────
+# Surfaced under the addon card when the overlay doesn't override them.
+
+DEFAULT_ADDON_BLURBS: Dict[str, str] = {
+    "additional-branch": (
+        "Extra branches — 20% off Premium, each with its own "
+        "1,000 new visitors/month."
+    ),
 }
 
 
@@ -415,6 +430,85 @@ def _build_plan_card(
     )
 
 
+# ── Add-on cards ──────────────────────────────────────────────────────
+
+
+def _addon_requires_plan(addon: AddonOut) -> Optional[str]:
+    """Plan slug required to purchase this addon, if any.
+
+    Derived addons are priced off a specific plan (``derived_from.plan``)
+    and — by catalog convention — are only purchasable by tenants on
+    that plan (see ``addon_service._require_premium_tier`` for the
+    ``additional-branch`` gate). Fixed addons have no plan requirement
+    unless a future catalog field says otherwise.
+    """
+    if addon.pricing_mode == "derived" and addon.derived_from:
+        plan = addon.derived_from.get("plan")
+        if isinstance(plan, str) and plan:
+            return plan
+    return None
+
+
+#: Addons that show on the public marketing pricing page by default,
+#: even without an explicit overlay opt-in. Keep this list small and
+#: deliberate — any other active catalog addon (eg a future storage
+#: top-up) stays hidden from marketing until an admin explicitly sets
+#: ``visible: true`` on its overlay row. This is an opt-in posture:
+#: admin-activating an addon in the catalog must never silently
+#: surface it on the public site.
+MARKETING_DEFAULT_VISIBLE_SLUGS = {"additional-branch"}
+
+
+async def _build_addon_cards(
+    overlay: Optional[PricingMarketingOverlayOut],
+) -> List[PricingAddonCard]:
+    """Live-resolve the marketing add-on catalog (eg "Additional branch").
+
+    Values (price) always come from the live addon catalog via
+    ``resolve_addon_unit_price`` — never cached/overlay-stored. The
+    overlay only ever supplies text (blurb) / visibility, following the
+    same contract as plan/feature copy.
+
+    Visibility is opt-in: a card is included only if the overlay
+    explicitly sets ``visible: true`` for that slug, or the slug is in
+    ``MARKETING_DEFAULT_VISIBLE_SLUGS``. Any other active catalog addon
+    (eg an admin-activated storage top-up) stays hidden until an admin
+    opts it in via the overlay. This builds the PUBLIC payload, so
+    non-visible cards are dropped entirely — never returned with
+    ``visible: false`` — to avoid leaking unreleased SKU pricing.
+    """
+    addons_copy = _index_by(overlay.addons, "slug") if overlay else {}
+    catalog = await list_addons({"status": AddonStatus.ACTIVE.value})
+
+    cards: List[PricingAddonCard] = []
+    for addon in catalog:
+        slug = addon.slug or addon.name
+        copy = addons_copy.get(slug)
+        if copy and copy.visible is not None:
+            visible = bool(copy.visible)
+        else:
+            visible = slug in MARKETING_DEFAULT_VISIBLE_SLUGS
+        if not visible:
+            continue
+        blurb = (copy.blurb if copy and copy.blurb else None) or (
+            DEFAULT_ADDON_BLURBS.get(slug) or addon.description
+        )
+        price = await resolve_addon_unit_price(addon)
+        cards.append(
+            PricingAddonCard(
+                slug=slug,
+                name=addon.name,
+                blurb=blurb,
+                price_monthly=price,
+                currency=addon.currency,
+                requires_plan=_addon_requires_plan(addon),
+                visible=visible,
+            )
+        )
+    cards.sort(key=lambda c: c.slug)
+    return cards
+
+
 # ── Row collection (feature + cap + storage + throughput rows) ───────
 
 
@@ -700,6 +794,7 @@ async def render_pricing_marketing() -> PricingMarketingOut:
     plan_cards = [_build_plan_card(p, overlay) for p in visible]
     rows_meta = _row_inventory(visible)
     sections = _build_sections(rows_meta, visible, overlay)
+    addon_cards = await _build_addon_cards(overlay)
 
     currency = (
         overlay.currency_display
@@ -720,6 +815,7 @@ async def render_pricing_marketing() -> PricingMarketingOut:
         currency=currency,
         plans=plan_cards,
         sections=sections,
+        addons=addon_cards,
         last_updated=int(overlay.last_updated)
         if overlay and overlay.last_updated
         else int(time.time()),
@@ -800,6 +896,7 @@ async def apply_overlay_patch(
             plans=patch.plans or [],
             features=patch.features or [],
             categories=patch.categories or [],
+            addons=patch.addons or [],
         )
         return await create_overlay(seed)
 
@@ -819,6 +916,9 @@ async def apply_overlay_patch(
     )
     current_dict["categories"] = _merge_list(
         current_dict.get("categories", []), patch.categories, "category_key"
+    )
+    current_dict["addons"] = _merge_list(
+        current_dict.get("addons", []), patch.addons, "slug"
     )
 
     current_dict["last_updated"] = int(time.time())
@@ -854,6 +954,7 @@ async def delete_overlay_row(kind: str, key: str) -> PricingMarketingOverlayOut:
             plans=[],
             features=[],
             categories=[],
+            addons=[],
             date_created=int(time.time()),
             last_updated=int(time.time()),
         )
@@ -872,6 +973,10 @@ async def delete_overlay_row(kind: str, key: str) -> PricingMarketingOverlayOut:
             c
             for c in current_dict.get("categories", [])
             if c.get("category_key") != key
+        ]
+    elif kind == "addon":
+        current_dict["addons"] = [
+            a for a in current_dict.get("addons", []) if a.get("slug") != key
         ]
     else:
         raise ValueError(f"Unknown pricing_marketing row kind: {kind}")

@@ -292,7 +292,7 @@ def validate_enum_value(
         raise AppException(
             status_code=400,
             code=ErrorCode.VALIDATION_FAILED,
-            message=f"'{value}' is not an accepted {kind.value} for this tenant",
+            message=f"'{value}' is not an accepted {kind.value} for this organization",
             details={
                 "kind": kind.value,
                 "accepted": [opt.value for opt in enum_view.options],

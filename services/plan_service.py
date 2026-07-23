@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
 
 from bson import ObjectId
@@ -21,6 +22,8 @@ from schemas.plan_schema import (
     PlanTier,
 )
 from services.audit_service import record_audit_event
+
+logger = logging.getLogger(__name__)
 
 
 async def add_plan(
@@ -107,6 +110,17 @@ async def add_plan(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Plan with name '{plan_data.name}' already exists",
         )
+
+    # Enterprise plans are bespoke per-customer documents and must NOT
+    # leak into the public catalogue by default (the ``is_public``
+    # dataclass/schema default is True, which is right for the three
+    # singleton tiers but wrong here). Only override when the caller
+    # did not explicitly set it — an admin who deliberately passes
+    # ``is_public=True`` for a showcase enterprise plan is still
+    # respected.
+    if plan_tier_value == "enterprise" and "is_public" not in plan_data.model_fields_set:
+        plan_data.is_public = False
+
     plan = await create_plan(plan_data, preassigned_id=preassigned_id)
 
     # Record audit event (fire-and-forget)
@@ -194,9 +208,23 @@ async def update_plan_by_id(plan_id: str, plan_data: PlanUpdate) -> Optional[Pla
             )
 
     if existing and existing.name:
-        from config.plan_tiers import get_canonical_plan
+        from config.plan_tiers import ENTERPRISE_TEMPLATE, get_canonical_plan
 
         canonical = get_canonical_plan(existing.name)
+        if canonical is None:
+            existing_tier_value = (
+                existing.tier.value
+                if hasattr(existing.tier, "value")
+                else str(existing.tier)
+            )
+            if existing_tier_value == "enterprise":
+                # Enterprise plans are bespoke (each has its own slug),
+                # so ``get_canonical_plan`` never resolves one — fall
+                # back to the shared ``ENTERPRISE_TEMPLATE`` allowlist
+                # per its own docstring. This closes the previously
+                # dead-code gap where enterprise edits were completely
+                # unrestricted.
+                canonical = ENTERPRISE_TEMPLATE
         if canonical is not None:
             disallowed: list[str] = []
             sent = plan_data.model_dump(exclude_unset=True, exclude_none=True)
@@ -234,7 +262,24 @@ async def update_plan_by_id(plan_id: str, plan_data: PlanUpdate) -> Optional[Pla
                     ),
                 )
 
-    return await update_plan({"_id": ObjectId(plan_id)}, plan_data)
+    updated = await update_plan({"_id": ObjectId(plan_id)}, plan_data)
+
+    # Post-write hook: any addon whose price is derived from THIS plan
+    # (e.g. the "additional-branch" addon derives from Premium's
+    # base_price_monthly) needs its cached unit_price recomputed right
+    # away, not left to drift until the next catalog read.
+    if updated is not None and updated.name:
+        try:
+            from services.addon_service import resync_derived_addon_prices
+
+            await resync_derived_addon_prices(updated.name)
+        except Exception:
+            logger.exception(
+                "plan_service: failed to resync derived addon prices for plan %s",
+                updated.name,
+            )
+
+    return updated
 
 
 async def archive_plan(plan_id: str) -> Optional[PlanOut]:

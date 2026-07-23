@@ -233,6 +233,16 @@ async def submit_checkin_for_tenant_endpoint(
             "result (subject to plan + tenant settings allowing KYC)."
         ),
     ),
+    registration_token: Optional[str] = Form(
+        None,
+        description=(
+            "Signed QR registration token (Issue 5). When present its "
+            "tenant/department/branch scope is verified and overrides any "
+            "conflicting ``tenant_specific_data['department_id']`` / "
+            "``branch_id`` value — a department-scoped QR pins the "
+            "department server-side so the kiosk may omit the picker."
+        ),
+    ),
     consent_granted: Optional[bool] = Form(
         None, description='"true"/"false" — visitor accepted the privacy notice'
     ),
@@ -302,6 +312,7 @@ async def submit_checkin_for_tenant_endpoint(
         id_file_mime=file_mime,
         id_type=id_type,
         kyc_reference_id=kyc_reference_id,
+        registration_token=registration_token,
         visitor_lat=visitor_lat,
         visitor_lng=visitor_lng,
         consent=consent,

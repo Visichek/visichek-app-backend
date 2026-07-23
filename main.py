@@ -338,6 +338,23 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("session_user_type backfill failed at startup", exc_info=True)
 
+    # One-shot new-visitor first-seen ledger backfill (WS0.3). Derives
+    # earliest (tenant, branch, visitor_profile) visits from visit_sessions
+    # + checkins and inserts any missing visitor_branch_firsts rows.
+    # Idempotent: record_first_seen is insert-if-absent, backed by the
+    # unique index. See services/visitor_first_seen_backfill.py.
+    try:
+        from services.visitor_first_seen_backfill import backfill_visitor_first_seen
+
+        first_seen_backfill_summary = await backfill_visitor_first_seen()
+        logger.info(
+            "visitor_first_seen_backfill summary: %s", first_seen_backfill_summary
+        )
+    except Exception:
+        logger.warning(
+            "visitor_first_seen_backfill failed at startup", exc_info=True
+        )
+
     # Main super_admin invariant — backfill + auto-heal. Ensures every
     # active tenant has exactly one ``is_main_super_admin=True`` row.
     # Runs AFTER ensure_indexes (which creates the partial-unique index
@@ -367,6 +384,76 @@ async def lifespan(app: FastAPI):
         logger.info("plan_bootstrap summary: %s", plan_bootstrap_summary)
     except Exception:
         logger.warning("plan_bootstrap failed at startup", exc_info=True)
+
+    # Add-on catalog seed. Idempotent: upserts singleton catalog add-ons
+    # (currently "additional-branch") by slug, preserving admin-edited
+    # description text across restarts. Runs after plan bootstrap since
+    # derived pricing needs the Premium plan row to already exist.
+    try:
+        from services.addon_bootstrap import ensure_addon_catalog
+
+        addon_bootstrap_summary = await ensure_addon_catalog()
+        logger.info("addon_bootstrap summary: %s", addon_bootstrap_summary)
+    except Exception:
+        logger.warning("addon_bootstrap failed at startup", exc_info=True)
+
+    # Task 9: grandfather existing Premium tenants ahead of the branch-quota
+    # flip. Idempotent: skips tenants already granted (metadata marker) and
+    # tenants already notified (per-tenant backfill_markers doc). MUST run
+    # before the stored-doc flip immediately below — grants must exist
+    # before the tightened cap goes live. See
+    # services/premium_branch_grandfather_backfill.py.
+    try:
+        from services.premium_branch_grandfather_backfill import (
+            backfill_premium_branch_grandfathering,
+        )
+
+        grandfather_summary = await backfill_premium_branch_grandfathering()
+        logger.info(
+            "premium_branch_grandfather_backfill summary: %s", grandfather_summary
+        )
+    except Exception:
+        logger.warning(
+            "premium_branch_grandfather_backfill failed at startup", exc_info=True
+        )
+
+    # Task 9: flip the STORED premium plan document's max_branches. The
+    # canonical config flip (config/plan_tiers.py) alone does not update
+    # existing installs' persisted plan doc — plan_bootstrap's refresh
+    # deliberately excludes tenant_caps. MUST run after the grandfathering
+    # backfill above (same startup, before traffic). See
+    # services/premium_max_branches_flip_migration.py.
+    try:
+        from services.premium_max_branches_flip_migration import (
+            flip_stored_premium_max_branches,
+        )
+
+        flipped = await flip_stored_premium_max_branches()
+        logger.info("premium_max_branches_flip: applied=%s", flipped)
+    except Exception:
+        logger.warning("premium_max_branches_flip failed at startup", exc_info=True)
+
+    # Post-backfill safety check (log-only, never blocks startup): expect
+    # zero Premium tenants whose active branch count now exceeds their
+    # effective (addon-inclusive) max_branches after the grants + flip.
+    try:
+        from services.premium_branch_grandfather_backfill import (
+            check_premium_branch_cap_safety,
+        )
+
+        cap_violators = await check_premium_branch_cap_safety()
+        if cap_violators:
+            logger.error(
+                "premium_branch_grandfather_backfill: %d tenant(s) over cap "
+                "after migration: %s",
+                len(cap_violators),
+                cap_violators,
+            )
+    except Exception:
+        logger.warning(
+            "premium_branch_grandfather_backfill safety check failed at startup",
+            exc_info=True,
+        )
 
     # Default FAQ seed. Idempotent: only inserts items whose item_key
     # (or normalised question) isn't already in the overlay, so admin
@@ -433,6 +520,20 @@ async def lifespan(app: FastAPI):
         trigger=IntervalTrigger(hours=6),
         id="expire_due_addons",
         name="Expire Due Addons",
+        replace_existing=True,
+    )
+
+    # Schedule recurring add-on renewal (hourly, alongside subscription
+    # renewal). Charges the tenant's saved instrument for recurring
+    # tenant_addons (e.g. additional-branch) due for renewal; a declined
+    # or missing-instrument charge enters a dunning-style grace window
+    # before the row is marked expired (never a fake create_intent
+    # success — see services/addon_renewal_service.py).
+    scheduler.add_job(
+        "services.addon_renewal_service:renew_due_addons",
+        trigger=IntervalTrigger(hours=1),
+        id="renew_due_addons",
+        name="Addon Renewal Check",
         replace_existing=True,
     )
 
@@ -896,7 +997,10 @@ from api.v1.sub_processor_route import router as v1_sub_processor_route_router
 from api.v1.compliance_route import router as v1_compliance_route_router
 from api.v1.audit_route import router as v1_audit_route_router
 from api.v1.incident_route import router as v1_incident_route_router
-from api.v1.plan_route import router as v1_plan_route_router
+from api.v1.plan_route import (
+    admin_router as v1_plan_admin_route_router,
+    router as v1_plan_route_router,
+)
 from api.v1.pricing_marketing_route import router as v1_pricing_marketing_route_router
 from api.v1.faq_route import router as v1_faq_route_router
 from api.v1.subscription_route import router as v1_subscription_route_router
@@ -1019,6 +1123,7 @@ app.include_router(v1_compliance_route_router, prefix="/v1")
 app.include_router(v1_audit_route_router, prefix="/v1")
 app.include_router(v1_incident_route_router, prefix="/v1")
 app.include_router(v1_plan_route_router, prefix="/v1")
+app.include_router(v1_plan_admin_route_router, prefix="/v1")
 app.include_router(v1_pricing_marketing_route_router, prefix="/v1")
 app.include_router(v1_faq_route_router, prefix="/v1")
 app.include_router(v1_subscription_route_router, prefix="/v1")

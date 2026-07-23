@@ -7,6 +7,7 @@ import json
 import requests  # type: ignore[import-untyped]
 
 from core.errors import AppException, ErrorCode
+from core.payments.callback import resolve_browser_callback_url
 from core.payments.provider import PaymentProvider
 from core.payments.types import (
     PaymentIntentRequest,
@@ -41,9 +42,7 @@ class PaystackPaymentProvider(PaymentProvider):
                 "amount": payload.amount_minor,
                 "currency": payload.currency,
                 "email": payload.customer_email,
-                "callback_url": payload.metadata.get("redirect_url")
-                if payload.metadata
-                else None,
+                "callback_url": resolve_browser_callback_url(payload.metadata),
                 "metadata": payload.metadata or {},
             },
             headers=self._headers(),

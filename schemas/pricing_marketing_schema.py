@@ -43,6 +43,20 @@ class PricingCategoryCopy(BaseModel):
     sort_order: int = 0
 
 
+class PricingAddonCopy(BaseModel):
+    """Per-addon marketing copy. Keyed by ``slug`` (addon catalog slug).
+
+    Same overlay contract as ``PricingPlanCopy``: text/visibility only,
+    never price — price is always live-resolved from the addon catalog
+    (``services.addon_service.resolve_addon_unit_price``).
+    """
+
+    slug: str
+    blurb: Optional[str] = None
+    # None means "use the ship-with-code default / catalog visibility".
+    visible: Optional[bool] = None
+
+
 class PricingMarketingOverlayBase(BaseModel):
     """Persisted marketing overlay — the singleton document."""
 
@@ -52,6 +66,7 @@ class PricingMarketingOverlayBase(BaseModel):
     plans: List[PricingPlanCopy] = Field(default_factory=list)
     features: List[PricingFeatureCopy] = Field(default_factory=list)
     categories: List[PricingCategoryCopy] = Field(default_factory=list)
+    addons: List[PricingAddonCopy] = Field(default_factory=list)
 
 
 class PricingMarketingOverlayCreate(PricingMarketingOverlayBase):
@@ -75,6 +90,7 @@ class PricingMarketingOverlayPatch(BaseModel):
     plans: Optional[List[PricingPlanCopy]] = None
     features: Optional[List[PricingFeatureCopy]] = None
     categories: Optional[List[PricingCategoryCopy]] = None
+    addons: Optional[List[PricingAddonCopy]] = None
 
 
 class PricingMarketingOverlayOut(PricingMarketingOverlayBase):
@@ -143,6 +159,19 @@ class PricingComparisonSection(BaseModel):
     rows: List[PricingComparisonRow]
 
 
+class PricingAddonCard(BaseModel):
+    """One add-on card (eg "Additional branch") rendered under a plan."""
+
+    slug: str
+    name: str
+    blurb: Optional[str] = None
+    price_monthly: Optional[float] = None
+    currency: str
+    # Plan slug required to purchase (eg "premium"), None if unrestricted.
+    requires_plan: Optional[str] = None
+    visible: bool = True
+
+
 class PricingMarketingOut(BaseModel):
     """Full rendered marketing page payload."""
 
@@ -151,6 +180,7 @@ class PricingMarketingOut(BaseModel):
     currency: str
     plans: List[PricingPlanCard]
     sections: List[PricingComparisonSection]
+    addons: List[PricingAddonCard] = Field(default_factory=list)
     last_updated: int
 
 
@@ -161,3 +191,4 @@ class PricingMarketingOverlayRowKind(str, Enum):
     PLAN = "plan"
     FEATURE = "feature"
     CATEGORY = "category"
+    ADDON = "addon"

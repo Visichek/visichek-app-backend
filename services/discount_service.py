@@ -165,7 +165,7 @@ async def validate_discount_code(
         raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
             code=ErrorCode.DISCOUNT_INVALID,
-            message="Discount code is not valid for this tenant",
+            message="Discount code is not valid for this organization",
             details={"code": code, "tenant_id": tenant_id},
         )
 

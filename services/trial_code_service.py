@@ -147,7 +147,7 @@ async def claim_trial_for_tenant(
         raise AppException(
             status_code=status.HTTP_409_CONFLICT,
             code=ErrorCode.TRIAL_ALREADY_USED,
-            message="Tenant has already redeemed their trial",
+            message="Organization has already redeemed their trial",
             details={
                 "tenant_id": tenant_id,
                 "redeemed_trial_id": redeemed.id,
@@ -217,7 +217,7 @@ async def preview_trial_code(
         raise AppException(
             status_code=status.HTTP_403_FORBIDDEN,
             code=ErrorCode.TRIAL_INVALID,
-            message="Trial code does not belong to this tenant",
+            message="Trial code does not belong to this organization",
             details={"code": code, "tenant_id": tenant_id},
         )
     if trial.status != TrialCodeStatus.PENDING:
@@ -258,7 +258,7 @@ async def validate_trial_code_for_checkout(
         raise AppException(
             status_code=status.HTTP_403_FORBIDDEN,
             code=ErrorCode.TRIAL_INVALID,
-            message="Trial code does not belong to this tenant",
+            message="Trial code does not belong to this organization",
             details={"code": code, "tenant_id": tenant_id},
         )
     if trial.status != TrialCodeStatus.PENDING:
@@ -280,7 +280,7 @@ async def validate_trial_code_for_checkout(
         raise AppException(
             status_code=status.HTTP_409_CONFLICT,
             code=ErrorCode.TRIAL_ALREADY_USED,
-            message="Tenant has already redeemed their trial",
+            message="Organization has already redeemed their trial",
             details={"tenant_id": tenant_id, "redeemed_trial_id": redeemed.id},
         )
     return trial
