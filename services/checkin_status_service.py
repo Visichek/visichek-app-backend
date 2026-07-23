@@ -107,7 +107,8 @@ async def publish_checkin_status_nudge(checkin_id: str) -> None:
 
 def _checkin_state_value(checkin: Any) -> str:
     state = getattr(checkin, "state", None)
-    return state.value if hasattr(state, "value") else str(state or "")
+    value = getattr(state, "value", state)
+    return str(value or "")
 
 
 async def get_public_checkin_status(checkin_id: str) -> PublicCheckinStatusOut:

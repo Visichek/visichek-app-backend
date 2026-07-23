@@ -1320,13 +1320,6 @@ SECURITY_OFFICER_PERMISSIONS: list[Permission] = [
     _p("create_incident", ["POST"], "/v1/incidents/", "Create incident"),
     _p("list_incidents", ["GET"], "/v1/incidents/", "List incidents"),
     _p("get_incident", ["GET"], "/v1/incidents/{incident_id}", "View incident"),
-    # Branch point of contact (own branches only — enforced in-handler)
-    _p(
-        "get_branch_contact",
-        ["GET"],
-        "/v1/branches/{branch_id}/contact",
-        "View branch point of contact",
-    ),
 ]
 
 

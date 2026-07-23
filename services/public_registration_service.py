@@ -693,11 +693,7 @@ async def _resolve_badge_pass_tenant(
                 or getattr(branding, "primary_color", None),
                 text_color=getattr(branding, "badge_text_color", None) or "#FFFFFF",
                 logo_url=logo_url,
-                logo_position=(
-                    logo_position.value
-                    if hasattr(logo_position, "value")
-                    else logo_position
-                ),
+                logo_position=getattr(logo_position, "value", logo_position),
                 company_display_name=getattr(branding, "company_display_name", None)
                 or company_name,
             )
