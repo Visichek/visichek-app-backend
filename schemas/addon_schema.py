@@ -208,6 +208,12 @@ class TenantAddonBase(BaseModel):
 
     created_by_user_id: Optional[str] = None
 
+    # Free-form provenance bag. Currently used by the Task 9 grandfathering
+    # backfill: ``{"granted": "premium-per-location-migration"}`` marks a
+    # zero-price row minted for a pre-existing Premium tenant so the
+    # backfill can skip tenants it has already processed on re-run.
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
 
 class TenantAddonCreate(TenantAddonBase):
     date_created: int = Field(default_factory=lambda: int(time.time()))

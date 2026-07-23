@@ -497,7 +497,18 @@ PREMIUM_PLAN = CanonicalPlan(
     tenant_caps=TenantCapLimit(
         max_system_users=50,
         max_departments=15,  # per location — admins can scale via overrides
-        max_branches=None,  # unlimited
+        # Task 9: per-location pricing flip. Premium tenants now pay per
+        # branch via the "additional-branch" add-on (see addon_bootstrap.py)
+        # rather than getting unlimited branches baked into the tier. Note:
+        # this canonical-config value alone does NOT change the STORED
+        # plan document for existing installs — plan_bootstrap's refresh
+        # deliberately excludes tenant_caps (see
+        # services.plan_bootstrap._canonical_to_plan_update) so an admin's
+        # tuned caps survive redeploys. The stored doc is flipped by the
+        # one-shot services.premium_max_branches_flip_migration, which MUST
+        # run after the services.premium_branch_grandfather_backfill grants
+        # existing tenants their perpetual per-branch entitlements.
+        max_branches=1,
         max_visitors_per_month=500,  # per location baseline
         max_appointments_per_month=None,
         visitors_per_branch_per_month=1000,

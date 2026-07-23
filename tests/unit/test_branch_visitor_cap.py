@@ -236,10 +236,14 @@ class TestPlanTiersVisitorsPerBranch:
             "visitors_per_branch_per_month" in PREMIUM_PLAN.adjustable_cap_fields
         )
 
-    def test_premium_plan_max_branches_untouched(self):
+    def test_premium_plan_max_branches_flipped_to_one(self):
+        """Task 9: Premium moved from unlimited branches to 1 baked-in
+        branch + paid ``additional-branch`` add-ons for more. Existing
+        Premium tenants are protected by the grandfathering backfill —
+        see services/premium_branch_grandfather_backfill.py."""
         from config.plan_tiers import PREMIUM_PLAN
 
-        assert PREMIUM_PLAN.tenant_caps.max_branches is None
+        assert PREMIUM_PLAN.tenant_caps.max_branches == 1
 
     def test_enterprise_template_adjustable_fields_include_branch_cap(self):
         from config.plan_tiers import ENTERPRISE_TEMPLATE
