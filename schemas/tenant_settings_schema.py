@@ -112,6 +112,12 @@ class TenantSettingsBase(BaseModel):
     sso_enabled: bool = False
     sso_provider: Optional[SsoProvider] = None
 
+    # Beta features — org-wide opt-in to early-access UI in the tenant app
+    # (chat-style support cases, incident calendar). Toggled by the
+    # super_admin from Settings → Advanced; surfaced to every tenant role
+    # through the /system-users/me tenant summary.
+    beta_features_enabled: bool = False
+
     @model_validator(mode="after")
     def validate_settings(self):
         if (
@@ -198,6 +204,9 @@ class TenantSettingsUpdate(BaseModel):
     webhook_url: Optional[str] = None
     webhook_secret: Optional[str] = None
     webhook_events: Optional[List[str]] = None
+
+    # Beta features
+    beta_features_enabled: Optional[bool] = None
 
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 

@@ -786,6 +786,10 @@ class TestSystemUserRoutes:
                 "api.v1.system_user_route.retrieve_tenant_by_id",
                 new_callable=AsyncMock,
                 return_value=None,
+            ), patch(
+                "api.v1.system_user_route.retrieve_beta_features_enabled",
+                new_callable=AsyncMock,
+                return_value=False,
             ):
                 async with AsyncClient(
                     transport=ASGITransport(app=app), base_url="http://test"

@@ -51,6 +51,7 @@ from services.system_user_service import (
     verify_system_user_otp,
 )
 from services.tenant_service import retrieve_tenant_by_id
+from services.tenant_settings_service import retrieve_beta_features_enabled
 
 
 def jsonable_encoder(obj, **kwargs):
@@ -777,6 +778,9 @@ async def get_my_profile(
     user = await retrieve_system_user_by_id(user_id=principal.user_id)
     tenant_summary = None
     if principal.tenant_id:
+        beta_features_enabled = await retrieve_beta_features_enabled(
+            principal.tenant_id
+        )
         try:
             tenant = await retrieve_tenant_by_id(principal.tenant_id)
             tenant_summary = TenantProfileSummary(
@@ -792,6 +796,7 @@ async def get_my_profile(
                 enable_repeat_visitor_recognition=tenant.enable_repeat_visitor_recognition,
                 mfa_default_for_users=tenant.mfa_default_for_users,
                 mfa_user_override_allowed=tenant.mfa_user_override_allowed,
+                beta_features_enabled=beta_features_enabled,
             )
         except Exception:
             pass

@@ -169,6 +169,10 @@ class TenantProfileSummary(BaseModel):
     enable_repeat_visitor_recognition: Optional[bool] = None
     mfa_default_for_users: Optional[bool] = None
     mfa_user_override_allowed: Optional[bool] = None
+    # Org-wide beta-features opt-in from tenant_settings — read by every
+    # role at boot so the frontend can gate early-access UI without a
+    # super_admin-only settings call.
+    beta_features_enabled: Optional[bool] = None
 
 
 class SystemUserProfileOut(SystemUserOut):

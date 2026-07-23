@@ -30,6 +30,22 @@ async def retrieve_or_create_tenant_settings(tenant_id: str) -> TenantSettingsOu
     return await create_tenant_settings(defaults)
 
 
+async def retrieve_beta_features_enabled(tenant_id: str) -> bool:
+    """Read-only lookup of the org beta-features flag for profile enrichment.
+
+    Sits on the /system-users/me boot path, so it never raises and never
+    upserts — a settings hiccup must not break login, and reads must not
+    create documents. Missing settings mean the flag is off.
+    """
+    try:
+        if not tenant_id or not ObjectId.is_valid(tenant_id):
+            return False
+        existing = await get_tenant_settings({"tenant_id": tenant_id})
+        return bool(existing.beta_features_enabled) if existing else False
+    except Exception:
+        return False
+
+
 async def update_tenant_settings_by_id(
     tenant_id: str,
     data: TenantSettingsUpdate,
