@@ -25,6 +25,81 @@ from schemas.branch_schema import BranchCreate, BranchOut, BranchUpdate
 from schemas.branch_schema import BranchStatus
 
 
+async def validate_branch_contact_user(
+    tenant_id: str,
+    contact_user_id: str,
+    branch_id: Optional[str] = None,
+) -> None:
+    """Validate a designated branch point-of-contact.
+
+    Rules (raises ``HTTPException`` on violation):
+
+    * must be a valid ObjectId belonging to a system_user of the SAME tenant;
+    * if that user has a branch-scoped role (dept_admin / receptionist /
+      security_officer), ``branch_id`` must be in their ``branch_ids`` — a
+      contact must be able to see the branch they front. On CREATE the branch
+      is new, so a branch-scoped user can only be designated after being
+      assigned to it (update flow).
+    """
+    if not ObjectId.is_valid(contact_user_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid contact_user_id format",
+        )
+    from repositories.system_user_repo import get_system_user
+
+    user = await get_system_user(
+        {"_id": ObjectId(contact_user_id), "tenant_id": tenant_id}
+    )
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contact user not found for this organization",
+        )
+    from security.principal import BRANCH_SCOPED_ROLES
+
+    role = getattr(user.role, "value", None) or str(user.role)
+    if role in BRANCH_SCOPED_ROLES:
+        assigned = list(getattr(user, "branch_ids", None) or [])
+        if not branch_id or branch_id not in assigned:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "This user has a branch-scoped role and is not assigned to "
+                    "this branch, so they cannot be its point of contact."
+                ),
+            )
+
+
+async def get_branch_contact_summary(branch: BranchOut):
+    """Resolve the point-of-contact card for a branch (never raises)."""
+    from services.summary_resolver import resolve_contact_summary
+
+    return await resolve_contact_summary(
+        tenant_id=branch.tenant_id,
+        contact_user_id=branch.contact_user_id,
+        branch_name=branch.name,
+        branch_email=branch.email,
+        branch_phone=branch.phone,
+    )
+
+
+async def get_org_contact_summary(tenant_id: str):
+    """Point-of-contact card for the organization: the main super admin."""
+    from services.summary_resolver import resolve_contact_summary
+
+    return await resolve_contact_summary(tenant_id=tenant_id)
+
+
+async def _enrich_branch_with_contact(branch: BranchOut) -> BranchOut:
+    try:
+        branch.contact_summary = await get_branch_contact_summary(branch)
+    except Exception:
+        # Enrichment is best-effort — never break a branch read.
+        branch.contact_summary = None
+    return branch
+
+
 async def add_branch(
     branch_data: BranchCreate,
     *,
@@ -33,6 +108,13 @@ async def add_branch(
     """Create a new branch for a tenant, enforcing plan limits."""
     # Check branch cap from tenant's plan
     await _enforce_branch_cap(branch_data.tenant_id)
+
+    if branch_data.contact_user_id:
+        await validate_branch_contact_user(
+            branch_data.tenant_id,
+            branch_data.contact_user_id,
+            branch_id=preassigned_id,
+        )
 
     # Check for duplicate branch name within the same tenant
     existing = await get_branch(
@@ -53,7 +135,10 @@ async def add_branch(
 async def retrieve_branch_by_id(branch_id: str) -> Optional[BranchOut]:
     if not ObjectId.is_valid(branch_id):
         return None
-    return await get_branch({"_id": ObjectId(branch_id)})
+    branch = await get_branch({"_id": ObjectId(branch_id)})
+    if branch is None:
+        return None
+    return await _enrich_branch_with_contact(branch)
 
 
 async def retrieve_branches_for_tenant(
@@ -61,8 +146,17 @@ async def retrieve_branches_for_tenant(
     start: int = 0,
     stop: int = 100,
 ) -> List[BranchOut]:
-    """List all branches belonging to a tenant."""
-    return await get_branches({"tenant_id": tenant_id}, start=start, stop=stop)
+    """List all branches belonging to a tenant, with contact_summary enriched
+    (feeds both the ``branches.list`` precompute loader and the route-side
+    fallback loader)."""
+    import asyncio
+
+    branches = await get_branches({"tenant_id": tenant_id}, start=start, stop=stop)
+    if branches:
+        await asyncio.gather(
+            *(_enrich_branch_with_contact(b) for b in branches)
+        )
+    return branches
 
 
 async def count_tenant_branches(tenant_id: str) -> int:

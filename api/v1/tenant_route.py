@@ -22,7 +22,11 @@ from core.queue.write_pipeline import enqueue_write
 from core.response_envelope import document_response
 from schemas.tenant_schema import TenantCreate, TenantUpdate
 from security.account_status_check import check_admin_account_status_and_permissions
-from security.auth import verify_any_token, verify_super_admin_token
+from security.auth import (
+    verify_any_token,
+    verify_super_admin_token,
+    verify_system_user_token,
+)
 from security.principal import AuthPrincipal
 from services.tenant_service import (
     retrieve_tenant_by_id_with_summary,
@@ -353,6 +357,43 @@ async def _load_tenants() -> List[Any]:
         t.model_dump(mode="json", by_alias=True) if hasattr(t, "model_dump") else t
         for t in tenants
     ]
+
+
+@router.get("/me/contact")
+@document_response(
+    message="Organization contact fetched successfully",
+    description=(
+        "Point-of-contact card for the authenticated user's organization: "
+        "the main super admin (name, email, role)."
+    ),
+    summary="Get organization point of contact",
+    success_example={
+        "user_id": "507f1f77bcf86cd799439012",
+        "full_name": "Ada Obi",
+        "email": "ada@acme.com",
+        "phone": None,
+        "role": "super_admin",
+        "source": "main_super_admin",
+    },
+    response_codes={
+        401: "Unauthorized - invalid or missing token",
+        403: "Forbidden - only super_admin can view the organization contact",
+        404: "Organization contact not found",
+    },
+)
+async def get_org_contact_endpoint(
+    principal: AuthPrincipal = Depends(verify_system_user_token("super_admin")),
+):
+    """Synchronous read (no queueing) — powers the Settings → Organization
+    contact card and the platform-admin org detail POC card."""
+    from fastapi import HTTPException
+
+    from services.branch_service import get_org_contact_summary
+
+    contact = await get_org_contact_summary(principal.tenant_id or "")
+    if contact is None:
+        raise HTTPException(status_code=404, detail="Organization contact not found")
+    return contact
 
 
 @router.get("/{tenant_id}")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from schemas.imports import *
 from pydantic import Field
+from schemas.summary_schema import ContactBriefSummary
 import time
 
 
@@ -24,6 +25,11 @@ class BranchBase(BaseModel):
     is_headquarters: bool = False
     status: BranchStatus = BranchStatus.ACTIVE
     metadata: Optional[dict] = None
+    # Designated point-of-contact: a system_user id in the SAME tenant. For
+    # branch-scoped roles (dept_admin/receptionist/security_officer) the user
+    # must have this branch in their branch_ids — validated in
+    # services.branch_service.validate_branch_contact_user before writes.
+    contact_user_id: Optional[str] = None
 
 
 class BranchCreate(BranchBase):
@@ -53,6 +59,10 @@ class BranchUpdate(BaseModel):
     is_headquarters: Optional[bool] = None
     status: Optional[BranchStatus] = None
     metadata: Optional[dict] = None
+    # None = "not provided" (route dumps with exclude_none, so None never
+    # reaches the DB). Send "" to CLEAR a previously designated contact —
+    # the writer normalises "" back to a stored None.
+    contact_user_id: Optional[str] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
@@ -60,6 +70,9 @@ class BranchOut(BranchBase):
     id: Optional[str] = Field(default=None, alias="_id")
     date_created: Optional[int] = None
     last_updated: Optional[int] = None
+    # Enriched best-effort in the service layer (never stored):
+    # designated contact user -> branch email/phone -> main super admin.
+    contact_summary: Optional[ContactBriefSummary] = None
 
     @model_validator(mode="before")
     @classmethod

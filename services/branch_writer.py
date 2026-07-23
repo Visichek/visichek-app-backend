@@ -23,6 +23,7 @@ from services.branch_service import (
     retrieve_branch_by_id,
     retrieve_branches_for_tenant,
     update_branch_by_id,
+    validate_branch_contact_user,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,27 @@ async def _branch_create(resource_id: str, data: dict[str, Any]) -> dict[str, An
 )
 async def _branch_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
     tenant_id = data.pop("tenant_id", "") or ""
+    # Point-of-contact: "" is the explicit CLEAR sentinel (the route dumps
+    # with exclude_none, so None can never reach us); a non-empty value is
+    # validated against the tenant + branch scoping rules before the write.
+    contact_user_id = data.get("contact_user_id")
+    if contact_user_id:
+        await validate_branch_contact_user(
+            tenant_id, contact_user_id, branch_id=resource_id
+        )
+    elif contact_user_id == "":
+        # The repo's update path strips None values, so an explicit $unset
+        # is needed to actually drop the designated contact.
+        data.pop("contact_user_id", None)
+        from bson import ObjectId
+
+        from core.database import db as _db
+
+        if ObjectId.is_valid(resource_id):
+            await _db["branches"].update_one(
+                {"_id": ObjectId(resource_id), "tenant_id": tenant_id},
+                {"$unset": {"contact_user_id": ""}},
+            )
     upd = BranchUpdate(**data)
     result = await update_branch_by_id(branch_id=resource_id, update_data=upd)
     _enqueue_list_refresh(tenant_id)
