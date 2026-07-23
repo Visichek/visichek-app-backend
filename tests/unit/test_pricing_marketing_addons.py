@@ -39,7 +39,7 @@ def _branch_addon(**overrides) -> AddonOut:
         benefit_per_unit={"branches": 1},
     )
     base.update(overrides)
-    return AddonOut(**base)
+    return AddonOut.model_validate(base)
 
 
 # ─── _build_addon_cards ───────────────────────────────────────────────

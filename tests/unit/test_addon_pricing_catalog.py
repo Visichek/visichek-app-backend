@@ -181,6 +181,63 @@ async def test_purchase_blocked_for_non_premium_tenant() -> None:
     assert exc_info.value.status_code == 403
 
 
+async def test_purchase_allowed_for_premium_tenant_cold_cache_miss_enum_tier() -> None:
+    """On a cache miss, ``resolve_tenant_plan`` re-derives the plan from the
+    DB and returns the tier as a ``PlanTier`` enum member rather than the
+    plain string the warm Redis path serves. ``_require_premium_tier`` must
+    still recognise Premium in that shape (Task 7 review risk: cold-miss
+    tier-gate regression) instead of 403ing a legitimate Premium tenant."""
+    from schemas.plan_schema import PlanTier
+    from services.addon_service import initiate_addon_purchase
+    from core.payments.types import PaymentIntentResponse, PaymentProviderName, PaymentStatus
+
+    addon = _derived_addon(unit_price=120_000.0)
+    saved_row = TenantAddonOut(
+        _id="ta1",
+        tenant_id="507f1f77bcf86cd799439011",
+        addon_id="addon1",
+        addon_kind=AddonKind.BRANCH_QUOTA,
+        quantity=1,
+        unit_price_snapshot=120_000.0,
+        currency_snapshot="NGN",
+        status=TenantAddonStatus.PENDING,
+    )
+    intent = PaymentIntentResponse(
+        provider=PaymentProviderName.APP,
+        reference="ref1",
+        status=PaymentStatus.PENDING,
+        checkout_url="https://pay/x",
+        provider_payload={},
+    )
+    with (
+        patch("services.addon_service.get_public_addon", new=AsyncMock(return_value=addon)),
+        patch(
+            # Simulate the cold-miss DB-resolution path: tier comes back as
+            # the enum member (PlanTier.PREMIUM), not the string "premium".
+            "services.plan_cache_service.resolve_tenant_plan",
+            new=AsyncMock(return_value={"tier": PlanTier.PREMIUM}),
+        ),
+        patch("services.addon_service._select_provider", return_value="app"),
+        patch(
+            "services.addon_service._create_intent_with_fallback",
+            return_value=("app", intent),
+        ),
+        patch(
+            "services.addon_service.create_tenant_addon", new=AsyncMock(return_value=saved_row)
+        ) as mock_create,
+        patch("services.addon_service.record_audit_event", new=AsyncMock()),
+    ):
+        result = await initiate_addon_purchase(
+            tenant_id="507f1f77bcf86cd799439011",
+            addon_id="addon1",
+            quantity=1,
+            actor_id="user1",
+        )
+
+    assert result is saved_row
+    mock_create.assert_awaited_once()
+
+
 async def test_purchase_allowed_for_premium_tenant_and_snapshots_price_and_cycle() -> None:
     from services.addon_service import initiate_addon_purchase
     from core.payments.types import PaymentIntentResponse
