@@ -694,3 +694,156 @@ async def test_get_tenant_checkout_does_not_leak_across_tenants() -> None:
             )
 
     assert err.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Verify-on-return: inline Paystack verify from the payment-return lookup
+# ---------------------------------------------------------------------------
+
+
+def _paystack_manager(fetch_result=None, fetch_error=None) -> tuple[MagicMock, MagicMock]:
+    manager = MagicMock()
+    manager.has_provider = lambda name: name == "paystack"
+    provider = MagicMock()
+    if fetch_error is not None:
+        provider.fetch_transaction = MagicMock(side_effect=fetch_error)
+    else:
+        provider.fetch_transaction = MagicMock(return_value=MagicMock(raw=fetch_result))
+    manager.get_provider = lambda name: provider
+    return manager, provider
+
+
+async def test_return_page_lookup_verifies_pending_paystack_inline() -> None:
+    """A PENDING Paystack session fetched by reference is verified against
+    Paystack inline and completed via the same path the webhook uses."""
+    from services import checkout_service
+
+    pending = _session_stub(
+        provider=CheckoutProvider.PAYSTACK, provider_reference="chk_ref"
+    )
+    succeeded = _session_stub(
+        provider=CheckoutProvider.PAYSTACK,
+        provider_reference="chk_ref",
+        status=CheckoutStatus.SUCCEEDED,
+    )
+    manager, provider = _paystack_manager(
+        fetch_result={"data": {"status": "success", "reference": "chk_ref"}}
+    )
+    handle = AsyncMock()
+
+    with (
+        patch.object(
+            checkout_service.PaymentManager, "get_instance", return_value=manager
+        ),
+        patch.object(
+            checkout_service,
+            "get_checkout_by_reference",
+            new=AsyncMock(return_value=pending),
+        ),
+        patch.object(
+            checkout_service,
+            "get_checkout_by_id",
+            new=AsyncMock(side_effect=[pending, succeeded]),
+        ),
+        patch("services.paystack_webhook_service._handle_charge_success", new=handle),
+    ):
+        result = await checkout_service.get_tenant_checkout_by_reference(
+            tenant_id="tenant_1", reference="chk_ref"
+        )
+
+    handle.assert_awaited_once()
+    provider.fetch_transaction.assert_called_once_with(reference="chk_ref")
+    assert result.status == CheckoutStatus.SUCCEEDED
+
+
+async def test_return_page_lookup_survives_paystack_verify_error() -> None:
+    """A Paystack outage during inline verify must never break the return
+    page — the session comes back unchanged and no poll budget is consumed."""
+    from services import checkout_service
+
+    pending = _session_stub(
+        provider=CheckoutProvider.PAYSTACK, provider_reference="chk_ref"
+    )
+    manager, _ = _paystack_manager(fetch_error=RuntimeError("paystack down"))
+    update_mock = AsyncMock()
+
+    with (
+        patch.object(
+            checkout_service.PaymentManager, "get_instance", return_value=manager
+        ),
+        patch.object(
+            checkout_service,
+            "get_checkout_by_reference",
+            new=AsyncMock(return_value=pending),
+        ),
+        patch.object(checkout_service, "update_checkout", new=update_mock),
+    ):
+        result = await checkout_service.get_tenant_checkout_by_reference(
+            tenant_id="tenant_1", reference="chk_ref"
+        )
+
+    assert result.status == CheckoutStatus.PENDING
+    update_mock.assert_not_awaited()
+
+
+async def test_return_page_lookup_skips_verify_for_non_paystack() -> None:
+    """Non-Paystack (or non-pending) sessions never touch the provider."""
+    from services import checkout_service
+
+    pending = _session_stub()  # provider=APP
+    get_instance = MagicMock()
+
+    with (
+        patch.object(checkout_service.PaymentManager, "get_instance", get_instance),
+        patch.object(
+            checkout_service,
+            "get_checkout_by_reference",
+            new=AsyncMock(return_value=pending),
+        ),
+    ):
+        result = await checkout_service.get_tenant_checkout_by_reference(
+            tenant_id="tenant_1", reference="chk_test"
+        )
+
+    assert result.status == CheckoutStatus.PENDING
+    get_instance.assert_not_called()
+
+
+async def test_return_page_lookup_fails_session_on_terminal_status() -> None:
+    """An 'abandoned'/'failed' verdict from inline verify marks the session
+    FAILED immediately instead of leaving it PENDING for the poller."""
+    from services import checkout_service
+
+    pending = _session_stub(
+        provider=CheckoutProvider.PAYSTACK, provider_reference="chk_ref"
+    )
+    failed = _session_stub(
+        provider=CheckoutProvider.PAYSTACK,
+        provider_reference="chk_ref",
+        status=CheckoutStatus.FAILED,
+    )
+    manager, _ = _paystack_manager(fetch_result={"data": {"status": "abandoned"}})
+    update_mock = AsyncMock()
+
+    with (
+        patch.object(
+            checkout_service.PaymentManager, "get_instance", return_value=manager
+        ),
+        patch.object(
+            checkout_service,
+            "get_checkout_by_reference",
+            new=AsyncMock(return_value=pending),
+        ),
+        patch.object(
+            checkout_service, "get_checkout_by_id", new=AsyncMock(return_value=failed)
+        ),
+        patch.object(checkout_service, "update_checkout", new=update_mock),
+    ):
+        result = await checkout_service.get_tenant_checkout_by_reference(
+            tenant_id="tenant_1", reference="chk_ref"
+        )
+
+    update_args = update_mock.await_args
+    assert update_args is not None
+    assert update_args.args[1].status == CheckoutStatus.FAILED
+    assert result.status == CheckoutStatus.FAILED

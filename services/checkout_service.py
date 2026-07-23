@@ -468,7 +468,11 @@ async def get_tenant_checkout_by_reference(
     session = await get_checkout_by_reference(reference)
     if not session or session.tenant_id != tenant_id:
         raise resource_not_found(resource="CheckoutSession", resource_id=reference)
-    return session
+    # Verify-on-return: the customer arriving back with this reference is a
+    # strong signal the charge just finished — settle a still-PENDING Paystack
+    # session now instead of making them wait for the webhook or the ~50s
+    # poll reconciler.
+    return await verify_pending_paystack_checkout(session)
 
 
 async def cancel_checkout(
@@ -846,6 +850,65 @@ async def _fail_pending_checkout(session: CheckoutSessionOut, *, reason: str) ->
                 session.id,
                 exc_info=True,
             )
+
+
+async def verify_pending_paystack_checkout(
+    session: CheckoutSessionOut,
+) -> CheckoutSessionOut:
+    """Inline Paystack verify for a still-PENDING session (verify-on-return).
+
+    Called from the payment-return lookup (``get_tenant_checkout_by_reference``)
+    so the customer landing back from Paystack's hosted page gets their session
+    settled immediately instead of waiting for the webhook or the ~50s poll
+    reconciler. Best-effort: any provider error returns the session unchanged
+    (the poller stays the safety net), and the poller's ``poll_attempts``
+    budget is never consumed by this on-demand path.
+    """
+    if (
+        session.id is None
+        or session.status != CheckoutStatus.PENDING
+        or session.provider != CheckoutProvider.PAYSTACK
+        or not session.provider_reference
+    ):
+        return session
+
+    manager = PaymentManager.get_instance()
+    if not manager.has_provider(_POLL_PROVIDER):
+        return session
+    provider = manager.get_provider(_POLL_PROVIDER)
+
+    try:
+        tx = await asyncio.to_thread(
+            provider.fetch_transaction, reference=session.provider_reference
+        )
+        raw = tx.raw if isinstance(tx.raw, dict) else {}
+        tx_status = str((raw.get("data") or {}).get("status", "")).lower()
+    except Exception:
+        logger.warning(
+            "Verify-on-return: Paystack verify failed for reference=%s",
+            session.provider_reference,
+            exc_info=True,
+        )
+        return session
+
+    if tx_status == "success":
+        # Re-read so we don't double-process a session the webhook completed
+        # in the gap between the lookup and now.
+        fresh = await get_checkout_by_id(session.id)
+        if fresh and fresh.status == CheckoutStatus.PENDING:
+            from services.paystack_webhook_service import _handle_charge_success
+
+            await _handle_charge_success(raw)
+    elif tx_status in _PAYSTACK_TERMINAL_FAILURE:
+        await _fail_pending_checkout(
+            session, reason=f"Paystack reported transaction '{tx_status}'"
+        )
+    else:
+        # Still pending/ongoing on Paystack too — nothing to settle yet.
+        return session
+
+    settled = await get_checkout_by_id(session.id)
+    return settled or session
 
 
 async def reconcile_pending_paystack_checkouts() -> dict:

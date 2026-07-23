@@ -47,7 +47,15 @@ _BYPASS_PREFIXES = (
 # - ``v1-dashboard`` already uses the precompute layer for heavy payloads.
 #   A second full-response cache can keep live check-in counters stale after
 #   direct synchronous writes, so dashboard routes bypass this middleware.
-_BYPASS_RESOURCE_SEGMENTS = frozenset({"v1-jobs", "v1-notifications", "v1-dashboard"})
+# - ``v1-checkout`` is payment status: it flips PENDING → SUCCEEDED via the
+#   Paystack webhook (anon scope, ``/v1/payments/...`` path) or the scheduler
+#   poll — neither of which invalidates the tenant's cached ``v1-checkout``
+#   entries, so a cached response can show a stale "pending" for up to 60s
+#   after the payment already cleared. The return page polls this; never
+#   cache it.
+_BYPASS_RESOURCE_SEGMENTS = frozenset(
+    {"v1-jobs", "v1-notifications", "v1-dashboard", "v1-checkout"}
+)
 
 # Substrings that mark a path as auth-related (never cacheable).
 _BYPASS_SUBSTRINGS = (

@@ -62,6 +62,7 @@ def _build_app() -> FastAPI:
     app = FastAPI()
     app.state.counter = 0
     app.state.checkin_counter = 0
+    app.state.checkout_counter = 0
     app.add_middleware(HttpCacheMiddleware)
 
     @app.get("/v1/visitors")
@@ -89,6 +90,15 @@ def _build_app() -> FastAPI:
     @app.post("/v1/checkins/{checkin_id}/confirm")
     async def confirm_checkin(checkin_id: str) -> dict:
         return {"id": checkin_id, "state": "approved"}
+
+    @app.get("/v1/checkout/sessions/by-reference/{reference}")
+    async def checkout_by_reference(reference: str) -> dict:
+        app.state.checkout_counter += 1
+        return {
+            "reference": reference,
+            "status": "pending",
+            "count": app.state.checkout_counter,
+        }
 
     @app.get("/health")
     async def health() -> dict:
@@ -261,6 +271,28 @@ async def test_confirm_checkin_invalidates_tenant_scoped_checkin_list(
             assert not any(
                 k.startswith("httpcache:anon:v1-checkins:") for k in fake_cache.store
             )
+
+
+@pytest.mark.asyncio
+async def test_checkout_paths_bypass_cache(app, fake_cache) -> None:
+    """Payment status reads must never be served stale — /v1/checkout/*
+    bypasses the response cache entirely."""
+    with patch(
+        "core.http_cache.get_access_token_allow_expired", new_callable=AsyncMock
+    ) as m:
+        m.return_value = None
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r1 = await client.get("/v1/checkout/sessions/by-reference/chk_1")
+            r2 = await client.get("/v1/checkout/sessions/by-reference/chk_1")
+
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert app.state.checkout_counter == 2, "handler must run on every request"
+    assert not any("v1-checkout" in k for k in fake_cache.store), (
+        "checkout responses must not be written to the cache"
+    )
 
 
 @pytest.mark.asyncio
