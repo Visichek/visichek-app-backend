@@ -14,10 +14,11 @@ to Flutterwave → Paystack → fall back to the in-app ``app`` provider.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from bson import ObjectId
 
@@ -55,6 +56,128 @@ from services.audit_service import record_audit_event
 logger = logging.getLogger(__name__)
 
 _PROVIDER_PREFERENCE: Tuple[str, ...] = ("stripe", "flutterwave", "paystack", "app")
+
+# Slug of the derived branch-quota addon (see services/addon_bootstrap.py).
+# Purchasable only by tenants on the Premium tier.
+ADDITIONAL_BRANCH_SLUG = "additional-branch"
+
+
+# ─── Derived pricing ─────────────────────────────────────────────────
+
+
+async def resolve_derived_addon_price(derived_from: dict[str, Any]) -> Optional[float]:
+    """Resolve a ``derived_from`` spec against the CURRENT live plan.
+
+    ``derived_from`` shape: ``{"plan": "premium", "field":
+    "base_price_monthly", "multiplier": 0.8}``. Returns ``None`` (never
+    raises) when the referenced plan or field can't be resolved so
+    callers can fall back to the addon's cached ``unit_price``.
+    """
+    plan_slug = derived_from.get("plan")
+    field = derived_from.get("field")
+    multiplier = derived_from.get("multiplier", 1.0)
+    if not plan_slug or not field:
+        return None
+    try:
+        from repositories.plan_repo import get_plan
+
+        plan = await get_plan({"name": plan_slug})
+    except Exception:
+        logger.exception("addon: derived price plan lookup failed for %s", plan_slug)
+        return None
+    if plan is None:
+        return None
+    base_value = getattr(plan, field, None)
+    if base_value is None:
+        return None
+    try:
+        return float(round(float(base_value) * float(multiplier)))
+    except (TypeError, ValueError):
+        return None
+
+
+async def resolve_addon_unit_price(addon: AddonOut) -> float:
+    """The addon's effective per-unit price right now.
+
+    ``fixed`` addons: the stored ``unit_price`` is authoritative.
+    ``derived`` addons: live-resolve from ``derived_from`` against the
+    referenced plan's current price, rounded to whole naira; falls
+    back to the cached ``unit_price`` display value if the referenced
+    plan/field can't be resolved.
+
+    Called at catalog read, purchase, and (Task 8) renewal — never
+    baked into a long-lived cache, so admin price changes on the
+    referenced plan take effect on the very next call.
+    """
+    if addon.pricing_mode != "derived" or not addon.derived_from:
+        return addon.unit_price
+    resolved = await resolve_derived_addon_price(addon.derived_from)
+    return resolved if resolved is not None else addon.unit_price
+
+
+def _addon_period_days(addon: AddonOut) -> Optional[int]:
+    """Validity length in days for one purchase/renewal cycle.
+
+    Recurring addons derive their period from ``billing_cycle``
+    (``validity_days`` is ignored for them); one-time addons use
+    ``validity_days`` directly (``None`` = perpetual).
+    """
+    if addon.recurring:
+        return 365 if addon.billing_cycle == "yearly" else 30
+    return addon.validity_days
+
+
+async def _require_premium_tier(tenant_id: str) -> None:
+    """Raise 403 unless the tenant's effective plan tier is Premium.
+
+    Gates purchase of the ``additional-branch`` addon — buying more
+    branch capacity only makes sense once on Premium.
+    """
+    from services.plan_cache_service import resolve_tenant_plan
+
+    resolved = await resolve_tenant_plan(tenant_id)
+    tier_value: Any = resolved.get("tier") if resolved else None
+    tier = (
+        tier_value.value
+        if tier_value is not None and hasattr(tier_value, "value")
+        else str(tier_value or "")
+    )
+    if tier != "premium":
+        raise AppException(
+            status_code=403,
+            code=ErrorCode.FEATURE_DISABLED,
+            message=(
+                "Additional branches are only available on the Premium plan. "
+                "Upgrade to Premium to purchase more branches."
+            ),
+        )
+
+
+async def resync_derived_addon_prices(plan_name: str) -> int:
+    """Recompute + persist ``unit_price`` for every addon derived from
+    ``plan_name``.
+
+    Called as a post-write hook whenever that plan is updated (see
+    ``services.plan_service.update_plan_by_id``) so the catalog's
+    display-cache price never drifts far from the live derived value.
+    Best-effort per row — one bad row never blocks the others.
+    """
+    rows = await list_addons({"pricing_mode": "derived", "derived_from.plan": plan_name})
+    updated = 0
+    for row in rows:
+        if not row.id or not row.derived_from:
+            continue
+        resolved = await resolve_derived_addon_price(row.derived_from)
+        if resolved is None or resolved == row.unit_price:
+            continue
+        try:
+            await update_addon(row.id, AddonUpdate(unit_price=resolved))
+            updated += 1
+        except Exception:
+            logger.exception(
+                "addon: failed to resync derived price for addon %s", row.id
+            )
+    return updated
 
 
 async def _invalidate_tenant_addon_caches(tenant_id: Optional[str]) -> None:
@@ -173,23 +296,37 @@ async def admin_delete_addon(
 # ─── Public catalog reads ───────────────────────────────────────────
 
 
+async def _with_live_price(addon: AddonOut) -> AddonOut:
+    """Return ``addon`` with ``unit_price`` overridden to the live
+    resolved price for derived addons (does not persist)."""
+    if addon.pricing_mode != "derived":
+        return addon
+    live_price = await resolve_addon_unit_price(addon)
+    if live_price == addon.unit_price:
+        return addon
+    return addon.model_copy(update={"unit_price": live_price})
+
+
 async def list_public_addons(*, kind: Optional[AddonKind] = None) -> List[AddonOut]:
     """Return active addons available for purchase.
 
     Filters by ``kind`` when supplied so a UI page rendering "buy
-    more storage" only sees ``storage_extension`` rows.
+    more storage" only sees ``storage_extension`` rows. Derived-price
+    rows are returned with their live-resolved ``unit_price`` so the
+    catalog never shows a stale cached number.
     """
     filt: dict = {"status": AddonStatus.ACTIVE.value}
     if kind is not None:
         filt["kind"] = kind.value
-    return await list_addons(filt, skip=0, limit=200)
+    rows = await list_addons(filt, skip=0, limit=200)
+    return list(await asyncio.gather(*(_with_live_price(row) for row in rows)))
 
 
 async def get_public_addon(addon_id: str) -> AddonOut:
     addon = await get_addon_by_id(addon_id)
     if addon is None or addon.status != AddonStatus.ACTIVE:
         raise resource_not_found(resource="Addon", resource_id=addon_id)
-    return addon
+    return await _with_live_price(addon)
 
 
 # ─── Purchase flow ──────────────────────────────────────────────────
@@ -258,6 +395,9 @@ async def initiate_addon_purchase(
         raise resource_not_found(resource="Tenant", resource_id=tenant_id)
     addon = await get_public_addon(addon_id)
 
+    if addon.slug == ADDITIONAL_BRANCH_SLUG:
+        await _require_premium_tier(tenant_id)
+
     if quantity < 1:
         raise AppException(
             status_code=400,
@@ -303,9 +443,16 @@ async def initiate_addon_purchase(
         addon_id=addon.id or "",
         addon_kind=addon.kind,
         quantity=quantity,
+        # ``addon.unit_price`` here is already the live-resolved value
+        # (get_public_addon overrides it for derived addons) — snapshot
+        # it now so a catalog price change between purchase and webhook
+        # activation can't change what's charged/renewed.
         unit_price_snapshot=addon.unit_price,
         currency_snapshot=addon.currency,
         benefit_snapshot=addon.benefit_per_unit,
+        recurring_snapshot=addon.recurring,
+        validity_days_snapshot=_addon_period_days(addon),
+        billing_cycle_snapshot=addon.billing_cycle if addon.recurring else None,
         status=TenantAddonStatus.PENDING,
         payment_provider=provider_name,
         payment_reference=reference,
@@ -357,8 +504,16 @@ async def activate_tenant_addon_by_reference(
         return row
 
     now = completed_at or int(time.time())
-    addon = await get_addon_by_id(row.addon_id)
-    validity_days = addon.validity_days if addon else None  # None = perpetual
+    if row.recurring_snapshot:
+        # Recurring addons ALWAYS derive expires_at from the purchase-time
+        # snapshot, never the current catalog row — the catalog row's
+        # validity_days is meaningless for recurring addons anyway (their
+        # period comes from billing_cycle) and re-reading it here is
+        # exactly the quirk this snapshot exists to avoid.
+        validity_days = row.validity_days_snapshot
+    else:
+        addon = await get_addon_by_id(row.addon_id)
+        validity_days = addon.validity_days if addon else None  # None = perpetual
     expires_at = now + validity_days * 86400 if validity_days else None
 
     update = TenantAddonUpdate(

@@ -385,6 +385,18 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("plan_bootstrap failed at startup", exc_info=True)
 
+    # Add-on catalog seed. Idempotent: upserts singleton catalog add-ons
+    # (currently "additional-branch") by slug, preserving admin-edited
+    # description text across restarts. Runs after plan bootstrap since
+    # derived pricing needs the Premium plan row to already exist.
+    try:
+        from services.addon_bootstrap import ensure_addon_catalog
+
+        addon_bootstrap_summary = await ensure_addon_catalog()
+        logger.info("addon_bootstrap summary: %s", addon_bootstrap_summary)
+    except Exception:
+        logger.warning("addon_bootstrap failed at startup", exc_info=True)
+
     # Default FAQ seed. Idempotent: only inserts items whose item_key
     # (or normalised question) isn't already in the overlay, so admin
     # edits to a default item are preserved across restarts.

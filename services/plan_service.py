@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
 
 from bson import ObjectId
@@ -21,6 +22,8 @@ from schemas.plan_schema import (
     PlanTier,
 )
 from services.audit_service import record_audit_event
+
+logger = logging.getLogger(__name__)
 
 
 async def add_plan(
@@ -234,7 +237,24 @@ async def update_plan_by_id(plan_id: str, plan_data: PlanUpdate) -> Optional[Pla
                     ),
                 )
 
-    return await update_plan({"_id": ObjectId(plan_id)}, plan_data)
+    updated = await update_plan({"_id": ObjectId(plan_id)}, plan_data)
+
+    # Post-write hook: any addon whose price is derived from THIS plan
+    # (e.g. the "additional-branch" addon derives from Premium's
+    # base_price_monthly) needs its cached unit_price recomputed right
+    # away, not left to drift until the next catalog read.
+    if updated is not None and updated.name:
+        try:
+            from services.addon_service import resync_derived_addon_prices
+
+            await resync_derived_addon_prices(updated.name)
+        except Exception:
+            logger.exception(
+                "plan_service: failed to resync derived addon prices for plan %s",
+                updated.name,
+            )
+
+    return updated
 
 
 async def archive_plan(plan_id: str) -> Optional[PlanOut]:
