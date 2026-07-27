@@ -115,17 +115,32 @@ async def _cleanup_checkins(tenant_id: str, cutoff: int, action: DeletionAction)
                 )
             )
     else:
-        cursor = db.checkins.find(filter_dict, {"_id": 1})
+        # Project manual_verification so we can tell whether it is already
+        # populated. It is a nested optional subdocument whose sibling
+        # fields (verified_by_user_id, verified_at, ...) are required by
+        # ManualVerificationInfo when present — a bare
+        # "manual_verification.notes" $set on a doc where the field is
+        # currently null would fabricate a malformed partial subdocument
+        # that doesn't match the schema. Guard it; only scrub the note when
+        # the subdocument already exists.
+        cursor = db.checkins.find(filter_dict, {"_id": 1, "manual_verification": 1})
         async for doc in cursor:
+            set_fields = {
+                "tenant_specific_data": {},
+                "host_name": "ANONYMISED",
+                "department_name": "ANONYMISED",
+                # purpose is a required (always-present) subdocument, so
+                # scrubbing its free-text detail field is always safe.
+                "purpose.purpose_details": "ANONYMISED",
+                "approval_notes": "ANONYMISED",
+                "rejection_reason": "ANONYMISED",
+            }
+            if doc.get("manual_verification"):
+                set_fields["manual_verification.notes"] = "ANONYMISED"
+
             await db.checkins.update_one(
                 {"_id": doc["_id"]},
-                {
-                    "$set": {
-                        "tenant_specific_data": {},
-                        "host_name": "ANONYMISED",
-                        "department_name": "ANONYMISED",
-                    }
-                },
+                {"$set": set_fields},
             )
             await create_deletion_log(
                 DeletionLogCreate(
