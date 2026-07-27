@@ -136,6 +136,18 @@ _ANALYTICS_CAPS_BY_TIER: Dict[str, Dict[str, int]] = {
 }
 
 
+def _support_case_caps() -> Dict[str, Any]:
+    """Platform-wide support-case caps, surfaced so the FE quota banner and
+    the sales collateral read the same number the 429 enforces.
+
+    Note ``resolved`` still holds a slot against this cap until the case
+    auto-closes after 7 days — see support_case_schema.OPEN_STATUSES.
+    """
+    from services.support_case_service import MAX_OPEN_CASES_PER_TENANT
+
+    return {"maxOpenSupportCases": MAX_OPEN_CASES_PER_TENANT}
+
+
 async def _list_locked_branch_ids(tenant_id: str) -> List[str]:
     """Branches the plan's ``max_branches`` cap excludes.
 
@@ -342,6 +354,7 @@ async def build_me_limitations(
     caps_out.update(
         _ANALYTICS_CAPS_BY_TIER.get(str(plan_data.get("tier") or "").lower(), {})
     )
+    caps_out.update(_support_case_caps())
 
     locked_branches = await _list_locked_branch_ids(tenant_id)
     locked_departments = await _list_locked_department_ids(tenant_id)
