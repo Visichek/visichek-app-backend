@@ -9,7 +9,11 @@ class IncidentLogBase(BaseModel):
     incident_type: IncidentType
     status: IncidentStatus = IncidentStatus.OPEN
     description: str
-    risk_level: Optional[str] = None  # low, medium, high, critical
+    risk_level: Optional[RiskLevel] = None
+    # Property this incident belongs to. Resolved from the reporter's token.
+    # Null for rows predating branch attribution; the branch backfill tags
+    # those to HQ.
+    branch_id: Optional[str] = None
     data_affected: Optional[str] = None
     mitigation_steps: Optional[str] = None
     ndpc_notified: bool = False
@@ -40,7 +44,8 @@ class IncidentLogCreateRequest(BaseModel):
     incident_type: IncidentType = Field(alias="type")
     status: IncidentStatus = IncidentStatus.OPEN
     description: str
-    risk_level: Optional[str] = None
+    risk_level: Optional[RiskLevel] = None
+    branch_id: Optional[str] = None
     data_affected: Optional[str] = None
     mitigation_steps: Optional[str] = None
     ndpc_notified: bool = False
@@ -56,7 +61,7 @@ class IncidentLogCreateRequest(BaseModel):
 class IncidentLogUpdate(BaseModel):
     status: Optional[IncidentStatus] = None
     description: Optional[str] = None
-    risk_level: Optional[str] = None
+    risk_level: Optional[RiskLevel] = None
     data_affected: Optional[str] = None
     mitigation_steps: Optional[str] = None
     ndpc_notified: Optional[bool] = None

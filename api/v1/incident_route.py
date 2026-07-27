@@ -85,6 +85,7 @@ INCIDENTS_LIST_SPEC = ListSpec(
         "ndpcNotified": FilterDef(
             name="ndpcNotified", mongo_field="ndpc_notified", coerce=coerce_bool
         ),
+        "branchId": FilterDef(name="branchId", mongo_field="branch_id"),
         "approachingDeadline": FilterDef(
             name="approachingDeadline", builder=_approaching_builder
         ),
@@ -149,6 +150,16 @@ async def create_incident(
     payload = log_data.model_dump(exclude_none=True)
     payload["tenant_id"] = principal.tenant_id or ""
     payload["reported_by"] = principal.user_id
+    # Branch is resolved from the caller's token (branch-scoped roles are
+    # pinned to their own branch; super_admins may pass an explicit one,
+    # else HQ). Stored on the incident so branch separation holds.
+    from services.branch_service import resolve_branch_for_principal
+
+    payload["branch_id"] = await resolve_branch_for_principal(
+        principal,
+        principal.tenant_id or "",
+        explicit_branch_id=payload.get("branch_id"),
+    )
     return await enqueue_write(
         writer_key="incident.create",
         payload=payload,

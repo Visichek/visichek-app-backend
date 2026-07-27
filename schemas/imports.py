@@ -189,6 +189,16 @@ class IncidentStatus(str, Enum):
     CLOSED = "closed"
 
 
+class RiskLevel(str, Enum):
+    """Incident severity. Was a free-text Optional[str] whose valid values
+    lived only in a comment, so severity was unfilterable and unsortable."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
 class BadgeFormat(str, Enum):
     A6 = "A6"
     A7 = "A7"

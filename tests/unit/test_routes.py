@@ -1339,12 +1339,16 @@ class TestIncidentRoutes:
 
         with patch(
             "api.v1.incident_route.enqueue_write", new_callable=AsyncMock
-        ) as mock_enqueue:
+        ) as mock_enqueue, patch(
+            "services.branch_service.resolve_branch_for_principal",
+            new_callable=AsyncMock,
+        ) as mock_branch:
             mock_enqueue.return_value = {
                 "id": "incident-001",
                 "job_id": "job-inc-create",
                 "status": "queued",
             }
+            mock_branch.return_value = "hq-branch-001"
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"

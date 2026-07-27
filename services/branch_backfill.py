@@ -28,6 +28,19 @@ from services.branch_service import ensure_default_branch
 logger = logging.getLogger(__name__)
 
 
+# Collections whose rows carry a ``branch_id`` and are read through the
+# branch-scoped list filter. Legacy rows created before branch separation
+# have no branch_id; tag them to HQ so they remain visible to HQ-assigned
+# branch-scoped users (reads do a strict ``branch_id $in branch_ids``
+# match — see services.branch_service.branch_scope_filter).
+_branch_scoped_collections = (
+    "expected_appointments",
+    "visit_sessions",
+    "checkins",
+    "incident_logs",
+)
+
+
 async def backfill_branch_assignments() -> dict[str, int]:
     """Backfill HQ branches and ``branch_ids`` on every existing system_user.
 
@@ -39,17 +52,6 @@ async def backfill_branch_assignments() -> dict[str, int]:
         "users_updated": 0,
         "records_tagged_hq": 0,
     }
-
-    # Collections whose rows carry a ``branch_id`` and are read through the
-    # branch-scoped list filter. Legacy rows created before branch separation
-    # have no branch_id; tag them to HQ so they remain visible to HQ-assigned
-    # branch-scoped users (reads do a strict ``branch_id $in branch_ids``
-    # match — see services.branch_service.branch_scope_filter).
-    _branch_scoped_collections = (
-        "expected_appointments",
-        "visit_sessions",
-        "checkins",
-    )
 
     cursor = db.tenant_companies.find({})
     async for tenant_doc in cursor:
