@@ -87,15 +87,15 @@ async def _incident_create(resource_id: str, data: dict[str, Any]) -> dict[str, 
             resource_id=str(result.id or resource_id),
             tenant_id=result.tenant_id or "",
             details={
-                "incident_type": data.get("incident_type"),
-                "branch_id": data.get("branch_id"),
+                "incident_type": result.incident_type,
+                "branch_id": result.branch_id,
             },
             request_id=request_id,
         )
     return {
         "id": result.id,
         "tenant_id": result.tenant_id,
-        "incident_type": data.get("incident_type"),
+        "incident_type": result.incident_type,
     }
 
 
