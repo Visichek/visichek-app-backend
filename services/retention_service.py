@@ -8,7 +8,7 @@ from repositories.retention_policy_repo import get_retention_policies
 from repositories.deletion_log_repo import create_deletion_log
 from repositories.tenant_repo import get_tenants
 from schemas.deletion_log_schema import DeletionLogCreate
-from schemas.imports import DeletionAction
+from schemas.imports import CheckinState, DeletionAction, RetentionScope
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,8 @@ async def run_retention_cleanup():
                 await _cleanup_id_images(tenant.id, cutoff, action)
             elif policy.scope == "visitor_profiles":
                 await _cleanup_visitor_profiles(tenant.id, cutoff, action)
+            elif policy.scope == RetentionScope.CHECKINS.value:
+                await _cleanup_checkins(tenant.id, cutoff, action)
 
     logger.info("Retention cleanup completed")
 
@@ -71,6 +73,64 @@ async def _cleanup_visit_sessions(tenant_id: str, cutoff: int, action: DeletionA
                 DeletionLogCreate(
                     tenant_id=tenant_id,
                     entity_type="visit_session",
+                    entity_id=str(doc["_id"]),
+                    reason="retention_policy_expired",
+                    action=DeletionAction.ANONYMISE,
+                    performed_by="system",
+                )
+            )
+
+
+async def _cleanup_checkins(tenant_id: str, cutoff: int, action: DeletionAction):
+    """Purge or anonymise terminal kiosk check-ins past their retention window.
+
+    The kiosk submit path writes ``checkins`` and creates NO ``visit_sessions``
+    row (see services/checkin_service.py), so without this branch kiosk
+    visitors were retained indefinitely. ``tenant_specific_data`` carries the
+    raw form answers and is the richest PII on the record.
+    """
+    filter_dict = {
+        "tenant_id": tenant_id,
+        "date_created": {"$lt": cutoff},
+        "state": {
+            "$in": [
+                CheckinState.CHECKED_OUT.value,
+                CheckinState.REJECTED.value,
+            ]
+        },
+    }
+
+    if action == DeletionAction.DELETE:
+        cursor = db.checkins.find(filter_dict, {"_id": 1})
+        async for doc in cursor:
+            await db.checkins.delete_one({"_id": doc["_id"]})
+            await create_deletion_log(
+                DeletionLogCreate(
+                    tenant_id=tenant_id,
+                    entity_type="checkin",
+                    entity_id=str(doc["_id"]),
+                    reason="retention_policy_expired",
+                    action=DeletionAction.DELETE,
+                    performed_by="system",
+                )
+            )
+    else:
+        cursor = db.checkins.find(filter_dict, {"_id": 1})
+        async for doc in cursor:
+            await db.checkins.update_one(
+                {"_id": doc["_id"]},
+                {
+                    "$set": {
+                        "tenant_specific_data": {},
+                        "host_name": "ANONYMISED",
+                        "department_name": "ANONYMISED",
+                    }
+                },
+            )
+            await create_deletion_log(
+                DeletionLogCreate(
+                    tenant_id=tenant_id,
+                    entity_type="checkin",
                     entity_id=str(doc["_id"]),
                     reason="retention_policy_expired",
                     action=DeletionAction.ANONYMISE,
