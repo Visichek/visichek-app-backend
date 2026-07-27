@@ -28,11 +28,19 @@ from services.branch_service import ensure_default_branch
 logger = logging.getLogger(__name__)
 
 
-# Collections whose rows carry a ``branch_id`` and are read through the
-# branch-scoped list filter. Legacy rows created before branch separation
-# have no branch_id; tag them to HQ so they remain visible to HQ-assigned
-# branch-scoped users (reads do a strict ``branch_id $in branch_ids``
-# match — see services.branch_service.branch_scope_filter).
+# Collections whose rows carry a ``branch_id``. Legacy rows created before
+# branch separation have no branch_id; tag them to HQ so they are not
+# orphaned into an unbucketed group.
+#
+# For ``expected_appointments``, ``visit_sessions`` and ``checkins``, reads
+# do a strict ``branch_id $in branch_ids`` match — see
+# services.branch_service.branch_scope_filter — so tagging these is what
+# makes the rows visible to HQ-assigned branch-scoped users at all.
+#
+# ``departments`` and ``incident_logs`` are NOT read through that filter —
+# access to them is not branch-isolated. There the tag serves per-branch
+# cap-bucketing (departments' max_departments cap) and attribution/
+# filtering (incident branchId filter) only, not read isolation.
 _branch_scoped_collections = (
     "expected_appointments",
     "visit_sessions",
@@ -113,8 +121,11 @@ async def backfill_branch_assignments() -> dict[str, int]:
                 exc_info=True,
             )
 
-        # Tag legacy branch-null records (appointments / visit sessions /
-        # check-ins) to HQ so branch-scoped reads still surface them.
+        # Tag legacy branch-null records to HQ. For appointments / visit
+        # sessions / check-ins this keeps them visible to branch-scoped
+        # reads; for departments / incident_logs (not read-filtered by
+        # branch) it keeps them in the HQ cap-bucket / attribution group
+        # instead of an unbucketed "no branch" group.
         for coll in _branch_scoped_collections:
             try:
                 res2: Any = await db[coll].update_many(

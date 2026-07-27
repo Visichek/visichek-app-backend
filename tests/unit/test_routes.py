@@ -1017,12 +1017,16 @@ class TestAppointmentRoutes:
 
         with patch(
             "api.v1.appointment_route.enqueue_write", new_callable=AsyncMock
-        ) as mock_enqueue:
+        ) as mock_enqueue, patch(
+            "services.branch_service.resolve_branch_for_principal",
+            new_callable=AsyncMock,
+        ) as mock_branch:
             mock_enqueue.return_value = {
                 "id": "appt-001",
                 "job_id": "job-appt-create",
                 "status": "queued",
             }
+            mock_branch.return_value = "hq-branch-001"
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"

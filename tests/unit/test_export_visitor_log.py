@@ -11,6 +11,11 @@ class _Cursor:
     def __init__(self, docs):
         self._docs = list(docs)
 
+    def limit(self, _n):
+        # Mirrors pymongo's chainable cursor.limit(); _visitor_log_rows
+        # calls .find(...).limit(10000) on checkins (FIX 4).
+        return self
+
     def __aiter__(self):
         async def gen():
             for d in self._docs:
@@ -64,6 +69,31 @@ class TestVisitorLogRows:
         names = [r[0] for r in rows]
         assert "Desk Dan" in names, "visit_sessions rows must still appear"
         assert "Kiosk Kate" in names, "kiosk checkins were missing from the export"
+
+    async def test_nested_checkin_purpose_renders_as_plain_string(self):
+        """A checkins doc stores purpose as a nested CheckinPurpose object
+        ({"purpose": ..., "purpose_details": ...}), unlike visit_sessions'
+        plain-string snapshot. The export row must contain the human
+        readable purpose string, never the raw dict — a defect already
+        caught once in _checkin_purpose (services/export_service.py)."""
+        fake = _fake_db(
+            [{"_id": "c1", "tenant_specific_data": {"full_name": "Doc Dana"},
+              "date_created": 300, "state": "approved", "host_name": "",
+              "department_name": "", "check_out_method": None,
+              "checked_out_at": None,
+              "purpose": {"purpose": "delivery", "purpose_details": "parcel for reception"},
+              "verified": False}]
+        )
+        with patch("services.export_service.db", fake), patch(
+            "services.export_service.get_visit_sessions",
+            AsyncMock(return_value=[]),
+        ):
+            rows = await _visitor_log_rows("t1", None, None, None)
+
+        assert len(rows) == 1
+        purpose_cell = rows[0][-1]
+        assert purpose_cell == "delivery"
+        assert not isinstance(purpose_cell, dict)
 
     async def test_rows_are_sorted_by_check_in_time(self):
         fake = _fake_db(

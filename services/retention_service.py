@@ -13,13 +13,26 @@ from schemas.retention_policy_schema import RetentionPolicyOut
 
 logger = logging.getLogger(__name__)
 
-# Scopes an implicit (settings-derived) policy covers. ``id_images`` is
-# deliberately excluded — image retention is a separate, deliberate decision
-# and must stay opt-in via an explicit RetentionPolicy row.
+# Scopes an implicit (settings-derived) policy covers. Both ``id_images``
+# and ``visitor_profiles`` are deliberately excluded.
+#
+# ``visitor_data_retention_days`` / ``deletion_action`` on tenant_settings
+# are schema defaults physically persisted on every settings document
+# (365 days / ANONYMISE — see schemas/tenant_settings_schema.py), not an
+# affirmative operator choice. This bridge fires whenever a tenant has no
+# explicit ``retention_policies`` rows, which is the normal state for the
+# entire installed base. ``_cleanup_visitor_profiles`` filters on profile
+# *creation* date (not last activity) and its anonymise path overwrites
+# ``full_name``, hashes ``phone`` unrecoverably, nulls email/company/photo/
+# id_number, and stamps ``deleted_at`` — hiding the row from every default
+# read. Deriving that destructive a sweep from an untouched default would
+# irreversibly damage long-lived visitor records, including active repeat
+# visitors, on the very first cron tick after deploy. Profile erasure
+# (like image erasure) must stay opt-in behind an explicit
+# ``RetentionPolicy`` row that an operator deliberately created.
 _IMPLICIT_VISITOR_SCOPES: tuple[str, ...] = (
     RetentionScope.VISIT_SESSIONS.value,
     RetentionScope.CHECKINS.value,
-    RetentionScope.VISITOR_PROFILES.value,
 )
 
 

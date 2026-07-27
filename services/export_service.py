@@ -116,7 +116,7 @@ async def _visitor_log_rows(
             ci_time["$lte"] = date_to
         checkin_filter["date_created"] = ci_time
 
-    cursor = db.checkins.find(checkin_filter)
+    cursor = db.checkins.find(checkin_filter).limit(10000)
     async for doc in cursor:
         created = doc.get("date_created") or 0
         checked_out = doc.get("checked_out_at")

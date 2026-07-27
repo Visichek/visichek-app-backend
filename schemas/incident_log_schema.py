@@ -74,6 +74,13 @@ class IncidentLogUpdate(BaseModel):
 
 class IncidentLogOut(IncidentLogBase):
     id: Optional[str] = Field(default=None, alias="_id")
+    # Deliberately widened back to ``str``: the pre-branch write path
+    # accepted arbitrary strings for risk_level, and get_incident_logs
+    # builds every row through IncidentLogOut(**doc) in a single list
+    # comprehension — one legacy off-enum row must not 500 the entire
+    # listing. Writes stay strictly validated via IncidentLogBase/Create.
+    # Same idiom as RetentionPolicyOut.scope in retention_policy_schema.py.
+    risk_level: Optional[str] = None  # type: ignore[assignment]
     date_created: Optional[int] = None
     notification_deadline: Optional[int] = None
     notification_sent_at: Optional[int] = None

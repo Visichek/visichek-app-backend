@@ -152,7 +152,9 @@ async def create_incident(
     payload["reported_by"] = principal.user_id
     # Branch is resolved from the caller's token (branch-scoped roles are
     # pinned to their own branch; super_admins may pass an explicit one,
-    # else HQ). Stored on the incident so branch separation holds.
+    # else HQ). Stored on the incident for attribution and branchId
+    # filtering only — incident reads are not branch-isolated, so this
+    # tag does not by itself enforce access separation.
     from services.branch_service import resolve_branch_for_principal
 
     payload["branch_id"] = await resolve_branch_for_principal(
