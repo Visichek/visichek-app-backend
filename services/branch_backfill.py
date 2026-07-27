@@ -38,6 +38,7 @@ _branch_scoped_collections = (
     "visit_sessions",
     "checkins",
     "incident_logs",
+    "departments",
 )
 
 

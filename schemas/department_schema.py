@@ -9,6 +9,11 @@ class DepartmentBase(BaseModel):
     name: str
     is_active: bool = True
     created_by: Optional[str] = None
+    # Property this department belongs to. Optional on the wire: a
+    # single-branch tenant never supplies one and the service resolves HQ.
+    # Null on rows predating branch scoping; the branch backfill tags those
+    # to HQ.
+    branch_id: Optional[str] = None
 
 
 class DepartmentCreate(BaseModel):
@@ -17,6 +22,11 @@ class DepartmentCreate(BaseModel):
     name: str
     is_active: bool = True
     created_by: Optional[str] = None
+    # Property this department belongs to. Optional on the wire: a
+    # single-branch tenant never supplies one and the service resolves HQ.
+    # Null on rows predating branch scoping; the branch backfill tags those
+    # to HQ.
+    branch_id: Optional[str] = None
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
@@ -33,6 +43,7 @@ class DepartmentUpdate(BaseModel):
     code: Optional[str] = None
     name: Optional[str] = None
     is_active: Optional[bool] = None
+    branch_id: Optional[str] = None
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
 
