@@ -1,22 +1,74 @@
 from __future__ import annotations
 
-import csv
 import io
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+from core.csv_export import csv_buffer
+from core.database import db
 from repositories.audit_log_repo import get_audit_logs
 from repositories.visit_session_repo import get_visit_sessions
 from services.audit_service import retrieve_audit_logs_with_summary
 
+VISITOR_LOG_HEADER = [
+    "Visitor Name",
+    "Company",
+    "Department",
+    "Host",
+    "Check-In Time",
+    "Check-Out Time",
+    "Duration (min)",
+    "Status",
+    "Verification Status",
+    "Check-In Method",
+    "Receptionist",
+    "Purpose",
+]
 
-async def export_visitor_log_csv(
+
+def _checkin_visitor_name(doc: Dict[str, Any]) -> str:
+    """Best-effort visitor name from the kiosk form answers."""
+    tsd = doc.get("tenant_specific_data") or {}
+    for key in ("full_name", "name", "visitor_name"):
+        value = tsd.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _checkin_purpose(doc: Dict[str, Any]) -> str:
+    """Purpose text from a raw ``checkins`` doc.
+
+    Unlike ``visit_sessions.purpose`` (a plain string snapshot), a
+    ``checkins`` document stores ``purpose`` as the nested
+    ``CheckinPurpose`` object (``{"purpose": ..., "purpose_details": ...,
+    "expected_duration_minutes": ...}``) — see ``schemas.checkin_schema``.
+    Reading ``doc.get("purpose")`` directly would put that whole dict into
+    the export cell instead of the human-readable purpose string.
+    """
+    purpose = doc.get("purpose")
+    if isinstance(purpose, dict):
+        value = purpose.get("purpose")
+        return value if isinstance(value, str) else ""
+    if isinstance(purpose, str):
+        return purpose
+    return ""
+
+
+async def _visitor_log_rows(
     tenant_id: str,
     department_id: Optional[str] = None,
     date_from: Optional[int] = None,
     date_to: Optional[int] = None,
-) -> bytes:
+) -> List[List[Any]]:
+    """Merged visitor-log rows across BOTH visit models, oldest first.
+
+    ``visit_sessions`` covers the receptionist and public-registration
+    flows; ``checkins`` covers the kiosk/checkin-config flow, which creates
+    no visit_sessions row. Exporting only the former silently omitted every
+    kiosk visitor.
+    """
     filter_dict: Dict[str, Any] = {"tenant_id": tenant_id}
     if department_id:
         filter_dict["department_id"] = department_id
@@ -30,48 +82,83 @@ async def export_visitor_log_csv(
 
     sessions = await get_visit_sessions(filter_dict=filter_dict, start=0, stop=10000)
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(
-        [
-            "Visitor Name",
-            "Company",
-            "Department",
-            "Host",
-            "Check-In Time",
-            "Check-Out Time",
-            "Duration (min)",
-            "Status",
-            "Verification Status",
-            "Check-In Method",
-            "Receptionist",
-            "Purpose",
-        ]
-    )
-
+    rows: List[tuple] = []
     for s in sessions:
-        check_in = _format_timestamp(s.check_in_time) if s.check_in_time else ""
-        check_out = _format_timestamp(s.check_out_time) if s.check_out_time else ""
         duration = round(s.visit_duration / 60, 1) if s.visit_duration else ""
-
-        writer.writerow(
-            [
-                s.visitor_name_snapshot or "",
-                s.company_snapshot or "",
-                s.department_name_snapshot or "",
-                s.host_name_snapshot or "",
-                check_in,
-                check_out,
-                duration,
-                s.status or "",
-                s.verification_status or "",
-                s.check_in_method or "",
-                s.receptionist_name_snapshot or "",
-                s.purpose or "",
-            ]
+        rows.append(
+            (
+                s.check_in_time or 0,
+                [
+                    s.visitor_name_snapshot or "",
+                    s.company_snapshot or "",
+                    s.department_name_snapshot or "",
+                    s.host_name_snapshot or "",
+                    _format_timestamp(s.check_in_time) if s.check_in_time else "",
+                    _format_timestamp(s.check_out_time) if s.check_out_time else "",
+                    duration,
+                    s.status or "",
+                    s.verification_status or "",
+                    s.check_in_method or "",
+                    s.receptionist_name_snapshot or "",
+                    s.purpose or "",
+                ],
+            )
         )
 
-    return output.getvalue().encode("utf-8")
+    checkin_filter: Dict[str, Any] = {"tenant_id": tenant_id}
+    if department_id:
+        checkin_filter["department_id"] = department_id
+    if date_from or date_to:
+        ci_time: Dict[str, Any] = {}
+        if date_from:
+            ci_time["$gte"] = date_from
+        if date_to:
+            ci_time["$lte"] = date_to
+        checkin_filter["date_created"] = ci_time
+
+    cursor = db.checkins.find(checkin_filter)
+    async for doc in cursor:
+        created = doc.get("date_created") or 0
+        checked_out = doc.get("checked_out_at")
+        duration_min: Any = ""
+        if created and checked_out:
+            duration_min = round((checked_out - created) / 60, 1)
+        rows.append(
+            (
+                created,
+                [
+                    _checkin_visitor_name(doc),
+                    "",
+                    doc.get("department_name") or "",
+                    doc.get("host_name") or "",
+                    _format_timestamp(created) if created else "",
+                    _format_timestamp(checked_out) if checked_out else "",
+                    duration_min,
+                    doc.get("state") or "",
+                    "verified" if doc.get("verified") else "unverified",
+                    "kiosk",
+                    "",
+                    _checkin_purpose(doc),
+                ],
+            )
+        )
+
+    rows.sort(key=lambda pair: pair[0])
+    return [row for _, row in rows]
+
+
+async def export_visitor_log_csv(
+    tenant_id: str,
+    department_id: Optional[str] = None,
+    date_from: Optional[int] = None,
+    date_to: Optional[int] = None,
+) -> bytes:
+    rows = await _visitor_log_rows(tenant_id, department_id, date_from, date_to)
+    # csv_buffer (core.csv_export) escapes leading =, +, -, @, tab and CR
+    # per OWASP CWE-1236. The previous raw csv.writer did not, so a
+    # visitor-supplied name could execute as a formula in the spreadsheet
+    # the tenant opens.
+    return csv_buffer([VISITOR_LOG_HEADER, *rows])
 
 
 async def export_visitor_log_xlsx(
@@ -85,59 +172,15 @@ async def export_visitor_log_xlsx(
     except ImportError:
         raise RuntimeError("openpyxl is required for Excel export")
 
-    filter_dict: Dict[str, Any] = {"tenant_id": tenant_id}
-    if department_id:
-        filter_dict["department_id"] = department_id
-    if date_from or date_to:
-        time_filter: Dict[str, Any] = {}
-        if date_from:
-            time_filter["$gte"] = date_from
-        if date_to:
-            time_filter["$lte"] = date_to
-        filter_dict["check_in_time"] = time_filter
-
-    sessions = await get_visit_sessions(filter_dict=filter_dict, start=0, stop=10000)
+    rows = await _visitor_log_rows(tenant_id, department_id, date_from, date_to)
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Visitor Log"
-    headers = [
-        "Visitor Name",
-        "Company",
-        "Department",
-        "Host",
-        "Check-In Time",
-        "Check-Out Time",
-        "Duration (min)",
-        "Status",
-        "Verification Status",
-        "Check-In Method",
-        "Receptionist",
-        "Purpose",
-    ]
-    ws.append(headers)
+    ws.append(VISITOR_LOG_HEADER)
 
-    for s in sessions:
-        check_in = _format_timestamp(s.check_in_time) if s.check_in_time else ""
-        check_out = _format_timestamp(s.check_out_time) if s.check_out_time else ""
-        duration = round(s.visit_duration / 60, 1) if s.visit_duration else ""
-
-        ws.append(
-            [
-                s.visitor_name_snapshot or "",
-                s.company_snapshot or "",
-                s.department_name_snapshot or "",
-                s.host_name_snapshot or "",
-                check_in,
-                check_out,
-                duration,
-                s.status or "",
-                s.verification_status or "",
-                s.check_in_method or "",
-                s.receptionist_name_snapshot or "",
-                s.purpose or "",
-            ]
-        )
+    for row in rows:
+        ws.append(row)
 
     buffer = io.BytesIO()
     wb.save(buffer)
