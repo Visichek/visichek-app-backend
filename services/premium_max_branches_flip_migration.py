@@ -56,7 +56,7 @@ _FORCED_CAP_KEYS: tuple[str, ...] = (
 
 async def sync_stored_premium_caps(
     keys: tuple[str, ...] = _FORCED_CAP_KEYS,
-) -> dict[str, Any]:
+) -> dict[str, tuple[Any, Any]]:
     """Force the given cap ``keys`` on the stored premium plan doc to their
     canonical values.
 
@@ -76,7 +76,7 @@ async def sync_stored_premium_caps(
         return {}
 
     stored_caps = plan_doc.get("tenant_caps") or {}
-    changed: dict[str, Any] = {}
+    changed: dict[str, tuple[Any, Any]] = {}
     set_payload: dict[str, Any] = {}
 
     for key in keys:
