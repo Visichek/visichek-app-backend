@@ -49,7 +49,6 @@ _GATED_FIELDS_BY_FEATURE: dict[str, tuple[str, ...]] = {
     ),
     "visitor_policies": (
         "require_id_scan",
-        "require_host_approval",
         "require_consent_before_check_in",
         "allow_self_registration",
         "auto_checkout_after_hours",
