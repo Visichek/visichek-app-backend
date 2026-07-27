@@ -64,12 +64,19 @@ from schemas.support_case_schema import (
     SupportCaseWithSummaryOut,
 )
 from services.audit_service import record_audit_event
+from services.plan_limits import get_plan_data_safe
 
 logger = logging.getLogger(__name__)
 
 # --- Configuration constants ---
 
 MAX_OPEN_CASES_PER_TENANT = 10
+
+# Floor applied to a computed SLA window when the tenant's plan carries no
+# ``sla_response_hours``. Matches the MEDIUM priority window, so plans
+# without an SLA entitlement cannot self-select a tighter clock than the
+# platform default.
+DEFAULT_SLA_FLOOR_SECONDS = 72 * 3600
 
 # RESOLVED cases auto-close after 7d of inactivity.
 RESOLVED_AUTO_CLOSE_AFTER_SECONDS = 7 * 24 * 3600
@@ -234,11 +241,32 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
         logger.debug("support_case cache refresh enqueue failed", exc_info=True)
 
 
-def _compute_sla_due_at(priority: SupportCasePriority, date_created: int) -> int:
+async def _resolve_sla_floor_seconds(tenant_id: str) -> int:
+    """Minimum SLA window the tenant's plan entitles them to, in seconds.
+
+    ``priority`` is client-supplied on case creation, so without a floor any
+    tenant on any plan could select CRITICAL and buy a 4-hour response clock.
+    The plan's ``sla_response_hours`` is the entitlement (Premium 24h,
+    Enterprise 4h); plans that set none fall back to the platform default.
+    """
+    plan_data = await get_plan_data_safe(tenant_id)
+    if not plan_data:
+        return DEFAULT_SLA_FLOOR_SECONDS
+    hours = plan_data.get("sla_response_hours")
+    if not isinstance(hours, int) or hours <= 0:
+        return DEFAULT_SLA_FLOOR_SECONDS
+    return hours * 3600
+
+
+def _compute_sla_due_at(
+    priority: SupportCasePriority,
+    date_created: int,
+    floor_seconds: int = DEFAULT_SLA_FLOOR_SECONDS,
+) -> int:
     window = SLA_WINDOWS_SECONDS.get(
         priority.value, SLA_WINDOWS_SECONDS[SupportCasePriority.MEDIUM.value]
     )
-    return date_created + window
+    return date_created + max(window, floor_seconds)
 
 
 def _throttle_admin_reply_email(case_id: str) -> bool:
@@ -475,6 +503,10 @@ async def add_support_case(
     except ValueError:
         category_enum = SupportCaseCategory.OTHER
 
+    date_created = int(time.time())
+    floor_seconds = await _resolve_sla_floor_seconds(tenant_id)
+    sla_due_at = _compute_sla_due_at(priority_enum, date_created, floor_seconds)
+
     payload = SupportCaseCreate(
         subject=subject,
         description=description,
@@ -483,6 +515,8 @@ async def add_support_case(
         tenant_id=tenant_id,
         opened_by=opened_by,
         opened_by_role=opened_by_role,
+        date_created=date_created,
+        sla_due_at=sla_due_at,
     )
 
     created = await create_support_case(payload, preassigned_id=preassigned_id)
