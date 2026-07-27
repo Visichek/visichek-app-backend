@@ -180,7 +180,12 @@ async def _list_locked_branch_ids(tenant_id: str) -> List[str]:
 
 
 async def _list_locked_department_ids(tenant_id: str) -> List[str]:
-    """Departments the plan's ``max_departments`` cap excludes."""
+    """Departments the plan's ``max_departments`` cap excludes, per branch.
+
+    The cap is per-location, so the overflow must be computed within each
+    branch. Computing it tenant-wide would report a six-branch tenant's
+    perfectly legitimate 90 departments as 75 locked.
+    """
     plan_data = await resolve_tenant_plan(tenant_id)
     if not plan_data:
         return []
@@ -191,17 +196,22 @@ async def _list_locked_department_ids(tenant_id: str) -> List[str]:
 
     cursor = (
         db["departments"]
-        .find({"tenant_id": tenant_id}, projection={"_id": 1})
+        .find({"tenant_id": tenant_id}, projection={"_id": 1, "branch_id": 1})
         .sort("date_created", 1)
     )
-    seen = 0
+
+    seen_per_branch: Dict[str, int] = {}
     locked: List[str] = []
     async for doc in cursor:
-        seen += 1
-        if seen > int(cap):
-            _id = doc.get("_id")
-            if _id is not None:
-                locked.append(str(_id))
+        _id = doc.get("_id")
+        if _id is None:
+            continue
+        # Group untagged legacy rows under one bucket so they don't each
+        # form their own uncapped branch.
+        branch_key = str(doc.get("branch_id") or "")
+        seen_per_branch[branch_key] = seen_per_branch.get(branch_key, 0) + 1
+        if seen_per_branch[branch_key] > int(cap):
+            locked.append(str(_id))
     return locked
 
 

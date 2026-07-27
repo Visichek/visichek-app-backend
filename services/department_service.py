@@ -137,10 +137,14 @@ async def get_accessible_department_ids(tenant_id: str) -> Optional[set[str]]:
 
     Returns ``None`` if the tenant has no plan-level cap on departments
     (Premium with overrides, Enterprise) — meaning every department is
-    accessible. Otherwise returns the set of the OLDEST ``cap`` active
-    departments by ``date_created``; everything beyond the cap is
-    locked-out (read AND write) until either the cap is raised or the
-    excess departments are deleted.
+    accessible. Otherwise the cap is per-branch: a six-property group
+    keeps its plan's ``max_departments`` at EACH property, not across the
+    tenant as a whole. Returns the set of the OLDEST ``cap`` departments
+    per branch by ``date_created``; everything beyond the per-branch cap
+    is locked-out (read AND write) until either the cap is raised or the
+    excess departments are deleted. Untagged legacy rows (no ``branch_id``
+    yet) share one bucket so they don't each form their own uncapped
+    branch.
 
     Sort order is stable (oldest first) so a tenant who downgrades and
     re-upgrades sees the same primary department both times.
@@ -164,14 +168,23 @@ async def get_accessible_department_ids(tenant_id: str) -> Optional[set[str]]:
 
     cursor = (
         _db["departments"]
-        .find({"tenant_id": tenant_id}, projection={"_id": 1})
+        .find({"tenant_id": tenant_id}, projection={"_id": 1, "branch_id": 1})
         .sort("date_created", 1)
-        .limit(int(cap))
     )
+    # Per-branch: the cap is per-location, so the oldest ``cap`` departments
+    # WITHIN EACH BRANCH stay accessible. Counting tenant-wide would lock a
+    # six-property group out of five properties' worth of departments.
+    seen_per_branch: dict[str, int] = {}
     allowed: set[str] = set()
     async for doc in cursor:
         _id = doc.get("_id")
-        if _id is not None:
+        if _id is None:
+            continue
+        # Untagged legacy rows share one bucket so they don't each form
+        # their own uncapped branch.
+        branch_key = str(doc.get("branch_id") or "")
+        seen_per_branch[branch_key] = seen_per_branch.get(branch_key, 0) + 1
+        if seen_per_branch[branch_key] <= int(cap):
             allowed.add(str(_id))
     return allowed
 
