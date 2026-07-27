@@ -520,7 +520,11 @@ PREMIUM_PLAN = CanonicalPlan(
     sla_response_hours=24,
     custom_branding=True,
     api_access=True,
-    support_tier=SupportTier.STANDARD,
+    # Must match ``priority_support=True`` above — support_tier is the field
+    # services/support_case_service.py actually branches on, and PRIORITY is
+    # what unlocks the per-event assigned-admin notifications that back the
+    # plan's advertised SLA support.
+    support_tier=SupportTier.PRIORITY,
     sort_order=30,
     trial_days=PAID_PLAN_TRIAL_DAYS,
     adjustable_cap_fields=frozenset(
