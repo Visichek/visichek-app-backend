@@ -157,6 +157,7 @@ async def resolve_tenant_plan(tenant_id: str) -> Optional[dict]:
         ),
         # Feature flags
         "priority_support": plan.priority_support,
+        "sla_response_hours": plan.sla_response_hours,
         "custom_branding": plan.custom_branding,
         "api_access": plan.api_access,
         # Support tier (plan default, subscription override wins)
@@ -336,6 +337,7 @@ async def _build_resolved_from_raw(sub: dict, plan: dict, tenant_id: str) -> dic
             sub.get("tenant_cap_overrides"),
         ),
         "priority_support": plan.get("priority_support"),
+        "sla_response_hours": plan.get("sla_response_hours"),
         "custom_branding": plan.get("custom_branding"),
         "api_access": plan.get("api_access"),
         "support_tier": (

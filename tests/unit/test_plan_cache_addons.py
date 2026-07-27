@@ -343,6 +343,7 @@ async def test_single_and_bulk_resolvers_produce_same_addon_inclusive_snapshot()
         display_name = "Premium"
         tier = "premium"
         priority_support = False
+        sla_response_hours = None
         custom_branding = False
         api_access = False
         support_tier = None
