@@ -10,6 +10,7 @@ from core.queue.manager import QueueManager
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.queue.write_pipeline import write_handler
 from schemas.incident_log_schema import IncidentLogCreate, IncidentLogUpdate
+from services.audit_service import record_audit_event
 from services.incident_service import (
     add_incident,
     retrieve_incidents,
@@ -49,6 +50,19 @@ async def _nudge_dashboard(tenant_id: str) -> None:
         logger.debug("incident_writer: dashboard nudge failed", exc_info=True)
 
 
+def _pop_actor(data: dict[str, Any]) -> tuple[str, str, str | None]:
+    """Strip the reserved actor keys the route threads through the payload.
+
+    They must not reach a Pydantic *Create/*Update model — see the reserved
+    payload keys rule in CLAUDE.md.
+    """
+    return (
+        data.pop("_actor_id", "") or "",
+        data.pop("_actor_role", "") or "",
+        data.pop("_request_id", None),
+    )
+
+
 @write_handler(
     "incident.create",
     invalidates=[
@@ -59,14 +73,29 @@ async def _nudge_dashboard(tenant_id: str) -> None:
     ],
 )
 async def _incident_create(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    actor_id, actor_role, request_id = _pop_actor(data)
     log = IncidentLogCreate(**data)
     result = await add_incident(log_data=log, preassigned_id=resource_id)
     _enqueue_refresh(result.tenant_id)
     await _nudge_dashboard(result.tenant_id)
+    if actor_id:
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role or "system_user",
+            action="incident.created",
+            resource_type="incident",
+            resource_id=str(result.id or resource_id),
+            tenant_id=result.tenant_id or "",
+            details={
+                "incident_type": data.get("incident_type"),
+                "branch_id": data.get("branch_id"),
+            },
+            request_id=request_id,
+        )
     return {
         "id": result.id,
         "tenant_id": result.tenant_id,
-        "incident_type": result.incident_type,
+        "incident_type": data.get("incident_type"),
     }
 
 
@@ -80,13 +109,26 @@ async def _incident_create(resource_id: str, data: dict[str, Any]) -> dict[str, 
     ],
 )
 async def _incident_update(resource_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    actor_id, actor_role, request_id = _pop_actor(data)
     tenant_id = data.pop("tenant_id", "") or ""
+    changes = dict(data)
     upd = IncidentLogUpdate(**data)
     result = await update_incident_by_id(
         incident_id=resource_id, tenant_id=tenant_id, log_data=upd
     )
     _enqueue_refresh(tenant_id)
     await _nudge_dashboard(tenant_id)
+    if actor_id:
+        await record_audit_event(
+            actor_id=actor_id,
+            actor_role=actor_role or "system_user",
+            action="incident.updated",
+            resource_type="incident",
+            resource_id=str(result.id or resource_id),
+            tenant_id=tenant_id,
+            details={"changes": changes},
+            request_id=request_id,
+        )
     return {"id": result.id, "status": result.status}
 
 

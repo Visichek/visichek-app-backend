@@ -160,6 +160,10 @@ async def create_incident(
         principal.tenant_id or "",
         explicit_branch_id=payload.get("branch_id"),
     )
+    request_id = getattr(request.state, "request_id", None)
+    payload["_actor_id"] = principal.user_id
+    payload["_actor_role"] = principal.role
+    payload["_request_id"] = request_id
     return await enqueue_write(
         writer_key="incident.create",
         payload=payload,
@@ -167,7 +171,7 @@ async def create_incident(
         tenant_id=principal.tenant_id,
         actor_id=principal.user_id,
         actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
+        request_id=request_id,
     )
 
 
@@ -336,6 +340,10 @@ async def update_incident(
     tenant_id = principal.tenant_id or ""
     payload = log_data.model_dump(exclude_none=True)
     payload["tenant_id"] = tenant_id
+    request_id = getattr(request.state, "request_id", None)
+    payload["_actor_id"] = principal.user_id
+    payload["_actor_role"] = principal.role
+    payload["_request_id"] = request_id
     return await enqueue_write(
         writer_key="incident.update",
         payload=payload,
@@ -344,7 +352,7 @@ async def update_incident(
         tenant_id=tenant_id,
         actor_id=principal.user_id,
         actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
+        request_id=request_id,
     )
 
 

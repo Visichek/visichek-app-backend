@@ -106,6 +106,9 @@ _AUTO_AUDIT_SKIP: frozenset[str] = frozenset(
         "appointment.create",
         "appointment.update",
         "appointment.delete",
+        # incident_writer self-audits
+        "incident.create",
+        "incident.update",
         # visitor_profile_writer self-audits the DSR erasure lifecycle
         "visitor_profile.erase",
         "visitor_profile.restore",
