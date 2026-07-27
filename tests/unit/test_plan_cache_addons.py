@@ -548,3 +548,9 @@ async def test_me_limitations_includes_active_addons_summary() -> None:
     assert result["activeAddons"] == [
         {"kind": "branch_quota", "quantity": 2, "expires_at": None}
     ]
+    # Guards the wiring, not just the helper: if the
+    # caps_out.update(_support_case_caps()) line in build_me_limitations
+    # were ever deleted, this would catch it even though
+    # test_me_limitations_support_cap.py (which only exercises
+    # _support_case_caps() in isolation) would still pass.
+    assert result["caps"]["maxOpenSupportCases"] == 10
