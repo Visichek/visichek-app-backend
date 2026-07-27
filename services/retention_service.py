@@ -9,8 +9,64 @@ from repositories.deletion_log_repo import create_deletion_log
 from repositories.tenant_repo import get_tenants
 from schemas.deletion_log_schema import DeletionLogCreate
 from schemas.imports import CheckinState, DeletionAction, RetentionScope
+from schemas.retention_policy_schema import RetentionPolicyOut
 
 logger = logging.getLogger(__name__)
+
+# Scopes an implicit (settings-derived) policy covers. ``id_images`` is
+# deliberately excluded — image retention is a separate, deliberate decision
+# and must stay opt-in via an explicit RetentionPolicy row.
+_IMPLICIT_VISITOR_SCOPES: tuple[str, ...] = (
+    RetentionScope.VISIT_SESSIONS.value,
+    RetentionScope.CHECKINS.value,
+    RetentionScope.VISITOR_PROFILES.value,
+)
+
+
+async def _implicit_policies_from_settings(tenant_id: str) -> list[RetentionPolicyOut]:
+    """Derive retention policies from ``tenant_settings`` for tenants with none.
+
+    The Settings UI presents ``visitor_data_retention_days`` as *the*
+    retention control, but the sweep only ever honoured explicit
+    ``retention_policies`` rows — so a tenant who configured retention in
+    Settings and never created a policy retained visitor data forever.
+
+    These are computed per sweep and never persisted: an explicit policy row
+    always wins, and the tenant can still see exactly one source of truth in
+    the UI. Returns ``[]`` when there is no settings document, or when the
+    configured window is 0 / None (which means "retain indefinitely" — we
+    never invent a purge the operator did not ask for).
+    """
+    try:
+        settings_doc = await db["tenant_settings"].find_one({"tenant_id": tenant_id})
+    except Exception:
+        logger.warning(
+            "retention: tenant_settings lookup failed tenant=%s", tenant_id,
+            exc_info=True,
+        )
+        return []
+
+    if not settings_doc:
+        return []
+
+    days = settings_doc.get("visitor_data_retention_days")
+    if not isinstance(days, int) or days <= 0:
+        return []
+
+    try:
+        action = DeletionAction(settings_doc.get("deletion_action") or "anonymise")
+    except ValueError:
+        action = DeletionAction.ANONYMISE
+
+    return [
+        RetentionPolicyOut(
+            tenant_id=tenant_id,
+            scope=scope,
+            retention_days=days,
+            action=action,
+        )
+        for scope in _IMPLICIT_VISITOR_SCOPES
+    ]
 
 
 async def run_retention_cleanup():
@@ -18,6 +74,8 @@ async def run_retention_cleanup():
     tenants = await get_tenants()
     for tenant in tenants:
         policies = await get_retention_policies({"tenant_id": tenant.id})
+        if not policies:
+            policies = await _implicit_policies_from_settings(tenant.id)
         for policy in policies:
             cutoff = int(time.time()) - (policy.retention_days * 86400)
             action = policy.action
