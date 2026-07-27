@@ -145,6 +145,19 @@ class DeletionAction(str, Enum):
     SCHEDULED = "scheduled"
 
 
+class RetentionScope(str, Enum):
+    """Collections the retention sweep knows how to purge.
+
+    Was an unvalidated ``str`` on RetentionPolicyBase, so a typo produced a
+    policy that matched no sweep branch and silently retained data forever.
+    """
+
+    VISIT_SESSIONS = "visit_sessions"
+    CHECKINS = "checkins"
+    ID_IMAGES = "id_images"
+    VISITOR_PROFILES = "visitor_profiles"
+
+
 class DSRType(str, Enum):
     ACCESS = "access"
     CORRECTION = "correction"

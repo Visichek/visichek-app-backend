@@ -5,7 +5,7 @@ import time
 
 class RetentionPolicyBase(BaseModel):
     tenant_id: str
-    scope: str  # e.g., "visit_sessions", "id_images", "visitor_profiles"
+    scope: RetentionScope
     retention_days: int
     action: DeletionAction = DeletionAction.ANONYMISE
 
@@ -24,13 +24,18 @@ class RetentionPolicyUpdate(BaseModel):
 
 class RetentionPolicyOut(RetentionPolicyBase):
     id: Optional[str] = Field(default=None, alias="_id")
+    # Deliberately widened back to ``str``: legacy rows may carry a scope
+    # that predates (or typos) the enum, and a read path must never 500 on
+    # historical data. Writes are validated strictly via the Base/Create.
+    scope: str  # type: ignore[assignment]
     date_created: Optional[int] = None
 
     @model_validator(mode="before")
     @classmethod
     def convert_objectid(cls, values):
-        if "_id" in values and isinstance(values["_id"], ObjectId):
-            values["_id"] = str(values["_id"])
+        if isinstance(values, dict) and "_id" in values:
+            if isinstance(values["_id"], ObjectId):
+                values["_id"] = str(values["_id"])
         return values
 
     class Config:
