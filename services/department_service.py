@@ -17,6 +17,7 @@ from schemas.department_schema import (
     DepartmentOut,
     DepartmentWithSummaryOut,
 )
+from services.branch_service import resolve_hq_branch_id
 from services.plan_limits import enforce_entity_cap
 
 
@@ -31,16 +32,34 @@ async def validate_department_create(
     tenant_id: str,
     name: str,
     code: Optional[str],
-) -> None:
+    branch_id: Optional[str] = None,
+) -> str:
     """Synchronous pre-flight check used as the route-level gate.
 
     Raises before a write is enqueued so the client gets an immediate 409
     instead of a 202 followed by a failed-job notification.
+
+    Returns the RESOLVED branch id so the caller can stamp it on the write
+    payload. Departments are branch-scoped: the cap and both uniqueness
+    checks are per-branch, so a six-property group gets its plan's
+    ``max_departments`` at each property and Imperial and Elvis may each
+    have their own "Front Office". A single-branch tenant supplies no
+    branch_id and everything resolves to HQ, which is behaviourally
+    identical to the previous tenant-wide rule.
     """
     if not tenant_id:
         raise HTTPException(status_code=400, detail="tenant_id is required")
 
-    current_count = await count_departments({"tenant_id": tenant_id})
+    resolved_branch_id = branch_id or await resolve_hq_branch_id(tenant_id)
+    if not resolved_branch_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Tenant has no branch — cannot create a department",
+        )
+
+    scope = {"tenant_id": tenant_id, "branch_id": resolved_branch_id}
+
+    current_count = await count_departments(scope)
     await enforce_entity_cap(
         tenant_id=tenant_id,
         cap_key="max_departments",
@@ -49,22 +68,22 @@ async def validate_department_create(
     )
 
     if code:
-        existing_code = await get_department({"tenant_id": tenant_id, "code": code})
+        existing_code = await get_department({**scope, "code": code})
         if existing_code:
             raise HTTPException(
                 status_code=409,
-                detail="Department with this code already exists in tenant",
+                detail="Department with this code already exists in this branch",
             )
 
     if name and name.strip():
-        existing_name = await get_department(
-            {"tenant_id": tenant_id, "name": _name_match_filter(name)}
-        )
+        existing_name = await get_department({**scope, "name": _name_match_filter(name)})
         if existing_name:
             raise HTTPException(
                 status_code=409,
-                detail="Department with this name already exists in tenant",
+                detail="Department with this name already exists in this branch",
             )
+
+    return resolved_branch_id
 
 
 async def validate_department_update(
@@ -74,7 +93,11 @@ async def validate_department_update(
     name: Optional[str],
     code: Optional[str],
 ) -> None:
-    """Pre-flight check for renames/recodes; excludes the department itself."""
+    """Pre-flight check for renames/recodes; excludes the department itself.
+
+    Uniqueness is scoped to the department's OWN branch, so two properties
+    may each run a "Front Office".
+    """
     if not ObjectId.is_valid(department_id):
         raise HTTPException(status_code=400, detail="Invalid department ID format")
     if not tenant_id:
@@ -82,32 +105,30 @@ async def validate_department_update(
 
     self_oid = ObjectId(department_id)
 
+    current = await get_department({"_id": self_oid, "tenant_id": tenant_id})
+    if current is None:
+        raise HTTPException(status_code=404, detail="Department not found")
+
+    scope: dict = {"tenant_id": tenant_id, "_id": {"$ne": self_oid}}
+    # Legacy rows the backfill has not tagged yet carry no branch_id; fall
+    # back to tenant-wide uniqueness for those rather than matching on null.
+    if current.branch_id:
+        scope["branch_id"] = current.branch_id
+
     if code:
-        existing_code = await get_department(
-            {
-                "tenant_id": tenant_id,
-                "code": code,
-                "_id": {"$ne": self_oid},
-            }
-        )
+        existing_code = await get_department({**scope, "code": code})
         if existing_code:
             raise HTTPException(
                 status_code=409,
-                detail="Department with this code already exists in tenant",
+                detail="Department with this code already exists in this branch",
             )
 
     if name and name.strip():
-        existing_name = await get_department(
-            {
-                "tenant_id": tenant_id,
-                "name": _name_match_filter(name),
-                "_id": {"$ne": self_oid},
-            }
-        )
+        existing_name = await get_department({**scope, "name": _name_match_filter(name)})
         if existing_name:
             raise HTTPException(
                 status_code=409,
-                detail="Department with this name already exists in tenant",
+                detail="Department with this name already exists in this branch",
             )
 
 
@@ -212,11 +233,13 @@ async def add_department(
     *,
     preassigned_id: Optional[str] = None,
 ) -> DepartmentOut:
-    await validate_department_create(
+    resolved_branch_id = await validate_department_create(
         tenant_id=dept_data.tenant_id or "",
         name=dept_data.name,
         code=dept_data.code,
+        branch_id=dept_data.branch_id,
     )
+    dept_data.branch_id = resolved_branch_id
     if created_by:
         dept_data.created_by = created_by
     return await create_department(dept_data, preassigned_id=preassigned_id)
