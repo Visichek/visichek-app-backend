@@ -90,7 +90,11 @@ def _optional_bool_builder(mongo_field: str):
 
 TENANTS_LIST_SPEC = ListSpec(
     sortable_fields=frozenset(
-        {"company_name", "date_created", "is_active", "subscription_status"}
+        # ``subscription_status`` lives on the read-time-computed plan_summary,
+        # not the tenant document — sorting on it produced arbitrary order.
+        # (The subscriptionStatus FILTER below is fine: it joins via the
+        # subscriptions collection into base_filter before run_list.)
+        {"company_name", "date_created", "is_active"}
     ),
     default_sort=(("date_created", -1),),
     search_fields=("company_name", "dpo_contact_email"),

@@ -152,7 +152,8 @@ ADMIN_INCIDENTS_LIST_SPEC = ListSpec(
         {"date_created", "notification_deadline", "risk_level", "status"}
     ),
     default_sort=(("date_created", -1),),
-    search_fields=("description", "summary"),
+    # ``summary`` is not a field on incident_logs — only ``description`` is.
+    search_fields=("description",),
     filters={
         "status": FilterDef(
             name="status", multi=True, allowed_values=_ADMIN_INC_STATUSES

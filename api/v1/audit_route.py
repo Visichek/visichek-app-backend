@@ -39,7 +39,9 @@ _AUDIT_OPERATIONS = frozenset({"create", "read", "update", "delete"})
 AUDIT_LOG_LIST_SPEC = ListSpec(
     sortable_fields=frozenset({"timestamp"}),
     default_sort=(("timestamp", -1),),
-    search_fields=("action", "details_summary"),
+    # ``details_summary`` never existed on audit rows (``details`` is a dict);
+    # q-search matches on the action string only.
+    search_fields=("action",),
     filters={
         "actorUserId": FilterDef(name="actorUserId", mongo_field="actor_id"),
         "actorRole": FilterDef(name="actorRole", mongo_field="actor_role"),
@@ -62,7 +64,9 @@ AUDIT_LOG_LIST_SPEC = ListSpec(
 MY_AUDIT_LOG_LIST_SPEC = ListSpec(
     sortable_fields=frozenset({"timestamp"}),
     default_sort=(("timestamp", -1),),
-    search_fields=("action", "details_summary"),
+    # ``details_summary`` never existed on audit rows (``details`` is a dict);
+    # q-search matches on the action string only.
+    search_fields=("action",),
     filters={
         "operation": FilterDef(name="operation", allowed_values=_AUDIT_OPERATIONS),
         "resourceType": FilterDef(name="resourceType", mongo_field="resource_type"),

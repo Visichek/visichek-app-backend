@@ -347,6 +347,7 @@ async def test_single_and_bulk_resolvers_produce_same_addon_inclusive_snapshot()
         custom_branding = False
         api_access = False
         support_tier = None
+        currency = "NGN"
 
         def model_dump(self, mode: str = "json") -> dict:
             return {

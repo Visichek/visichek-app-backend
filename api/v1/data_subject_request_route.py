@@ -1,4 +1,5 @@
-from typing import Any, List, Optional
+import time
+from typing import Any, List, Optional, Sequence
 
 from bson import ObjectId
 from fastapi import APIRouter, Body, Depends, Header, Request, status
@@ -38,16 +39,52 @@ _DSR_STATUSES = frozenset({"pending", "in_progress", "completed", "rejected"})
 _DSR_TYPES = frozenset({"access", "correction", "deletion", "consent_withdrawal"})
 
 
+# SLA state is derived, not persisted: it is a window over ``sla_deadline``
+# for still-open requests. Semantics mirror the DSR stats rollup in
+# services/data_subject_request_service.py (at-risk = due within 24h).
+_DSR_OPEN_STATUSES = ["pending", "in_progress"]
+_SLA_AT_RISK_WINDOW_SECONDS = 86400
+
+
+def _dsr_sla_state_builder(vs: Sequence[str]) -> dict[str, Any]:
+    now = int(time.time())
+    soon = now + _SLA_AT_RISK_WINDOW_SECONDS
+    clauses = []
+    for state in vs:
+        if state == "breached":
+            deadline: dict = {"$lt": now}
+        elif state == "at_risk":
+            deadline = {"$gte": now, "$lte": soon}
+        else:  # on_track
+            deadline = {"$gt": soon}
+        clauses.append(
+            {"status": {"$in": _DSR_OPEN_STATUSES}, "sla_deadline": deadline}
+        )
+    return clauses[0] if len(clauses) == 1 else {"$or": clauses}
+
+
 DSR_LIST_SPEC = ListSpec(
-    sortable_fields=frozenset({"date_created", "sla_deadline", "status", "type"}),
+    # The stored field is ``request_type`` (see DSRBase) — ``type`` was a
+    # phantom that sorted/filtered on a nonexistent path.
+    sortable_fields=frozenset(
+        {"date_created", "sla_deadline", "status", "request_type"}
+    ),
     default_sort=(("date_created", -1),),
-    search_fields=("subject_email", "subject_name", "request_number"),
+    # Docs store ``requester_email`` / ``requester_name``; the previous
+    # subject_*/request_number names never existed so ``q`` matched nothing.
+    search_fields=("requester_email", "requester_name"),
     filters={
         "status": FilterDef(name="status", multi=True, allowed_values=_DSR_STATUSES),
-        "type": FilterDef(name="type", multi=True, allowed_values=_DSR_TYPES),
+        "type": FilterDef(
+            name="type",
+            multi=True,
+            allowed_values=_DSR_TYPES,
+            mongo_field="request_type",
+        ),
         "slaState": FilterDef(
             name="slaState",
             allowed_values=frozenset({"on_track", "at_risk", "breached"}),
+            builder=_dsr_sla_state_builder,
         ),
     },
     range_filters={"createdAt": "date_created"},

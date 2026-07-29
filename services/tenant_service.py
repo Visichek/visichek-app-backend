@@ -294,7 +294,9 @@ def _build_plan_summary(plan_data: dict | None) -> TenantPlanSummary | None:
         subscription_status=plan_data.get("subscription_status"),
         billing_cycle=plan_data.get("billing_cycle"),
         effective_price=plan_data.get("effective_price"),
-        currency="NGN",
+        # Read the plan's real currency; NGN only as legacy-cache fallback
+        # (snapshots written before "currency" joined the resolved dict).
+        currency=plan_data.get("currency") or "NGN",
         current_period_end=plan_data.get("current_period_end"),
         trial_ends_at=plan_data.get("trial_ends_at"),
         entity_caps=plan_data.get("tenant_caps"),

@@ -77,6 +77,7 @@ async def test_resolve_tenant_plan_single_path_carries_sla_response_hours() -> N
         custom_branding = True
         api_access = True
         support_tier = None
+        currency = "NGN"
 
         def model_dump(self, mode: str = "json") -> dict:
             return {
@@ -205,6 +206,7 @@ async def test_support_case_floor_uses_real_resolution_path_end_to_end() -> None
         custom_branding = True
         api_access = True
         support_tier = None
+        currency = "NGN"
 
         def model_dump(self, mode: str = "json") -> dict:
             return {

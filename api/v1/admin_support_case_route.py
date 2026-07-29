@@ -7,7 +7,8 @@ filters (assigned_admin_id, support_tier, tenant_id) are available here.
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Optional
+import time
+from typing import Annotated, Any, Optional, Sequence
 
 from bson import ObjectId
 from fastapi import APIRouter, Body, Depends, Header, Query, Request, status
@@ -61,6 +62,31 @@ _SUPPORT_STATUSES = frozenset(
 )
 _SUPPORT_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
 
+# SLA state is derived, not persisted: nothing ever writes ``sla_state`` to
+# the collection, so the old ``{"sla_state": ...}`` builder always matched
+# zero rows. It is a window over ``sla_due_at`` for still-active cases;
+# active-status set mirrors repositories/support_case_repo.py
+# list_sla_breached_cases, at-risk = due within 24h.
+_SC_SLA_ACTIVE_STATUSES = ["open", "acknowledged", "in_progress", "reopened"]
+_SC_SLA_AT_RISK_WINDOW_SECONDS = 86400
+
+
+def _sc_sla_state_builder(vs: Sequence[str]) -> dict[str, Any]:
+    now = int(time.time())
+    soon = now + _SC_SLA_AT_RISK_WINDOW_SECONDS
+    clauses = []
+    for state in vs:
+        if state == "breached":
+            due: dict[str, Any] = {"$lte": now}
+        elif state == "at_risk":
+            due = {"$gt": now, "$lte": soon}
+        else:  # on_track
+            due = {"$gt": soon}
+        clauses.append(
+            {"status": {"$in": _SC_SLA_ACTIVE_STATUSES}, "sla_due_at": due}
+        )
+    return clauses[0] if len(clauses) == 1 else {"$or": clauses}
+
 
 SUPPORT_CASES_LIST_SPEC = ListSpec(
     sortable_fields=frozenset(
@@ -85,11 +111,7 @@ SUPPORT_CASES_LIST_SPEC = ListSpec(
         "slaState": FilterDef(
             name="slaState",
             allowed_values=frozenset({"on_track", "at_risk", "breached"}),
-            builder=lambda vs: (
-                {"sla_state": vs[0]}
-                if len(vs) == 1
-                else {"sla_state": {"$in": list(vs)}}
-            ),
+            builder=_sc_sla_state_builder,
         ),
     },
     range_filters={"createdAt": "date_created"},

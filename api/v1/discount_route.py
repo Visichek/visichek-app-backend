@@ -36,7 +36,9 @@ router = APIRouter(prefix="/discounts", tags=["Discounts"])
 
 DISCOUNTS_LIST_SPEC = ListSpec(
     sortable_fields=frozenset(
-        {"date_created", "expires_at", "current_redemptions", "code"}
+        # ``expires_at`` was a phantom — discounts store ``valid_until``
+        # (already used correctly by the ``expiresAt`` range filter below).
+        {"date_created", "valid_until", "current_redemptions", "code"}
     ),
     default_sort=(("date_created", -1),),
     search_fields=("code", "description"),
