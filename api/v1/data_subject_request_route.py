@@ -30,6 +30,7 @@ from services.notification_service import (
     extract_resource_ids,
     schedule_resource_read_receipt,
 )
+from schemas.data_subject_request_schema import DSROut
 
 router = APIRouter(prefix="/dsr", tags=["Data Subject Requests"])
 _dpo_roles = verify_system_user_token("super_admin", "dpo")
@@ -64,6 +65,7 @@ def _dsr_sla_state_builder(vs: Sequence[str]) -> dict[str, Any]:
 
 
 DSR_LIST_SPEC = ListSpec(
+    model=DSROut,
     # The stored field is ``request_type`` (see DSRBase) — ``type`` was a
     # phantom that sorted/filtered on a nonexistent path.
     sortable_fields=frozenset(

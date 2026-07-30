@@ -106,6 +106,13 @@ class FilterDef:
     # Special handling: the parser builds a complete fragment instead of
     # the default ``{field: value}`` / ``{field: {$in: [...]}}``.
     builder: Optional[Callable[[Sequence[str]], Mapping[str, Any]]] = None
+    # The filter is NOT applied against this collection: the route resolves
+    # it via a pre-query join (e.g. ``planTier`` / ``supportTier`` → a set of
+    # tenant ids) and pops it from ``query.filters`` before ``run_list``.
+    # Purely a declaration — it exempts the filter from the startup
+    # ListSpec/schema drift check, which would otherwise flag the name as a
+    # phantom document field. The route MUST still pop it.
+    external: bool = False
 
     def field_path(self) -> str:
         return self.mongo_field or self.name
@@ -162,6 +169,19 @@ class ListSpec:
     # Range filter pairs: ``"createdAt"`` → fields
     # ``createdAtGte`` / ``createdAtLte`` mapping to ``date_created``.
     range_filters: dict[str, str] = field(default_factory=dict)
+    # The Pydantic model describing the documents this spec queries — the
+    # ``*Out`` schema for the collection. Set it and every field name above
+    # is cross-checked against the schema at boot by
+    # ``core.list_spec_validation``, which is what stops phantom fields
+    # (a sort/search/filter naming a path no document has) from shipping
+    # as a silent zero-result query. Leave ``None`` only when the spec
+    # queries something with no schema; the check reports those as
+    # unvalidated rather than passing them.
+    model: Optional[type] = None
+    # Real document paths the model deliberately does not declare —
+    # denormalised or repo-written fields. Escape hatch for the check
+    # above; keep the list tight and say why in a comment at the call site.
+    extra_fields: frozenset[str] = field(default_factory=frozenset)
 
 
 # ─── ListQuery (parsed result) ────────────────────────────────────────

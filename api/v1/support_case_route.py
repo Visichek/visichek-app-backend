@@ -47,6 +47,7 @@ from services.support_case_service import (
     retrieve_support_case_by_id,
     retrieve_support_cases,
 )
+from schemas.support_case_schema import SupportCaseOut
 
 
 _SUPPORT_STATUSES = frozenset(
@@ -88,6 +89,7 @@ def _sc_sla_state_builder(vs: Sequence[str]) -> dict[str, Any]:
 
 
 SUPPORT_CASES_TENANT_LIST_SPEC = ListSpec(
+    model=SupportCaseOut,
     # NOTE: the persisted SLA field is `sla_due_at` (set by support_case_service
     # / SupportCaseCreate), NOT `sla_deadline`. The old `sla_deadline` entry was
     # a phantom: it passed the allowlist but Mongo sorted by a missing field

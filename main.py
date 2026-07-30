@@ -1287,3 +1287,12 @@ apply_response_documentation(app)
 from security.permissions import assert_admin_permission_coverage
 
 assert_admin_permission_coverage(app)
+
+# Same idea one layer down: surface any ListSpec whose sort/search/filter
+# allowlist names a path its schema doesn't have. Those are silent — a
+# phantom filter returns zero rows and a phantom sort returns arbitrary
+# order, with no error anywhere. Logs at boot; tests/unit/test_list_spec_drift.py
+# is what actually fails CI.
+from core.list_spec_validation import assert_list_spec_coverage
+
+assert_list_spec_coverage(app)

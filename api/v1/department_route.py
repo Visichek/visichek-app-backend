@@ -24,9 +24,11 @@ from services.department_service import (
     validate_department_create,
     validate_department_update,
 )
+from schemas.department_schema import DepartmentOut
 
 
 DEPARTMENTS_LIST_SPEC = ListSpec(
+    model=DepartmentOut,
     sortable_fields=frozenset({"name", "code", "date_created"}),
     default_sort=(("name", 1),),
     search_fields=("name", "code"),

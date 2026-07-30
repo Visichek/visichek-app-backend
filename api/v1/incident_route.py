@@ -25,6 +25,7 @@ from services.notification_service import (
     extract_resource_ids,
     schedule_resource_read_receipt,
 )
+from schemas.incident_log_schema import IncidentLogOut
 
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
@@ -65,6 +66,7 @@ def _approaching_builder(values):
 
 
 INCIDENTS_LIST_SPEC = ListSpec(
+    model=IncidentLogOut,
     sortable_fields=frozenset(
         {"date_created", "notification_deadline", "risk_level", "status"}
     ),

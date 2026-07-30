@@ -21,6 +21,7 @@ from schemas.plan_schema import (
 )
 from services.plan_service import retrieve_plan_by_id, retrieve_plans
 from security.account_status_check import check_admin_account_status_and_permissions
+from schemas.plan_schema import PlanOut
 
 router = APIRouter(prefix="/plans", tags=["Plans"])
 
@@ -39,6 +40,7 @@ def _plan_status_builder(values):
 
 
 PLANS_LIST_SPEC = ListSpec(
+    model=PlanOut,
     sortable_fields=frozenset(
         {"display_name", "name", "base_price_monthly", "date_created", "status", "tier"}
     ),

@@ -56,8 +56,11 @@ _ONBOARDING_STATUSES = frozenset(
 
 
 ONBOARDING_LIST_SPEC = ListSpec(
+    model=OnboardingSubmissionOut,
     sortable_fields=frozenset(
-        {"submitted_at", "status", "organization_name", "date_created"}
+        # Onboarding submissions timestamp with ``submitted_at``; they have
+        # no ``date_created``, so that entry sorted by a missing field.
+        {"submitted_at", "status", "organization_name"}
     ),
     default_sort=(("submitted_at", -1),),
     search_fields=("organization_name", "full_name", "email"),

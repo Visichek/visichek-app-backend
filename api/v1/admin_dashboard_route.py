@@ -24,6 +24,7 @@ from services.billing_report_service import (
     get_billing_summary,
     get_payment_discrepancies,
 )
+from schemas.incident_log_schema import IncidentLogOut
 
 router = APIRouter(prefix="/admins/dashboard", tags=["Application Admin Dashboard"])
 
@@ -148,6 +149,7 @@ _ADMIN_INC_TYPES = frozenset(
 _ADMIN_RISK_LEVELS = frozenset({"low", "medium", "high", "critical"})
 
 ADMIN_INCIDENTS_LIST_SPEC = ListSpec(
+    model=IncidentLogOut,
     sortable_fields=frozenset(
         {"date_created", "notification_deadline", "risk_level", "status"}
     ),

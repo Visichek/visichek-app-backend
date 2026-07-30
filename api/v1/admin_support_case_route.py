@@ -43,10 +43,12 @@ from services.notification_service import (
 from services.support_case_service import (
     enrich_support_case_dicts,
     retrieve_cases_approaching_sla,
+    resolve_support_tier_tenant_filter,
     retrieve_messages_for_case,
     retrieve_support_case_by_id,
     retrieve_support_cases,
 )
+from schemas.support_case_schema import SupportCaseOut
 
 
 _SUPPORT_STATUSES = frozenset(
@@ -61,6 +63,7 @@ _SUPPORT_STATUSES = frozenset(
     }
 )
 _SUPPORT_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
+_SUPPORT_TIERS = frozenset({"none", "standard", "priority"})
 
 # SLA state is derived, not persisted: nothing ever writes ``sla_state`` to
 # the collection, so the old ``{"sla_state": ...}`` builder always matched
@@ -89,6 +92,7 @@ def _sc_sla_state_builder(vs: Sequence[str]) -> dict[str, Any]:
 
 
 SUPPORT_CASES_LIST_SPEC = ListSpec(
+    model=SupportCaseOut,
     sortable_fields=frozenset(
         {"date_created", "sla_due_at", "priority", "status", "last_updated"}
     ),
@@ -107,7 +111,15 @@ SUPPORT_CASES_LIST_SPEC = ListSpec(
         "tenantId": FilterDef(name="tenantId", mongo_field="tenant_id"),
         "assigneeId": FilterDef(name="assigneeId", mongo_field="assigned_admin_id"),
         "category": FilterDef(name="category"),
-        "supportTier": FilterDef(name="supportTier", mongo_field="support_tier"),
+        # Resolved by the route into a tenant_id fragment (see
+        # resolve_support_tier_tenant_filter) — support_tier is plan-derived
+        # and never stored on a case document.
+        "supportTier": FilterDef(
+            name="supportTier",
+            multi=True,
+            allowed_values=_SUPPORT_TIERS,
+            external=True,
+        ),
         "slaState": FilterDef(
             name="slaState",
             allowed_values=frozenset({"on_track", "at_risk", "breached"}),
@@ -196,9 +208,23 @@ async def admin_list_support_cases(
         _auto_read_admin_support_cases(admin, result)
         return result
     query = parse_list_query(request, SUPPORT_CASES_LIST_SPEC)
+
+    # supportTier is plan-derived and never stored on the case document, so
+    # it can't be applied against this collection. Resolve it to a tenant_id
+    # fragment first, then drop it from the parsed filters — otherwise
+    # run_list would query a field that doesn't exist and return nothing.
+    base_filter: dict[str, Any] = {}
+    tier_filter = await resolve_support_tier_tenant_filter(
+        request.query_params.getlist("supportTier")
+    )
+    query.filters.pop("supportTier", None)
+    if tier_filter is not None:
+        base_filter.update(tier_filter)
+
     result = await run_list(
         collection=db.support_cases,
         query=query,
+        base_filter=base_filter,
         map_doc=_map_sc_doc,
         facet_runner=_sc_status_facet,
     )

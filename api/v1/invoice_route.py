@@ -24,6 +24,7 @@ from services.invoice_service import (
     retrieve_invoice_by_id_with_summary,
     retrieve_invoices_for_tenant_with_summary,
 )
+from schemas.invoice_schema import InvoiceOut
 
 router = APIRouter(prefix="/invoices", tags=["Invoices"])
 
@@ -51,6 +52,7 @@ def _amount_minor(raw: object) -> int:
 
 
 INVOICES_ADMIN_LIST_SPEC = ListSpec(
+    model=InvoiceOut,
     sortable_fields=frozenset(
         {"issued_at", "total_minor", "status", "date_created", "invoice_number"}
     ),
@@ -83,6 +85,7 @@ INVOICES_ADMIN_LIST_SPEC = ListSpec(
 
 
 INVOICES_TENANT_LIST_SPEC = ListSpec(
+    model=InvoiceOut,
     sortable_fields=frozenset(
         {"issued_at", "total_minor", "status", "date_created", "invoice_number"}
     ),

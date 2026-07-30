@@ -29,6 +29,7 @@ from services.notification_service import (
     schedule_resource_read_receipt,
 )
 from services.visit_session_service import check_in_from_appointment
+from schemas.appointment_schema import AppointmentOut
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
 
@@ -49,6 +50,7 @@ _APPT_STATUSES = frozenset(
 
 
 APPOINTMENTS_LIST_SPEC = ListSpec(
+    model=AppointmentOut,
     sortable_fields=frozenset(
         {"scheduled_datetime", "date_created", "status", "last_updated"}
     ),

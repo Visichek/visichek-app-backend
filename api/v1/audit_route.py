@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import time
-from typing import Annotated, Any, Dict, Optional
+from typing import Annotated, Any, Dict, Optional, Sequence
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, Query, Request
@@ -21,9 +21,9 @@ from security.account_status_check import (
 )
 from security.auth import verify_system_user_token
 from security.principal import AuthPrincipal, TENANT_USER_ROLES
-from schemas.audit_log_schema import AuditLogOut
 from services.audit_service import enrich_audit_logs, retrieve_audit_logs_with_summary
 from services.export_service import export_audit_logs_xlsx
+from schemas.audit_log_schema import AuditLogOut
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 _audit_roles = verify_system_user_token("super_admin", "auditor", "dpo")
@@ -35,8 +35,33 @@ _self_roles = verify_system_user_token(*TENANT_USER_ROLES)
 
 _AUDIT_OPERATIONS = frozenset({"create", "read", "update", "delete"})
 
+# Audit rows carry no `operation` field — the CRUD verb lives in the tail of
+# `action` (`<resource>.<verb>`, past tense: "appointment.created"). Filtering
+# on a bare `operation` path matched zero rows on a control the tenant audit
+# page actually exposes. Match the verb suffix instead, accepting both the
+# past-tense form the services emit and the bare form the frontend's
+# `operationVariant` also recognises. "read" is included for completeness —
+# no read events are audited today, so it legitimately matches nothing.
+_AUDIT_OPERATION_VERBS: dict[str, tuple[str, ...]] = {
+    "create": ("create", "created"),
+    "read": ("read", "viewed", "accessed", "exported"),
+    "update": ("update", "updated"),
+    "delete": ("delete", "deleted"),
+}
+
+
+def _audit_operation_builder(vs: Sequence[str]) -> dict[str, Any]:
+    verbs: list[str] = []
+    for op in vs:
+        verbs.extend(_AUDIT_OPERATION_VERBS.get(op, ()))
+    if not verbs:
+        # An unknown operation must match nothing, never everything.
+        return {"action": {"$in": []}}
+    return {"action": {"$regex": rf"\.({'|'.join(verbs)})$"}}
+
 
 AUDIT_LOG_LIST_SPEC = ListSpec(
+    model=AuditLogOut,
     sortable_fields=frozenset({"timestamp"}),
     default_sort=(("timestamp", -1),),
     # ``details_summary`` never existed on audit rows (``details`` is a dict);
@@ -45,7 +70,12 @@ AUDIT_LOG_LIST_SPEC = ListSpec(
     filters={
         "actorUserId": FilterDef(name="actorUserId", mongo_field="actor_id"),
         "actorRole": FilterDef(name="actorRole", mongo_field="actor_role"),
-        "operation": FilterDef(name="operation", allowed_values=_AUDIT_OPERATIONS),
+        "operation": FilterDef(
+            name="operation",
+            multi=True,
+            allowed_values=_AUDIT_OPERATIONS,
+            builder=_audit_operation_builder,
+        ),
         "resourceType": FilterDef(name="resourceType", mongo_field="resource_type"),
         "resourceId": FilterDef(name="resourceId", mongo_field="resource_id"),
         "tenantId": FilterDef(name="tenantId", mongo_field="tenant_id"),
@@ -62,13 +92,19 @@ AUDIT_LOG_LIST_SPEC = ListSpec(
 # tenantId, resourceId) so a caller can never widen the feed past their own
 # actions — the forced actor_id base filter is the only actor predicate.
 MY_AUDIT_LOG_LIST_SPEC = ListSpec(
+    model=AuditLogOut,
     sortable_fields=frozenset({"timestamp"}),
     default_sort=(("timestamp", -1),),
     # ``details_summary`` never existed on audit rows (``details`` is a dict);
     # q-search matches on the action string only.
     search_fields=("action",),
     filters={
-        "operation": FilterDef(name="operation", allowed_values=_AUDIT_OPERATIONS),
+        "operation": FilterDef(
+            name="operation",
+            multi=True,
+            allowed_values=_AUDIT_OPERATIONS,
+            builder=_audit_operation_builder,
+        ),
         "resourceType": FilterDef(name="resourceType", mongo_field="resource_type"),
         "action": FilterDef(name="action"),
     },

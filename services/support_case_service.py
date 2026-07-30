@@ -22,10 +22,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Sequence
 
 from bson import ObjectId
 
+from core.database import db
 from core.errors import AppException, ErrorCode
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.redis_cache import cache_db
@@ -144,6 +145,72 @@ async def _resolve_support_tier(tenant_id: str) -> SupportTier:
         return SupportTier(tier_raw)
     except ValueError:
         return SupportTier.NONE
+
+
+async def resolve_support_tier_tenant_filter(
+    tiers: Sequence[str],
+) -> Optional[dict[str, Any]]:
+    """Translate a ``supportTier`` filter into a ``tenant_id`` Mongo fragment.
+
+    ``support_tier`` is NEVER persisted on a support_case document — it is
+    resolved per request from the tenant's plan (``plan.support_tier``, with
+    ``subscription.support_tier_override`` winning). Filtering the collection
+    on it directly matched zero rows; this pre-query join is the same shape
+    ``tenant_route._resolve_subscription_tenant_ids`` uses for ``planTier``.
+
+    Returns ``None`` when no tier was requested. Otherwise returns a fragment
+    to merge into ``base_filter``. A tenant with no ACTIVE/TRIALING
+    subscription resolves to tier ``"none"`` (mirroring ``_resolve_support_tier``),
+    so asking for ``none`` also matches every tenant that has no subscription
+    at all — expressed as a ``$nin`` against the subscribed set rather than an
+    unbounded ``$in`` of every tenant id.
+    """
+    requested = {t for t in tiers if t}
+    if not requested:
+        return None
+
+    from schemas.subscription_schema import SubscriptionStatus
+
+    # plan_id -> support_tier declared on the plan
+    plan_tiers: dict[str, str] = {}
+    async for plan_doc in db.plans.find({}, {"_id": 1, "support_tier": 1}):
+        plan_tiers[str(plan_doc["_id"])] = str(
+            plan_doc.get("support_tier") or SupportTier.NONE.value
+        )
+
+    matched: list[str] = []
+    subscribed: list[str] = []
+    cursor = db.subscriptions.find(
+        {
+            "status": {
+                "$in": [
+                    SubscriptionStatus.ACTIVE.value,
+                    SubscriptionStatus.TRIALING.value,
+                ]
+            }
+        },
+        {"tenant_id": 1, "plan_id": 1, "support_tier_override": 1},
+    )
+    async for doc in cursor:
+        tenant_id = doc.get("tenant_id")
+        if not tenant_id:
+            continue
+        tenant_id = str(tenant_id)
+        subscribed.append(tenant_id)
+        override = doc.get("support_tier_override")
+        effective = (
+            str(override)
+            if override
+            else plan_tiers.get(str(doc.get("plan_id")), SupportTier.NONE.value)
+        )
+        if effective in requested:
+            matched.append(tenant_id)
+
+    if SupportTier.NONE.value in requested:
+        # Unsubscribed tenants are tier "none" too — they simply have no row
+        # in `subscriptions`, so match them by exclusion.
+        return {"$or": [{"tenant_id": {"$in": matched}}, {"tenant_id": {"$nin": subscribed}}]}
+    return {"tenant_id": {"$in": matched}}
 
 
 async def _resolve_tenant_company_name(tenant_id: str) -> str:

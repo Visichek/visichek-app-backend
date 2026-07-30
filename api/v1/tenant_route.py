@@ -32,6 +32,7 @@ from services.tenant_service import (
     retrieve_tenant_by_id_with_summary,
     retrieve_tenants_with_summary,
 )
+from schemas.tenant_schema import TenantOut
 
 router = APIRouter(prefix="/tenants", tags=["Tenants"])
 
@@ -89,6 +90,7 @@ def _optional_bool_builder(mongo_field: str):
 
 
 TENANTS_LIST_SPEC = ListSpec(
+    model=TenantOut,
     sortable_fields=frozenset(
         # ``subscription_status`` lives on the read-time-computed plan_summary,
         # not the tenant document — sorting on it produced arbitrary order.
@@ -105,9 +107,16 @@ TENANTS_LIST_SPEC = ListSpec(
             allowed_values=frozenset({"active", "inactive", "all"}),
             builder=_status_filter_builder,
         ),
-        "planTier": FilterDef(name="planTier", multi=True, allowed_values=_PLAN_TIERS),
+        # Both live on `subscriptions`, not `tenant_companies`: the route
+        # resolves them into a tenant-id set and pops them before run_list.
+        "planTier": FilterDef(
+            name="planTier", multi=True, allowed_values=_PLAN_TIERS, external=True
+        ),
         "subscriptionStatus": FilterDef(
-            name="subscriptionStatus", multi=True, allowed_values=_SUB_STATUSES
+            name="subscriptionStatus",
+            multi=True,
+            allowed_values=_SUB_STATUSES,
+            external=True,
         ),
         "isActive": FilterDef(
             name="isActive", coerce=coerce_bool, mongo_field="is_active"

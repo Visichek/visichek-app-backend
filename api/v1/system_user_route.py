@@ -52,6 +52,7 @@ from services.system_user_service import (
 )
 from services.tenant_service import retrieve_tenant_by_id
 from services.tenant_settings_service import retrieve_beta_features_enabled
+from schemas.system_user_schema import SystemUserOut
 
 
 def jsonable_encoder(obj, **kwargs):
@@ -908,6 +909,7 @@ def _su_status_builder(values):
 
 
 SYSTEM_USERS_LIST_SPEC = ListSpec(
+    model=SystemUserOut,
     sortable_fields=frozenset(
         {"full_name", "email", "role", "date_created", "last_login_at"}
     ),
