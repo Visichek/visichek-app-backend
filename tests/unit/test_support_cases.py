@@ -239,9 +239,14 @@ class TestEmailTierDispatch:
                 new=lambda _tid: None,
             ),
             patch(
-                "services.support_case_service.notify_support_case_opened",
+                # add_support_case rebinds this name via a function-local
+                # `from services.notification_service import
+                # notify_support_case_opened` at call time, so patching the
+                # support_case_service module attribute above does not
+                # intercept it — patch it at its real home instead (matches
+                # test_support_case_sla_floor.py).
+                "services.notification_service.notify_support_case_opened",
                 new_callable=AsyncMock,
-                create=True,
             ),
         ):
             # Build the fake case the repository "returned".

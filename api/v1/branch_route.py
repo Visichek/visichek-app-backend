@@ -21,11 +21,13 @@ from services.branch_service import (
     retrieve_branch_by_id,
     retrieve_branches_for_tenant,
 )
+from schemas.branch_schema import BranchOut
 
 router = APIRouter(prefix="/branches", tags=["Branches"])
 
 
 BRANCHES_LIST_SPEC = ListSpec(
+    model=BranchOut,
     # NOTE: branch docs store ``status: "active"|"inactive"`` — there is no
     # ``is_active`` field on the schema (pre-existing bug, fixed here per
     # visichek-plan-verification-notes.md #19: the old ``is_active`` filter

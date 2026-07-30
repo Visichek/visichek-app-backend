@@ -224,6 +224,11 @@ class TestSystemUserService:
     """Test suite for system user service layer."""
 
     @patch(
+        "services.system_user_service.resolve_hq_branch_id",
+        new_callable=AsyncMock,
+        return_value="hq-branch",
+    )
+    @patch(
         "services.system_user_service._resolve_branch_ids_for_user_assignment",
         new_callable=AsyncMock,
         return_value=["branch-1"],
@@ -251,6 +256,7 @@ class TestSystemUserService:
         mock_get_many,
         mock_cap,
         mock_resolve_branch,
+        mock_resolve_hq,
     ):
         """Test adding a new system user."""
         from services.system_user_service import add_system_user
@@ -284,6 +290,11 @@ class TestSystemUserService:
         assert result.access_token == "access_token_123"
         assert result.refresh_token == "refresh_token_456"
 
+    @patch(
+        "services.system_user_service.resolve_hq_branch_id",
+        new_callable=AsyncMock,
+        return_value="hq-branch",
+    )
     @patch("services.system_user_service.enforce_entity_cap", new_callable=AsyncMock)
     @patch(
         "services.system_user_service.count_system_users",
@@ -293,7 +304,7 @@ class TestSystemUserService:
     @patch("services.system_user_service.get_system_users", new_callable=AsyncMock)
     @patch("services.system_user_service.get_system_user")
     async def test_add_system_user_duplicate_email_raises_409(
-        self, mock_get, mock_get_many, mock_count, mock_cap
+        self, mock_get, mock_get_many, mock_count, mock_cap, mock_resolve_hq
     ):
         """Test adding user with duplicate email raises 409."""
         from services.system_user_service import add_system_user

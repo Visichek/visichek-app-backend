@@ -434,21 +434,23 @@ async def lifespan(app: FastAPI):
             "premium_branch_grandfather_backfill failed at startup", exc_info=True
         )
 
-    # Task 9: flip the STORED premium plan document's max_branches. The
-    # canonical config flip (config/plan_tiers.py) alone does not update
-    # existing installs' persisted plan doc — plan_bootstrap's refresh
-    # deliberately excludes tenant_caps. MUST run after the grandfathering
-    # backfill above (same startup, before traffic). See
+    # Task 9 (+ generalised): force the STORED premium plan document's
+    # tenant_caps allowlist (max_branches, visitors_per_branch_per_month)
+    # to canonical. The canonical config alone (config/plan_tiers.py) does
+    # not update existing installs' persisted plan doc — plan_bootstrap's
+    # refresh deliberately excludes tenant_caps. MUST run after the
+    # grandfathering backfill above (same startup, before traffic). See
     # services/premium_max_branches_flip_migration.py.
     try:
         from services.premium_max_branches_flip_migration import (
-            flip_stored_premium_max_branches,
+            sync_stored_premium_caps,
         )
 
-        flipped = await flip_stored_premium_max_branches()
-        logger.info("premium_max_branches_flip: applied=%s", flipped)
+        synced = await sync_stored_premium_caps()
+        if synced:
+            logger.info("premium stored cap sync applied: %s", synced)
     except Exception:
-        logger.warning("premium_max_branches_flip failed at startup", exc_info=True)
+        logger.warning("premium stored cap sync failed at startup", exc_info=True)
 
     # Post-backfill safety check (log-only, never blocks startup): expect
     # zero Premium tenants whose active branch count now exceeds their
@@ -1285,3 +1287,12 @@ apply_response_documentation(app)
 from security.permissions import assert_admin_permission_coverage
 
 assert_admin_permission_coverage(app)
+
+# Same idea one layer down: surface any ListSpec whose sort/search/filter
+# allowlist names a path its schema doesn't have. Those are silent — a
+# phantom filter returns zero rows and a phantom sort returns arbitrary
+# order, with no error anywhere. Logs at boot; tests/unit/test_list_spec_drift.py
+# is what actually fails CI.
+from core.list_spec_validation import assert_list_spec_coverage
+
+assert_list_spec_coverage(app)

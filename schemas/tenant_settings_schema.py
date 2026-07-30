@@ -55,7 +55,6 @@ class TenantSettingsBase(BaseModel):
 
     # Visitor Policies
     require_id_scan: bool = False
-    require_host_approval: bool = False
     require_consent_before_check_in: bool = True
     # Visitors still shown as on-site after this many hours are closed by
     # the auto-checkout sweep (services/auto_checkout_service.py, every
@@ -170,7 +169,6 @@ class TenantSettingsUpdate(BaseModel):
 
     # Visitor Policies
     require_id_scan: Optional[bool] = None
-    require_host_approval: Optional[bool] = None
     require_consent_before_check_in: Optional[bool] = None
     auto_checkout_after_hours: Optional[int] = None
     visitor_badge_expiry: Optional[VisitorBadgeExpiry] = None

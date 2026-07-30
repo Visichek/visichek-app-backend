@@ -36,6 +36,7 @@ from services.notification_service import (
     extract_resource_ids,
     schedule_resource_read_receipt,
 )
+from schemas.data_subject_request_schema import DSROut
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ _DSR_TYPES = frozenset({"access", "correction", "deletion", "consent_withdrawal"
 
 
 ADMIN_DSR_LIST_SPEC = ListSpec(
+    model=DSROut,
     sortable_fields=frozenset({"date_created", "sla_deadline", "status"}),
     default_sort=(("date_created", -1),),
     search_fields=("notes",),

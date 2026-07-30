@@ -343,9 +343,11 @@ async def test_single_and_bulk_resolvers_produce_same_addon_inclusive_snapshot()
         display_name = "Premium"
         tier = "premium"
         priority_support = False
+        sla_response_hours = None
         custom_branding = False
         api_access = False
         support_tier = None
+        currency = "NGN"
 
         def model_dump(self, mode: str = "json") -> dict:
             return {
@@ -547,3 +549,9 @@ async def test_me_limitations_includes_active_addons_summary() -> None:
     assert result["activeAddons"] == [
         {"kind": "branch_quota", "quantity": 2, "expires_at": None}
     ]
+    # Guards the wiring, not just the helper: if the
+    # caps_out.update(_support_case_caps()) line in build_me_limitations
+    # were ever deleted, this would catch it even though
+    # test_me_limitations_support_cap.py (which only exercises
+    # _support_case_caps() in isolation) would still pass.
+    assert result["caps"]["maxOpenSupportCases"] == 10

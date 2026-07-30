@@ -130,6 +130,7 @@ async def resolve_tenant_plan(tenant_id: str) -> Optional[dict]:
         "plan_name": plan.name,
         "plan_display_name": plan.display_name,
         "tier": plan.tier,
+        "currency": plan.currency,
         "subscription_id": sub.id,
         "subscription_status": sub.status,
         "tenant_id": tenant_id,
@@ -157,6 +158,7 @@ async def resolve_tenant_plan(tenant_id: str) -> Optional[dict]:
         ),
         # Feature flags
         "priority_support": plan.priority_support,
+        "sla_response_hours": plan.sla_response_hours,
         "custom_branding": plan.custom_branding,
         "api_access": plan.api_access,
         # Support tier (plan default, subscription override wins)
@@ -315,6 +317,7 @@ async def _build_resolved_from_raw(sub: dict, plan: dict, tenant_id: str) -> dic
         "plan_name": plan.get("name"),
         "plan_display_name": plan.get("display_name"),
         "tier": plan.get("tier"),
+        "currency": plan.get("currency"),
         "subscription_id": sub_id,
         "subscription_status": sub.get("status"),
         "tenant_id": tenant_id,
@@ -336,6 +339,7 @@ async def _build_resolved_from_raw(sub: dict, plan: dict, tenant_id: str) -> dic
             sub.get("tenant_cap_overrides"),
         ),
         "priority_support": plan.get("priority_support"),
+        "sla_response_hours": plan.get("sla_response_hours"),
         "custom_branding": plan.get("custom_branding"),
         "api_access": plan.get("api_access"),
         "support_tier": (

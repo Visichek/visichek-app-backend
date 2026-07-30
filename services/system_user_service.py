@@ -42,6 +42,7 @@ from services.auth_helpers import issue_tokens_for_role
 from core.email_utils import normalize_email
 from config.role_permissions import get_default_permissions_for_role
 from services.audit_service import record_audit_event
+from services.branch_service import resolve_hq_branch_id
 from services.plan_limits import enforce_entity_cap
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,33 @@ async def _check_email_uniqueness(email: str, role: str, tenant_id: str) -> None
             )
 
 
+async def _enforce_seat_cap(tenant_id: str, branch_ids: list[str]) -> None:
+    """Enforce ``max_system_users`` per branch rather than tenant-wide.
+
+    A user assigned to several branches consumes a seat at each — "50 seats
+    per location" means each property can staff 50 people, and a user with
+    access to three properties occupies a slot at all three. A tenant with
+    only the default HQ branch behaves exactly as the old tenant-wide rule.
+    """
+    targets = list(branch_ids or [])
+    if not targets:
+        hq = await resolve_hq_branch_id(tenant_id)
+        targets = [hq] if hq else []
+    if not targets:
+        return  # No branch to scope to — fail open, mirroring plan_limits
+
+    for branch_id in targets:
+        current_count = await count_system_users(
+            {"tenant_id": tenant_id, "branch_ids": {"$in": [branch_id]}}
+        )
+        await enforce_entity_cap(
+            tenant_id=tenant_id,
+            cap_key="max_system_users",
+            current_count=current_count,
+            friendly_name="System user",
+        )
+
+
 async def add_system_user(
     user_data: SystemUserCreate,
     *,
@@ -164,13 +192,9 @@ async def add_system_user(
 ) -> SystemUserOut:
     """Create a system user with auto-assigned permissions based on role."""
 
-    # Enforce plan cap on total system users for this tenant
-    current_count = await count_system_users({"tenant_id": user_data.tenant_id})
-    await enforce_entity_cap(
-        tenant_id=user_data.tenant_id,
-        cap_key="max_system_users",
-        current_count=current_count,
-        friendly_name="System user",
+    # Enforce plan cap on system users per branch (see _enforce_seat_cap).
+    await _enforce_seat_cap(
+        user_data.tenant_id, list(getattr(user_data, "branch_ids", None) or [])
     )
 
     # Enforce email uniqueness with normalization

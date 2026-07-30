@@ -52,6 +52,16 @@ class TestSuperAdminDepartments:
 
     @pytest_asyncio.fixture
     async def _dept_payload(self, seeded_tenant, seeded_system_user):
+        # Departments are branch-scoped: create resolves the HQ branch and
+        # 409s when the tenant has none. Real tenants always have one
+        # (bootstrap / boot-time backfill provisions it); the raw seeded
+        # tenant fixture bypasses that, so provision HQ here.
+        from services.branch_service import ensure_default_branch
+
+        await ensure_default_branch(
+            tenant_id=seeded_tenant.id or "",
+            company_name=seeded_tenant.company_name,
+        )
         user, _ = seeded_system_user
         return {
             "tenant_id": seeded_tenant.id,

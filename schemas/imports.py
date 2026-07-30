@@ -145,6 +145,19 @@ class DeletionAction(str, Enum):
     SCHEDULED = "scheduled"
 
 
+class RetentionScope(str, Enum):
+    """Collections the retention sweep knows how to purge.
+
+    Was an unvalidated ``str`` on RetentionPolicyBase, so a typo produced a
+    policy that matched no sweep branch and silently retained data forever.
+    """
+
+    VISIT_SESSIONS = "visit_sessions"
+    CHECKINS = "checkins"
+    ID_IMAGES = "id_images"
+    VISITOR_PROFILES = "visitor_profiles"
+
+
 class DSRType(str, Enum):
     ACCESS = "access"
     CORRECTION = "correction"
@@ -174,6 +187,16 @@ class IncidentStatus(str, Enum):
     CONTAINED = "contained"
     REPORTED_TO_NDPC = "reported_to_ndpc"
     CLOSED = "closed"
+
+
+class RiskLevel(str, Enum):
+    """Incident severity. Was a free-text Optional[str] whose valid values
+    lived only in a comment, so severity was unfilterable and unsortable."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
 
 
 class BadgeFormat(str, Enum):

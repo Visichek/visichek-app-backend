@@ -24,9 +24,11 @@ from services.department_service import (
     validate_department_create,
     validate_department_update,
 )
+from schemas.department_schema import DepartmentOut
 
 
 DEPARTMENTS_LIST_SPEC = ListSpec(
+    model=DepartmentOut,
     sortable_fields=frozenset({"name", "code", "date_created"}),
     default_sort=(("name", 1),),
     search_fields=("name", "code"),
@@ -86,13 +88,15 @@ async def create_department_endpoint(
     tenant_id = principal.tenant_id or ""
     # Sync gate: reject duplicates / cap violations up-front so the client
     # gets a 4xx instead of a 202 followed by a failed-job notification.
-    await validate_department_create(
+    resolved_branch_id = await validate_department_create(
         tenant_id=tenant_id,
         name=dept_data.name,
         code=dept_data.code,
+        branch_id=dept_data.branch_id,
     )
     payload = dept_data.model_dump(exclude_none=True)
     payload["tenant_id"] = tenant_id
+    payload["branch_id"] = resolved_branch_id
     payload["created_by"] = principal.user_id
     return await enqueue_write(
         writer_key="department.create",

@@ -21,9 +21,11 @@ from services.host_service import (
     validate_host_create,
     validate_host_update,
 )
+from schemas.host_schema import HostOut
 
 
 HOSTS_LIST_SPEC = ListSpec(
+    model=HostOut,
     sortable_fields=frozenset({"name", "date_created", "last_updated"}),
     default_sort=(("name", 1),),
     search_fields=("name", "email", "phone"),

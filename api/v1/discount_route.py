@@ -30,13 +30,17 @@ from security.account_status_check import check_admin_account_status_and_permiss
 from security.auth import verify_super_admin_token
 from security.principal import AuthPrincipal
 from core.errors import auth_permission_denied
+from schemas.discount_schema import DiscountOut
 
 router = APIRouter(prefix="/discounts", tags=["Discounts"])
 
 
 DISCOUNTS_LIST_SPEC = ListSpec(
+    model=DiscountOut,
     sortable_fields=frozenset(
-        {"date_created", "expires_at", "current_redemptions", "code"}
+        # ``expires_at`` was a phantom — discounts store ``valid_until``
+        # (already used correctly by the ``expiresAt`` range filter below).
+        {"date_created", "valid_until", "current_redemptions", "code"}
     ),
     default_sort=(("date_created", -1),),
     search_fields=("code", "description"),

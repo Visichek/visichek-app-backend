@@ -24,6 +24,7 @@ from services.invoice_service import (
     retrieve_invoice_by_id_with_summary,
     retrieve_invoices_for_tenant_with_summary,
 )
+from schemas.invoice_schema import InvoiceOut
 
 router = APIRouter(prefix="/invoices", tags=["Invoices"])
 
@@ -43,9 +44,17 @@ def _coerce_amount(raw):
     return float(raw)
 
 
+# Invoices store money in MINOR units on ``total_minor`` (see InvoiceBase);
+# there is no ``amount`` field — the old builders queried a nonexistent path
+# and always matched zero rows. The wire params stay in major units.
+def _amount_minor(raw: object) -> int:
+    return int(round(float(str(raw)) * 100))
+
+
 INVOICES_ADMIN_LIST_SPEC = ListSpec(
+    model=InvoiceOut,
     sortable_fields=frozenset(
-        {"issued_at", "amount", "status", "date_created", "invoice_number"}
+        {"issued_at", "total_minor", "status", "date_created", "invoice_number"}
     ),
     default_sort=(("issued_at", -1),),
     search_fields=("invoice_number",),
@@ -59,15 +68,15 @@ INVOICES_ADMIN_LIST_SPEC = ListSpec(
         ),
         "amountGte": FilterDef(
             name="amountGte",
-            mongo_field="amount",
+            mongo_field="total_minor",
             coerce=_coerce_amount,
-            builder=lambda vs: {"amount": {"$gte": float(vs[0])}},
+            builder=lambda vs: {"total_minor": {"$gte": _amount_minor(vs[0])}},
         ),
         "amountLte": FilterDef(
             name="amountLte",
-            mongo_field="amount",
+            mongo_field="total_minor",
             coerce=_coerce_amount,
-            builder=lambda vs: {"amount": {"$lte": float(vs[0])}},
+            builder=lambda vs: {"total_minor": {"$lte": _amount_minor(vs[0])}},
         ),
     },
     range_filters={"issuedAt": "issued_at"},
@@ -76,8 +85,9 @@ INVOICES_ADMIN_LIST_SPEC = ListSpec(
 
 
 INVOICES_TENANT_LIST_SPEC = ListSpec(
+    model=InvoiceOut,
     sortable_fields=frozenset(
-        {"issued_at", "amount", "status", "date_created", "invoice_number"}
+        {"issued_at", "total_minor", "status", "date_created", "invoice_number"}
     ),
     default_sort=(("issued_at", -1),),
     search_fields=("invoice_number",),
@@ -90,11 +100,11 @@ INVOICES_TENANT_LIST_SPEC = ListSpec(
         ),
         "amountGte": FilterDef(
             name="amountGte",
-            builder=lambda vs: {"amount": {"$gte": float(vs[0])}},
+            builder=lambda vs: {"total_minor": {"$gte": _amount_minor(vs[0])}},
         ),
         "amountLte": FilterDef(
             name="amountLte",
-            builder=lambda vs: {"amount": {"$lte": float(vs[0])}},
+            builder=lambda vs: {"total_minor": {"$lte": _amount_minor(vs[0])}},
         ),
     },
     range_filters={"issuedAt": "issued_at"},

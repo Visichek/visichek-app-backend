@@ -22,10 +22,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Sequence
 
 from bson import ObjectId
 
+from core.database import db
 from core.errors import AppException, ErrorCode
 from core.queue.precompute import PrecomputeScope, register_precompute
 from core.redis_cache import cache_db
@@ -64,12 +65,19 @@ from schemas.support_case_schema import (
     SupportCaseWithSummaryOut,
 )
 from services.audit_service import record_audit_event
+from services.plan_limits import get_plan_data_safe
 
 logger = logging.getLogger(__name__)
 
 # --- Configuration constants ---
 
 MAX_OPEN_CASES_PER_TENANT = 10
+
+# Floor applied to a computed SLA window when the tenant's plan carries no
+# ``sla_response_hours``. Matches the MEDIUM priority window, so plans
+# without an SLA entitlement cannot self-select a tighter clock than the
+# platform default.
+DEFAULT_SLA_FLOOR_SECONDS = 72 * 3600
 
 # RESOLVED cases auto-close after 7d of inactivity.
 RESOLVED_AUTO_CLOSE_AFTER_SECONDS = 7 * 24 * 3600
@@ -137,6 +145,72 @@ async def _resolve_support_tier(tenant_id: str) -> SupportTier:
         return SupportTier(tier_raw)
     except ValueError:
         return SupportTier.NONE
+
+
+async def resolve_support_tier_tenant_filter(
+    tiers: Sequence[str],
+) -> Optional[dict[str, Any]]:
+    """Translate a ``supportTier`` filter into a ``tenant_id`` Mongo fragment.
+
+    ``support_tier`` is NEVER persisted on a support_case document — it is
+    resolved per request from the tenant's plan (``plan.support_tier``, with
+    ``subscription.support_tier_override`` winning). Filtering the collection
+    on it directly matched zero rows; this pre-query join is the same shape
+    ``tenant_route._resolve_subscription_tenant_ids`` uses for ``planTier``.
+
+    Returns ``None`` when no tier was requested. Otherwise returns a fragment
+    to merge into ``base_filter``. A tenant with no ACTIVE/TRIALING
+    subscription resolves to tier ``"none"`` (mirroring ``_resolve_support_tier``),
+    so asking for ``none`` also matches every tenant that has no subscription
+    at all — expressed as a ``$nin`` against the subscribed set rather than an
+    unbounded ``$in`` of every tenant id.
+    """
+    requested = {t for t in tiers if t}
+    if not requested:
+        return None
+
+    from schemas.subscription_schema import SubscriptionStatus
+
+    # plan_id -> support_tier declared on the plan
+    plan_tiers: dict[str, str] = {}
+    async for plan_doc in db.plans.find({}, {"_id": 1, "support_tier": 1}):
+        plan_tiers[str(plan_doc["_id"])] = str(
+            plan_doc.get("support_tier") or SupportTier.NONE.value
+        )
+
+    matched: list[str] = []
+    subscribed: list[str] = []
+    cursor = db.subscriptions.find(
+        {
+            "status": {
+                "$in": [
+                    SubscriptionStatus.ACTIVE.value,
+                    SubscriptionStatus.TRIALING.value,
+                ]
+            }
+        },
+        {"tenant_id": 1, "plan_id": 1, "support_tier_override": 1},
+    )
+    async for doc in cursor:
+        tenant_id = doc.get("tenant_id")
+        if not tenant_id:
+            continue
+        tenant_id = str(tenant_id)
+        subscribed.append(tenant_id)
+        override = doc.get("support_tier_override")
+        effective = (
+            str(override)
+            if override
+            else plan_tiers.get(str(doc.get("plan_id")), SupportTier.NONE.value)
+        )
+        if effective in requested:
+            matched.append(tenant_id)
+
+    if SupportTier.NONE.value in requested:
+        # Unsubscribed tenants are tier "none" too — they simply have no row
+        # in `subscriptions`, so match them by exclusion.
+        return {"$or": [{"tenant_id": {"$in": matched}}, {"tenant_id": {"$nin": subscribed}}]}
+    return {"tenant_id": {"$in": matched}}
 
 
 async def _resolve_tenant_company_name(tenant_id: str) -> str:
@@ -234,11 +308,32 @@ def _enqueue_list_refresh(tenant_id: str) -> None:
         logger.debug("support_case cache refresh enqueue failed", exc_info=True)
 
 
-def _compute_sla_due_at(priority: SupportCasePriority, date_created: int) -> int:
+async def _resolve_sla_floor_seconds(tenant_id: str) -> int:
+    """Minimum SLA window the tenant's plan entitles them to, in seconds.
+
+    ``priority`` is client-supplied on case creation, so without a floor any
+    tenant on any plan could select CRITICAL and buy a 4-hour response clock.
+    The plan's ``sla_response_hours`` is the entitlement (Premium 24h,
+    Enterprise 4h); plans that set none fall back to the platform default.
+    """
+    plan_data = await get_plan_data_safe(tenant_id)
+    if not plan_data:
+        return DEFAULT_SLA_FLOOR_SECONDS
+    hours = plan_data.get("sla_response_hours")
+    if not isinstance(hours, int) or hours <= 0:
+        return DEFAULT_SLA_FLOOR_SECONDS
+    return hours * 3600
+
+
+def _compute_sla_due_at(
+    priority: SupportCasePriority,
+    date_created: int,
+    floor_seconds: int = DEFAULT_SLA_FLOOR_SECONDS,
+) -> int:
     window = SLA_WINDOWS_SECONDS.get(
         priority.value, SLA_WINDOWS_SECONDS[SupportCasePriority.MEDIUM.value]
     )
-    return date_created + window
+    return date_created + max(window, floor_seconds)
 
 
 def _throttle_admin_reply_email(case_id: str) -> bool:
@@ -475,6 +570,10 @@ async def add_support_case(
     except ValueError:
         category_enum = SupportCaseCategory.OTHER
 
+    date_created = int(time.time())
+    floor_seconds = await _resolve_sla_floor_seconds(tenant_id)
+    sla_due_at = _compute_sla_due_at(priority_enum, date_created, floor_seconds)
+
     payload = SupportCaseCreate(
         subject=subject,
         description=description,
@@ -483,6 +582,8 @@ async def add_support_case(
         tenant_id=tenant_id,
         opened_by=opened_by,
         opened_by_role=opened_by_role,
+        date_created=date_created,
+        sla_due_at=sla_due_at,
     )
 
     created = await create_support_case(payload, preassigned_id=preassigned_id)

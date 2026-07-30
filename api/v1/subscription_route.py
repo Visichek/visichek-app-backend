@@ -27,13 +27,17 @@ from services.subscription_service import (
 from security.account_status_check import check_admin_account_status_and_permissions
 from security.auth import verify_any_token
 from security.principal import AuthPrincipal
+from schemas.subscription_schema import SubscriptionOut
 
 router = APIRouter(prefix="/subscriptions", tags=["Subscriptions"])
 
 
 SUBS_LIST_SPEC = ListSpec(
+    model=SubscriptionOut,
     sortable_fields=frozenset(
-        {"renews_at", "current_period_end", "date_created", "status", "effective_price"}
+        # ``renews_at`` was a phantom (no such field anywhere in the repo);
+        # the real renewal timestamp is ``current_period_end``.
+        {"current_period_end", "date_created", "status", "effective_price"}
     ),
     default_sort=(("date_created", -1),),
     search_fields=("tenant_id", "plan_id"),

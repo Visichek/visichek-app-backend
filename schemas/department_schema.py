@@ -9,6 +9,11 @@ class DepartmentBase(BaseModel):
     name: str
     is_active: bool = True
     created_by: Optional[str] = None
+    # Property this department belongs to. Optional on the wire: a
+    # single-branch tenant never supplies one and the service resolves HQ.
+    # Null on rows predating branch scoping; the branch backfill tags those
+    # to HQ.
+    branch_id: Optional[str] = None
 
 
 class DepartmentCreate(BaseModel):
@@ -17,6 +22,11 @@ class DepartmentCreate(BaseModel):
     name: str
     is_active: bool = True
     created_by: Optional[str] = None
+    # Property this department belongs to. Optional on the wire: a
+    # single-branch tenant never supplies one and the service resolves HQ.
+    # Null on rows predating branch scoping; the branch backfill tags those
+    # to HQ.
+    branch_id: Optional[str] = None
     date_created: int = Field(default_factory=lambda: int(time.time()))
     last_updated: int = Field(default_factory=lambda: int(time.time()))
 
@@ -30,6 +40,16 @@ class DepartmentCreate(BaseModel):
 
 
 class DepartmentUpdate(BaseModel):
+    # branch_id is deliberately NOT settable via update. Create resolves
+    # and validates it (target-branch ownership + per-branch max_departments
+    # cap); validate_department_update never re-checks either, and
+    # repositories/department_repo.py filters None out of $set so it could
+    # never be used to clear a branch either. Forwarding it verbatim would
+    # let a caller invent an arbitrary branch_id string, which
+    # get_accessible_department_ids buckets by str(branch_id) — turning
+    # every invented value into its own uncapped bucket and making the cap
+    # unenforceable. If branch moves are ever needed, add a dedicated,
+    # validated endpoint instead of reopening this field.
     code: Optional[str] = None
     name: Optional[str] = None
     is_active: Optional[bool] = None

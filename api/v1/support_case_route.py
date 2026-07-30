@@ -12,7 +12,8 @@ breach-tracking log. "Support cases" are platform-level support threads.
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, List
+import time
+from typing import Annotated, Any, List, Sequence
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -46,6 +47,7 @@ from services.support_case_service import (
     retrieve_support_case_by_id,
     retrieve_support_cases,
 )
+from schemas.support_case_schema import SupportCaseOut
 
 
 _SUPPORT_STATUSES = frozenset(
@@ -61,8 +63,33 @@ _SUPPORT_STATUSES = frozenset(
 )
 _SUPPORT_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
 
+# SLA state is derived, not persisted — nothing writes ``sla_state`` to the
+# collection, so the old ``{"sla_state": ...}`` builder always matched zero
+# rows. Window over ``sla_due_at`` for still-active cases; mirrors
+# repositories/support_case_repo.py list_sla_breached_cases + the admin spec.
+_SC_SLA_ACTIVE_STATUSES = ["open", "acknowledged", "in_progress", "reopened"]
+_SC_SLA_AT_RISK_WINDOW_SECONDS = 86400
+
+
+def _sc_sla_state_builder(vs: Sequence[str]) -> dict[str, Any]:
+    now = int(time.time())
+    soon = now + _SC_SLA_AT_RISK_WINDOW_SECONDS
+    clauses = []
+    for state in vs:
+        if state == "breached":
+            due: dict[str, Any] = {"$lte": now}
+        elif state == "at_risk":
+            due = {"$gt": now, "$lte": soon}
+        else:  # on_track
+            due = {"$gt": soon}
+        clauses.append(
+            {"status": {"$in": _SC_SLA_ACTIVE_STATUSES}, "sla_due_at": due}
+        )
+    return clauses[0] if len(clauses) == 1 else {"$or": clauses}
+
 
 SUPPORT_CASES_TENANT_LIST_SPEC = ListSpec(
+    model=SupportCaseOut,
     # NOTE: the persisted SLA field is `sla_due_at` (set by support_case_service
     # / SupportCaseCreate), NOT `sla_deadline`. The old `sla_deadline` entry was
     # a phantom: it passed the allowlist but Mongo sorted by a missing field
@@ -87,11 +114,7 @@ SUPPORT_CASES_TENANT_LIST_SPEC = ListSpec(
         "slaState": FilterDef(
             name="slaState",
             allowed_values=frozenset({"on_track", "at_risk", "breached"}),
-            builder=lambda vs: (
-                {"sla_state": vs[0]}
-                if len(vs) == 1
-                else {"sla_state": {"$in": list(vs)}}
-            ),
+            builder=_sc_sla_state_builder,
         ),
     },
     range_filters={"createdAt": "date_created"},

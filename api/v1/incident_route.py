@@ -25,6 +25,7 @@ from services.notification_service import (
     extract_resource_ids,
     schedule_resource_read_receipt,
 )
+from schemas.incident_log_schema import IncidentLogOut
 
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
@@ -65,11 +66,13 @@ def _approaching_builder(values):
 
 
 INCIDENTS_LIST_SPEC = ListSpec(
+    model=IncidentLogOut,
     sortable_fields=frozenset(
         {"date_created", "notification_deadline", "risk_level", "status"}
     ),
     default_sort=(("date_created", -1),),
-    search_fields=("description", "summary"),
+    # ``summary`` is not a field on incident_logs — only ``description`` is.
+    search_fields=("description",),
     filters={
         "status": FilterDef(
             name="status", multi=True, allowed_values=_INCIDENT_STATUSES
@@ -85,6 +88,7 @@ INCIDENTS_LIST_SPEC = ListSpec(
         "ndpcNotified": FilterDef(
             name="ndpcNotified", mongo_field="ndpc_notified", coerce=coerce_bool
         ),
+        "branchId": FilterDef(name="branchId", mongo_field="branch_id"),
         "approachingDeadline": FilterDef(
             name="approachingDeadline", builder=_approaching_builder
         ),
@@ -149,6 +153,22 @@ async def create_incident(
     payload = log_data.model_dump(exclude_none=True)
     payload["tenant_id"] = principal.tenant_id or ""
     payload["reported_by"] = principal.user_id
+    # Branch is resolved from the caller's token (branch-scoped roles are
+    # pinned to their own branch; super_admins may pass an explicit one,
+    # else HQ). Stored on the incident for attribution and branchId
+    # filtering only — incident reads are not branch-isolated, so this
+    # tag does not by itself enforce access separation.
+    from services.branch_service import resolve_branch_for_principal
+
+    payload["branch_id"] = await resolve_branch_for_principal(
+        principal,
+        principal.tenant_id or "",
+        explicit_branch_id=payload.get("branch_id"),
+    )
+    request_id = getattr(request.state, "request_id", None)
+    payload["_actor_id"] = principal.user_id
+    payload["_actor_role"] = principal.role
+    payload["_request_id"] = request_id
     return await enqueue_write(
         writer_key="incident.create",
         payload=payload,
@@ -156,7 +176,7 @@ async def create_incident(
         tenant_id=principal.tenant_id,
         actor_id=principal.user_id,
         actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
+        request_id=request_id,
     )
 
 
@@ -325,6 +345,10 @@ async def update_incident(
     tenant_id = principal.tenant_id or ""
     payload = log_data.model_dump(exclude_none=True)
     payload["tenant_id"] = tenant_id
+    request_id = getattr(request.state, "request_id", None)
+    payload["_actor_id"] = principal.user_id
+    payload["_actor_role"] = principal.role
+    payload["_request_id"] = request_id
     return await enqueue_write(
         writer_key="incident.update",
         payload=payload,
@@ -333,7 +357,7 @@ async def update_incident(
         tenant_id=tenant_id,
         actor_id=principal.user_id,
         actor_role=principal.role,
-        request_id=getattr(request.state, "request_id", None),
+        request_id=request_id,
     )
 
 
